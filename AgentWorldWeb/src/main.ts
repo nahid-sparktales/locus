@@ -1,8 +1,10 @@
 import { OutpostWorld } from './world';
-import { DEFAULT_THEME, parseTheme, parseCatalog } from './theme';
-import type { ThemeChoice } from './theme';
-import { STATUS_META, SECTOR_SIZE, agentSector, clampSector, parseHostMessage, searchAgents, sectorAgents } from './state';
-import type { Agent, Snapshot, WorldMessage } from './state';
+import { SnailAlert } from './snailAlert';
+import { unseenRecentTransfers } from './fleetActivity';
+import { DEFAULT_THEME, SHIP_ASSET_TYPES, SHIP_NAMES, parseTheme, parseCatalog } from './theme';
+import type { ShipAssetType, ThemeChoice } from './theme';
+import { STATUS_META, SECTOR_SIZE, agentSector, clampSector, isResidentStyle, parseHostMessage, searchAgents, sectorAgents } from './state';
+import type { Agent, ResidentStyle, Snapshot, WorldMessage } from './state';
 
 declare global {
   interface Window {
@@ -14,24 +16,95 @@ declare global {
 const el = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const bridge = window.webkit?.messageHandlers?.locusScreen;
 const demo = !bridge;
+document.body.dataset.demo = String(demo);
+const seenTransfers = new Set<string>();
+const activityButtons = new Map<string, HTMLButtonElement>();
 const rosterButtons = new Map<string, HTMLButtonElement>();
 let snapshot: Snapshot = { version: 1, type: 'snapshot', agents: [], theme: 'outpost', projectName: '' };
 let world: OutpostWorld | undefined;
 let sector = 0;
 let nativeVisible = true;
-let themeChoices: ThemeChoice[] = [{ id: 'outpost', name: 'Orbital Outpost' }];
+let themeChoices: ThemeChoice[] = [{ id: 'outpost', name: 'Orbital Locus Outpost' }];
 let loadedTheme: string | undefined;
+let ocean = false;
+let residentStyle: ResidentStyle = 'mixed';
+let navigationMode: 'orbit' | 'pan' = 'orbit';
 let loadingTheme: string | undefined;
 let themeGeneration = 0;
 let noteTimer: ReturnType<typeof setTimeout> | undefined;
 let disposed = false;
+const snailAlert = new SnailAlert(el('snail-alert'), openAttention);
 
 const send = (message: WorldMessage): void => { try { bridge?.postMessage(message); } catch { el('live-label').textContent = 'Connection unavailable'; } };
 const announce = (message: string): void => { el('screen-reader-status').textContent = message; };
+function updatePreviewURL(): void {
+  if (!demo) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('theme', loadedTheme ?? snapshot.theme);
+  url.searchParams.set('residentStyle', residentStyle);
+  history.replaceState(null, '', url);
+}
 function showNote(message: string): void {
   const note = el('selection-note'); note.textContent = message; note.hidden = false;
   if (noteTimer) clearTimeout(noteTimer);
   noteTimer = setTimeout(() => { note.hidden = true; }, 5000);
+}
+
+function applyActivity(): void {
+  if (!world) return;
+  const fresh = ocean && loadedTheme === snapshot.theme ? unseenRecentTransfers(snapshot.transfers ?? [], seenTransfers, Date.now() / 1000) : [];
+  world.setActivity(snapshot.attentionRequests ?? [], fresh);
+}
+function openAttention(requestID: string): void {
+  const request = snapshot.attentionRequests?.find(item => item.id === requestID);
+  if (!request) return;
+  if (demo) { showNote('Demo Ping Ping. In Locus, this opens the exact approval or input request in the captain’s quarters. No request was sent.'); return; }
+  send({ version: 1, type: 'openAttention', requestID });
+}
+function openTransfer(transferID: string): void {
+  const transfer = snapshot.transfers?.find(item => item.id === transferID);
+  if (!transfer) return;
+  if (demo) { showNote('This courier illustrates a sample handoff. In Locus, it opens the actual handoff or artifact details. No task is running.'); return; }
+  send({ version: 1, type: 'openTransfer', transferID });
+}
+function renderActivity(): void {
+  const requests = snapshot.attentionRequests ?? [], transfers = snapshot.transfers ?? [];
+  snailAlert.update(requests, snapshot.agents, demo);
+  el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
+  el('agent-controls-title').textContent = ocean ? 'Captain’s quarters' : 'Agent controls';
+  const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
+  el('agent-controls-name').textContent = selected?.name ?? (ocean ? 'Choose a captain or manage your fleet' : 'Manage your agents');
+  el('activity-toggle').hidden = !ocean;
+  el('activity-count').textContent = String(requests.length + transfers.length);
+  el('activity-title').textContent = demo ? 'Sample signals' : 'Ship signals';
+  if (!ocean) { el('fleet-activity').hidden = true; el('activity-toggle').setAttribute('aria-expanded', 'false'); }
+  const list = el('activity-list');
+  const activityIDs = new Set([...requests.map(item => `request:${item.id}`), ...transfers.map(item => `transfer:${item.id}`)]);
+  for (const [id, button] of activityButtons) if (!activityIDs.has(id)) { button.remove(); activityButtons.delete(id); }
+  let itemIndex = 0;
+  const activityButton = (id: string, className: string, action: () => void): HTMLButtonElement => {
+    let button = activityButtons.get(id);
+    if (!button) {
+      button = document.createElement('button'); button.type = 'button'; button.className = `activity-item ${className}`;
+      button.append(document.createElement('strong'), document.createElement('span'));
+      button.addEventListener('click', action); activityButtons.set(id, button);
+    }
+    if (list.children[itemIndex] !== button) list.insertBefore(button, list.children[itemIndex] ?? null);
+    itemIndex++; return button;
+  };
+  const nameFor = (id: string): string => snapshot.agents.find(agent => agent.id.toLowerCase() === id.toLowerCase())?.name ?? 'Agent';
+  for (const request of requests) {
+    const button = activityButton(`request:${request.id}`, 'request-item', () => openAttention(request.id)); button.dataset.requestId = request.id;
+    button.querySelector('strong')!.textContent = `${nameFor(request.agentID)} · ${request.kind === 'approval' ? 'Approval' : 'Needs your input'}`;
+    button.querySelector('span')!.textContent = request.title;
+  }
+  for (const transfer of [...transfers].sort((a, b) => b.occurredAt - a.occurredAt)) {
+    const button = activityButton(`transfer:${transfer.id}`, 'transfer-item', () => openTransfer(transfer.id)); button.dataset.transferId = transfer.id;
+    button.querySelector('strong')!.textContent = `${nameFor(transfer.fromAgentID)} → ${nameFor(transfer.toAgentID)}`;
+    button.querySelector('span')!.textContent = `${transfer.kind === 'artifact' ? 'Artifact' : 'Handoff'} · ${transfer.title}`;
+  }
+  el('activity-empty').hidden = requests.length + transfers.length > 0;
+  el('activity-caption').textContent = demo ? 'Examples only. No calls or tasks are running.' : 'Calls need your input. Couriers show recent handoffs and artifacts.';
 }
 
 function selectAgent(id: string): void {
@@ -42,23 +115,24 @@ function selectAgent(id: string): void {
   snapshot = { ...snapshot, selectedAgentID: id };
   world?.setAgents(sectorAgents(snapshot.agents, sector), id);
   world?.focusResident(id);
+  applyActivity();
   renderRoster();
   send({ version: 1, type: 'selectAgent', agentID: id });
   announce(`${agent.name} selected. ${STATUS_META[agent.status].label}.`);
-  if (demo) showNote(`${agent.name} is a demo resident. In Locus, this opens their real conversation beside the world.`);
+  if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. In Locus, this opens their real conversation beside the world.`);
 }
 
 function renderRoster(): void {
   el('resident-count').textContent = String(snapshot.agents.length);
   el('project-name').textContent = snapshot.projectName || (demo ? 'A preview of your next workspace' : 'Select a project in Locus');
   el('project-name').title = snapshot.projectName;
-  el('live-label').textContent = demo ? 'Demo residents · no model calls' : 'Connected to Locus';
+  el('live-label').textContent = demo ? `Demo ${ocean ? 'fleet' : 'residents'} · no model calls` : 'Connected to Locus';
   const totalSectors = Math.max(1, Math.ceil(snapshot.agents.length / SECTOR_SIZE));
   el('sector-label').textContent = `${String(sector + 1).padStart(2, '0')} / ${String(totalSectors).padStart(2, '0')}`;
   el('coordinate-sector').textContent = String(sector + 1).padStart(2, '0');
   const working = snapshot.agents.filter(agent => agent.status === 'working').length;
   const attention = snapshot.agents.filter(agent => agent.status === 'needs_attention' || agent.status === 'failed').length;
-  el('working-count').textContent = working ? `${working} agent${working === 1 ? '' : 's'} at work` : attention ? `${attention} need${attention === 1 ? 's' : ''} your attention` : 'All systems calm';
+  el('working-count').textContent = working ? `${working} agent${working === 1 ? '' : 's'} at work` : attention ? `${attention} need${attention === 1 ? 's' : ''} your attention` : ocean ? 'Calm seas' : 'All systems calm';
   const list = el('resident-list');
   const filtered = searchAgents(snapshot.agents, el<HTMLInputElement>('resident-search').value);
   const displayed = new Set(filtered.map(agent => agent.id));
@@ -77,23 +151,96 @@ function renderRoster(): void {
       button.addEventListener('click', () => selectAgent(agent.id));
       rosterButtons.set(agent.id, button);
     }
+    const avatar = button.querySelector<HTMLElement>('.resident-avatar')!;
+    const appearance = ocean ? world?.getAgentAppearance(agent.id) : undefined;
+    const ship = appearance && (SHIP_ASSET_TYPES as readonly string[]).includes(appearance) ? appearance as ShipAssetType : undefined;
+    avatar.dataset.vessel = String(ship ? SHIP_ASSET_TYPES.indexOf(ship) : snapshot.agents.indexOf(agent) % 12);
+    const kind = world?.getAgentKind(agent.id);
+    if (kind) { avatar.dataset.residentKind = kind; button.dataset.residentKind = kind; }
+    else { delete avatar.dataset.residentKind; delete button.dataset.residentKind; }
     button.querySelector('.resident-name')!.textContent = agent.name;
-    button.querySelector('.resident-role')!.textContent = agent.role || 'Agent';
+    const home = ship ? world?.getAgentHome(agent.id) : undefined;
+    button.querySelector('.resident-role')!.textContent = ship ? `${SHIP_NAMES[ship]}${home ? ` · ${home}` : ''}` : agent.role || 'Agent';
     button.classList.toggle('selected', agent.id === snapshot.selectedAgentID);
     button.style.setProperty('--status', STATUS_META[agent.status].color);
     button.dataset.status = agent.status;
     button.setAttribute('aria-pressed', String(agent.id === snapshot.selectedAgentID));
-    button.setAttribute('aria-label', `${agent.name}, ${agent.role || 'Agent'}, ${STATUS_META[agent.status].label}${agent.detail ? `. ${agent.detail}` : ''}`);
-    button.title = `${STATUS_META[agent.status].label}${agent.detail ? ` · ${agent.detail}` : ''}`;
+    button.setAttribute('aria-label', `${agent.name}${ship ? ` aboard ${SHIP_NAMES[ship]}` : ''}${home ? `, home island ${home}` : ''}, ${agent.role || 'Agent'}, ${STATUS_META[agent.status].label}${agent.detail ? `. ${agent.detail}` : ''}`);
+    button.title = `${agent.role || 'Agent'} · ${STATUS_META[agent.status].label}${agent.detail ? ` · ${agent.detail}` : ''}`;
     if (list.children[index] !== button) list.insertBefore(button, list.children[index] || null);
   });
-  if (!filtered.length && snapshot.agents.length) { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.textContent = 'No residents match your search.'; list.append(empty); }
+  if (!filtered.length && snapshot.agents.length) { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.textContent = `No ${ocean ? 'captains' : 'residents'} match your search.`; list.append(empty); }
   el('empty-state').hidden = snapshot.agents.length > 0;
+  renderActivity();
+}
+
+function renderNavigation(): void {
+  document.body.dataset.navigation = navigationMode;
+  el('mode-orbit').setAttribute('aria-pressed', String(navigationMode === 'orbit'));
+  el('mode-pan').setAttribute('aria-pressed', String(navigationMode === 'pan'));
+  el('drag-hint').textContent = navigationMode === 'pan' ? 'Drag to move map' : 'Drag to rotate';
+  el('world').setAttribute('aria-label', `3D ${ocean ? 'Local Line ocean world. Each agent has their own ship' : 'outpost overview'}. Click ${ocean ? 'a ship' : 'an agent'} to interact. Drag to ${navigationMode === 'pan' ? 'move the map' : 'rotate the view'}, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the ${ocean ? 'Fleet' : 'Residents'} list to select agents with the keyboard.`);
+}
+
+function setNavigationMode(mode: 'orbit' | 'pan'): void {
+  navigationMode = mode;
+  world?.setNavigationMode(mode);
+  renderNavigation();
+  announce(mode === 'pan' ? 'Move map mode. Drag to move across the map. Arrow keys or W A S D also move the map.' : 'Rotate mode. Drag to rotate the view. Arrow keys or W A S D move the map.');
+}
+
+function renderResidentStyle(): void {
+  document.body.dataset.residentStyle = residentStyle;
+  el('resident-appearance').hidden = ocean;
+  el('appearance-mixed').setAttribute('aria-pressed', String(residentStyle === 'mixed'));
+  el('appearance-pandas').setAttribute('aria-pressed', String(residentStyle === 'pandas'));
+  el('appearance-explorers').setAttribute('aria-pressed', String(residentStyle === 'explorers'));
+}
+
+function setResidentStyle(style: ResidentStyle): void {
+  residentStyle = style;
+  snapshot = { ...snapshot, residentStyle: style };
+  world?.setResidentStyle(style);
+  renderResidentStyle();
+  renderRoster();
+  send({ version: 1, type: 'preferences', preferences: { residentStyle: style } });
+  if (demo) {
+    try { localStorage.setItem('locus.agentWorld.residentStyle.v1', style); } catch { /* The switch still works when storage is unavailable. */ }
+    updatePreviewURL();
+  }
+  announce(style === 'mixed' ? 'Your crew now includes pandas, people, and robots.' : style === 'pandas' ? 'Your agents now appear as pandas.' : 'Your agents now appear as explorers.');
+}
+
+function applyThemePresentation(isOcean: boolean): void {
+  ocean = isOcean;
+  document.body.dataset.environment = isOcean ? 'ocean' : 'campus';
+  renderResidentStyle();
+  el('world-subtitle').hidden = !isOcean;
+  el('voyage-chart').hidden = !isOcean;
+  el('roster-title').textContent = isOcean ? 'Your fleet' : 'Residents';
+  document.querySelector('.roster-panel')!.setAttribute('aria-label', isOcean ? 'Fleet manifest' : 'Residents');
+  const rosterHidden = el('roster-body').hidden;
+  el('roster-toggle').setAttribute('aria-label', `${rosterHidden ? 'Expand' : 'Collapse'} ${isOcean ? 'fleet' : 'residents'}`);
+  el('resident-search').setAttribute('aria-label', isOcean ? 'Search fleet' : 'Search residents');
+  el<HTMLInputElement>('resident-search').placeholder = isOcean ? 'Find your captain' : 'Find an agent';
+  el('empty-title').textContent = isOcean ? 'Your adventure begins here' : 'No residents yet';
+  el('empty-description').textContent = isOcean ? 'Create an agent profile in Locus to launch their own ship.' : 'Create an agent profile in Locus to give it a home here.';
+  el('coordinate-region').textContent = isOcean ? 'THE AGE OF LOCAL MINDS' : 'LYRA SYSTEM';
+  el('coordinate-unit').textContent = isOcean ? 'FLEET' : 'SECTOR';
+  el('coordinate-detail').textContent = isOcean ? ' · LOCAL LINE' : ' · 04.28 N / 78.16 E';
+  el('select-hint').textContent = isOcean ? 'Choose a ship to open its agent' : 'Click an agent to interact';
+  el('world-version').textContent = isOcean ? 'SET SAIL' : 'OUTPOST 01';
+  el('loading-label').textContent = isOcean ? 'Setting sail for the Local Line' : 'Arriving at your outpost';
+  el('asset-notice').textContent = isOcean ? 'Some artwork is unavailable. Your fleet is using built-in ships.' : 'Some artwork is unavailable. The outpost is using built-in models.';
+  el('fallback-reason').textContent = `3D graphics are unavailable on this device. Select ${isOcean ? 'a captain from your fleet' : 'a resident'} to open their conversation.`;
+  renderNavigation();
+  renderRoster();
+  renderThemes();
 }
 
 function assetProgress(completed: number, total: number): void {
   el('asset-loading').hidden = completed >= total;
-  el('asset-loading').textContent = `Preparing world artwork · ${completed} / ${total}`;
+  el('asset-loading').textContent = `Preparing ${ocean ? 'the fleet' : 'world artwork'} · ${completed} / ${total}`;
 }
 
 function fallback(reason?: string): void {
@@ -108,26 +255,41 @@ function fallback(reason?: string): void {
 
 async function loadTheme(id: string): Promise<void> {
   const allowed = themeChoices.find(choice => choice.id === id);
-  if (!allowed || loadedTheme === id || loadingTheme === id || disposed) return;
+  if (!allowed || loadingTheme === id || disposed) return;
+  if (loadedTheme === id && world) {
+    // Choosing the current world cancels another manifest still in flight.
+    themeGeneration += 1;
+    loadingTheme = undefined;
+    return;
+  }
   loadingTheme = id;
   const generation = ++themeGeneration;
   try {
-    const response = await fetch(new URL(`./themes/${id}/theme.json`, document.baseURI), { credentials: 'omit' });
+    const response = await fetch(new URL(`./themes/${id}/theme.json`, document.baseURI), { credentials: 'omit', cache: 'no-store' });
     if (!response.ok) throw new Error('Theme unavailable');
     const theme = parseTheme(await response.json());
     if (generation !== themeGeneration || disposed) return;
     if (theme.id !== id) throw new Error('Theme identity does not match its catalog entry');
     world?.dispose(); world = undefined;
     loadedTheme = id;
+    applyThemePresentation(theme.environment === 'ocean');
+    document.querySelector('.controls')?.removeAttribute('hidden');
+    document.querySelector('.coordinate-label')?.removeAttribute('hidden');
     el('asset-notice').hidden = true;
     el('graphics-fallback').hidden = true;
     el('agent-labels').hidden = false;
     const heading = document.querySelector('.brand h1')!;
     heading.firstChild!.textContent = theme.name;
+    document.title = `${theme.name} · Agent World · Locus`;
     el('theme-button').children[1].textContent = allowed.name.replace(/^Orbital /, '');
-    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select a resident to keep talking.') });
+    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
+    world.setNavigationMode(navigationMode);
     world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+    applyActivity();
+    renderRoster();
+    renderThemes();
     world.setVisible(nativeVisible && !document.hidden);
+    updatePreviewURL();
     el('loading-indicator').hidden = true;
   } catch (error) {
     if (generation !== themeGeneration || disposed) return;
@@ -135,10 +297,13 @@ async function loadTheme(id: string): Promise<void> {
     // Missing manifest can still show a functional built-in outpost without network access.
     if (!world && id === 'outpost') {
       try {
-        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() });
+        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
+        world.setNavigationMode(navigationMode);
         world.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+        applyActivity();
         world.setVisible(nativeVisible && !document.hidden);
         loadedTheme = id;
+        applyThemePresentation(false);
         el('asset-notice').hidden = false;
         el('loading-indicator').hidden = true;
       } catch { fallback(); }
@@ -152,37 +317,74 @@ async function loadTheme(id: string): Promise<void> {
 function receive(message: unknown): void {
   const parsed = parseHostMessage(message);
   if (!parsed || disposed) return;
-  if (parsed.type === 'visibility') { nativeVisible = parsed.visible; world?.setVisible(nativeVisible && !document.hidden); return; }
+  if (parsed.type === 'visibility') { nativeVisible = parsed.visible; world?.setVisible(nativeVisible && !document.hidden); snailAlert.setVisible(nativeVisible && !document.hidden); return; }
   const projectChanged = parsed.projectName !== snapshot.projectName;
   const selectionChanged = parsed.selectedAgentID !== snapshot.selectedAgentID;
   snapshot = parsed;
+  if (parsed.residentStyle && residentStyle !== parsed.residentStyle) {
+    residentStyle = parsed.residentStyle;
+    world?.setResidentStyle(residentStyle);
+    renderResidentStyle();
+  }
   sector = selectionChanged && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
-  renderRoster();
   world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+  applyActivity();
+  renderRoster();
   void loadTheme(snapshot.theme);
 }
 window.locusAgentWorld = { receive };
 
+el('shared-chat').addEventListener('click', () => {
+  if (demo) showNote('Crew Chat connects your agents in Locus. This preview does not open a real chat or send messages.');
+  else send({ version: 1, type: 'openSharedChat' });
+});
+el('agent-controls').addEventListener('click', () => {
+  if (demo) showNote('In Locus, the captain’s quarters contains the selected agent’s conversation, tools and controls.');
+  else send({ version: 1, type: 'openAgentControls', ...(snapshot.selectedAgentID ? { agentID: snapshot.selectedAgentID } : {}) });
+});
+el('activity-toggle').addEventListener('click', () => {
+  const panel = el('fleet-activity'); panel.hidden = !panel.hidden;
+  el('activity-toggle').setAttribute('aria-expanded', String(!panel.hidden));
+});
+el('activity-close').addEventListener('click', () => { el('fleet-activity').hidden = true; el('activity-toggle').setAttribute('aria-expanded', 'false'); el('activity-toggle').focus(); });
+
 el<HTMLInputElement>('resident-search').addEventListener('input', renderRoster);
+el('appearance-mixed').addEventListener('click', () => setResidentStyle('mixed'));
+el('appearance-pandas').addEventListener('click', () => setResidentStyle('pandas'));
+el('appearance-explorers').addEventListener('click', () => setResidentStyle('explorers'));
+el('mode-orbit').addEventListener('click', () => setNavigationMode('orbit'));
+el('mode-pan').addEventListener('click', () => setNavigationMode('pan'));
+el('view-reset').addEventListener('click', () => { world?.resetView(); announce('Camera returned to the world overview.'); });
 el('roster-toggle').addEventListener('click', () => {
   const body = el('roster-body'), button = el('roster-toggle'); body.hidden = !body.hidden;
   button.textContent = body.hidden ? '+' : '−';
   button.setAttribute('aria-expanded', String(!body.hidden));
-  button.setAttribute('aria-label', body.hidden ? 'Expand residents' : 'Collapse residents');
+  button.setAttribute('aria-label', `${body.hidden ? 'Expand' : 'Collapse'} ${ocean ? 'fleet' : 'residents'}`);
   document.querySelector('.roster-panel')!.classList.toggle('collapsed', body.hidden);
 });
 const themePopover = el('theme-popover');
 el('theme-button').addEventListener('click', () => { themePopover.hidden = !themePopover.hidden; el('theme-button').setAttribute('aria-expanded', String(!themePopover.hidden)); });
 document.addEventListener('pointerdown', event => { if (!(event.target instanceof Element) || event.target.closest('#theme-button, #theme-popover')) return; themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') { themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); } });
-document.addEventListener('visibilitychange', () => world?.setVisible(nativeVisible && !document.hidden));
-window.addEventListener('pagehide', () => { disposed = true; world?.dispose(); if (noteTimer) clearTimeout(noteTimer); });
+document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !world || disposed || document.hidden || !themePopover.hidden) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest('input, textarea, select, [contenteditable], [role="textbox"], #resident-list, #theme-popover, #fleet-activity, #snail-alert, .world-actions')) return;
+  const directions: Record<string, 'left' | 'right' | 'up' | 'down'> = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down' };
+  const direction = directions[event.key.toLowerCase()];
+  if (!direction) return;
+  event.preventDefault();
+  world.panMap(direction);
+});
+document.addEventListener('visibilitychange', () => { world?.setVisible(nativeVisible && !document.hidden); snailAlert.setVisible(nativeVisible && !document.hidden); });
+window.addEventListener('pagehide', () => { disposed = true; world?.dispose(); snailAlert.dispose(); if (noteTimer) clearTimeout(noteTimer); });
 
 function renderThemes(): void {
   themePopover.querySelectorAll('.theme-choice').forEach(item => item.remove());
   for (const choice of themeChoices) {
     const button = document.createElement('button'); button.className = 'theme-choice'; button.type = 'button';
-    const planet = document.createElement('span'); planet.className = 'planet-dot'; planet.setAttribute('aria-hidden', 'true');
+    const planet = document.createElement('span'); planet.className = 'planet-dot'; planet.dataset.world = choice.id; planet.setAttribute('aria-hidden', 'true');
+    button.setAttribute('aria-pressed', String(choice.id === loadedTheme));
     const label = document.createElement('span'); label.textContent = choice.name;
     button.append(planet, label);
     button.addEventListener('click', () => {
@@ -196,9 +398,18 @@ function renderThemes(): void {
 
 async function start(): Promise<void> {
   try {
-    const response = await fetch(new URL('./themes/catalog.json', document.baseURI), { credentials: 'omit' });
+    const response = await fetch(new URL('./themes/catalog.json', document.baseURI), { credentials: 'omit', cache: 'no-store' });
     if (response.ok) { const catalog = parseCatalog(await response.json()); if (catalog.length) themeChoices = catalog; }
   } catch { /* The shipped outpost remains accessible if its catalog is missing. */ }
+  if (demo) {
+    const requestedTheme = new URLSearchParams(window.location.search).get('theme');
+    if (requestedTheme && themeChoices.some(choice => choice.id === requestedTheme)) snapshot.theme = requestedTheme;
+    let savedStyle: unknown;
+    try { savedStyle = localStorage.getItem('locus.agentWorld.residentStyle.v1'); } catch { /* Private browser storage is optional. */ }
+    const requestedStyle = new URLSearchParams(window.location.search).get('residentStyle');
+    residentStyle = isResidentStyle(requestedStyle) ? requestedStyle : isResidentStyle(savedStyle) ? savedStyle : 'mixed';
+    snapshot.residentStyle = residentStyle;
+  }
   renderThemes();
   renderRoster();
   await loadTheme(themeChoices.some(theme => theme.id === snapshot.theme) ? snapshot.theme : themeChoices[0].id);
@@ -213,8 +424,20 @@ if (demo) {
     { id: '10000000-0000-4000-8000-000000000004', name: 'Echo', role: 'Writing & storytelling', status: 'needs_attention', detail: 'Example attention state' },
     { id: '10000000-0000-4000-8000-000000000005', name: 'Sage', role: 'Planning & strategy', status: 'completed' },
     { id: '10000000-0000-4000-8000-000000000006', name: 'Pip', role: 'Quality & testing', status: 'idle' },
+    { id: '10000000-0000-4000-8000-000000000007', name: 'Lyra', role: 'Ideas & exploration', status: 'idle' },
+    { id: '10000000-0000-4000-8000-000000000008', name: 'Finn', role: 'Data & insights', status: 'idle' },
+    { id: '10000000-0000-4000-8000-000000000009', name: 'Cleo', role: 'Product & direction', status: 'queued', detail: 'Example queued state' },
+    { id: '10000000-0000-4000-8000-000000000010', name: 'Sol', role: 'Code & craft', status: 'idle' },
+    { id: '10000000-0000-4000-8000-000000000011', name: 'Mika', role: 'Words & stories', status: 'completed' },
+    { id: '10000000-0000-4000-8000-000000000012', name: 'Rune', role: 'Systems & operations', status: 'idle' },
   ];
-  snapshot = { version: 1, type: 'snapshot', agents: demoAgents, projectName: 'Mission control · Demo workspace', theme: 'outpost' };
+  snapshot = { version: 1, type: 'snapshot', agents: demoAgents, projectName: 'Demo workspace', theme: 'grand-line',
+    attentionRequests: [{ id: '20000000-0000-4000-8000-000000000001', agentID: demoAgents[3].id, kind: 'approval', title: 'Sample approval · no real request is pending' }],
+    transfers: [
+      { id: '30000000-0000-4000-8000-000000000001', fromAgentID: demoAgents[0].id, toAgentID: demoAgents[1].id, kind: 'handoff', title: 'Sample research handoff', occurredAt: Date.now() / 1000 },
+      { id: '30000000-0000-4000-8000-000000000002', fromAgentID: demoAgents[2].id, toAgentID: demoAgents[5].id, kind: 'artifact', title: 'Sample build artifact', occurredAt: Date.now() / 1000 },
+    ],
+  };
 } else {
   el('empty-state').hidden = true;
   send({ version: 1, type: 'ready' });

@@ -1,4 +1,13 @@
 {
   "version": 1,
-  "themes": [{"id": "outpost", "name": "Orbital Outpost"}]
+  "themes": [
+    {
+      "id": "outpost",
+      "name": "Orbital Locus Outpost"
+    },
+    {
+      "id": "grand-line",
+      "name": "The Local Line"
+    }
+  ]
 }

@@ -1,3 +1,4 @@
+import { shipBerthHeading } from './islandBerths.ts';
 import type { AgentStatus, Point } from './state.ts';
 import { DEFAULT_THEME, PROP_OBSTACLE_RADII } from './theme.ts';
 import type { CircleObstacle, Placement, ResidentAssetType, Theme } from './theme.ts';
@@ -47,6 +48,7 @@ export function stationObstacles(home: Placement): CircleObstacle[] {
 
 type Edge = { to: number; distance: number };
 export type NavigationMap = {
+  bodyRadius: number;
   /** Traversable map radius after allowing for the resident's body. */
   radius: number;
   /** Obstacles already inflated by the resident's body clearance. */
@@ -55,29 +57,47 @@ export type NavigationMap = {
   nodes: readonly Point[];
   edges: readonly (readonly Edge[])[];
 };
-export type NavigationInput = { radius: number; obstacles?: readonly CircleObstacle[]; wanderPoints?: readonly Point[] };
+export type NavigationInput = { radius: number; bodyRadius?: number; obstacles?: readonly CircleObstacle[]; wanderPoints?: readonly Point[] };
 
+function pointClearsCircles(point: Point, circles: readonly CircleObstacle[]): boolean {
+  return circles.every(obstacle => {
+    const dx = point.x - obstacle.x, dz = point.z - obstacle.z, radius = obstacle.radius - EPSILON;
+    return dx * dx + dz * dz >= radius * radius;
+  });
+}
+function segmentClearsCircles(from: Point, to: Point, circles: readonly CircleObstacle[]): boolean {
+  const dx = to.x - from.x, dz = to.z - from.z, lengthSquared = dx * dx + dz * dz;
+  return circles.every(obstacle => {
+    const projection = lengthSquared > 0 ? Math.max(0, Math.min(1, ((obstacle.x - from.x) * dx + (obstacle.z - from.z) * dz) / lengthSquared)) : 0;
+    const gapX = from.x + projection * dx - obstacle.x, gapZ = from.z + projection * dz - obstacle.z;
+    const radius = obstacle.radius - EPSILON;
+    return gapX * gapX + gapZ * gapZ >= radius * radius;
+  });
+}
 export function pointIsWalkable(point: Point, map: NavigationMap): boolean {
-  return Number.isFinite(point.x) && Number.isFinite(point.z) && Math.hypot(point.x, point.z) <= map.radius + EPSILON
-    && map.obstacles.every(obstacle => distance(point, obstacle) >= obstacle.radius - EPSILON);
+  const radius = map.radius + EPSILON;
+  return Number.isFinite(point.x) && Number.isFinite(point.z) && point.x * point.x + point.z * point.z <= radius * radius
+    && pointClearsCircles(point, map.obstacles);
 }
 export function segmentIsWalkable(from: Point, to: Point, map: NavigationMap): boolean {
-  if (!pointIsWalkable(from, map) || !pointIsWalkable(to, map)) return false;
-  const dx = to.x - from.x, dz = to.z - from.z, lengthSquared = dx * dx + dz * dz;
-  return map.obstacles.every(obstacle => {
-    const projection = lengthSquared > EPSILON * EPSILON ? Math.max(0, Math.min(1, ((obstacle.x - from.x) * dx + (obstacle.z - from.z) * dz) / lengthSquared)) : 0;
-    return Math.hypot(from.x + projection * dx - obstacle.x, from.z + projection * dz - obstacle.z) >= obstacle.radius - EPSILON;
-  });
+  // A circle is convex, so endpoints inside the map guarantee that the entire
+  // segment stays inside it. The segment test already checks both endpoints
+  // against obstacles; checking all obstacles another two times is redundant.
+  const radius = map.radius + EPSILON;
+  return Number.isFinite(from.x) && Number.isFinite(from.z) && Number.isFinite(to.x) && Number.isFinite(to.z)
+    && from.x * from.x + from.z * from.z <= radius * radius && to.x * to.x + to.z * to.z <= radius * radius
+    && segmentClearsCircles(from, to, map.obstacles);
 }
 
 /** Precompute a visibility graph only when the theme/sector changes. Circular
  * samples sit beyond the tangent polygon, so even corner-cutting segments
  * have enough clearance; the per-frame simulation never needs pathfinding. */
 export function createNavigation(input: NavigationInput): NavigationMap {
-  const radius = Number.isFinite(input.radius) ? Math.max(1, input.radius - RESIDENT_RADIUS - 0.08) : 13.64;
+  const bodyRadius = Number.isFinite(input.bodyRadius) ? Math.max(RESIDENT_RADIUS, Math.min(2, input.bodyRadius!)) : RESIDENT_RADIUS;
+  const radius = Number.isFinite(input.radius) ? Math.max(1, input.radius - bodyRadius - 0.08) : 13.64;
   const obstacles = (input.obstacles ?? []).filter(item => Number.isFinite(item.x) && Number.isFinite(item.z) && Number.isFinite(item.radius) && item.radius > 0)
-    .map(item => ({ ...item, radius: item.radius + RESIDENT_RADIUS + 0.06 }));
-  const map: NavigationMap = { radius, obstacles, wanderPoints: [], nodes: [], edges: [] };
+    .map(item => ({ ...item, radius: item.radius + bodyRadius + 0.06 }));
+  const map: NavigationMap = { radius, bodyRadius, obstacles, wanderPoints: [], nodes: [], edges: [] };
   const proposed = input.wanderPoints ?? Array.from({ length: 16 }, (_, index) => ({ x: Math.sin(index * TAU / 16) * radius * 0.5, z: Math.cos(index * TAU / 16) * radius * 0.5 }));
   map.wanderPoints = proposed.filter(point => pointIsWalkable(point, map)).map(copyPoint);
   const nodes: Point[] = map.wanderPoints.map(copyPoint);
@@ -105,10 +125,11 @@ export function createNavigation(input: NavigationInput): NavigationMap {
 export function themeNavigation(theme: Theme, homes: readonly Placement[] = theme.layout.stations): NavigationMap {
   return createNavigation({
     radius: theme.layout.radius,
+    bodyRadius: theme.environment === 'ocean' ? 1.35 : RESIDENT_RADIUS,
     obstacles: [
       ...theme.layout.obstacles,
       ...theme.layout.props.map(prop => ({ x: prop.x, z: prop.z, radius: prop.radius ?? PROP_OBSTACLE_RADII[prop.asset] * theme.heights[prop.asset] / DEFAULT_THEME.heights[prop.asset] })),
-      ...homes.flatMap(stationObstacles),
+      ...(theme.environment === 'ocean' ? [] : homes.flatMap(stationObstacles)),
     ],
     wanderPoints: theme.layout.wanderPoints,
   });
@@ -172,6 +193,7 @@ export type ResidentMotion = {
   sequence: number;
   speed: number;
   home: Placement;
+  trafficCooldown?: number;
 };
 export type MotionStep = { status: AgentStatus; home: Placement; dt: number; visible?: boolean; paused?: boolean; reducedMotion?: boolean; rosterIDs?: readonly string[] };
 export const statusCanWander = (status: AgentStatus): boolean => status === 'idle' || status === 'completed';
@@ -217,6 +239,47 @@ function findPromenadePath(from: Point, destination: number, map: NavigationMap)
   return length(clockwise) <= length(counterclockwise) ? clockwise : counterclockwise;
 }
 
+/** A harbor patrol is a small seaward loop that ends at the assigned island.
+ * A rare visit can reach a neighboring bay, but it still returns home before
+ * resting. Campus residents continue to use their existing promenade paths. */
+function findHarborPatrol(state: ResidentMotion, map: NavigationMap): Point[] | null {
+  const home = state.home;
+  const appendLeg = (route: Point[], from: Point, to: Point, local: boolean): Point | null => {
+    const leg = findResidentPath(from, to, map);
+    if (!leg || (local && leg.some(point => distance(home, point) > 7.2))) return null;
+    route.push(...leg); return to;
+  };
+  const visitRound = residentSeed(`${state.id}:harbor-visit`) % 11;
+  if (state.sequence >= 3 && state.sequence % 11 === visitRound) {
+    const destinations = map.wanderPoints.filter(point => distance(home, point) > 8 && distance(home, point) < 18);
+    if (destinations.length) {
+      const target = destinations[Math.floor(randomUnit(state.id, state.sequence, 'island-visit') * destinations.length)];
+      const route: Point[] = [];
+      const reached = appendLeg(route, state, target, false);
+      if (reached && appendLeg(route, reached, home, false)) return route;
+    }
+  }
+  const offshore = (home.rotation ?? 0) + Math.PI;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const radius = 2.8 + randomUnit(state.id, state.sequence + attempt, 'harbor-radius') * 1.0;
+    const center = offshore + (randomUnit(state.id, state.sequence + attempt, 'harbor-angle') - 0.5) * 0.8;
+    const direction = randomUnit(state.id, state.sequence, 'harbor-direction') > 0.5 ? 1 : -1;
+    const targets = [-0.44 * direction, 0.44 * direction].map(offset => ({
+      x: home.x + Math.sin(center + offset) * radius,
+      z: home.z + Math.cos(center + offset) * radius,
+    }));
+    if (targets.some(point => !pointIsWalkable(point, map))) continue;
+    const route: Point[] = [];
+    let current: Point | null = state;
+    for (const target of [...targets, home]) {
+      current = appendLeg(route, current, target, true);
+      if (!current) break;
+    }
+    if (current && route.length) return route;
+  }
+  return findResidentPath(state, home, map);
+}
+
 export function createResidentMotion(id: string, home: Placement): ResidentMotion {
   return { id, x: home.x, z: home.z, heading: home.rotation ?? 0, walking: false, phase: 'at_station', intent: 'station', route: [], routeIndex: 0,
     pauseRemaining: 0.6 + randomUnit(id, 0, 'arrival') * 3.5, sequence: 0, speed: 0.65 + randomUnit(id, 0, 'pace') * 0.28, home: { ...home } };
@@ -234,16 +297,19 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
   if (input.visible === false || (input.paused && statusCanWander(input.status))) { state.phase = 'paused'; return state; }
   const dt = Number.isFinite(input.dt) ? Math.max(0, Math.min(MAX_MOTION_DT, input.dt)) : 0;
   if (dt === 0) return state;
+  state.trafficCooldown = Math.max(0, (state.trafficCooldown ?? 0) - dt);
   const intent = statusCanWander(input.status) && !input.reducedMotion ? 'wander' : 'station';
   const homeChanged = distance(input.home, state.home) > EPSILON || input.home.rotation !== state.home.rotation;
   if (intent !== state.intent || homeChanged) {
     state.intent = intent; state.route = []; state.routeIndex = 0; state.home = { ...input.home };
     if (intent === 'station') state.pauseRemaining = 0;
+    else if (map.bodyRadius > RESIDENT_RADIUS) state.pauseRemaining = 12 + randomUnit(state.id, state.sequence, 'harbor-stay') * 18;
   }
   const atHome = distance(state, input.home) < EPSILON;
+  const parkedHeading = map.bodyRadius > RESIDENT_RADIUS ? shipBerthHeading(input.home) : input.home.rotation ?? 0;
   if (intent === 'station' && atHome) {
     state.phase = 'at_station'; state.route = []; state.routeIndex = 0;
-    state.heading = faceToward(state.heading, input.home.rotation ?? 0, dt);
+    state.heading = faceToward(state.heading, parkedHeading, dt);
     return state;
   }
   if (state.routeIndex >= state.route.length) {
@@ -253,18 +319,24 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
       state.route = findResidentPath(state, input.home, map) ?? [];
     } else {
       state.phase = atHome ? 'at_station' : 'resting';
+      if (atHome && map.bodyRadius > RESIDENT_RADIUS) state.heading = faceToward(state.heading, parkedHeading, dt * 0.42);
       state.pauseRemaining = Math.max(0, state.pauseRemaining - dt);
       if (state.pauseRemaining > 0) return state;
-      const targets = map.wanderPoints;
-      const offset = input.rosterIDs
-        ? residentWanderTargetIndex(state.id, state.sequence, targets.length, input.rosterIDs)
-        : Math.floor(randomUnit(state.id, state.sequence, 'destination') * targets.length);
-      state.sequence += 1;
-      for (let attempt = 0; attempt < targets.length; attempt++) {
-        const destination = (offset + attempt) % targets.length;
-        if (distance(state, targets[destination]) < 1.8) continue;
-        const path = findPromenadePath(state, destination, map);
-        if (path?.length) { state.route = path; break; }
+      if (map.bodyRadius > RESIDENT_RADIUS) {
+        state.route = findHarborPatrol(state, map) ?? [];
+        state.sequence += 1;
+      } else {
+        const targets = map.wanderPoints;
+        const offset = input.rosterIDs
+          ? residentWanderTargetIndex(state.id, state.sequence, targets.length, input.rosterIDs)
+          : Math.floor(randomUnit(state.id, state.sequence, 'destination') * targets.length);
+        state.sequence += 1;
+        for (let attempt = 0; attempt < targets.length; attempt++) {
+          const destination = (offset + attempt) % targets.length;
+          if (distance(state, targets[destination]) < 1.8) continue;
+          const path = findPromenadePath(state, destination, map);
+          if (path?.length) { state.route = path; break; }
+        }
       }
       if (state.route.length === 0) { state.pauseRemaining = 2; return state; }
     }
@@ -280,28 +352,73 @@ export function stepResidentMotion(previous: ResidentMotion, input: MotionStep, 
     // pedestrian must touch. Passing a marker within one body width lets a
     // sidestepping resident continue without circling a shared point forever.
     // Workstation goals retain exact arrival and their assigned facing.
-    if (remaining < RESIDENT_RADIUS * 2 + 0.2) {
+    if (map.bodyRadius === RESIDENT_RADIUS && remaining < RESIDENT_RADIUS * 2 + 0.2) {
       const nextTarget = state.route[state.routeIndex + 1];
       if ((nextTarget && segmentIsWalkable(state, nextTarget, map)) || (!nextTarget && intent === 'wander')) { state.routeIndex += 1; continue; }
     }
+    const course = Math.atan2(target.x - state.x, target.z - state.z);
+    state.heading = faceToward(state.heading, course, map.bodyRadius > RESIDENT_RADIUS ? dt * 0.42 : dt);
+    if (map.bodyRadius > RESIDENT_RADIUS && Math.abs(Math.atan2(Math.sin(course - state.heading), Math.cos(course - state.heading))) > 0.001) break;
     const moved = Math.min(remaining, remainingDistance);
     const next = { x: state.x + (target.x - state.x) * moved / remaining, z: state.z + (target.z - state.z) * moved / remaining };
     if (!segmentIsWalkable(state, next, map)) { state.route = []; state.routeIndex = 0; state.pauseRemaining = 2; break; }
-    state.heading = faceToward(state.heading, Math.atan2(target.x - state.x, target.z - state.z), dt);
     state.x = next.x; state.z = next.z; state.walking = true;
     remainingDistance -= moved;
     if (remaining - moved < EPSILON) state.routeIndex += 1;
+    if (map.bodyRadius > RESIDENT_RADIUS) break;
   }
   if (state.routeIndex >= state.route.length) {
     state.route = []; state.routeIndex = 0;
-    state.pauseRemaining = 2.2 + randomUnit(state.id, state.sequence, 'rest') * 4.8;
-    state.phase = intent === 'station' ? 'at_station' : 'resting';
+    state.pauseRemaining = map.bodyRadius > RESIDENT_RADIUS
+      ? 14 + randomUnit(state.id, state.sequence, 'harbor-rest') * 18
+      : 2.2 + randomUnit(state.id, state.sequence, 'rest') * 4.8;
+    state.phase = intent === 'station' || (map.bodyRadius > RESIDENT_RADIUS && distance(state, input.home) < EPSILON) ? 'at_station' : 'resting';
   }
   return state;
 }
 
 
-/** Light local pedestrian yielding, applied to the whole frame before mesh
+/** Keep the island visibility graph and add only the edges needed to route
+ * around nearby traffic. This runs on an obstruction, never every frame. */
+function navigationWithTraffic(map: NavigationMap, peers: readonly Point[]): NavigationMap {
+  const circles = peers.map(point => ({ x: point.x, z: point.z, radius: map.bodyRadius * 2 + 0.08 }));
+  const traffic: NavigationMap = { ...map, obstacles: [...map.obstacles, ...circles], nodes: [], edges: [] };
+  const originalIndices = new Map<number, number>();
+  const nodes: Point[] = [];
+  map.nodes.forEach((point, index) => {
+    if (pointClearsCircles(point, circles)) { originalIndices.set(index, nodes.length); nodes.push(point); }
+  });
+  const originalCount = nodes.length;
+  const samples = 12;
+  for (const circle of circles) {
+    const radius = circle.radius / Math.cos(Math.PI / samples) + 0.025;
+    for (let index = 0; index < samples; index++) {
+      const angle = index * TAU / samples;
+      const point = { x: circle.x + Math.sin(angle) * radius, z: circle.z + Math.cos(angle) * radius };
+      if (pointIsWalkable(point, traffic) && !nodes.some(node => distance(node, point) < 0.05)) nodes.push(point);
+    }
+  }
+  const edges: Edge[][] = nodes.map(() => []);
+  for (const [oldIndex, index] of originalIndices) {
+    for (const edge of map.edges[oldIndex]) {
+      const to = originalIndices.get(edge.to);
+      if (to === undefined || to <= index || !segmentClearsCircles(nodes[index], nodes[to], circles)) continue;
+      edges[index].push({ to, distance: edge.distance }); edges[to].push({ to: index, distance: edge.distance });
+    }
+  }
+  for (let index = originalCount; index < nodes.length; index++) {
+    for (let to = 0; to < index; to++) {
+      if (!segmentIsWalkable(nodes[index], nodes[to], traffic)) continue;
+      const weight = distance(nodes[index], nodes[to]);
+      edges[index].push({ to, distance: weight }); edges[to].push({ to: index, distance: weight });
+    }
+  }
+  traffic.nodes = nodes; traffic.edges = edges;
+  return traffic;
+}
+
+
+/** Resolve fleet traffic and local pedestrian yielding before mesh
  * transforms. It preserves the ordinary travel budget and leaves every
  * adjusted step collision-free. There is no catch-up, pushing, or teleport. */
 export function resolveResidentSpacing(
@@ -311,8 +428,9 @@ export function resolveResidentSpacing(
   const before = new Map(previous.map(state => [state.id, state]));
   const resolved = new Map<string, ResidentMotion>();
   const ordered = [...proposed].sort((a, b) => a.id.localeCompare(b.id));
-  const clearance = RESIDENT_RADIUS * 2 + 0.08;
-  for (const state of ordered) {
+  const clearance = map.bodyRadius * 2 + 0.08;
+  for (const proposal of ordered) {
+    let state = proposal;
     const start = before.get(state.id) ?? state;
     const budget = distance(start, state);
     if (!state.walking || budget < EPSILON || pausedIDs.has(state.id)) {
@@ -333,6 +451,30 @@ export function resolveResidentSpacing(
       });
     };
     if (safe(state)) { resolved.set(state.id, state); continue; }
+    if (map.bodyRadius > RESIDENT_RADIUS && !state.trafficCooldown) {
+      // Wide ships cannot always sidestep a parked vessel between shorelines.
+      // Replan around the current fleet occasionally, then sail the detour at
+      // the ordinary speed; never move another resident out of the way.
+      const goal = state.intent === 'station' ? state.home : state.route.at(-1);
+      state = { ...state, trafficCooldown: 1.5 };
+      if (goal) {
+        const nearbyPeers = ordered.filter(peer => peer.id !== state.id)
+          .map(peer => resolved.get(peer.id) ?? before.get(peer.id) ?? peer)
+          .filter(peer => distance(start, peer) < clearance * 3.5);
+        const traffic = navigationWithTraffic(map, nearbyPeers);
+        const route = findResidentPath(start, goal, traffic);
+        if (route?.length) {
+          resolved.set(state.id, { ...state, x: start.x, z: start.z, heading: start.heading, walking: false, route, routeIndex: 0 });
+          continue;
+        }
+      }
+    }
+    // A vessel waits for its detour or for traffic to clear. Pedestrian-style
+    // sidesteps would translate a hull sideways regardless of its bow heading.
+    if (map.bodyRadius > RESIDENT_RADIUS) {
+      resolved.set(state.id, { ...state, x: start.x, z: start.z, walking: false });
+      continue;
+    }
     const dx = (state.x - start.x) / budget, dz = (state.z - start.z) / budget;
     let alternate: Point | undefined;
     // Both directions of traffic prefer their own right, so they pass rather

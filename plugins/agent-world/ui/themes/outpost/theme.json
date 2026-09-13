@@ -1,7 +1,7 @@
 {
   "version": 1,
   "id": "outpost",
-  "name": "Orbital Outpost",
+  "name": "Orbital Locus Outpost",
   "description": "A garden campus of workshops, planted paths, and places for your agents to unwind.",
   "assets": {
     "resident": "assets/resident.glb",
@@ -30,9 +30,9 @@
     "server": 1.9
   },
   "palette": {
-    "ground": "#192A37",
-    "accent": "#74F3CD",
-    "sky": "#07131D"
+    "ground": "#46613E",
+    "accent": "#C9F54A",
+    "sky": "#171713"
   },
   "rotations": {
     "resident": 0,

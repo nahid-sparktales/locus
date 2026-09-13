@@ -19,6 +19,17 @@ test('the resident list can find and navigate to agents beyond the first sector'
   assert.equal(clampSector(2, 3), 0);
   assert.equal(clampSector(1, 0), 0);
 });
+test('appearance snapshots accept mixed crews, pandas and explorers while keeping older hosts compatible', () => {
+  assert.ok(parseHostMessage(snapshot));
+  for (const residentStyle of ['mixed', 'pandas', 'explorers']) {
+    const parsed = parseHostMessage({ ...snapshot, residentStyle });
+    assert.ok(parsed && parsed.type === 'snapshot');
+    assert.equal(parsed.residentStyle, residentStyle);
+  }
+  for (const residentStyle of [null, '', 'Pandas', 'ships', '../pandas', 1, [], {}]) {
+    assert.equal(parseHostMessage({ ...snapshot, residentStyle }), null);
+  }
+});
 test('small pointer movement still selects while an orbit drag does not count as a click', () => {
   assert.equal(isClickGesture({ x: 400, y: 300 }, { x: 403, y: 303 }), true);
   assert.equal(isClickGesture({ x: 400, y: 300 }, { x: 445, y: 300 }), false);

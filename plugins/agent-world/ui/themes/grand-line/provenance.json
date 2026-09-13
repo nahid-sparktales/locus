@@ -1,0 +1,1313 @@
+{
+  "generator": "Meshy",
+  "model": "meshy-7",
+  "reference_model": "nano-banana-pro",
+  "credit_ceiling": 648,
+  "user_credit_ceiling_exclusive": 1000,
+  "reserved_credits": 648,
+  "reported_credits": 648,
+  "pricing_verified_on": "2026-09-13",
+  "pricing_source": "Meshy MCP tool pricing and consumed_credits reports",
+  "generation_settings": {
+    "model_type": "standard",
+    "target_polycount": 30000,
+    "should_remesh": true,
+    "topology": "triangle",
+    "target_formats": [
+      "glb"
+    ],
+    "should_texture": true,
+    "enable_pbr": true,
+    "texture_resolution": "4k"
+  },
+  "source_image": {
+    "filename": "grandline_0007_Layer_11.jpg",
+    "sha256": "6bd9f98a53bcf7054d16c95ecc0dfd38cfefd3e56e5d60466fd7800c68ede259",
+    "path": "references/grandline_0007_Layer_11.jpg"
+  },
+  "source_attribution": "Unofficial One Piece fan-art world. Ship shapes and colors are based on the user-supplied Grand Line ship reference image; One Piece and its named ships belong to their respective rights holders. Generated assets are original AI reconstructions of that supplied reference.",
+  "tasks": [
+    {
+      "asset": "thousand_sunny",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09916-8828-7233-b453-97544d3f137a",
+      "prompt": "Use ONLY the ship at row 1 column 1, labelled Thousand Sunny, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including lion sun figurehead, wooden round hull, white skull sail, orange/yellow trim, aft green lawn, masts and flags. Preserve the silhouette and colors faithfully. Crisp clean geometry, rich hand-painted material details, neutral studio lighting, plain white background. No text labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "thousand_sunny",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a09919-e647-74af-bdd0-0c7bd53464c9",
+      "input_task_id": "01a09916-8828-7233-b453-97544d3f137a",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "going_merry",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-27d6-72a3-bd0b-23b643702d51",
+      "prompt": "Use ONLY the ship at row 1 column 2, labelled Going Merry, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including sheep ram figurehead, caramel wood hull, white skull sail, tiny aft cabin, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "going_merry",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-27bf-77e0-9692-36213b144732",
+      "input_task_id": "01a09917-27d6-72a3-bd0b-23b643702d51",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "baratie",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-290e-7774-b3ca-fae4f09b09b5",
+      "prompt": "Use ONLY the ship at row 1 column 3, labelled Baratie, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including orange fish-shaped bow, broad green and red restaurant hull, tall yellow-white striped sails, stacked wooden decks. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "baratie",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-2d43-72c1-bce1-f9af575a2763",
+      "input_task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "navy_h03",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-2a80-777f-a994-02de9de845c8",
+      "prompt": "Use ONLY the ship at row 2 column 1, labelled Navy H03, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including turquoise hull, large clustered white sails covered in red markings, naval superstructure, curled dog-like bow. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "navy_h03",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-32b2-74f4-bcbf-a7272807e6be",
+      "input_task_id": "01a09917-2a80-777f-a994-02de9de845c8",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "polar_tang",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9",
+      "prompt": "Use ONLY the ship at row 2 column 2, labelled Polar Tang, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright yellow rounded submarine hull, circular portholes, orange tail fin, black-red sail, yellow conning tower. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "polar_tang",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-386e-7087-9629-d6609e270f8f",
+      "input_task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "spade_pirates",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-2d80-75cf-a62f-74981a5d14e6",
+      "prompt": "Use ONLY the ship at row 2 column 3, labelled Spade Pirates Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark wood hull, smiling orange bow figurehead, large black sails, white skull emblem, small cream sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "spade_pirates",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-3d1d-7326-83f4-0bbcaa5dc1be",
+      "input_task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "red_force",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-2f2d-730e-9552-c79f43073178",
+      "prompt": "Use ONLY the ship at row 3 column 1, labelled Red Force, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including red dragon figurehead, deep red brown wooden hull, multiple white sails, gold trim, broad aft deck. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "red_force",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-4260-7597-889a-93834280a7ec",
+      "input_task_id": "01a09917-2f2d-730e-9552-c79f43073178",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "moby_dick",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-30a3-743e-b8f3-d62e832c8e6e",
+      "prompt": "Use ONLY the ship at row 3 column 2, labelled Moby Dick, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including huge rounded white whale bow, light-blue underside, multi-deck wooden stern, rows of white square sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "moby_dick",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-48ea-70be-aff3-0c31fc882bbc",
+      "input_task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "perfume_yuda",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6",
+      "prompt": "Use ONLY the ship at row 3 column 3, labelled Perfume Yuda, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including black-red Chinese junk hull, enormous bright red battened sails, green curling serpent figureheads, gilded trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "perfume_yuda",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-d4e3-71db-81b8-1341c42d47bd",
+      "input_task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "oro_jackson",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-3368-7698-9581-9fb024deb93a",
+      "prompt": "Use ONLY the ship at row 4 column 1, labelled Oro Jackson, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark crimson sails with pale pirate emblems, warm wood hull, golden bow ornaments, crossed spars, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "oro_jackson",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-4e58-73ff-bc7d-52568aeb8f0c",
+      "input_task_id": "01a09917-3368-7698-9581-9fb024deb93a",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "queen_mama_chanter",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-34bd-73bd-82a7-c9064f3748a9",
+      "prompt": "Use ONLY the ship at row 4 column 2, labelled Queen Mama Chanter, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright pink cream cake-like hull, yellow smiley face bow, tall stacked cream and pink sails, red candy trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "queen_mama_chanter",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-53bb-77fc-bb27-ffd0c90dba44",
+      "input_task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "dragons_ship",
+      "stage": "reference",
+      "reserved_credits": 9,
+      "status": "SUCCEEDED",
+      "id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e",
+      "prompt": "Use ONLY the ship at row 4 column 3, labelled Dragon's Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark charcoal and red hull, black battened sails, tall red masts, gray carved dragon figurehead, moody pirate details. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "ai_model": "nano-banana-pro",
+      "consumed_credits": 9
+    },
+    {
+      "asset": "dragons_ship",
+      "stage": "model",
+      "reserved_credits": 15,
+      "status": "SUCCEEDED",
+      "id": "01a0991a-59ff-7359-831a-33cddc7b46f6",
+      "input_task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e",
+      "ai_model": "meshy-t2",
+      "consumed_credits": 15
+    },
+    {
+      "asset": "thousand_sunny",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "primary",
+      "id": "01a0991c-9efa-74d1-ac44-48892b6b8e73",
+      "input_task_id": "01a09916-8828-7233-b453-97544d3f137a",
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "e4037b4248b1c383b36072857c00b6413ed1d9ab045a426847790553a90b588b",
+        "bytes": 25858240,
+        "mesh_count": 1,
+        "material_count": 1,
+        "faces": 30823
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "going_merry",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "f1b7225b6a925be85c79141c9a216b2cc6923ec7f8d41fbec59c7cd37fead4c2",
+      "id": "01a0991e-a719-7037-87e7-dd03bc830df0",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "ba5eb9388ab83f59454fbe297f33511453e8b30b2f42e4a816815b3a2e702895",
+        "bytes": 27318756,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "baratie",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "cc8e8e865c361e0a520287f0ee7d35c6734be7ae114f7e9def1e81cb88300cd3",
+      "id": "01a0991e-ae67-731b-bae5-3d9bcbeb5cae",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "06c42a4a22a1212aeee4eee5bd51db9a7f521b50045cc7472e4087ba21acf13b",
+        "bytes": 27275356,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "navy_h03",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "09e54c37fa5c2339792d1470c80edaaba903e15000722817397a593c2849bb01",
+      "id": "01a0991e-b530-71af-98ac-dfda771b502a",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "8243f11fcc9edd2ab0ee19106f645c41f33cf5e8e4a08ca64df56a9917b4afba",
+        "bytes": 28058012,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "polar_tang",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "b314aa1afa7f8ef2c9e4b24dc374980e959a5654afa91a01511f3aee1c72abb1",
+      "id": "01a0991e-bc04-74ee-81c7-0677c45d376c",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "eba127d11ce32028d9da9d86665b96749361ec2b50e7eb767dd48d563c3005d5",
+        "bytes": 21982188,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "spade_pirates",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "dad5ca989a037b0d94ef52bd84536e4fc21111ebda1386a91811c48a0d26c0ff",
+      "id": "01a0991e-c217-7325-8798-d74ff3c0e52e",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "b6bf0d50099f423f4d31008b033648d671b7020358f27538aa0278e6bf779be4",
+        "bytes": 27799656,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "red_force",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "60ed0d63df7779fc2c74520e7c60159edbb624bbf44d60579b56481ba82ef732",
+      "id": "01a0991e-c8d0-758c-a29b-155a0445d93e",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "b90a5b9e50824baeab7fbb6e5cf8ccb6ed01eaeaa67041afc5fe02b427ac0d9c",
+        "bytes": 29852976,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "moby_dick",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "8f79e573bdfbcaca6996be3088ab5af5a2160e8b8d118200ee7a06baeb3fb5c7",
+      "id": "01a0991e-d07a-7310-bc3e-6f2271630b54",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "26189e026d0c196b5e53cb304942bd6f49797e6e94bd2568eab32833054bf158",
+        "bytes": 28282412,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "perfume_yuda",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "00ad4fe843de079f1957e1a5f541f001707b8a08b7d0ea8962b62fadb1c56acf",
+      "id": "01a0991e-d7b6-7307-afa4-0d58c7f8dc3c",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "0907ea0bd49d3d07a42d488ccf382a59f6cf8ef206fb9a0a2a339ea49410594e",
+        "bytes": 29783060,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "oro_jackson",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "9fc41fafa6e1b37fd8fdd614290e0ea4d71efb9468928dfb2e7fd283165a9319",
+      "id": "01a0991e-e01f-7731-8e9a-7dcc2c6fbbf2",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "cdd77b1fc5c2c1334f023b1bf9b26d2012b17ffae40c25c7ccbc0fdd1839be92",
+        "bytes": 26740284,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "queen_mama_chanter",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "77793ac87826dec4525b0caf7ae082052067c1da2f4e5b841d46c648ceb6a241",
+      "id": "01a0991e-e78d-70b9-b018-4b2eb6fd2578",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "db20ee9682114914f7c3785fd17ca7613c4bdf89e2ec59f8e1624967b25b7a36",
+        "bytes": 24289028,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    },
+    {
+      "asset": "dragons_ship",
+      "stage": "upgrade",
+      "reserved_credits": 30,
+      "status": "SUCCEEDED",
+      "ai_model": "meshy-7",
+      "connection": "backup",
+      "reference_sha256": "3c64908cb04231a198c73a5cf6e7db6268e2fbae7fa99435252bd66f756509a6",
+      "submission_reconciliation": "HTTP 429 rejected the eleventh simultaneous task. Ten returned task IDs all succeeded; account balance delta exactly matches their 300 reported credits. No charge for this rejected request.",
+      "id": "01a09925-98f4-7370-aa0d-c47631f13194",
+      "progress": 100,
+      "consumed_credits": 30,
+      "asset_metadata": {
+        "sha256": "0232b8dbc1ed6089e62c204d1a862064ce349eb0d28ccd311621569c967e6e02",
+        "bytes": 27817676,
+        "mesh_count": 1,
+        "material_count": 1
+      },
+      "downloaded": true
+    }
+  ],
+  "assets": {
+    "ship_thousand_sunny": {
+      "sha256": "f275e260d4df694a068be7442b2d07b4f61fb013fffa0567c147dacd6c4e657d",
+      "source_task_id": "01a0991c-9efa-74d1-ac44-48892b6b8e73",
+      "reference_task_id": "01a09916-8828-7233-b453-97544d3f137a",
+      "reference_image": "references/thousand_sunny.png",
+      "prompt": "Use ONLY the ship at row 1 column 1, labelled Thousand Sunny, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including lion sun figurehead, wooden round hull, white skull sail, orange/yellow trim, aft green lawn, masts and flags. Preserve the silhouette and colors faithfully. Crisp clean geometry, rich hand-painted material details, neutral studio lighting, plain white background. No text labels, no other ships, no water, no base.",
+      "bytes": 6641580,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_going_merry": {
+      "sha256": "a576a30fdbb8268f682681d75496b9a1b8473ffcb2416ca0139a7dcec5ccbc20",
+      "source_task_id": "01a0991e-a719-7037-87e7-dd03bc830df0",
+      "reference_task_id": "01a09917-27d6-72a3-bd0b-23b643702d51",
+      "reference_image": "references/going_merry.png",
+      "prompt": "Use ONLY the ship at row 1 column 2, labelled Going Merry, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including sheep ram figurehead, caramel wood hull, white skull sail, tiny aft cabin, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6638612,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_baratie": {
+      "sha256": "0cfcb74d06a770f370d82b327e32b56c322b9227430e06b64c49026aead7de5a",
+      "source_task_id": "01a0991e-ae67-731b-bae5-3d9bcbeb5cae",
+      "reference_task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5",
+      "reference_image": "references/baratie.png",
+      "prompt": "Use ONLY the ship at row 1 column 3, labelled Baratie, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including orange fish-shaped bow, broad green and red restaurant hull, tall yellow-white striped sails, stacked wooden decks. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6879936,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_navy_h03": {
+      "sha256": "381f3b9db688c0fdda93a993e670decc839b1742ca16d2065639567f6ffe0d0c",
+      "source_task_id": "01a0991e-b530-71af-98ac-dfda771b502a",
+      "reference_task_id": "01a09917-2a80-777f-a994-02de9de845c8",
+      "reference_image": "references/navy_h03.png",
+      "prompt": "Use ONLY the ship at row 2 column 1, labelled Navy H03, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including turquoise hull, large clustered white sails covered in red markings, naval superstructure, curled dog-like bow. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6824856,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_polar_tang": {
+      "sha256": "8cfdb4420d81a804de5e0a92bab2d4423425a79c52333ea6d6efc547cdb7ffa2",
+      "source_task_id": "01a0991e-bc04-74ee-81c7-0677c45d376c",
+      "reference_task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9",
+      "reference_image": "references/polar_tang.png",
+      "prompt": "Use ONLY the ship at row 2 column 2, labelled Polar Tang, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright yellow rounded submarine hull, circular portholes, orange tail fin, black-red sail, yellow conning tower. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 5277228,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_spade_pirates": {
+      "sha256": "800f92826121fb60b18fbe2700093db724f99828f47178496c0e59982e15d1b3",
+      "source_task_id": "01a0991e-c217-7325-8798-d74ff3c0e52e",
+      "reference_task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6",
+      "reference_image": "references/spade_pirates.png",
+      "prompt": "Use ONLY the ship at row 2 column 3, labelled Spade Pirates Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark wood hull, smiling orange bow figurehead, large black sails, white skull emblem, small cream sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6550788,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_red_force": {
+      "sha256": "989c5d5846cb592bffbc74e0cb869d812ee289a808e5fb08ba3bd64ae57adc76",
+      "source_task_id": "01a0991e-c8d0-758c-a29b-155a0445d93e",
+      "reference_task_id": "01a09917-2f2d-730e-9552-c79f43073178",
+      "reference_image": "references/red_force.png",
+      "prompt": "Use ONLY the ship at row 3 column 1, labelled Red Force, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including red dragon figurehead, deep red brown wooden hull, multiple white sails, gold trim, broad aft deck. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 7382352,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_moby_dick": {
+      "sha256": "9b1b7f7e8b843fd5c93a11509208fe8c1a2ac8819087150c0cf8ea2ea37a4b4a",
+      "source_task_id": "01a0991e-d07a-7310-bc3e-6f2271630b54",
+      "reference_task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e",
+      "reference_image": "references/moby_dick.png",
+      "prompt": "Use ONLY the ship at row 3 column 2, labelled Moby Dick, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including huge rounded white whale bow, light-blue underside, multi-deck wooden stern, rows of white square sails. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6884476,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_perfume_yuda": {
+      "sha256": "d2261254513df337f885944378623d3204a6f1388f5a70b3e318ee600ce52e0f",
+      "source_task_id": "01a0991e-d7b6-7307-afa4-0d58c7f8dc3c",
+      "reference_task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6",
+      "reference_image": "references/perfume_yuda.png",
+      "prompt": "Use ONLY the ship at row 3 column 3, labelled Perfume Yuda, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including black-red Chinese junk hull, enormous bright red battened sails, green curling serpent figureheads, gilded trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 7161456,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_oro_jackson": {
+      "sha256": "a10da415df9cf15bbbc247cd5923068075a2a0ecffbaf7be4d1e0f63063f5b52",
+      "source_task_id": "01a0991e-e01f-7731-8e9a-7dcc2c6fbbf2",
+      "reference_task_id": "01a09917-3368-7698-9581-9fb024deb93a",
+      "reference_image": "references/oro_jackson.png",
+      "prompt": "Use ONLY the ship at row 4 column 1, labelled Oro Jackson, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark crimson sails with pale pirate emblems, warm wood hull, golden bow ornaments, crossed spars, black flags. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6640116,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_queen_mama_chanter": {
+      "sha256": "ffc4c66e98f8eb8b0e289fe9ac6ba89464c36ad3088cb96a2cf0ac18e1b375ec",
+      "source_task_id": "01a0991e-e78d-70b9-b018-4b2eb6fd2578",
+      "reference_task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9",
+      "reference_image": "references/queen_mama_chanter.png",
+      "prompt": "Use ONLY the ship at row 4 column 2, labelled Queen Mama Chanter, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including bright pink cream cake-like hull, yellow smiley face bow, tall stacked cream and pink sails, red candy trim. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6458036,
+      "mesh_count": 1,
+      "material_count": 1
+    },
+    "ship_dragons_ship": {
+      "sha256": "6965f3b4e2c00613a8f005a4ee4597f86a6df24827d44a39d4abc522e3e3abc9",
+      "source_task_id": "01a09925-98f4-7370-aa0d-c47631f13194",
+      "reference_task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e",
+      "reference_image": "references/dragons_ship.png",
+      "prompt": "Use ONLY the ship at row 4 column 3, labelled Dragon's Ship, of this reference grid. Recreate and upscale that exact One Piece fan-art miniature as one isolated detailed 3D game asset reference. Large front-left three-quarter view, entire ship including dark charcoal and red hull, black battened sails, tall red masts, gray carved dragon figurehead, moody pirate details. Preserve its silhouette and colors faithfully. Crisp geometry, rich hand-painted materials, neutral studio lighting, plain white background. No labels, no other ships, no water, no base.",
+      "bytes": 6736952,
+      "mesh_count": 1,
+      "material_count": 1
+    }
+  },
+  "references": {
+    "thousand_sunny": {
+      "path": "references/thousand_sunny.png",
+      "sha256": "bf709af95f0100bbf1b304818dd6c6737cd2c08b8db288bbacc4ef633b1bb848",
+      "task_id": "01a09916-8828-7233-b453-97544d3f137a"
+    },
+    "going_merry": {
+      "path": "references/going_merry.png",
+      "sha256": "f1b7225b6a925be85c79141c9a216b2cc6923ec7f8d41fbec59c7cd37fead4c2",
+      "task_id": "01a09917-27d6-72a3-bd0b-23b643702d51"
+    },
+    "baratie": {
+      "path": "references/baratie.png",
+      "sha256": "cc8e8e865c361e0a520287f0ee7d35c6734be7ae114f7e9def1e81cb88300cd3",
+      "task_id": "01a09917-290e-7774-b3ca-fae4f09b09b5"
+    },
+    "navy_h03": {
+      "path": "references/navy_h03.png",
+      "sha256": "09e54c37fa5c2339792d1470c80edaaba903e15000722817397a593c2849bb01",
+      "task_id": "01a09917-2a80-777f-a994-02de9de845c8"
+    },
+    "polar_tang": {
+      "path": "references/polar_tang.png",
+      "sha256": "b314aa1afa7f8ef2c9e4b24dc374980e959a5654afa91a01511f3aee1c72abb1",
+      "task_id": "01a09917-2bd8-7714-b3ed-6c3388a0b1c9"
+    },
+    "spade_pirates": {
+      "path": "references/spade_pirates.png",
+      "sha256": "dad5ca989a037b0d94ef52bd84536e4fc21111ebda1386a91811c48a0d26c0ff",
+      "task_id": "01a09917-2d80-75cf-a62f-74981a5d14e6"
+    },
+    "red_force": {
+      "path": "references/red_force.png",
+      "sha256": "60ed0d63df7779fc2c74520e7c60159edbb624bbf44d60579b56481ba82ef732",
+      "task_id": "01a09917-2f2d-730e-9552-c79f43073178"
+    },
+    "moby_dick": {
+      "path": "references/moby_dick.png",
+      "sha256": "8f79e573bdfbcaca6996be3088ab5af5a2160e8b8d118200ee7a06baeb3fb5c7",
+      "task_id": "01a09917-30a3-743e-b8f3-d62e832c8e6e"
+    },
+    "perfume_yuda": {
+      "path": "references/perfume_yuda.png",
+      "sha256": "00ad4fe843de079f1957e1a5f541f001707b8a08b7d0ea8962b62fadb1c56acf",
+      "task_id": "01a09917-31f6-75f7-a2fd-a2ed8bcd15d6"
+    },
+    "oro_jackson": {
+      "path": "references/oro_jackson.png",
+      "sha256": "9fc41fafa6e1b37fd8fdd614290e0ea4d71efb9468928dfb2e7fd283165a9319",
+      "task_id": "01a09917-3368-7698-9581-9fb024deb93a"
+    },
+    "queen_mama_chanter": {
+      "path": "references/queen_mama_chanter.png",
+      "sha256": "77793ac87826dec4525b0caf7ae082052067c1da2f4e5b841d46c648ceb6a241",
+      "task_id": "01a09917-34bd-73bd-82a7-c9064f3748a9"
+    },
+    "dragons_ship": {
+      "path": "references/dragons_ship.png",
+      "sha256": "3c64908cb04231a198c73a5cf6e7db6268e2fbae7fa99435252bd66f756509a6",
+      "task_id": "01a09917-360a-7395-ab6a-6f4d8c5deb2e"
+    }
+  },
+  "packaging": {
+    "operation": "runtime_texture_optimization",
+    "meshy_credits": 0,
+    "base_color_max_dimension": 2048,
+    "base_color_jpeg_quality": 94,
+    "pbr_max_dimension": 1024,
+    "pbr_format": "PNG",
+    "geometry_unchanged": true,
+    "assets": {
+      "ship_thousand_sunny": {
+        "source_sha256": "e4037b4248b1c383b36072857c00b6413ed1d9ab045a426847790553a90b588b",
+        "sha256": "f275e260d4df694a068be7442b2d07b4f61fb013fffa0567c147dacd6c4e657d",
+        "source_bytes": 25858240,
+        "runtime_bytes": 6641580,
+        "geometry_sha256": "bc108d9b5283f7ae4775be18febdc5afd78011d50fc62f2840f910970ae99534",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_going_merry": {
+        "source_sha256": "ba5eb9388ab83f59454fbe297f33511453e8b30b2f42e4a816815b3a2e702895",
+        "sha256": "a576a30fdbb8268f682681d75496b9a1b8473ffcb2416ca0139a7dcec5ccbc20",
+        "source_bytes": 27318756,
+        "runtime_bytes": 6638612,
+        "geometry_sha256": "76062c6d387bc18f21318085fb94e1229ad7657d72ce0462f6935f085bf40a52",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_baratie": {
+        "source_sha256": "06c42a4a22a1212aeee4eee5bd51db9a7f521b50045cc7472e4087ba21acf13b",
+        "sha256": "0cfcb74d06a770f370d82b327e32b56c322b9227430e06b64c49026aead7de5a",
+        "source_bytes": 27275356,
+        "runtime_bytes": 6879936,
+        "geometry_sha256": "2e5915bc2763cb878ffd08f5c796cee01a6442066e0ded2b0b89471fbefa740b",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_navy_h03": {
+        "source_sha256": "8243f11fcc9edd2ab0ee19106f645c41f33cf5e8e4a08ca64df56a9917b4afba",
+        "sha256": "381f3b9db688c0fdda93a993e670decc839b1742ca16d2065639567f6ffe0d0c",
+        "source_bytes": 28058012,
+        "runtime_bytes": 6824856,
+        "geometry_sha256": "443dd35046baef82fc6a8295896c1306672de8abd9863288f7a5d8389eab8b8d",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_polar_tang": {
+        "source_sha256": "eba127d11ce32028d9da9d86665b96749361ec2b50e7eb767dd48d563c3005d5",
+        "sha256": "8cfdb4420d81a804de5e0a92bab2d4423425a79c52333ea6d6efc547cdb7ffa2",
+        "source_bytes": 21982188,
+        "runtime_bytes": 5277228,
+        "geometry_sha256": "4fa440d8e930db3c08aa5a22a388b6fa6388bf0022b9e877214a704af31100cc",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_spade_pirates": {
+        "source_sha256": "b6bf0d50099f423f4d31008b033648d671b7020358f27538aa0278e6bf779be4",
+        "sha256": "800f92826121fb60b18fbe2700093db724f99828f47178496c0e59982e15d1b3",
+        "source_bytes": 27799656,
+        "runtime_bytes": 6550788,
+        "geometry_sha256": "c3fb41477e8ab156e1a045d6b93658149363a36843a4e532130175cd52d59a6f",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_red_force": {
+        "source_sha256": "b90a5b9e50824baeab7fbb6e5cf8ccb6ed01eaeaa67041afc5fe02b427ac0d9c",
+        "sha256": "989c5d5846cb592bffbc74e0cb869d812ee289a808e5fb08ba3bd64ae57adc76",
+        "source_bytes": 29852976,
+        "runtime_bytes": 7382352,
+        "geometry_sha256": "e3409fadb8093090ec9b7d122257b255ed61a0f6751bdc8b7bc6771d4831d42a",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_moby_dick": {
+        "source_sha256": "26189e026d0c196b5e53cb304942bd6f49797e6e94bd2568eab32833054bf158",
+        "sha256": "9b1b7f7e8b843fd5c93a11509208fe8c1a2ac8819087150c0cf8ea2ea37a4b4a",
+        "source_bytes": 28282412,
+        "runtime_bytes": 6884476,
+        "geometry_sha256": "30ff5c4f0bffb3e6022dbb446ede6084bfe55ca7b49f21676ca789f84dcc0b23",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_perfume_yuda": {
+        "source_sha256": "0907ea0bd49d3d07a42d488ccf382a59f6cf8ef206fb9a0a2a339ea49410594e",
+        "sha256": "d2261254513df337f885944378623d3204a6f1388f5a70b3e318ee600ce52e0f",
+        "source_bytes": 29783060,
+        "runtime_bytes": 7161456,
+        "geometry_sha256": "0d89cd0c2b3ff5fe0c1cf1b567e742a6a180618b63468cfab5eba12fe2164ea3",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_oro_jackson": {
+        "source_sha256": "cdd77b1fc5c2c1334f023b1bf9b26d2012b17ffae40c25c7ccbc0fdd1839be92",
+        "sha256": "a10da415df9cf15bbbc247cd5923068075a2a0ecffbaf7be4d1e0f63063f5b52",
+        "source_bytes": 26740284,
+        "runtime_bytes": 6640116,
+        "geometry_sha256": "b4ac4e00d22aeb857290fdad7ccdae7488b60add2a0ad6267ef073bb5b02d919",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_queen_mama_chanter": {
+        "source_sha256": "db20ee9682114914f7c3785fd17ca7613c4bdf89e2ec59f8e1624967b25b7a36",
+        "sha256": "ffc4c66e98f8eb8b0e289fe9ac6ba89464c36ad3088cb96a2cf0ac18e1b375ec",
+        "source_bytes": 24289028,
+        "runtime_bytes": 6458036,
+        "geometry_sha256": "a56a73a2b9119f90bae55daf0dd6802c449e3d5ddecac0310dcd916577a184e8",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      },
+      "ship_dragons_ship": {
+        "source_sha256": "0232b8dbc1ed6089e62c204d1a862064ce349eb0d28ccd311621569c967e6e02",
+        "sha256": "6965f3b4e2c00613a8f005a4ee4597f86a6df24827d44a39d4abc522e3e3abc9",
+        "source_bytes": 27817676,
+        "runtime_bytes": 6736952,
+        "geometry_sha256": "edad3910dca7180754473a52b21592d87bc147dadaf28f415706c2eae531eeeb",
+        "geometry_unchanged": true,
+        "images": [
+          {
+            "index": 0,
+            "role": "base_color",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              2048,
+              2048
+            ],
+            "mime_type": "image/jpeg"
+          },
+          {
+            "index": 1,
+            "role": "pbr",
+            "source_size": [
+              2048,
+              2048
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          },
+          {
+            "index": 2,
+            "role": "pbr",
+            "source_size": [
+              4096,
+              4096
+            ],
+            "runtime_size": [
+              1024,
+              1024
+            ],
+            "mime_type": "image/png"
+          }
+        ],
+        "source_texture_rgba_bytes": 150994944,
+        "runtime_texture_rgba_bytes": 25165824
+      }
+    },
+    "source_bytes": 325057644,
+    "runtime_bytes": 80076388,
+    "source_texture_rgba_bytes": 1811939328,
+    "source_texture_rgba_with_mipmaps_estimate_bytes": 2415919104,
+    "runtime_texture_rgba_bytes": 301989888,
+    "runtime_texture_rgba_with_mipmaps_estimate_bytes": 402653184
+  }
+}

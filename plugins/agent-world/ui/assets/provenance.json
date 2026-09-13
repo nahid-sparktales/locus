@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "generator": "Meshy",
+  "description": "Shared Den Den Mushi alert HUD artwork for Agent World. Generated for the user-requested One Piece-inspired world.",
+  "reserved_credits": 44,
+  "reported_credits": 44,
+  "tasks": [
+    {
+      "id": "01a0996d-ca8d-7715-8bec-e08624508786",
+      "asset": "den_den_mushi",
+      "stage": "reference",
+      "ai_model": "nano-banana-pro",
+      "connection": "connected",
+      "reserved_credits": 9,
+      "consumed_credits": 9,
+      "status": "SUCCEEDED"
+    },
+    {
+      "asset": "den_den_mushi",
+      "stage": "model",
+      "ai_model": "meshy-7",
+      "connection": "authorized-backup",
+      "reserved_credits": 35,
+      "status": "SUCCEEDED",
+      "settings": {
+        "ai_model": "meshy-7",
+        "ultra_mode": true,
+        "model_type": "standard",
+        "should_texture": true,
+        "enable_pbr": true,
+        "texture_resolution": "4k",
+        "should_remesh": true,
+        "target_polycount": 20000,
+        "topology": "triangle",
+        "target_formats": [
+          "glb"
+        ],
+        "alpha_thumbnail": true
+      },
+      "id": "01a0996f-c4d5-72dd-866c-ed437a224d74",
+      "consumed_credits": 35
+    }
+  ],
+  "reference": {
+    "path": "references/den-den-mushi.png",
+    "task_id": "01a0996d-ca8d-7715-8bec-e08624508786",
+    "sha256": "696983052de69818453f647089830486f7e935c5ba4d2f4bcf3cc52e6023d02d",
+    "prompt": "Premium 3D Den Den Mushi snail telephone from One Piece. Isolated full character, three-quarter front view, light gray background. Smiling cream yellow snail, thick tall eye stalks, big white eyes. Ochre foot, lime green spiral shell. Dark teal vintage telephone handset on brass cradle atop shell, short coiled wire, brass rotary dial on shell front, amber alert lamp. Polished hand-painted game prop, clear rounded shapes, teal lime ivory gold palette, soft even lighting. No text or pedestal."
+  },
+  "assets": {
+    "den_den_mushi": {
+      "path": "models/den-den-mushi.glb",
+      "sha256": "7936b36de2bc83919de83a2f6dc62604501ba44462097ee18404eed0cfcaae7a",
+      "bytes": 4176012,
+      "source_task_id": "01a0996f-c4d5-72dd-866c-ed437a224d74",
+      "source_sha256": "c7cff260a5c6761e690be95cbdaa1cd0fd0d88b3935cb1384196b406df96f429",
+      "geometry_preserved": true,
+      "packaged_color_resolution": 2048,
+      "packaged_pbr_resolution": 1024
+    }
+  }
+}

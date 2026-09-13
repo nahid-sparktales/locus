@@ -1,7 +1,16 @@
 import { safeThemeID } from './state.ts';
 import type { Point } from './state.ts';
 
-export const RESIDENT_ASSET_TYPES = ['resident', 'resident_explorer', 'resident_botanist', 'resident_engineer'] as const;
+export const HUMANOID_ASSET_TYPES = ['resident', 'resident_explorer', 'resident_botanist', 'resident_engineer'] as const;
+export const SHIP_ASSET_TYPES = ['ship_thousand_sunny', 'ship_going_merry', 'ship_baratie', 'ship_navy_h03', 'ship_polar_tang', 'ship_spade_pirates', 'ship_red_force', 'ship_moby_dick', 'ship_perfume_yuda', 'ship_oro_jackson', 'ship_queen_mama_chanter', 'ship_dragons_ship'] as const;
+export type ShipAssetType = typeof SHIP_ASSET_TYPES[number];
+export const SHIP_NAMES: Record<ShipAssetType, string> = {
+  ship_thousand_sunny: 'Thousand Funny', ship_going_merry: 'Going Sherry', ship_baratie: 'BaratAI',
+  ship_navy_h03: 'Navy Q4', ship_polar_tang: 'Polar Tensor', ship_spade_pirates: "Spade Prompters’ Ship",
+  ship_red_force: 'Thread Force', ship_moby_dick: 'Moby Disk', ship_perfume_yuda: 'Perfume CUDA',
+  ship_oro_jackson: 'Oro JSON', ship_queen_mama_chanter: 'Queen Llama Chanter', ship_dragons_ship: "Dragon’s Chip",
+};
+export const RESIDENT_ASSET_TYPES = [...HUMANOID_ASSET_TYPES, ...SHIP_ASSET_TYPES] as const;
 export type ResidentAssetType = typeof RESIDENT_ASSET_TYPES[number];
 export const PROP_ASSET_TYPES = ['beacon', 'habitat', 'crates', 'planter', 'lounge', 'server'] as const;
 export type PropAssetType = typeof PROP_ASSET_TYPES[number];
@@ -16,6 +25,7 @@ export type Theme = {
   id: string;
   name: string;
   description: string;
+  environment: 'campus' | 'ocean';
   assets: Partial<Record<AssetType, string>>;
   heights: Record<AssetType, number>;
   rotations: Partial<Record<AssetType, number>>;
@@ -59,10 +69,11 @@ export function campusLayout(radius = 14.1): ThemeLayout {
 }
 
 export const DEFAULT_THEME: Theme = {
-  version: 1, id: 'outpost', name: 'Orbital Outpost', description: 'A living campus for your agents.',
+  version: 1, id: 'outpost', name: 'Orbital Locus Outpost', description: 'A living campus for your agents.', environment: 'campus',
   assets: {},
-  heights: { resident: 1.8, resident_explorer: 1.8, resident_botanist: 1.8, resident_engineer: 1.8, station: 1.25, beacon: 3.5, habitat: 4, crates: 1.2, planter: 1.15, lounge: 0.9, server: 1.9 },
-  rotations: {}, palette: { ground: '#647978', accent: '#7ce8d0', sky: '#132b37' },
+  heights: { resident: 1.8, resident_explorer: 1.8, resident_botanist: 1.8, resident_engineer: 1.8, station: 1.25, beacon: 3.5, habitat: 4, crates: 1.2, planter: 1.15, lounge: 0.9, server: 1.9,
+    ship_thousand_sunny: 3.2, ship_going_merry: 2.9, ship_baratie: 3.2, ship_navy_h03: 3.1, ship_polar_tang: 2.1, ship_spade_pirates: 3.2, ship_red_force: 3.4, ship_moby_dick: 3.3, ship_perfume_yuda: 3.2, ship_oro_jackson: 3.4, ship_queen_mama_chanter: 3.5, ship_dragons_ship: 3.3 },
+  rotations: {}, palette: { ground: '#46613E', accent: '#C9F54A', sky: '#171713' },
   layout: campusLayout(),
 };
 
@@ -70,8 +81,8 @@ export function safeAssetPath(value: unknown): value is string {
   return typeof value === 'string' && /^assets\/[a-zA-Z0-9_./-]+\.glb$/.test(value) && !value.split('/').some(segment => segment === '..' || segment === '.') && !value.includes('//');
 }
 function placement(p: unknown): p is Placement {
-  return !!p && typeof p === 'object' && typeof (p as Placement).x === 'number' && Number.isFinite((p as Placement).x) && Math.abs((p as Placement).x) <= 30
-    && typeof (p as Placement).z === 'number' && Number.isFinite((p as Placement).z) && Math.abs((p as Placement).z) <= 30
+  return !!p && typeof p === 'object' && typeof (p as Placement).x === 'number' && Number.isFinite((p as Placement).x) && Math.abs((p as Placement).x) <= 48
+    && typeof (p as Placement).z === 'number' && Number.isFinite((p as Placement).z) && Math.abs((p as Placement).z) <= 48
     && ((p as Placement).rotation === undefined || (typeof (p as Placement).rotation === 'number' && Number.isFinite((p as Placement).rotation)));
 }
 const boundedRadius = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0.2 && value <= 8;
@@ -81,6 +92,7 @@ export function parseTheme(input: unknown): Theme {
   if (value.version !== 1 || !safeThemeID(value.id)) return DEFAULT_THEME;
   const result: Theme = { ...DEFAULT_THEME, assets: {}, heights: { ...DEFAULT_THEME.heights }, rotations: {}, palette: { ...DEFAULT_THEME.palette }, layout: campusLayout() };
   result.id = value.id;
+  result.environment = value.environment === 'ocean' ? 'ocean' : 'campus';
   if (typeof value.name === 'string' && value.name.length <= 100) result.name = value.name;
   if (typeof value.description === 'string' && value.description.length <= 500) result.description = value.description;
   for (const type of ASSET_TYPES) {
@@ -97,7 +109,7 @@ export function parseTheme(input: unknown): Theme {
   }
   const layout = value.layout as Record<string, unknown> | undefined;
   if (layout && typeof layout === 'object') {
-    if (typeof layout.radius === 'number' && Number.isFinite(layout.radius) && layout.radius >= 10 && layout.radius <= 24) result.layout = campusLayout(layout.radius);
+    if (typeof layout.radius === 'number' && Number.isFinite(layout.radius) && layout.radius >= 10 && layout.radius <= (result.environment === 'ocean' ? 42 : 24)) result.layout = campusLayout(layout.radius);
     if (Array.isArray(layout.stations) && layout.stations.length <= 12 && layout.stations.every(p => placement(p) && Math.hypot(p.x, p.z) < result.layout.radius - 1)) {
       result.layout.stations = layout.stations.map(p => ({ x: p.x, z: p.z, ...(p.rotation === undefined ? {} : { rotation: p.rotation }) }));
     }
