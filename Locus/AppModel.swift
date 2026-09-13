@@ -478,6 +478,13 @@ final class AppModel: ObservableObject {
     @Published var automaticInspectorPrompt: AutomaticInspectorPrompt?  // internal(for: AppModel extension files)
     @Published var usageDashboardPresented = false
     @Published var configureAgentPresented = false
+    @Published var savedAgentEditor: AgentProfile?
+    var savedAgentRuntimeSyncInFlight = false
+    var savedAgentRuntimeSyncPending = false
+    var pendingSavedAgentEditor: AgentProfile?
+    @Published var selectedSavedAgentID: UUID?
+    @Published var configureAgentProfileID: UUID?
+    @Published var creatingSavedAgentChatIDs: Set<UUID> = []
     @Published var configureAgentCreationPresented = false
     @Published var configureAgentPendingCreation = false
     @Published var configureAgentTab: ConfigureAgentTab = .agents
@@ -1281,6 +1288,10 @@ final class AppModel: ObservableObject {
         )
         configureTaskCapsules()
         configureAgentWorld()
+        agentTeamsModel.profilesChanged = { [weak self] in
+            guard let self, RuntimeInstallation.enabled, !self.isUITesting else { return }
+            Task { @MainActor [weak self] in try? await self?.syncSavedAgentsToRuntime() }
+        }
         configureGoals()
         configureOptionalQuestions()
         runs.configure(

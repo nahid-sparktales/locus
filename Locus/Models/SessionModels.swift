@@ -37,6 +37,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     let folderID: String?
     let sortOrder: Int?
     let agentTriggerID: String?
+    let agentProfileID: String?
     /// Added after event agents and schedules began sharing the same UI.
     /// Unknown and absent values remain decodable for older saved chats.
     let agentKind: String?
@@ -67,6 +68,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         folderID: String? = nil,
         sortOrder: Int? = nil,
         agentTriggerID: String? = nil,
+        agentProfileID: String? = nil,
         agentKind: String? = nil,
         agentName: String? = nil,
         agentPrimary: Bool? = nil,
@@ -90,6 +92,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.folderID = folderID
         self.sortOrder = sortOrder
         self.agentTriggerID = agentTriggerID
+        self.agentProfileID = agentProfileID
         self.agentKind = agentKind
         self.agentName = agentName
         self.agentPrimary = agentPrimary
@@ -104,6 +107,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         case folderID = "folder_id"
         case sortOrder = "sort_order"
         case agentTriggerID = "agent_trigger_id"
+        case agentProfileID = "agent_profile_id"
         case agentKind = "agent_kind"
         case agentName = "agent_name"
         case agentPrimary = "agent_primary"
@@ -140,7 +144,8 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     var date: Date { Date(timeIntervalSince1970: mtime) }
     var isPinned: Bool { pinned ?? false }
     var isArchived: Bool { archived ?? false }
-    var isAgentChat: Bool { agentTriggerID?.isEmpty == false }
+    var savedAgentProfileID: UUID? { agentProfileID.flatMap(UUID.init(uuidString:)) }
+    var isAgentChat: Bool { agentTriggerID?.isEmpty == false || savedAgentProfileID != nil }
     /// Whether this is the chat an agent's events arrive in.
     var isAgentEventChat: Bool { isAgentChat && agentPrimary == true }
 
@@ -170,6 +175,7 @@ struct SessionSummary: Codable, Hashable, Identifiable {
             folderID: folderID,
             sortOrder: sortOrder,
             agentTriggerID: agentTriggerID,
+            agentProfileID: agentProfileID,
             agentKind: agentKind,
             agentName: agentName,
             agentPrimary: agentPrimary,

@@ -11,15 +11,39 @@ struct InspectorAgentTab: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
 
     var body: some View {
-        AgentInspectorPanel(
-            automation: model.eventAutomations,
-            schedule: schedule,
-            sessionCatalog: sessionCatalog,
+        AgentInspectorSelectionView(
+            profile: agentTeams.agentProfiles.first { $0.id == model.selectedSavedAgentProfile?.id },
             inspector: model.agentInspector
         )
-        .environmentObject(model)
+    }
+}
+
+private struct AgentInspectorSelectionView: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    let profile: AgentProfile?
+    @ObservedObject var inspector: AgentInspectorModel
+
+    private var showsSavedProfile: Bool {
+        switch inspector.context {
+        case .fleet: true
+        case .agent, .chat, .event, .occurrence, .run: false
+        }
+    }
+
+    var body: some View {
+        Group {
+            if showsSavedProfile, let profile {
+                SavedAgentInspectorView(profile: profile)
+            } else {
+                AgentInspectorPanel(automation: model.eventAutomations, schedule: schedule,
+                    sessionCatalog: sessionCatalog, inspector: model.agentInspector)
+            }
+        }.environmentObject(model)
     }
 }
 

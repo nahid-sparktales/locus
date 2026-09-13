@@ -106,11 +106,28 @@ class RuntimeAutomation:
         workspace = run["workspace_root"]
         await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
         saved = runtime.private.read()
+        from .sessions import SessionMeta
+
+        metadata = SessionMeta.get(session_id)
+        profile_id = metadata.get("agent_world_profile_id")
+        profile_configuration = None
+        if profile_id:
+            import uuid
+
+            try:
+                profile_configuration = saved.get("agent-profiles", {}).get(str(uuid.UUID(str(profile_id))))
+            except ValueError:
+                pass
+            if not profile_configuration or profile_configuration.get("unavailable"):
+                runtime.store.state(session_id, "waiting_for_locus", "Open Locus and review this conversation’s saved agent and account.")
+                return
+            if run.get("run_kind") == "team" or manifest.get("solo_swarm"):
+                runtime.store.state(session_id, "waiting_for_locus", "This automation belongs to a saved agent and requires its solo runner.")
+                return
         automation_configuration = saved.get(f"automation:schedule:{manifest.get('schedule_id', '')}") or saved.get(f"automation:event:{manifest.get('event_trigger_id', '')}") or {}
-        if automation_configuration.get("agent_id"):
-            from .sessions import SessionMeta
+        if automation_configuration.get("agent_id") and not profile_configuration:
             SessionMeta.update(session_id, agent_profile_id=str(automation_configuration["agent_id"]))
-        account = automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}") or saved.get(f"worker:{session_id}", {}).get("/api/provider")
+        account = (profile_configuration or {}).get("provider") or automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}") or saved.get(f"worker:{session_id}", {}).get("/api/provider")
         if not account and manifest.get("provider") in {"remote", "chatgpt", "claude_plan"}:
             runtime.store.state(session_id, "waiting_for_account", "Provision the selected model account on this runtime to continue.")
             return
@@ -119,17 +136,20 @@ class RuntimeAutomation:
         configuration = {}
         if account:
             configuration["/api/provider"] = account
-        model = (account or {}).get("model") or manifest.get("model")
+        model = profile_configuration["profile"]["model"] if profile_configuration else (account or {}).get("model") or manifest.get("model")
         if model:
             configuration["/api/config"] = {"model": model}
         if automation_configuration.get("permissions"):
             configuration["/api/permissions"] = automation_configuration["permissions"]
         command["runtime_configuration"] = configuration
-        if runtime.store.worker(session_id)["state"] == "waiting_for_account":
+        if runtime.store.worker(session_id)["state"] in {"waiting_for_account", "waiting_for_locus"}:
             runtime.store.state(session_id, "idle")
         for key in ("agent_config", "goal_id", "goal_revision", "workflow_outputs"):
             if key in manifest:
                 command[key] = manifest[key]
+        if profile_configuration:
+            command["agent_profile"] = profile_configuration["profile"]
+            command["agent_config"] = profile_configuration["profile"].get("behavior", {})
         if run.get("run_kind") == "team":
             team = saved.get(f"team:{run.get('team_id', '')}")
             if not team:

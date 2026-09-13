@@ -586,6 +586,7 @@ extension AppModel {
         }
 
         await extensionsModel.refreshExtensions()
+        try? await syncSavedAgentsToRuntime()
         gitWorkspace.refreshBranch()
     }
 }

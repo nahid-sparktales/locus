@@ -2497,11 +2497,10 @@ final class LocusUITests: XCTestCase {
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
-        // New Chat follows the destination, so the same action now starts a
-        // chat under the current or most recently used agent.
+        // The primary action follows the destination and creates a saved agent.
         XCTAssertTrue(newChat.waitForExistence(timeout: 3))
-        XCTAssertTrue(waitUntil { newChat.value as? String == "Agent chat" })
-        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertTrue(waitUntil { newChat.value as? String == "Saved agent" })
+        XCTAssertEqual(newChat.label, "New agent")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertFalse(notebook.exists)
@@ -2532,12 +2531,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.tab.files").exists, "Files stays available beside the agent")
 
-        // Agent keeps the Agent controls: New chat with its plus
-        // glyph creates another chat for the selected agent, while Manage
-        // Agents keeps the Configure Agent glyph.
+        // The Agent page creates saved agents from its primary action;
+        // conversations are added from the selected agent’s controls.
         let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(newChat.exists)
-        XCTAssertEqual(newChat.label, "New chat")
+        XCTAssertEqual(newChat.label, "New agent")
         let agentMenu = anyElement("sidebar.agentMenu")
         XCTAssertTrue(agentMenu.exists)
         XCTAssertTrue(
@@ -2770,7 +2768,7 @@ final class LocusUITests: XCTestCase {
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
         XCTAssertTrue(anyElement("sidebar.newSession").waitForExistence(timeout: 3))
-        XCTAssertEqual(anyElement("sidebar.newSession").label, "New chat")
+        XCTAssertEqual(anyElement("sidebar.newSession").label, "New agent")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         XCTAssertTrue(anyElement("workspace.emptyDestination").waitForExistence(timeout: 3))
@@ -4136,7 +4134,7 @@ final class LocusUITests: XCTestCase {
         panel.scroll(byDeltaX: 0, deltaY: 2500)
         for _ in 0..<15 {
             if isRevealed() { return item }
-            panel.scroll(byDeltaX: 0, deltaY: -200)
+            panel.scroll(byDeltaX: 0, deltaY: -400)
         }
         XCTAssertTrue(fullyVisible ? isRevealed() : item.exists, "Could not reach \(identifier)")
         return item
@@ -4289,7 +4287,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(anyElement("activity.center").exists)
         XCTAssertTrue(anyElement("configureAgent.agents").exists)
         XCTAssertEqual(anyElement("configureAgent.tab.agents").value as? String, "Selected")
-        XCTAssertTrue(app.staticTexts["Your first Agent starts here"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Ready when you are"].waitForExistence(timeout: 5))
         XCTAssertTrue(anyElement("configureAgent.newAgent").exists)
         XCTAssertFalse(anyElement("configureAgent.create.schedule").exists)
 
@@ -4377,6 +4375,47 @@ final class LocusUITests: XCTestCase {
         anyElement("configureAgent.close").click()
         anyElement("sidebar.mode.ask").click()
         XCTAssertEqual(composer.value as? String, "When bitcoin hits 100k run the safety plan")
+    }
+
+    func testSavedAgentPageShowsChatsAndAllManagementOptions() {
+        relaunchWithAgentFixture("saved-profile")
+        revealSidebarForNavigation()
+        XCTAssertTrue(anyElement("agent.FAAAA111-1111-4111-8111-111111111111").waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("session.saved-agent-chat-1").exists)
+        XCTAssertTrue(anyElement("session.saved-agent-chat-2").exists)
+        XCTAssertEqual(anyElement("sidebar.newSession").label, "New agent")
+        anyElement("sidebar.configureAgent").click()
+        XCTAssertTrue(anyElement("configureAgent.profile").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("configureAgent.editProfile").exists)
+        anyElement("configureAgent.newAgent").click()
+        for kind in ["chat", "schedule", "event", "price"] {
+            XCTAssertTrue(anyElement("configureAgent.create.\(kind)").waitForExistence(timeout: 3))
+        }
+        let options = XCTAttachment(screenshot: app.screenshot())
+        options.name = "saved-agent-management-options"
+        options.lifetime = .keepAlways
+        add(options)
+        anyElement("configureAgent.create.price").click()
+        XCTAssertTrue(anyElement("eventAutomation.price.threshold").waitForExistence(timeout: 5))
+    }
+
+    func testNewAgentFromSidebarUsesTheSharedProfileEditor() {
+        revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
+        anyElement("sidebar.newSession").click()
+        XCTAssertTrue(anyElement("agent.editor").waitForExistence(timeout: 5))
+        XCTAssertTrue(anyElement("agent.name").exists)
+        XCTAssertTrue(anyElement("agent.save").exists)
+        XCTAssertFalse(anyElement("configureAgent.creation").exists)
+        anyElement("agent.cancel").click()
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.editor")))
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(anyElement("agent.editor").waitForExistence(timeout: 5))
+        let editor = XCTAttachment(screenshot: app.screenshot())
+        editor.name = "new-agent-shared-setup"
+        editor.lifetime = .keepAlways
+        add(editor)
+        anyElement("agent.cancel").click()
     }
 
     func testConfigureAgentCreationCardsOpenChildSheetsAndReturnToHub() {

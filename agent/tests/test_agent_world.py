@@ -59,6 +59,10 @@ def test_detached_session_is_durable_without_disturbing_busy_foreground(tmp_path
         assert service.core.messages == previous_messages
         assert service.core.cwd == str(tmp_path)
         assert client.get(f"/api/sessions/{session_id}").status_code == 200
+        assert client.get(f"/api/sessions/{session_id}").json()["agent_profile_id"] == profile_id
+        saved = next(item for item in SessionStore.summaries() if item["id"] == session_id)
+        assert saved["agent_profile_id"] == profile_id
+        assert saved["title"] == "Agent World · Reviewer"
     service.agent_future.cancel()
 
 
@@ -155,7 +159,7 @@ def test_world_profile_dispatch_isolated_from_solo_delegation(tmp_path, monkeypa
 
 @pytest.mark.parametrize("overrides", [
     {"team": {}}, {"capsule_context": {}}, {"text": "/reset"},
-    {"workflow_outputs": []}, {"agent_profile": {"name": "Broken"}},
+    {"workflow_outputs": "invalid"}, {"agent_profile": {"name": "Broken"}},
 ])
 def test_profile_dispatch_rejects_conflicting_or_invalid_configuration(tmp_path, monkeypatch, overrides):
     service = _service(tmp_path)
@@ -268,3 +272,24 @@ def test_profile_runs_through_existing_worker_with_exact_identity(tmp_path, monk
     assert service.core.agent_id == "primary"
     assert service.core.agent_configuration == original_configuration
     assert service.active_run_id is None
+
+
+def test_saved_agent_automation_retains_workflow_outputs_and_profile_boundary(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    profile = _profile()
+    SessionMeta.update(service.core.session.session_id, agent_world_profile_id=profile["id"])
+    calls = []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", lambda event: None)
+    outputs = [{"step_id": "lookup", "result": {"price": 120}}]
+    asyncio.run(server._handle_client_message(service, {
+        "type": "user_message", "text": "Review the alert", "mode": "work",
+        "agent_profile": profile, "workflow_outputs": outputs,
+    }))
+    forwarded = []
+    monkeypatch.setattr(server, "_run_user_turn", lambda *args, **kwargs: forwarded.append((args, kwargs)))
+    call, args = calls[0]
+    call(*args)
+    assert forwarded[0][1]["workflow_outputs"] == outputs
+    assert forwarded[0][1]["agent_profile"].id == profile["id"]
+    assert forwarded[0][0][4]["capability_policy"]["workspace_write"] is False

@@ -465,6 +465,7 @@ def _run_profile_turn(
     profile: AgentProfile,
     mode: str,
     reserved_run_id: str,
+    workflow_outputs: list[dict[str, Any]] | None = None,
 ) -> None:
     from .agent_profile_runtime import solo_profile_boundary
 
@@ -472,6 +473,7 @@ def _run_profile_turn(
         _run_user_turn(
             svc, text, just_chat, attachments, configuration, mode,
             reserved_run_id, solo_swarm_enabled=False, agent_profile=profile,
+            workflow_outputs=workflow_outputs,
         )
 
 
@@ -2541,7 +2543,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         agent_profile = None
         if msg.get("agent_profile") is not None:
             if core.identity_mode or team_manifest is not None or capsule_context is not None \
-                    or workflow_outputs is not None or approved_plan is not None or text.startswith("/"):
+                    or approved_plan is not None or text.startswith("/"):
                 _command_error(svc, str(mtype), "An agent profile requires an ordinary Chat or Work message.")
                 return
             from .agent_profile_runtime import parse_solo_profile
@@ -2557,6 +2559,8 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             call = _run_profile_turn
             args = (svc, text, just_chat, attachments, agent_profile, mode or "work",
                     str(msg.get("run_id") or ""))
+            if workflow_outputs is not None:
+                args = (*args, workflow_outputs)
         elif capsule_context is not None:
             call = _run_user_turn
             args = (svc, text, False, attachments, agent_config, mode or "plan",

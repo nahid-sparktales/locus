@@ -1275,7 +1275,7 @@ class SessionStore:
             if entry.get("archived") and not include_archived:
                 continue
             summary = SessionStore._summary_record(f)
-            if summary is None and entry.get("agent_trigger_id"):
+            if summary is None and (entry.get("agent_trigger_id") or entry.get("agent_profile_id")):
                 header = SessionStore.header(f)
                 summary = {
                     "preview": "",
@@ -1322,6 +1322,7 @@ class SessionStore:
                 "execution_path": entry.get("execution_path"),
                 "environment": entry.get("environment"),
                 "agent_trigger_id": entry.get("agent_trigger_id"),
+                "agent_profile_id": entry.get("agent_profile_id"),
                 "agent_kind": session_agent_kind(entry),
                 "agent_name": entry.get("agent_name"),
                 # The one chat an agent's events land in, as opposed to a side

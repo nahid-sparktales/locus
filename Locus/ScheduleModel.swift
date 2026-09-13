@@ -161,6 +161,7 @@ final class ScheduleModel: ObservableObject {
             body["provider_account_id"] = draft.providerAccountID ?? ""
         }
         if draft.id == nil { body["enabled"] = true }
+        if draft.id == nil, let profileID = draft.agentProfileID { body["agent_profile_id"] = profileID }
         isSavingSchedule = true
         defer { isSavingSchedule = false }
         do {

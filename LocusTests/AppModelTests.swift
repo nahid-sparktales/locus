@@ -6334,26 +6334,21 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testNewAgentChooserWaitsForItsManageAgentsHost() {
+    func testNewAgentUsesSavedProfileEditorAndPreservesTheDraft() {
         let model = AppModel(startImmediately: false)
         model.draftText = "Review incoming issues"
 
         model.presentNewAgent()
 
-        XCTAssertTrue(model.configureAgentPresented)
-        XCTAssertTrue(model.configureAgentPendingCreation)
+        XCTAssertNotNil(model.savedAgentEditor)
+        XCTAssertFalse(model.configureAgentPresented)
+        XCTAssertFalse(model.configureAgentPendingCreation)
         XCTAssertFalse(model.configureAgentCreationPresented)
         XCTAssertNil(model.eventAutomations.editorDraft)
 
-        model.mountPendingConfigureAgentEditor()
-        XCTAssertFalse(model.configureAgentPendingCreation)
-        XCTAssertTrue(model.configureAgentCreationPresented)
-        XCTAssertEqual(model.configureAgentDraftSuggestion, "Review incoming issues")
+        XCTAssertEqual(model.savedAgentEditor?.name, "")
+        XCTAssertEqual(model.savedAgentEditor?.accessCeiling, .readOnly)
         XCTAssertEqual(model.draftText, "Review incoming issues")
-
-        model.dismissConfigureAgent()
-        XCTAssertFalse(model.configureAgentCreationPresented)
-        XCTAssertFalse(model.configureAgentPendingCreation)
     }
 
     @MainActor

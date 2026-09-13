@@ -22,6 +22,12 @@ screen extension.
 
 ## Meet your agents
 
+- In Locus’s **Agent** page, choose **New Agent** to use the same setup form as
+  Agent World. Saving creates a named sidebar group and its first chat. Saved
+  agents also appear as residents in the world.
+- **Manage Agent → Add…** offers **New chat**, **On a schedule**, **When an event
+  arrives**, and **When a price changes**. Each conversation and automation
+  stays with that agent and uses its saved model, instructions, and access.
 - Drag to orbit the overview camera; scroll to zoom.
 - Click an agent or its label to interact. The searchable resident list also
   provides direct access to every agent.

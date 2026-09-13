@@ -34,7 +34,7 @@ extension AppModel {
         approvedPlan: [String: JSONValue]? = nil
     ) {
         guard admitTranscriptInput() else { return }
-        let residentProfileID = agentWorld.boundProfileID(for: currentSessionID)
+        let residentProfileID = savedAgentProfileID(for: currentSessionID)
         var residentDispatch: TaskCapsuleDispatch?
         if let residentProfileID {
             guard [.ask, .work].contains(selectedMode), explicitCapsuleDispatch == nil, approvedPlan == nil,
@@ -1027,7 +1027,7 @@ extension AppModel {
 
     func retryLastResponse() {
         guard admitTranscriptInput() else { return }
-        if agentWorld.boundProfileID(for: currentSessionID) != nil {
+        if savedAgentProfileID(for: currentSessionID) != nil {
             showToast("Reuse the last message and send it again to retry with this agent's saved profile and permissions.")
             return
         }

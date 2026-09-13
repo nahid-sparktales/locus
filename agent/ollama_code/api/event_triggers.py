@@ -261,6 +261,8 @@ def trigger_target_create(
         provider_account_id=account_id or None,
         provider_account_label=account_label or None,
         agent_trigger_id=trigger_id,
+        agent_profile_id=metadata.get("agent_profile_id"),
+        agent_world_profile_id=metadata.get("agent_world_profile_id"),
         agent_kind="event",
         agent_name=name,
         agent_primary=True,
@@ -329,6 +331,8 @@ def trigger_task_create(
         provider_account_id=account_id or None,
         provider_account_label=account_label or None,
         agent_trigger_id=trigger_id,
+        agent_profile_id=metadata.get("agent_profile_id"),
+        agent_world_profile_id=metadata.get("agent_world_profile_id"),
         agent_kind="event",
         agent_name=agent_name,
     )

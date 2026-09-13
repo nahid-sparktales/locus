@@ -129,6 +129,14 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         profileHistory[sessionID].flatMap(UUID.init(uuidString:))
     }
 
+    func bindConversation(_ sessionID: String, workspace: String, profileID: UUID) {
+        guard boundProfileID(for: sessionID).map({ $0 == profileID }) ?? true else { return }
+        profileHistory[sessionID] = profileID.uuidString
+        bindings[Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)] = sessionID
+        persistConversationBindings()
+        refresh()
+    }
+
     private func persistConversationBindings() {
         // Persist identity before selection: an interrupted save must never
         // leave a known agent conversation without its profile restrictions.

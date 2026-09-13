@@ -620,3 +620,33 @@ def test_deleting_a_worktree_agent_frees_its_checkout(tmp_path, monkeypatch) -> 
 
     # Kept out of pruning's reach while the agent existed; ordinary again now.
     assert TaskCheckoutStore.load(task_id).permanent is False
+
+
+def test_saved_profile_owns_schedule_and_side_chats_after_update(tmp_path):
+    import uuid
+
+    from ollama_code.api.schedules import schedule_create, schedule_task_create, schedule_update
+    from ollama_code.sessions import SessionMeta
+
+    service = _service(tmp_path)
+    profile_id = str(uuid.uuid4())
+    schedule = schedule_create(service, schedule_value(tmp_path, agent_profile_id=profile_id))
+    primary = _primary_session(schedule["id"])
+    assert SessionMeta.get(primary)["agent_profile_id"] == profile_id
+    schedule_update(schedule["id"], service, {"name": "Renamed schedule"})
+    side = schedule_task_create(schedule["id"], service, {"name": "Questions"})["session"]
+    assert side["agent_profile_id"] == profile_id
+    assert SessionMeta.get(side["id"])["agent_world_profile_id"] == profile_id
+    assert SessionMeta.get(primary)["agent_profile_id"] == profile_id
+
+
+def test_schedule_rejects_invalid_profile_before_creating_anything(tmp_path):
+    from fastapi import HTTPException
+
+    from ollama_code.api.schedules import schedule_create
+
+    service = _service(tmp_path)
+    with pytest.raises(HTTPException) as error:
+        schedule_create(service, schedule_value(tmp_path, agent_profile_id="not-a-profile"))
+    assert error.value.status_code == 422
+    assert service.run_store.schedules() == []

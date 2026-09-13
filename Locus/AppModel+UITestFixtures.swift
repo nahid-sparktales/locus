@@ -710,6 +710,22 @@ extension AppModel {
             if variant == "schedule" {
                 installTranscriptSession("seed-schedule-chat", blocks: blocks)
             }
+            if variant == "saved-profile" {
+                let profile = AgentProfile(id: UUID(uuidString: "FAAAA111-1111-4111-8111-111111111111")!,
+                    name: "Atlas", model: "fixture-model", instructions: "Help with project research.")
+                agentProfiles.append(profile)
+                let chats = (1...2).map { index in
+                    SessionSummary(id: "saved-agent-chat-\(index)", name: "saved-agent-chat-\(index)",
+                        preview: "", mtime: Date().timeIntervalSince1970 + Double(index), size: 0,
+                        title: "Chat \(index)", cwd: workspace, agentProfileID: profile.id.uuidString)
+                }
+                sessions.append(contentsOf: chats)
+                selectedSavedAgentID = profile.id
+                selectedAgentID = nil
+                agentInspector.clearAgentSelection()
+                installTranscriptSession(chats[0].id, blocks: [])
+                sidebarDestination = .agents
+            }
         }
         seedSessionOverviewUITest(workspace: workspace)
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_REQUEST_OVERVIEW"] == "1" {

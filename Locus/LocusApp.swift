@@ -127,9 +127,8 @@ struct LocusApp: App {
             }
 
             CommandGroup(replacing: .newItem) {
-                // The active destination decides whether this is a workspace
-                // chat or an agent chat; the user-facing action stays the same.
-                NotebookNewNoteCommand {
+                // The active destination chooses New Chat or New Agent.
+                NotebookNewNoteCommand(newItemTitle: model.sidebarDestination == .agents ? "New Agent" : "New Chat") {
                     model.newChatForSidebarDestination()
                 }
                 Button("New Chat Folder…") {
@@ -1117,6 +1116,14 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.shortcutsPresented) {
             ShortcutsSheet()
+        }
+        .sheet(item: $model.savedAgentEditor) { profile in
+            AgentProfileEditor(profile: profile,
+                isNew: !model.agentProfiles.contains(where: { $0.id == profile.id }),
+                existingProfiles: model.agentProfiles,
+                onSave: model.saveSidebarAgent)
+                .environmentObject(model)
+                .environmentObject(model.providerAccountsModel)
         }
         .sheet(isPresented: $model.configureAgentPresented, onDismiss: {
             model.dismissConfigureAgent()

@@ -33,11 +33,11 @@ struct WorkspaceView: View {
                           systemImage: destination == .agents ? "person.2" : "bubble.left")
                 } description: {
                     Text(destination == .agents
-                         ? "Select an agent in the sidebar or manage your agents to get started."
+                         ? "Create a saved agent or select one in the sidebar to open its chats."
                          : "Create a chat to start working in this workspace.")
                 } actions: {
-                    Button(destination == .agents ? "Manage Agents" : "New chat") {
-                        if destination == .agents { model.presentConfigureAgent(draftText: "") }
+                    Button(destination == .agents ? "New agent" : "New chat") {
+                        if destination == .agents { model.presentNewAgent() }
                         else { model.newSession() }
                     }
                     .accessibilityIdentifier("workspace.emptyDestination.action")
@@ -2014,6 +2014,7 @@ struct ScheduleEditorView: View {
                     ForEach(ScheduleRunner.selectableCases) { runner in Text(runner.title).tag(runner) }
                 }
                 .accessibilityIdentifier("scheduleEditor.runner")
+                .disabled(draft.agentProfileID != nil)
                 if draft.runner == .team {
                     Picker("Team", selection: $draft.teamID) {
                         Text("Choose a team").tag(String?.none)
@@ -2039,12 +2040,14 @@ struct ScheduleEditorView: View {
                     }
                 }
                 .accessibilityIdentifier("scheduleEditor.account")
+                .disabled(draft.agentProfileID != nil)
                 if catalogModels.isEmpty {
                     LabeledContent("Model") {
                         TextField("Exact model ID", text: $draft.model)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Model")
                             .accessibilityIdentifier("scheduleEditor.model")
+                            .disabled(draft.agentProfileID != nil)
                     }
                 } else {
                     Picker("Model", selection: $draft.model) {
@@ -2052,6 +2055,7 @@ struct ScheduleEditorView: View {
                         ForEach(availableModels, id: \.self) { name in Text(name).tag(name) }
                     }
                     .accessibilityIdentifier("scheduleEditor.model")
+                    .disabled(draft.agentProfileID != nil)
                 }
                 Text("Keep Locus running to process scheduled work. The selected provider receives the task when it starts.")
                     .font(.locus(size: 9))

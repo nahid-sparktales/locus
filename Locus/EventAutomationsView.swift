@@ -6,11 +6,13 @@ import SwiftUI
 struct ConfigureAgentView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var automation: EventAutomationModel
     @ObservedObject var schedule: ScheduleModel
     @State private var connectionSheet: ConnectorKind?
     @State private var chosenCreationKind: AgentConfigurationKind?
+    @State private var choseNewChat = false
     @State private var selectionID: String?
     @State private var search = ""
     @State private var agentFilter = "all"
@@ -93,6 +95,7 @@ struct ConfigureAgentView: View {
             applyRequestedFocus()
         }
         .onAppear { app.mountPendingConfigureAgentEditor() }
+        .onChange(of: app.configureAgentProfileID) { selectionID = nil; normalizeSelection() }
         .onChange(of: app.configureAgentFocusConfigurationID) { applyRequestedFocus() }
         .onChange(of: app.configureAgentPendingTriggerEdit) { app.mountPendingConfigureAgentEditor() }
         .onChange(of: app.configureAgentPendingCreation) { app.mountPendingConfigureAgentEditor() }
@@ -125,8 +128,8 @@ struct ConfigureAgentView: View {
                 .frame(width: 38, height: 38)
                 .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
             VStack(alignment: .leading, spacing: 3) {
-                Text("Manage Agents").font(.locus(size: 18, weight: .bold))
-                Text("Create, configure and follow your Agents.")
+                Text(app.configuredSavedAgent.map { "Manage \($0.name)" } ?? "Manage Agents").font(.locus(size: 18, weight: .bold))
+                Text("Chats, events, schedules, and price alerts.")
                     .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             }
             Spacer()
@@ -185,11 +188,39 @@ struct ConfigureAgentView: View {
 
     private var agentsTab: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !agentTeams.agentProfiles.isEmpty {
+                HStack {
+                    Picker("Agent", selection: $app.configureAgentProfileID) {
+                        Text("All automations").tag(UUID?.none)
+                        ForEach(agentTeams.agentProfiles) { profile in
+                            Text(profile.name).tag(Optional(profile.id))
+                        }
+                    }.accessibilityIdentifier("configureAgent.profile")
+                    Button("New Agent…") { app.presentNewAgent() }
+                        .accessibilityIdentifier("configureAgent.newProfile")
+                }.padding([.horizontal, .top], 20)
+            }
+            if let profile = app.configuredSavedAgent {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(profile.name).font(.locus(size: 15, weight: .semibold))
+                        Text("\(profile.role.title) · \(profile.model)")
+                            .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                        if !profile.instructions.isEmpty {
+                            Text(profile.instructions).font(.locus(size: 10)).lineLimit(2)
+                        }
+                    }
+                    Spacer()
+                    Button("Edit Agent…") { app.presentSavedAgentEditor(profile) }
+                        .accessibilityIdentifier("configureAgent.editProfile")
+                }.padding(20)
+            }
             HStack {
-                sectionHeading("Agents", detail: "An Agent is saved instructions, a trigger, and a place to work.")
+                sectionHeading(app.configuredSavedAgent == nil ? "Automations" : "Chats and automations",
+                    detail: "Start a conversation or choose what starts automatic work.")
                 Spacer(minLength: 10)
                 Button { app.configureAgentCreationPresented = true } label: {
-                    Label("New Agent", systemImage: "plus")
+                    Label("Add…", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent).accessibilityIdentifier("configureAgent.newAgent")
             }.padding(20)
@@ -208,9 +239,9 @@ struct ConfigureAgentView: View {
                 loadingState("Loading Agents…")
             } else if references.isEmpty {
                 VStack(spacing: 14) {
-                    ContentUnavailableView("Your first Agent starts here", systemImage: "sparkles",
-                        description: Text("Give it instructions and choose when it should work. Each Agent keeps its own conversations and activity."))
-                    Button("Create Agent") { app.configureAgentCreationPresented = true }
+                    ContentUnavailableView("Ready when you are", systemImage: "sparkles",
+                        description: Text("Chat with your agent, or add a schedule, incoming event, or price alert."))
+                    Button("Add chat or automation") { app.configureAgentCreationPresented = true }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("configureAgent.empty.create")
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -632,14 +663,16 @@ struct ConfigureAgentView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Create an Agent").font(.locus(size: 20, weight: .bold))
-                    Text("What should start its work?").font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    Text(app.configuredSavedAgent.map { "Add to \($0.name)" } ?? "Add automatic work")
+                        .font(.locus(size: 20, weight: .bold))
+                    Text("How would you like to work together?").font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
                 }
                 Spacer()
                 Button { app.configureAgentCreationPresented = false } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.locus(.icon)).keyboardShortcut(.cancelAction).accessibilityLabel("Cancel Agent creation")
+                    .buttonStyle(.locus(.icon)).keyboardShortcut(.cancelAction).accessibilityLabel("Cancel")
             }
-            Text("Add instructions, choose a trigger, and give your Agent a place to work. You can chat with it and refine its setup at any time.")
+            Text(app.configuredSavedAgent.map { "Add a conversation or automatic work to \($0.name)." }
+                 ?? "Open an agent conversation or add automatic work.")
                 .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
             if !app.configureAgentDraftSuggestion.isEmpty {
                 Text(app.configureAgentDraftSuggestion).font(.locus(size: 10)).lineLimit(3)
@@ -647,6 +680,22 @@ struct ConfigureAgentView: View {
                     .background(LocusTheme.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
             }
             VStack(spacing: 8) {
+                Button {
+                    choseNewChat = true
+                    app.configureAgentCreationPresented = false
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "plus.bubble").font(.locus(size: 18)).frame(width: 32)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("New chat").font(.locus(size: 12, weight: .semibold))
+                            Text("A separate conversation with this agent, ready for your message.")
+                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.locus(size: 9))
+                    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+                }.buttonStyle(.locus(.card)).accessibilityIdentifier("configureAgent.create.chat")
                 creationOption(.schedule, title: "On a schedule", detail: "A daily review, a weekly report, or a one-time task.")
                 creationOption(.event, title: "When an event arrives", detail: "React to Gmail, Telegram, or a signed webhook.")
                 creationOption(.price, title: "When a price changes", detail: "Watch a stock or crypto price and act at a threshold.")
@@ -678,9 +727,22 @@ struct ConfigureAgentView: View {
     }
 
     private func openChosenEditor() {
+        if choseNewChat {
+            choseNewChat = false
+            guard app.configureAgentPresented else { return }
+            if let profile = app.configuredSavedAgent { app.newSavedAgentChat(profile) }
+            else if app.inspectedAgentReference != nil { app.newAgentChat() }
+            else if let profile = agentTeams.agentProfiles.first { app.newSavedAgentChat(profile) }
+            else { app.presentNewAgent() }
+            return
+        }
         guard let kind = chosenCreationKind else { return }
         chosenCreationKind = nil
         guard app.configureAgentPresented else { return }
+        if let profile = app.configuredSavedAgent {
+            app.presentSavedAgentAutomation(kind, profile: profile)
+            return
+        }
         if kind == .schedule { app.presentScheduleEditor(prompt: app.configureAgentDraftSuggestion) }
         else {
             automation.presentEditor(targetSessionID: app.currentSessionID,
@@ -692,7 +754,14 @@ struct ConfigureAgentView: View {
     private var references: [AgentConfigurationReference] {
         let schedules = schedule.scheduledTasks.map { AgentConfigurationReference(kind: .schedule, configurationID: $0.id, title: $0.name) }
         let triggers = automation.triggers.map { AgentConfigurationReference(kind: $0.triggerKind == .price ? .price : .event, configurationID: $0.id, title: $0.name) }
-        return (schedules + triggers).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return (schedules + triggers).filter { reference in
+            guard let profileID = app.configureAgentProfileID else { return true }
+            guard let definition = definition(for: reference) else { return false }
+            return sessionCatalog.snapshot.sessions.contains {
+                $0.savedAgentProfileID == profileID
+                    && $0.agentReference(in: app.agentDefinitions) == AgentInspectorAgent(definition)
+            }
+        }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
     private var filteredReferences: [AgentConfigurationReference] {
         references.filter { reference in
@@ -1042,8 +1111,12 @@ private struct EventTriggerEditorView: View {
 
     init(draft: EventTriggerEditorDraft, automation: EventAutomationModel,
          sessions: [SessionSummary], currentModel: String) {
-        _draft = State(initialValue: draft)
-        originalDraft = draft
+        var ownedDraft = draft
+        ownedDraft.agentProfileID = draft.agentProfileID ?? sessions.first {
+            $0.id == draft.targetSessionID || $0.id == draft.templateSessionID
+        }?.agentProfileID
+        _draft = State(initialValue: ownedDraft)
+        originalDraft = ownedDraft
         self.automation = automation
         self.sessions = sessions
         self.currentModel = currentModel
@@ -1253,14 +1326,14 @@ private struct EventTriggerEditorView: View {
             Text("Its own Agent chat").tag(EventTriggerEditorDraft.dedicatedAgentChat)
             Text("Choose an existing chat").tag("")
             ForEach(sessions.filter { !$0.isArchived }) { Text($0.displayTitle).tag($0.id) }
-        }
+        }.disabled(draft.agentProfileID != nil)
         if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
             Text("Matching events continue the same Agent chat. Side conversations stay separate. The Agent uses the selected workspace’s files and instructions.")
                 .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
             if draft.id != nil, let model = existingAgentModel {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(draft.adoptCurrentRoute ? "Will use \(currentModel) after saving." : "Model: \(model)")
-                    if !draft.adoptCurrentRoute, currentModel != model {
+                    if draft.agentProfileID == nil, !draft.adoptCurrentRoute, currentModel != model {
                         Button("Switch to \(currentModel)") { draft.adoptCurrentRoute = true }
                             .accessibilityIdentifier("eventTrigger.route.adopt")
                     }
@@ -1277,7 +1350,7 @@ private struct EventTriggerEditorView: View {
         if app.automationWorkflowsEnabled {
             Picker("Runner", selection: $draft.runner) {
                 ForEach(ScheduleRunner.selectableCases) { Text($0.title).tag($0) }
-            }
+            }.disabled(draft.agentProfileID != nil)
             if draft.runner == .team {
                 Picker("Team", selection: $draft.teamID) {
                     Text("Choose a team").tag(String?.none)
@@ -1455,6 +1528,9 @@ private struct EventTriggerEditorView: View {
     }
 
     private var editorTitle: String {
+        if draft.agentProfileID != nil {
+            return draft.id != nil ? "Edit automation" : draft.triggerKind == .price ? "New price alert" : "New incoming event"
+        }
         if draft.id != nil { return "Edit Agent" }
         return draft.triggerKind == .price ? "New Price Alert Agent" : "New Event Agent"
     }

@@ -10,7 +10,10 @@ import Foundation
 @MainActor
 final class AgentTeamsModel: ObservableObject {
     @Published private(set) var primaryAgentBehavior = AgentBehavior.primaryDefault()
-    @Published var agentProfiles: [AgentProfile] = []
+    @Published var agentProfiles: [AgentProfile] = [] {
+        didSet { if !isRestoring { profilesChanged() } }
+    }
+    var profilesChanged: () -> Void = {}
     @Published var agentTeams: [AgentTeam] = []
     @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
 

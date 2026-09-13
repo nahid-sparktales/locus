@@ -728,6 +728,12 @@ def schedule_create(
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     _require_capability("durable_runs")
+    profile_id = body.get("agent_profile_id")
+    if profile_id is not None:
+        try:
+            profile_id = str(uuid.UUID(profile_id))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise HTTPException(422, "agent_profile_id must be a UUID") from exc
     if "workflow" in body and not capability_enabled("automation_workflows_v1"):
         raise HTTPException(422, "capability is disabled: automation_workflows_v1")
     store = service.run_store
@@ -736,7 +742,9 @@ def schedule_create(
     except RunStoreError as exc:
         raise HTTPException(422, str(exc)) from exc
     try:
-        _ensure_schedule_session(schedule)
+        session_id, _ = _ensure_schedule_session(schedule)
+        if profile_id is not None:
+            SessionMeta.update(session_id, agent_profile_id=profile_id, agent_world_profile_id=profile_id)
     except (HTTPException, WorktreeError, OSError) as exc:
         # A schedule without its chat is not an agent; do not leave half of one.
         try:
@@ -801,6 +809,7 @@ def schedule_task_create(
     schedule = service.run_store.schedule(schedule_id)
     if schedule is None:
         raise HTTPException(404, "schedule not found")
+    _, primary_metadata = _ensure_schedule_session(schedule)
     workspace_root = _schedule_workspace(schedule["workspace_root"])
     provider = str(schedule["provider"])
     model = str(schedule["model"])
@@ -820,6 +829,8 @@ def schedule_task_create(
         schedule_id=schedule_id,
         agent_trigger_id=schedule_id,
         agent_kind="schedule",
+        agent_profile_id=primary_metadata.get("agent_profile_id"),
+        agent_world_profile_id=primary_metadata.get("agent_world_profile_id"),
         agent_name=str(schedule["name"]),
     )
     _detach_agent_session(session_id, workspace_root)

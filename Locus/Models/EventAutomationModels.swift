@@ -478,6 +478,8 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
 
     var id: String?
     var creationID = UUID().uuidString.lowercased()
+    var agentProfileID: String?
+    var profileRoute: [String: String]?
     var name = ""
     var connectionID = ""
     var targetSessionID = ""

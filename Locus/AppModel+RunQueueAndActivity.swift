@@ -63,7 +63,18 @@ extension AppModel {
             }
         }
         if let task {
-            presentDraft(ScheduleEditorDraft(task: task))
+            var draft = ScheduleEditorDraft(task: task)
+            draft.agentProfileID = sessions.first {
+                $0.agentTriggerID == task.id && $0.agentKind == "schedule"
+            }?.agentProfileID
+            if let profileID = draft.agentProfileID.flatMap(UUID.init(uuidString:)),
+               let profile = agentProfiles.first(where: { $0.id == profileID }),
+               let route = try? agentProfileProvider(profile) {
+                draft.provider = route.provider
+                draft.providerAccountID = route.accountID
+                draft.model = profile.model
+            }
+            presentDraft(draft)
             return
         }
         var draft = ScheduleEditorDraft()
@@ -101,6 +112,7 @@ extension AppModel {
     }
 
     func presentConfigureAgent(draftText: String) {
+        configureAgentProfileID = sidebarDestination == .agents ? selectedSavedAgentProfile?.id : nil
         configureAgentDraftSuggestion = String(
             draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
         )
@@ -121,6 +133,11 @@ extension AppModel {
         configureAgentPendingScheduleDraft = nil
         configureAgentPendingTriggerEdit = nil
         configureAgentFocusConfigurationID = nil
+        configureAgentProfileID = nil
+        if let profile = pendingSavedAgentEditor {
+            pendingSavedAgentEditor = nil
+            savedAgentEditor = profile
+        }
     }
 
     func mountPendingConfigureAgentEditor() {
@@ -185,6 +202,14 @@ extension AppModel {
         guard FileManager.default.fileExists(atPath: task.workspaceRoot),
               workspaceAccess.activateStored(path: task.workspaceRoot)
         else { return "The workspace bookmark is no longer available" }
+        if let profileID = sessions.first(where: {
+            $0.agentTriggerID == task.id && $0.agentKind == "schedule"
+        })?.savedAgentProfileID {
+            do {
+                _ = try agentWorldProfileDispatch(profileID: profileID, mode: task.mode)
+                return task.runner == .solo ? nil : "This saved agent’s schedule requires its solo runner"
+            } catch { return error.localizedDescription }
+        }
         guard !task.model.isEmpty else { return "The configured model is no longer available" }
         if task.runner == .team {
             guard let id = task.teamID.flatMap(UUID.init(uuidString:)),
@@ -259,6 +284,13 @@ extension AppModel {
                       let workspace = retry.workspaceRoot ?? session.workspacePath
                 else {
                     showToast("The original chat or workspace is unavailable")
+                    return
+                }
+                if savedAgentProfileID(for: sessionID) != nil {
+                    guard restoredQueuedRunIDs.insert(retry.id).inserted else { return }
+                    await dispatchPersistedQueuedRun(retry)
+                    await activity.refreshActivityRuns()
+                    await refreshOrchestrationRuns(select: retry.id)
                     return
                 }
                 guard let worker = await ensureChatWorker(
@@ -494,12 +526,32 @@ extension AppModel {
             showToast("A saved queued run needs its original chat and workspace")
             return
         }
+        let profileDispatch: TaskCapsuleDispatch?
+        do {
+            struct Owner: Decodable { let agent_profile_id: String? }
+            let owner = try await backend.get("/api/sessions/\(sessionID)", as: Owner.self)
+            if let rawProfileID = owner.agent_profile_id {
+                guard let profileID = UUID(uuidString: rawProfileID) else {
+                    throw AgentWorldError.unavailable("This conversation’s saved agent identity is invalid. Review its agent before retrying.")
+                }
+                guard run.runKind != "team", !run.isSoloSwarm else {
+                    throw AgentWorldError.unavailable("This automation belongs to a saved agent. Choose its solo runner before retrying.")
+                }
+                profileDispatch = try agentWorldProfileDispatch(profileID: profileID,
+                    mode: run.manifest?["mode"]?.string.flatMap(WorkMode.canonical) ?? .work)
+            } else { profileDispatch = nil }
+        } catch {
+            restoredQueuedRunIDs.remove(run.id)
+            await markEventRunNeedsAttention(run, message: error.localizedDescription)
+            showToast(error.localizedDescription)
+            return
+        }
         guard let worker = await ensureChatWorker(
             for: sessionID,
             workspaceRoot: workspace,
-            provider: run.manifest?["provider"]?.string,
-            providerAccountID: run.manifest?["provider_account_id"]?.string,
-            model: run.manifest?["model"]?.string
+            provider: profileDispatch?.provider ?? run.manifest?["provider"]?.string,
+            providerAccountID: profileDispatch == nil ? run.manifest?["provider_account_id"]?.string : profileDispatch?.accountID,
+            model: profileDispatch?.profile.model ?? run.manifest?["model"]?.string
         ) else {
             restoredQueuedRunIDs.remove(run.id)
             await markEventRunNeedsAttention(
@@ -545,7 +597,12 @@ extension AppModel {
             return
         }
         do {
-            if run.manifest?["goal_id"] != nil {
+            if let profileDispatch {
+                worker.hasCapsuleProviderOverride = true
+                _ = try await prepareChatWorkerCapsuleRoute(using: worker.service,
+                    capsuleDispatch: profileDispatch, restoringOverride: true, ordinaryProviderBody: [:])
+            }
+            if profileDispatch == nil, run.manifest?["goal_id"] != nil {
                 if let issue = await prepareChatWorkerProvider(
                     using: worker.service,
                     provider: run.manifest?["provider"]?.string,
@@ -575,6 +632,10 @@ extension AppModel {
                 request["agent_config"] = config
             } else if let config = encodedJSONObject(primaryAgentBehavior) {
                 request["agent_config"] = config
+            }
+            if let profileDispatch {
+                request["agent_profile"] = Self.agentWorldProfileBody(profileDispatch.profile)
+                request["agent_config"] = encodedJSONObject(profileDispatch.profile.resolvedBehavior)
             }
             if let goalID = run.manifest?["goal_id"]?.string {
                 request["goal_id"] = goalID

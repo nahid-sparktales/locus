@@ -20,6 +20,58 @@ def runtime(tmp_path):
     return value
 
 
+def test_saved_agent_runtime_uses_profile_route_and_rejects_removed_profile(runtime, monkeypatch):
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from ollama_code.api.runtime import agent_profiles_update
+    from ollama_code.runtime_automation import RuntimeAutomation
+    from ollama_code.sessions import SessionMeta
+
+    profile = {"id": str(uuid.uuid4()), "name": "Bob", "model": "exact-model", "role": "generalist",
+               "instructions": "Review the event", "access_ceiling": "read_only",
+               "timeout_seconds": 120, "token_limit": 8192}
+    monkeypatch.setattr(SessionMeta, "get", lambda _: {"agent_profile_id": profile["id"],
+                                                     "agent_world_profile_id": profile["id"]})
+    runtime.ensure_worker = AsyncMock()
+    queued = []
+    runtime.enqueue = lambda session, command: queued.append(command)
+    runtime.private.set("account:stale", {"provider": "remote", "model": "wrong-model"})
+    request = SimpleNamespace(app=runtime.app)
+    configuration = {"profile": profile, "provider": {"provider": "ollama", "host": "http://127.0.0.1:11434"}}
+    assert agent_profiles_update(request, {"profiles": [configuration]}) == {"ok": True}
+    run = {"id": "run", "session_id": "worker", "workspace_root": "/tmp", "request": "Check quote",
+           "manifest": {"provider": "remote", "provider_account_id": "stale", "model": "wrong-model",
+                        "workflow_outputs": [{"step_id": "quote", "result": "100"}]}}
+    coordinator = RuntimeAutomation(runtime)
+    asyncio.run(coordinator.queue_run(run))
+    assert queued[0]["agent_profile"] == profile
+    assert queued[0]["runtime_configuration"]["/api/provider"]["provider"] == "ollama"
+    assert queued[0]["runtime_configuration"]["/api/config"] == {"model": "exact-model"}
+    assert queued[0]["workflow_outputs"] == run["manifest"]["workflow_outputs"]
+    queued.clear()
+    agent_profiles_update(request, {"profiles": []})
+    asyncio.run(coordinator.queue_run(run))
+    assert not queued
+    assert runtime.store.worker("worker")["state"] == "waiting_for_locus"
+    agent_profiles_update(request, {"profiles": [configuration]})
+    asyncio.run(coordinator.queue_run(run))
+    assert len(queued) == 1
+    queued.clear()
+    agent_profiles_update(request, {"profiles": [{"profile": profile, "unavailable": "Account removed"}]})
+    asyncio.run(coordinator.queue_run(run))
+    assert not queued
+
+
+def test_saved_agent_runtime_profile_snapshot_validates_before_replacing(runtime):
+    from ollama_code.api.runtime import agent_profiles_update
+
+    runtime.private.set("agent-profiles", {"existing": "unchanged"})
+    with pytest.raises(HTTPException):
+        agent_profiles_update(SimpleNamespace(app=runtime.app), {"profiles": [{"profile": {"id": "bad"}}]})
+    assert runtime.private.read()["agent-profiles"] == {"existing": "unchanged"}
+
+
 def test_native_claim_is_single_use_even_after_broker_disconnect(runtime):
     event = {'type': 'browser_action_request', 'request_id': 'click', 'tool': 'browser_click'}
     decision = runtime.store.decision('worker', event)
