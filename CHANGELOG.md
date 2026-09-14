@@ -2,36 +2,63 @@
 
 ## Unreleased
 
+## 3.0.1 — 2026-09-14
+
 ### Added
 
+- Create a saved agent directly from Agent World's native New Agent form,
+  without starting a chat. Existing residents keep their positions and routes
+  when the new agent joins.
+- The Local Line gains detailed island scenery, including Elbaf and Egghead,
+  mountain passages, waterfalls, ocean ripples, reflections, shoreline foam,
+  and curved ship wakes. The original twelve island homes remain stable.
+- Choose among fifteen ship styles, including Mihawk's Coffin Boat, Garp's
+  Battleship, and Marine Patrol. Choices are saved per agent while preserving
+  its conversations, home island, position, and work.
+- A redesigned Residents sidebar shows ship portraits, home islands, status,
+  and New Chat actions. Captain's Quarters adds themed conversation, agent
+  details, tools, and Crew Chat tabs, with an expandable conversation pane.
+- Den Den Dispatch opens the ocean's Activity Center; Outpost has its own
+  communications beacon and Mission Control. Attention and Activity tabs show
+  approvals, input requests, agent status, and recorded transfers.
+- Real transfers can trigger ship rendezvous. Cosmetic ship visits, cannon
+  practice, News Coo birds, and an interactive Laboon animate the world without
+  starting agent work. Working islands light up when their own ships dock.
+- Unavailable agent entries offer Delete Agent and Chats, moving all of the
+  missing profile's chats to recovery together, including archived chats and
+  chats hidden by search. Undo restores the batch with its original ownership.
 - MCP supports Legacy SSE, advanced connection settings, and opt-in OAuth for
-  local HTTP servers. Settings includes full tool/resource/prompt catalogs,
-  access controls, template arguments, previews, and argument completion.
+  configured localhost HTTP servers. The local OAuth option is off by default.
+  Settings includes tool, resource, template, and prompt catalogs, access
+  controls, previews, argument completion, and Add to chat.
 - MCP images reach supported models and chat previews, including delegated
   agents. Long-running tasks appear in the run Inspector, and input forms
   support choices, defaults, multiple selections, and validated values.
-- The Agent page now groups saved agents with their conversations and supports
-  new chats, schedules, event triggers, and price alerts from Manage Agent.
-- Agent World adds The Local Line: twelve ships with their own named islands,
-  map panning, bow-first sailing, side-on docking, and animated island crews.
-  Orbital Locus Outpost uses Locus colors and a mix of people, pandas, and robots.
-- Shared Crew Chat connects the main Agent page and Agent World, selecting
-  relevant or explicitly mentioned members while preserving each saved profile.
-  Captain’s Quarters exposes the normal Locus conversation and agent controls.
-- Ping Ping provides a 3D alert for approvals and input requests, with collapse,
-  hide, and restore controls. Courier boats visualize delivered agent handoffs.
 
 ### Fixed
 
-- MCP connection failures include redacted causes, HTTP status, bounded STDERR,
-  and suggested next steps. Tests report failures accurately, settings edits
-  preserve credentials, and permission changes retain discovered resource links.
-- Agent and settings forms use full-width, left-aligned placeholder inputs;
-  comma-separated event filters preserve unfinished entries while typing.
-- Saved-agent chats support full work modes, goals, task capsules, and controlled
-  delegation while retaining the agent’s model, instructions, and access.
-- Gmail agent polling handles connection responses consistently and saved-agent
-  access defaults agree between setup, chat, and runtime execution.
+- Idle Agent World residents roam freely again. Ships navigate around occupied
+  destinations, and new arrivals avoid existing residents. Reduced-motion
+  support covers the ocean, wildlife, and encounter effects.
+- Removing a saved agent archives its chats and keeps completed runs, preventing
+  leftover entries in the active list. Cleanup protects ongoing work and keeps
+  the open conversation synchronized if an operation fails.
+- Missing resident conversations offer an explicit new-chat recovery action.
+  Connection failures remain retryable without silently replacing the chat.
+- MCP connection failures include redacted causes, HTTP status, bounded command
+  error output, and suggested next steps. Connection tests report failures
+  accurately, settings edits preserve credentials, and permission changes
+  retain discovered resource links.
+- MCP image previews follow their conversation through recovery and forks;
+  task images remain attached to the conversation that owns the task.
+- Run Inspector task errors use readable contrast in light and dark appearances,
+  while preserving wrapping, text selection, and Retry controls.
+
+The updated Agent World package preserves model geometry and decoded texture
+pixels using lossless WebP textures and compressed GLB containers. Install the
+updated Locus app and Agent World package together for the new native controls.
+See `Docs/AgentWorld.md` and `Docs/MCPCompatibility.md` for setup and supported
+behavior.
 
 ## 3.0.0 — 2026-09-13
 
@@ -43,6 +70,16 @@
   persistent project conversation with the same account and permissions.
 - Four animated resident designs, included offline artwork, searchable access,
   and a theme catalog for expanding Agent World.
+- The Agent page now groups saved agents with their conversations and supports
+  new chats, schedules, event triggers, and price alerts from Manage Agent.
+- Agent World adds The Local Line: twelve ships with their own named islands,
+  map panning, bow-first sailing, side-on docking, and animated island crews.
+  Orbital Locus Outpost uses Locus colors and a mix of people, pandas, and robots.
+- Shared Crew Chat connects the main Agent page and Agent World, selecting
+  relevant or explicitly mentioned members while preserving each saved profile.
+  Captain’s Quarters exposes the normal Locus conversation and agent controls.
+- Ping Ping provides a 3D alert for approvals and input requests, with collapse,
+  hide, and restore controls. Courier boats visualize delivered agent handoffs.
 - Claude plan accounts in preview, separate from Claude API accounts, with a
   managed helper, isolated account directories, and resumable conversations.
 - ChatGPT-account support for GPT Image 2 and OpenAI API options for GPT Image
@@ -53,6 +90,12 @@
 
 ### Fixed
 
+- Agent and settings forms use full-width, left-aligned placeholder inputs;
+  comma-separated event filters preserve unfinished entries while typing.
+- Saved-agent chats support full work modes, goals, task capsules, and controlled
+  delegation while retaining the agent’s model, instructions, and access.
+- Gmail agent polling handles connection responses consistently and saved-agent
+  access defaults agree between setup, chat, and runtime execution.
 - Claude plan conversations with saved agents send profile instructions through
   the system channel, preventing duplicate instructions in replayed messages.
 - Local runtime cache refreshes tolerate Finder metadata without failing builds.
