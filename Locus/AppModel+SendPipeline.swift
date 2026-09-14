@@ -37,7 +37,7 @@ extension AppModel {
         let residentProfileID = savedAgentProfileID(for: currentSessionID)
         var residentDispatch: TaskCapsuleDispatch?
         if let residentProfileID {
-            do { residentDispatch = try agentWorldProfileDispatch(profileID: residentProfileID, mode: selectedMode) }
+            do { residentDispatch = try agentWorldProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
             catch { showToast(error.localizedDescription); return }
         }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
@@ -336,6 +336,11 @@ extension AppModel {
                     "execution_environment": dispatchedEnvironment.rawValue,
                     "solo_swarm": dispatchedSoloSwarm,
                 ]
+                if let capsuleDispatch, dispatchedTeam == nil,
+                   let route = try await self.prepareAgentChatQueueRoute(capsuleDispatch, sessionID: dispatchedSessionID) {
+                    queuedBody["agent_chat_route"] = route
+                    queuedBody["mode"] = dispatchedMode.rawValue
+                }
                 if let dispatchedGoalID {
                     guard let goal = await self.goals.flushUserInput(sessionID: dispatchedSessionID),
                           goal.id == dispatchedGoalID, goal.status == .active else {
@@ -694,7 +699,7 @@ extension AppModel {
         if let eventDeliveryID {
             let _: EventDelivery? = try? await backend.post(
                 "/api/event-deliveries/\(eventDeliveryID)/fail",
-                body: ["error": message, "pause_trigger": false],
+                body: ["error": message, "pause_trigger": false, "run_id": runID],
                 as: EventDelivery.self
             )
             eventAutomations.wakeDispatcher()

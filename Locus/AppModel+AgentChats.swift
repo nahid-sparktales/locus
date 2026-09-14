@@ -13,6 +13,172 @@ struct PendingEventTriggerEdit: Equatable {
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
+    /// Only ordinary conversations may override their owner's default route.
+    /// Scheduled/event receiving chats always retain their configured model.
+    func agentChatProfile(_ profile: AgentProfile, sessionID: String) -> AgentProfile {
+        guard sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true,
+              let selection = settings.agentChatModelSelections[sessionID],
+              selection.profileID == profile.id else { return profile }
+        var result = profile
+        result.route = selection.accountID.map(AgentRoute.providerAccount) ?? .localOllama
+        result.model = selection.model
+        return result
+    }
+
+    var modelSelectionLockReason: String? {
+        if !canAcceptTranscriptInput {
+            return "Model selection is unavailable while this task is opening. Wait for the conversation to load."
+        }
+        if isIdentityTask {
+            return "This Identity task uses its original model and account. Start a new Identity task to choose another model."
+        }
+        if let session = sessionCatalog.snapshot.sessionsByID[currentSessionID], session.isAgentEventChat {
+            return "This task uses the model configured for its automation. Edit the agent or schedule to change future runs, or open a new agent chat to choose a model."
+        }
+        if selectedMode == .duo {
+            return "Duo uses the planner and executor selected for this task. Change those agents in the Duo controls."
+        }
+        if taskCapsules.activeStageSessions[currentSessionID] != nil
+            || taskCapsules.pendingPlanningRequest(for: currentSessionID) != nil {
+            return "This task stage uses its saved specialist model. Finish the stage to change the model for ordinary chat messages."
+        }
+        if let profileID = savedAgentProfileID(for: currentSessionID),
+           !agentProfiles.contains(where: { $0.id == profileID }) {
+            return "This chat’s saved agent is unavailable. Restore the agent or start a new chat to choose a model."
+        }
+        return nil
+    }
+
+    /// The route the next owner turn will use, independent of global settings
+    /// and of a different agent selected in the sidebar or inspector.
+    var currentAgentChatProfile: AgentProfile? {
+        guard let id = savedAgentProfileID(for: currentSessionID),
+              let profile = agentProfiles.first(where: { $0.id == id }) else { return nil }
+        return agentChatProfile(profile, sessionID: currentSessionID)
+    }
+
+    /// Fixed task routes are displayed from their own execution snapshot. A
+    /// profile edited after a run must not relabel that run's recorded model.
+    var modelPickerTaskRoute: (model: String, accountID: UUID?, provider: String)? {
+        if let goal = goals.goal(for: currentSessionID), goal.status == .active,
+           let name = goal.execution["model"]?.string {
+            return (name, goal.execution["provider_account_id"]?.string.flatMap(UUID.init(uuidString:)),
+                    goal.execution["provider"]?.string ?? "")
+        }
+        let specialist: AgentProfile?
+        if selectedMode == .duo {
+            specialist = duoTask.map { [.executing, .paused, .completed].contains($0.phase) ? $0.executor : $0.planner }
+                ?? duo.saved.planner
+        } else if let pending = taskCapsules.pendingPlanningRequest(for: currentSessionID) {
+            specialist = capsuleProfiles.first { $0.id.uuidString.caseInsensitiveCompare(pending.recipe.plannerProfileID) == .orderedSame }
+        } else { specialist = nil }
+        if let specialist {
+            let account = providerAccounts.first { $0.id == specialist.route.accountID }
+            return (specialist.model, specialist.route.accountID, account?.kind.backendProvider ?? "ollama")
+        }
+        if isIdentityTask, let identity = taskWorkers[currentSessionID]?.identityProvider {
+            return (identity.model, UUID(uuidString: identity.accountID), identity.provider)
+        }
+        let session = sessionCatalog.snapshot.sessionsByID[currentSessionID]
+        if session?.isAgentEventChat == true {
+            let schedule = session?.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)?.schedule
+            let info = taskWorkers[currentSessionID]?.sessionInfo
+            let name = info?.model ?? session?.model ?? schedule?.model
+            let provider = info?.provider ?? session?.provider ?? schedule?.provider ?? ""
+            if let name {
+                let accountID = schedule.flatMap { $0.model == name && $0.provider == provider ? $0.providerAccountID : nil }
+                    .flatMap(UUID.init(uuidString:))
+                return (name, accountID, provider)
+            }
+        }
+        if taskCapsules.activeStageSessions[currentSessionID] != nil,
+           let info = taskWorkers[currentSessionID]?.sessionInfo {
+            return (info.model, nil, info.provider ?? "")
+        }
+        return nil
+    }
+
+    func taskModelPickerLabel(model: String, accountID: UUID?, provider: String) -> String {
+        if let accountID {
+            return "\(providerAccounts.first { $0.id == accountID }?.shortName ?? "Unavailable account") · \(model)"
+        }
+        let source: String?
+        switch provider {
+        case "chatgpt": source = "ChatGPT"
+        case "claude_plan": source = "Claude plan"
+        case "remote": source = "API"
+        default: source = nil
+        }
+        return source.map { "\($0) · \(model)" } ?? model
+    }
+
+    /// Runtime admission can win the race with the desktop worker or resume
+    /// after relaunch. Persist the same credential-free route with the run;
+    /// provision its exact account privately before making it runnable.
+    func prepareAgentChatQueueRoute(_ dispatch: TaskCapsuleDispatch, sessionID: String) async throws -> [String: Any]? {
+        guard dispatch.profileOnly,
+              sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true else { return nil }
+        if RuntimeInstallation.enabled, persistenceEnabled, !isUITesting {
+            var provider = dispatch.providerBody
+            provider["model"] = dispatch.profile.model
+            if dispatch.provider == "ollama" { provider["host"] = lastOllamaHost }
+            let _: [String: Bool] = try await backend.post("/api/runtime/credentials", body: [
+                "kind": "account", "id": dispatch.accountID ?? "local", "configuration": provider,
+            ], as: [String: Bool].self)
+        }
+        var route: [String: Any] = ["profile_id": dispatch.profile.id.uuidString,
+                                   "provider": dispatch.provider, "model": dispatch.profile.model]
+        if let accountID = dispatch.accountID { route["provider_account_id"] = accountID }
+        return route
+    }
+
+    @discardableResult
+    func selectAgentChatModel(account: ProviderAccount?, model: String) -> Bool {
+        guard let profile = currentAgentChatProfile else { return false }
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return true }
+        var selected = profile
+        selected.route = account.map { .providerAccount($0.id) } ?? .localOllama
+        selected.model = name
+        do { _ = try agentProfileProvider(selected) }
+        catch { showToast(error.localizedDescription); return true }
+        if selected.route != profile.route || selected.model != profile.model { pauseGoalForRouteChange() }
+        settings.agentChatModelSelections[currentSessionID] = AgentChatModelSelection(
+            profileID: profile.id, accountID: account?.id, model: name
+        )
+        persistSettings()
+        showToast("\(name) will be used for your next message in this chat")
+        return true
+    }
+
+    func resetAgentChatModel() {
+        guard modelSelectionLockReason == nil, let profile = currentAgentChatProfile else { return }
+        pauseGoalForRouteChange()
+        settings.agentChatModelSelections.removeValue(forKey: currentSessionID)
+        persistSettings()
+        showToast("This chat will use \(profile.name)’s default model for the next message")
+    }
+
+    func rememberSidebarAgent(_ identity: String) {
+        guard !identity.isEmpty, recentSidebarAgentIDs.first != identity else { return }
+        recentSidebarAgentIDs = [identity] + recentSidebarAgentIDs.filter { $0 != identity }
+    }
+
+    private func rememberSidebarAgent(_ reference: AgentInspectorAgent) {
+        let definition = inspectorAgentDefinition(reference)
+        let ownerID: UUID?
+        if let targetID = definition?.trigger?.targetSessionID,
+           let target = sessionCatalog.snapshot.sessionsByID[targetID] {
+            ownerID = target.savedAgentProfileID
+        } else {
+            let definitions = agentDefinitions
+            let owners = Set(sessions.filter { $0.agentReference(in: definitions) == reference }
+                .compactMap(\.savedAgentProfileID))
+            ownerID = owners.count == 1 ? owners.first : nil
+        }
+        rememberSidebarAgent(ownerID.map { "profile:\($0.uuidString)" } ?? reference.id)
+    }
+
     var agentDefinitions: [AgentDefinition] {
         eventAutomations.triggers.map(AgentDefinition.trigger) + schedule.scheduledTasks.map(AgentDefinition.schedule)
     }
@@ -42,7 +208,15 @@ extension AppModel {
         selectAgent(AgentInspectorAgent(definition))
     }
 
-    func selectAgent(_ reference: AgentInspectorAgent) {
+    func selectAgent(_ reference: AgentInspectorAgent, fromSidebarRow: Bool = false) {
+        if fromSidebarRow {
+            // Legacy unowned chats can keep this automation's own row visible
+            // beside the saved agent that owns its current receiving chat.
+            rememberSidebarAgent(reference.id)
+        } else {
+            rememberSidebarAgent(reference)
+        }
+        savedAgentOverviewID = nil
         selectedSavedAgentID = nil
         let agentID = reference.agentID
         selectedAgentID = agentID
@@ -54,6 +228,7 @@ extension AppModel {
     func inspectAgentChat(_ session: SessionSummary) {
         guard session.isAgentChat else { return }
         if let profileID = session.savedAgentProfileID {
+            rememberSidebarAgent("profile:\(profileID.uuidString)")
             selectedSavedAgentID = profileID
             selectedAgentID = nil
             agentInspector.clearAgentSelection()
@@ -68,6 +243,7 @@ extension AppModel {
             showToast("This saved chat’s agent kind is unavailable. Choose an agent to start a new conversation.")
             return
         }
+        rememberSidebarAgent(reference.id)
         agentInspector.show(.chat(reference, sessionID: session.id))
     }
 

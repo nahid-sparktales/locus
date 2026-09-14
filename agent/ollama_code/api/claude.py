@@ -73,7 +73,8 @@ def models(service: ServiceDependency, account_id: str = Query(...)):
         rows = manager_for(service, account_id).models()
     except CodexAppServerError as error:
         raise HTTPException(503, str(error)) from error
-    return {"status": "signed_in", "models": [
+    return {"status": "signed_in",
+            "catalog_complete": not any(row.get("isFallback") for row in rows), "models": [
         {"id": row["model"], "display_name": row.get("displayName") or row["model"],
          "description": row.get("description", ""), "is_default": bool(row.get("isDefault")),
          "supported_reasoning_efforts": row.get("supportedReasoningEfforts", [])} for row in rows]}

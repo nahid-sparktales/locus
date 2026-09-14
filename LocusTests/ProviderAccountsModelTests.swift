@@ -77,6 +77,45 @@ final class ProviderAccountsModelTests: XCTestCase {
         XCTAssertEqual(deactivatedAccountIDs, [account.id])
     }
 
+    func testIncompleteClaudeCatalogNeverReplacesWorkingSavedModelsWithDefault() async {
+        let account = ProviderAccount(kind: .claudePlan)
+        BackendStub.respond(toPath: "/api/claude/models") { _ in
+            ["status": "signed_in", "catalog_complete": false, "models": [
+                ["id": "default", "display_name": "Default", "description": "", "is_default": true]
+            ]] as [String: Any]
+        }
+        BackendStub.respond(toPath: "/api/claude/account") { _ in
+            ["status": "signed_in", "runtime_available": true]
+        }
+        BackendStub.respond(toPath: "/api/claude/usage") { _ in ["status": "signed_in"] }
+        let model = makeModel()
+        model.providerAccounts = [account]
+        model.accountModels[account.id] = ["opus[1m]", "sonnet"]
+        await model.refreshAccountCatalogs(force: true)
+        XCTAssertEqual(model.accountModels[account.id], ["opus[1m]", "sonnet"])
+        XCTAssertTrue(model.accountStatus[account.id]?.isHealthy == true)
+
+        model.accountModels[account.id] = nil
+        await model.refreshAccountCatalogs(force: true)
+        XCTAssertNil(model.accountModels[account.id], "A fallback is not an authoritative list")
+    }
+
+    func testCompleteClaudeCatalogCanReplaceAnOlderList() async {
+        let account = ProviderAccount(kind: .claudePlan)
+        BackendStub.respond(toPath: "/api/claude/models") { _ in
+            ["status": "signed_in", "catalog_complete": true, "models": [
+                ["id": "sonnet", "display_name": "Sonnet", "description": "", "is_default": true]
+            ]] as [String: Any]
+        }
+        BackendStub.respond(toPath: "/api/claude/account") { _ in ["status": "signed_in", "runtime_available": true] }
+        BackendStub.respond(toPath: "/api/claude/usage") { _ in ["status": "signed_in"] }
+        let model = makeModel()
+        model.providerAccounts = [account]
+        model.accountModels[account.id] = ["old-model"]
+        await model.refreshAccountCatalogs(force: true)
+        XCTAssertEqual(model.accountModels[account.id], ["sonnet"])
+    }
+
     func testCatalogRefreshSkipsWithoutPersistence() async {
         let model = makeModel(persistenceEnabled: false)
         model.providerAccounts = [ProviderAccount(kind: .chatGPT, name: "Plan")]

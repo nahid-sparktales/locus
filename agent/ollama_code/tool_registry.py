@@ -57,9 +57,13 @@ _PARALLEL_SAFE_BUILTIN_TOOLS = {
 
 
 def _base_schemas(access_ceiling: str = "workspace_write") -> list[dict[str, Any]]:
+    # Read-only authority and permission-free execution are separate. A GET
+    # such as web_fetch may still need approval, but it must remain available
+    # to a read-only researcher whose network capability is enabled.
     schemas = [
         schema for schema in TOOL_SCHEMAS
-        if (access_ceiling != "read_only" or schema["function"]["name"] in SAFE_TOOLS)
+        if (access_ceiling != "read_only"
+            or schema["function"]["name"] in SAFE_TOOLS | _READ_ONLY_BUILTIN_TOOLS)
         and (
             capability_enabled("workspace_knowledge")
             or schema["function"]["name"] not in _KNOWLEDGE_TOOLS
@@ -1480,6 +1484,7 @@ class ToolRegistry:
         if (
             self._agent_access_ceiling == "read_only"
             and name not in SAFE_TOOLS
+            and name not in _READ_ONLY_BUILTIN_TOOLS
             and name not in _SAFE_EXTENSION_TOOLS
             and name not in self._mcp_by_qualified
         ):

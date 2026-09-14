@@ -843,12 +843,15 @@ final class AgentOverviewTests: XCTestCase {
         model.sessions = [eventChat, scheduleChat, ambiguous]
         model.currentSessionID = eventChat.id
         model.selectAgent(AgentInspectorAgent(.schedule(scheduled)))
+        XCTAssertEqual(model.recentSidebarAgentIDs, ["schedule:shared"])
         XCTAssertEqual(model.inspectedAgentReference, AgentInspectorAgent(.schedule(scheduled)))
         XCTAssertEqual(model.agentSession(for: "shared", in: model.sessionCatalog.snapshot)?.id, scheduleChat.id)
         XCTAssertNil(model.agentDefinition(for: "shared"))
         model.inspectAgentChat(eventChat)
+        XCTAssertEqual(model.recentSidebarAgentIDs, ["event:shared", "schedule:shared"])
         XCTAssertEqual(model.agentInspector.context, .chat(AgentInspectorAgent(.trigger(event)), sessionID: eventChat.id))
         model.inspectAgentChat(ambiguous)
+        XCTAssertEqual(model.recentSidebarAgentIDs, ["event:shared", "schedule:shared"])
         XCTAssertEqual(model.agentInspector.context, .fleet)
         XCTAssertNil(model.agentInspector.selectedAgent)
     }

@@ -182,6 +182,14 @@ enum NotesScope: String, CaseIterable, Identifiable {
     }
 }
 
+/// A chat's explicit route contains account references, never credentials.
+/// The owner ID prevents an old preference from being applied to a new owner.
+struct AgentChatModelSelection: Codable, Hashable {
+    let profileID: UUID
+    let accountID: UUID?
+    let model: String
+}
+
 struct AppSettings: Codable, Hashable {
     var backendURL = "http://127.0.0.1:8791"
     var backendRoot = NSString(string: "~/Documents/locus/agent").expandingTildeInPath
@@ -264,6 +272,7 @@ struct AppSettings: Codable, Hashable {
     /// so disabling the router has a deterministic route to restore.
     var modelRouterFallbackAccountID: String?
     var modelRouterFallbackModel = ""
+    var agentChatModelSelections: [String: AgentChatModelSelection] = [:]
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// Preferred width of the conversations/workspaces sidebar. Layout may
     /// temporarily render it narrower in a compact window without overwriting
@@ -844,6 +853,9 @@ struct AppSettings: Codable, Hashable {
         modelRouterFallbackModel = try container.decodeIfPresent(
             String.self, forKey: .modelRouterFallbackModel
         ) ?? defaults.modelRouterFallbackModel
+        agentChatModelSelections = try container.decodeIfPresent(
+            [String: AgentChatModelSelection].self, forKey: .agentChatModelSelections
+        ) ?? defaults.agentChatModelSelections
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(

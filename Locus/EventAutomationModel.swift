@@ -185,10 +185,9 @@ final class EventAutomationModel: ObservableObject {
         }
     }
 
-    /// A failed dispatch disables the trigger in the backend and records why.
-    /// Nothing restarts it, so a person who is not looking at the Agent panel
-    /// would never learn their agent stopped. Schedules already announce this;
-    /// event agents now do too.
+    /// Structural configuration failures can stop automatic starts. Announce
+    /// that transition even when the Agent panel is closed. Transient account
+    /// and worker failures affect one attempt and leave the trigger enabled.
     private func announceAgentsStoppedByLocus(
         previous: [EventTrigger],
         current: [EventTrigger]
@@ -274,7 +273,8 @@ final class EventAutomationModel: ObservableObject {
         let instruction = (workflow.firstAgent?.instructionTemplate ?? draft.instruction)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !instruction.isEmpty, !draft.connectionID.isEmpty,
-              !draft.targetSessionID.isEmpty else {
+              !draft.targetSessionID.isEmpty,
+              draft.targetSessionID != EventTriggerEditorDraft.newOwnedAgentChat else {
             showMessage?("Add a name, connection, destination, and instruction.")
             return false
         }
@@ -369,6 +369,10 @@ final class EventAutomationModel: ObservableObject {
             "action_connection_ids": actions,
             "enabled": draft.enabled,
         ]
+        if let profileID = draft.agentProfileID {
+            body["agent_profile_id"] = profileID
+            if let route = draft.profileRoute { body["profile_route"] = route }
+        }
         if supportsWorkflows(), let encodedWorkflow = encodedJSONObject(workflow) {
             body["workflow"] = encodedWorkflow
             body["runner"] = draft.runner.rawValue
@@ -388,6 +392,7 @@ final class EventAutomationModel: ObservableObject {
                 )
             }
             replace(saved)
+            if draft.agentProfileID != nil { await refreshSessions?() }
             runtimeFingerprint = ""
             restartNativeRuntimeIfNeeded()
             editorDraft = nil

@@ -66,10 +66,13 @@ final class TaskCapsuleModelTests: XCTestCase {
         return model
     }
 
-    private func registerBackend(capsules: [TaskCapsule] = []) throws {
+    private func registerBackend(capsules: [TaskCapsule] = [], onListRequest: (() -> Void)? = nil) throws {
         let record = try JSONSerialization.jsonObject(with: JSONEncoder().encode(capsule))
         let records = try JSONSerialization.jsonObject(with: JSONEncoder().encode(capsules))
-        BackendStub.respond(toPath: "/api/capsules") { _ in ["capsule": record, "capsules": records] }
+        BackendStub.respond(toPath: "/api/capsules") { _ in
+            onListRequest?()
+            return ["capsule": record, "capsules": records]
+        }
     }
 
     func testConstructionAndConfigurationAreInert() {
@@ -205,7 +208,12 @@ final class TaskCapsuleModelTests: XCTestCase {
     }
 
     func testComposerPrefillPreservesUnfinishedCapsulesAndResetsAcrossWorkspaces() async throws {
-        try registerBackend(capsules: [capsule])
+        let refreshRequests = expectation(description: "All capsule opens have issued their refresh requests")
+        // Four opens enqueue their own refreshes, in addition to the two
+        // refreshes explicitly awaited below. Awaiting only those two leaves
+        // queued requests able to cross the next test's BackendStub.reset().
+        refreshRequests.expectedFulfillmentCount = 6
+        try registerBackend(capsules: [capsule], onListRequest: { refreshRequests.fulfill() })
         let model = makeModel()
         model.open(prefillingRequest: "  Current chat draft  ")
         await model.refresh()
@@ -225,6 +233,9 @@ final class TaskCapsuleModelTests: XCTestCase {
         XCTAssertEqual(model.draftRequest, "New workspace request")
         XCTAssertTrue(planningRequests.isEmpty)
         XCTAssertTrue(executionRequests.isEmpty)
+        // The workspace switch has cleared selectedID, so none of these
+        // list responses can enqueue a subsequent capsule-detail request.
+        await fulfillment(of: [refreshRequests], timeout: 2)
     }
 
     func testReadOnlyProfileCannotBecomeImplementationDefault() async throws {
@@ -610,7 +621,13 @@ extension TaskCapsuleModelTests {
         XCTAssertEqual(task.recovery_history?.first?["reason"]?.string, "Check interrupted")
     }
 
-    func testCapsuleAndTaskDetailSheetsWaitForEachOtherToDismiss() {
+    func testCapsuleAndTaskDetailSheetsWaitForEachOtherToDismiss() async {
+        let recipeRefresh = expectation(description: "Opening the recipe has issued its refresh request")
+        BackendStub.respond(toPath: "/api/capsules") { _ in
+            recipeRefresh.fulfill()
+            // No saved capsule means this refresh cannot launch a detail load.
+            return ["capsules": []]
+        }
         let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
         app.taskCapsules.isPresented = true
         app.showTaskDetail(sessionID: "saved-session")
@@ -626,6 +643,7 @@ extension TaskCapsuleModelTests {
         app.completeTaskDetailDismissal()
         XCTAssertTrue(app.taskCapsules.isPresented)
         XCTAssertNil(app.taskRecipeAfterDetailDismissal)
+        await fulfillment(of: [recipeRefresh], timeout: 2)
         XCTAssertTrue(BackendStub.requests.allSatisfy { $0.httpMethod == "GET" })
     }
 

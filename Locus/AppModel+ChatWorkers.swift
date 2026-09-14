@@ -554,6 +554,7 @@ extension AppModel {
         runtime: ChatWorkerRuntime
     ) {
         guard let type = event["type"] as? String else { return }
+        recordActivityCompletion(event, sessionID: runtime.sessionID, runtime: runtime)
         outputsLibrary.recordToolEffects(
             event, workspace: runtime.workspacePath, sessionID: runtime.sessionID,
             runID: (event["run_id"] as? String) ?? runtime.reservedRunID

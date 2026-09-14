@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -347,10 +348,114 @@ def test_failure_retry_retains_outputs_and_warns_about_local_effects(tmp_path) -
     )
     assert failed["execution"]["state"] == "failed"
     assert store.attention_items()[0]["kind"] == "workflow_failure"
+    # Failure callbacks and worker final state can arrive separately. Do not
+    # let Retry overlap the worker until its durable run has stopped.
+    with pytest.raises(RunStoreError, match="busy"):
+        store.retry_automation_step(execution["id"])
+    store.set_state("run-1", "failed")
     retried = store.retry_automation_step(execution["id"])
     assert retried["action"] == "run_agent"
     assert "does not undo local files or commands" in retried["warning"]
     assert retried["execution"]["context"]["steps"] == {}
+
+
+def test_failed_workflow_retry_acquires_one_session_lease_atomically(tmp_path) -> None:
+    path = tmp_path / "runs.sqlite3"
+    first_store, second_store = RunStore(path), RunStore(path)
+    executions = []
+    for occurrence in ("mail-1", "mail-2"):
+        execution, _ = first_store.create_automation_execution(
+            automation_kind="event", automation_id="mail", occurrence_id=occurrence,
+            session_id="agent-chat", workflow=implicit_workflow("Read mail", "work"),
+            trigger={}, settings={},
+        )
+        first_store.advance_automation_execution(execution["id"])
+        first_store.fail_automation_step(execution["id"], "account unavailable")
+        executions.append(execution["id"])
+
+    def attempt(store, execution_id):
+        try:
+            return store.retry_automation_step(execution_id)["action"]
+        except RunStoreError as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        attempts = [pool.submit(attempt, store, execution_id)
+                    for store, execution_id in zip((first_store, second_store), executions, strict=True)]
+        results = [result.result() for result in attempts]
+
+    assert results.count("run_agent") == 1
+    assert sum("busy" in result for result in results) == 1
+    assert sorted(first_store.automation_execution(value)["state"] for value in executions) == [
+        "awaiting_run", "failed",
+    ]
+
+
+def test_invalid_workflow_retry_does_not_strand_a_new_lease(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.sqlite3")
+    execution, _ = store.create_automation_execution(
+        automation_kind="event", automation_id="mail", occurrence_id="mail-1",
+        session_id="agent-chat", workflow=workflow(), trigger={}, settings={},
+    )
+    assert store.advance_automation_execution(execution["id"])["action"] == "failed"
+
+    with pytest.raises(RunStoreError, match="no value is available"):
+        store.retry_automation_step(execution["id"])
+
+    assert store.automation_execution(execution["id"])["state"] == "failed"
+    following, _ = store.create_automation_execution(
+        automation_kind="event", automation_id="mail", occurrence_id="mail-2",
+        session_id="agent-chat", workflow=implicit_workflow("Read mail", "work"),
+        trigger={}, settings={},
+    )
+    assert following["state"] == "advancing"
+
+
+@pytest.mark.parametrize("run_state,accepted,should_recover", [
+    ("cancelled", False, True),
+    ("interrupted", False, True),
+    ("queued", False, False),
+    ("dispatching", False, False),
+    ("cancelled", True, False),
+])
+def test_restart_recovers_only_proven_stopped_workflow_handoffs(
+    tmp_path, run_state, accepted, should_recover,
+) -> None:
+    path = tmp_path / "runs.sqlite3"
+    store = RunStore(path)
+    execution, _ = store.create_automation_execution(
+        automation_kind="event", automation_id="mail", occurrence_id="mail-1",
+        session_id="agent-chat", workflow=implicit_workflow("Read mail", "work"),
+        trigger={}, settings={},
+    )
+    action = store.advance_automation_execution(execution["id"])
+    queue_and_bind(store, execution["id"], action, "handoff-run")
+    if accepted:
+        store.append_event("handoff-run", {"type": "message_start"})
+    store.set_state("handoff-run", run_state)
+
+    recovered = RunStore(path)
+    result = recovered.automation_execution(execution["id"])
+
+    assert result["state"] == ("failed" if should_recover else "running")
+    assert result["attempts"][0]["state"] == ("failed" if should_recover else "queued")
+    if should_recover:
+        assert any(item["kind"] == "workflow_failure" for item in recovered.attention_items())
+        following, _ = recovered.create_automation_execution(
+            automation_kind="event", automation_id="mail", occurrence_id="mail-2",
+            session_id="agent-chat", workflow=workflow(), trigger={}, settings={},
+        )
+        assert following["state"] == "advancing"
+        with pytest.raises(RunStoreError, match="busy"):
+            recovered.retry_automation_step(execution["id"])
+        recovered.cancel_automation_execution(following["id"])
+        assert recovered.retry_automation_step(execution["id"])["action"] == "run_agent"
+    else:
+        with pytest.raises(RunStoreError, match="earlier workflow"):
+            recovered.create_automation_execution(
+                automation_kind="event", automation_id="mail", occurrence_id="mail-2",
+                session_id="agent-chat", workflow=workflow(), trigger={}, settings={},
+            )
 
 
 def test_connector_receipt_is_idempotent_and_keeps_first_result(tmp_path) -> None:

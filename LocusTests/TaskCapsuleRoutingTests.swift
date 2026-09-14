@@ -145,6 +145,167 @@ final class TaskCapsuleRoutingTests: XCTestCase {
         XCTAssertNoBackendTraffic()
     }
 
+    func testAgentChatPickerShowsItsOwnerInsteadOfTheGlobalProvider() throws {
+        let (model, profile) = agentChat()
+        let globalAccount = ProviderAccount(kind: .chatGPT, name: "Other chat", preferredModel: "gpt-5.6-sol")
+        model.providerAccounts = [globalAccount]
+        model.settings.activeAccountID = globalAccount.id.uuidString
+        model.models = [ModelInfo(name: "gpt-5.6-sol", size: 0, parameterSize: "", contextLength: 0)]
+
+        XCTAssertEqual(model.modelPickerLabel, profile.model)
+        XCTAssertTrue(model.isCurrentRoute(account: nil, model: profile.model))
+        XCTAssertFalse(model.isCurrentRoute(account: globalAccount, model: "gpt-5.6-sol"))
+        XCTAssertNil(model.modelSelectionLockReason)
+        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                         sessionID: "agent-chat").profile.model, profile.model)
+    }
+
+    func testAgentChatSelectionChangesTheWorkerProviderAndKeepsAgentIdentity() async throws {
+        registerProviderResponse()
+        let (model, profile) = agentChat()
+        let account = ProviderAccount(kind: .chatGPT, name: "Selected", preferredModel: "gpt-5.6-sol")
+        model.providerAccounts = [account]
+
+        model.selectModel(account: account, model: "gpt-5.6-sol")
+        let dispatch = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        _ = try await model.prepareChatWorkerCapsuleRoute(using: makeService(port: 10),
+            capsuleDispatch: dispatch, restoringOverride: true, ordinaryProviderBody: [:])
+
+        let request = try XCTUnwrap(BackendStub.requests.first)
+        let body = try requestBody(request)
+        XCTAssertEqual(BackendStub.requests.count, 1)
+        XCTAssertEqual(request.url?.port, 10, "Only this conversation's worker receives the route")
+        XCTAssertEqual(body["provider"] as? String, "chatgpt")
+        XCTAssertEqual(body["account_id"] as? String, account.id.uuidString)
+        XCTAssertEqual(body["model"] as? String, "gpt-5.6-sol")
+        XCTAssertEqual(dispatch.profile.id, profile.id)
+        XCTAssertEqual(dispatch.profile.instructions, profile.instructions)
+        XCTAssertEqual(dispatch.profile.accessCeiling, profile.accessCeiling)
+        XCTAssertEqual(model.agentProfiles.first, profile, "The saved agent remains the default for its other chats")
+        XCTAssertNil(model.settings.activeAccountID)
+        XCTAssertEqual(model.modelPickerLabel, "Selected · gpt-5.6-sol")
+        XCTAssertTrue(model.isCurrentRoute(account: account, model: "gpt-5.6-sol"))
+    }
+
+    func testAgentChatLocalSelectionSurvivesSettingsRestoreAndSwitchingChats() async throws {
+        registerProviderResponse()
+        BackendStub.respond(toPath: "/api/config") { _ in [:] }
+        let (model, profile) = agentChat()
+        model.selectModel(account: nil, model: "chat-local:14b")
+        let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(model.settings))
+        let (reopened, _) = agentChat(profile: profile)
+        reopened.settings = restored
+        let dispatch = try reopened.agentWorldProfileDispatch(profileID: profile.id, mode: .ask, sessionID: "agent-chat")
+        _ = try await reopened.prepareChatWorkerCapsuleRoute(using: makeService(port: 10),
+            capsuleDispatch: dispatch, restoringOverride: true, ordinaryProviderBody: [:])
+        XCTAssertEqual(BackendStub.requestPaths, ["/api/provider", "/api/config"])
+        XCTAssertEqual(try requestBody(BackendStub.requests[1])["model"] as? String, "chat-local:14b")
+        XCTAssertEqual(reopened.modelPickerLabel, "chat-local:14b")
+        XCTAssertEqual(try reopened.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                            sessionID: "another-chat").profile.model, profile.model)
+        reopened.installTranscriptSession("another-chat", blocks: [])
+        XCTAssertNil(reopened.currentAgentChatProfile)
+        reopened.installTranscriptSession("agent-chat", blocks: [])
+        XCTAssertEqual(reopened.modelPickerLabel, "chat-local:14b")
+        reopened.resetAgentChatModel()
+        XCTAssertEqual(reopened.modelPickerLabel, profile.model)
+        XCTAssertTrue(reopened.settings.agentChatModelSelections.isEmpty)
+        XCTAssertTrue(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).agentChatModelSelections.isEmpty)
+    }
+
+    func testSelectionDuringAgentTurnAppliesToNextDispatchWithoutRetargetingCapturedTurn() throws {
+        let (model, profile) = agentChat()
+        let submitted = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        model.isBusy = true
+        model.selectModel(account: nil, model: "next-model")
+
+        XCTAssertEqual(submitted.profile.model, profile.model)
+        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                         sessionID: "agent-chat").profile.model, "next-model")
+        XCTAssertNil(model.pendingProviderSwitch, "A per-chat choice must not later switch whichever global chat is open")
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testQueuedAgentTurnRetainsItsModelAfterAnotherPickerChoice() async throws {
+        let (model, profile) = agentChat()
+        model.selectModel(account: nil, model: "submitted-model")
+        let submitted = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        let prepared = try await model.prepareAgentChatQueueRoute(submitted, sessionID: "agent-chat")
+        let snapshot = try XCTUnwrap(prepared)
+        let route = try JSONDecoder().decode([String: JSONValue].self, from: JSONSerialization.data(withJSONObject: snapshot))
+        model.selectModel(account: nil, model: "next-model")
+
+        let restored = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                          sessionID: "agent-chat", queuedRoute: route)
+        XCTAssertEqual(restored.profile.model, "submitted-model")
+        XCTAssertEqual(Set(snapshot.keys), ["profile_id", "provider", "model"])
+        XCTAssertEqual(model.modelPickerLabel, "next-model")
+        var wrongOwner = route
+        wrongOwner["profile_id"] = .string(UUID().uuidString)
+        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                                sessionID: "agent-chat", queuedRoute: wrongOwner))
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testAutomationTaskLocksSelectionAndIgnoresEarlierChatOverride() throws {
+        let (model, profile) = agentChat(primary: true)
+        model.settings.agentChatModelSelections["agent-chat"] = AgentChatModelSelection(
+            profileID: profile.id, accountID: nil, model: "earlier-side-chat-model")
+        model.selectModel(account: nil, model: "must-not-select")
+        model.selectModel("must-not-select-either")
+
+        XCTAssertTrue(model.modelSelectionLockReason?.contains("automation") == true)
+        XCTAssertEqual(model.modelPickerLabel, profile.model)
+        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                         sessionID: "agent-chat").profile.model, profile.model)
+        XCTAssertEqual(model.settings.agentChatModelSelections["agent-chat"]?.model, "earlier-side-chat-model")
+        XCTAssertNil(model.settings.activeAccountID)
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testAgentChatRouteNeverFallsBackAfterSelectedAccountIsRemoved() throws {
+        let (model, profile) = agentChat()
+        let account = ProviderAccount(kind: .chatGPT, name: "Selected", preferredModel: "gpt-5.6-sol")
+        model.providerAccounts = [account]
+        model.selectModel(account: account, model: "gpt-5.6-sol")
+        model.providerAccounts = []
+
+        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat"))
+        XCTAssertEqual(model.modelPickerLabel, "Unavailable account · gpt-5.6-sol")
+        model.selectModel("same-source-change")
+        XCTAssertEqual(model.settings.agentChatModelSelections["agent-chat"]?.accountID, account.id)
+        let otherOwner = AgentProfile(name: "Other", model: "other-default")
+        XCTAssertEqual(model.agentChatProfile(otherOwner, sessionID: "agent-chat"), otherOwner)
+        model.selectModel(account: nil, model: "local-recovery")
+        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+                                                         sessionID: "agent-chat").profile.model, "local-recovery")
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testLockedTaskShowsItsRecordedModelAfterTheAgentDefaultChanges() {
+        let (model, profile) = agentChat(primary: true)
+        model.sessions = [SessionSummary(id: "agent-chat", name: "Finished task", preview: "", mtime: 1, size: 0,
+            agentProfileID: profile.id.uuidString, agentPrimary: true, model: "task-model", provider: "ollama")]
+
+        XCTAssertNotNil(model.modelSelectionLockReason)
+        XCTAssertEqual(model.modelPickerLabel, "task-model")
+        XCTAssertTrue(model.isCurrentRoute(account: nil, model: "task-model"))
+        XCTAssertFalse(model.isCurrentRoute(account: nil, model: profile.model))
+        model.selectModel(account: nil, model: "another-model")
+        XCTAssertTrue(model.settings.agentChatModelSelections.isEmpty)
+        XCTAssertNoBackendTraffic()
+    }
+
+    private func agentChat(profile: AgentProfile? = nil, primary: Bool = false) -> (AppModel, AgentProfile) {
+        let profile = profile ?? AgentProfile(name: "Jinbei", model: "owner-default", instructions: "Keep my instructions")
+        let model = AppModel(startImmediately: false, backendOverride: makeService(port: 9))
+        model.agentProfiles = [profile]
+        model.sessions = [SessionSummary(id: "agent-chat", name: "Agent chat", preview: "", mtime: 1, size: 0,
+            agentProfileID: profile.id.uuidString, agentPrimary: primary)]
+        model.installTranscriptSession("agent-chat", blocks: [])
+        return (model, profile)
+    }
+
     func testEveryGenericCapsuleRecoveryOpensTheSavedPlanWithoutChangingWorkspace() async throws {
         let recoveryRefreshes = expectation(description: "Every recovery action refreshes its saved capsules")
         BackendStub.respond(toPath: "/api/capsules") { _ in

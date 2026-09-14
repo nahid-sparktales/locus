@@ -72,6 +72,60 @@ def test_saved_agent_runtime_profile_snapshot_validates_before_replacing(runtime
     assert runtime.private.read()["agent-profiles"] == {"existing": "unchanged"}
 
 
+@pytest.mark.parametrize(("run_kind", "runner", "adaptive", "accepted"), [
+    ("solo", "solo", True, True),
+    ("solo", "solo", False, True),
+    ("solo", "solo_swarm", True, True),  # Legacy spelling of the Solo runner.
+    ("solo", "team", False, False),
+    ("team", "solo", False, False),
+    ("team", "team", True, False),
+])
+def test_headless_saved_agent_schedule_checks_runner_not_delegation_marker(
+    runtime, monkeypatch, run_kind, runner, adaptive, accepted,
+):
+    import uuid
+    from unittest.mock import AsyncMock
+
+    from ollama_code.api.runtime import agent_profiles_update
+    from ollama_code.runtime_automation import RuntimeAutomation
+    from ollama_code.sessions import SessionMeta
+
+    profile = {"id": str(uuid.uuid4()), "name": "Weather reader", "model": "default",
+               "role": "generalist", "access_ceiling": "read_only",
+               "behavior": {"capability_policy": {"network": True}}}
+    provider = {"provider": "claude_plan", "account_id": "selected-account"}
+    agent_profiles_update(SimpleNamespace(app=runtime.app), {
+        "profiles": [{"profile": profile, "provider": provider}],
+    })
+    monkeypatch.setattr(SessionMeta, "get", lambda _: {"agent_world_profile_id": profile["id"]})
+    runtime.ensure_worker = AsyncMock()
+    # Exercise the durable background admission queue, with no native app or
+    # worker/model execution. This is the manifest emitted for Solo schedules.
+    assert not runtime.controller_seen
+    runtime.store.state("worker", "waiting_for_locus", "Previously rejected")
+    run = {"id": "scheduled-run", "session_id": "worker", "workspace_root": "/tmp",
+           "request": "Get the current temperature", "run_kind": run_kind,
+           "manifest": {"scheduled": True, "schedule_id": "schedule", "mode": "work",
+                        "runner": runner, "solo_swarm": adaptive, "provider": "claude_plan",
+                        "model": "stale-model", "provider_account_id": "stale-account"}}
+    asyncio.run(RuntimeAutomation(runtime).queue_run(run, keep_running=True))
+    runtime.ensure_worker.assert_awaited_once_with("worker", "/tmp", keep_running=True)
+    commands = runtime.store.commands("worker")
+    assert len(commands) == int(accepted)
+    if not accepted:
+        worker = runtime.store.worker("worker")
+        assert worker["state"] == "waiting_for_locus"
+        assert "requires its solo runner" in worker["waiting_reason"]
+        return
+    command = runtime.private.read()["command:scheduled-run"]
+    assert command["agent_profile"] == profile
+    assert command["runtime_configuration"]["/api/provider"] == provider
+    assert command["runtime_configuration"]["/api/config"] == {"model": "default"}
+    assert "team" not in command
+    assert command.get("solo_swarm") == ({"enabled": True} if adaptive else None)
+    assert runtime.store.worker("worker")["state"] == "idle"
+
+
 def test_native_claim_is_single_use_even_after_broker_disconnect(runtime):
     event = {'type': 'browser_action_request', 'request_id': 'click', 'tool': 'browser_click'}
     decision = runtime.store.decision('worker', event)

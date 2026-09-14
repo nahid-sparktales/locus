@@ -4,6 +4,285 @@ import XCTest
 
 final class SavedAgentTests: XCTestCase {
     @MainActor
+    func testOpeningOwnedAutomationPromotesTheVisibleSavedAgent() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let eventOwner = AgentProfile(name: "Alpha", model: "fixture")
+        let scheduleOwner = AgentProfile(name: "Zulu", model: "fixture")
+        model.agentProfiles = [eventOwner, scheduleOwner]
+        let event = EventTrigger(id: "shared", name: "Inbox", connectionID: "gmail",
+            targetSessionID: "event-chat", instruction: "Review messages", mode: .work,
+            triggerKind: .event, filters: EventTriggerFilters(), runtimeState: PriceTriggerState(), actionConnectionIDs: [],
+            enabled: true, createdAt: 1, updatedAt: 1)
+        let schedule = ScheduledTask(id: "shared", name: "Digest", prompt: "Review messages",
+            workspaceRoot: "/tmp", mode: .work, executionEnvironment: .local, runner: .solo,
+            provider: "ollama", model: "fixture", timezone: "UTC",
+            rule: ScheduleRule(kind: .daily, hour: 9, minute: 0), enabled: true, createdAt: 1, updatedAt: 1)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [event], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [schedule])
+        model.sessions = [
+            SessionSummary(id: "event-chat", name: "event-chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentProfileID: eventOwner.id.uuidString, agentKind: "event"),
+            SessionSummary(id: "schedule-chat", name: "schedule-chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentProfileID: scheduleOwner.id.uuidString, agentKind: "schedule"),
+        ]
+
+        model.selectAgent(AgentInspectorAgent(.trigger(event)))
+        model.selectAgent(AgentInspectorAgent(.schedule(schedule)))
+
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(scheduleOwner.id.uuidString)", "profile:\(eventOwner.id.uuidString)",
+        ])
+        let groups = AgentSidebarCatalog.groups(definitions: model.agentDefinitions, sessions: model.sessions,
+            query: "", showArchived: false, runningSessionIDs: [], profiles: model.agentProfiles,
+            recentAgentIDs: model.recentSidebarAgentIDs)
+        XCTAssertEqual(groups.map(\.profileID), [scheduleOwner.id, eventOwner.id])
+        XCTAssertEqual(model.agentInspector.context, .agent(AgentInspectorAgent(.schedule(schedule))))
+    }
+
+    @MainActor
+    func testMixedOwnershipRecencyFollowsTheOpenedSidebarRowOrChat() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let eventOwner = AgentProfile(name: "Event owner", model: "fixture")
+        let scheduleOwner = AgentProfile(name: "Schedule owner", model: "fixture")
+        model.agentProfiles = [eventOwner, scheduleOwner]
+        let event = EventTrigger(id: "shared", name: "Inbox", connectionID: "gmail",
+            targetSessionID: "owned-event", instruction: "Review messages", mode: .work,
+            triggerKind: .event, filters: EventTriggerFilters(), runtimeState: PriceTriggerState(), actionConnectionIDs: [],
+            enabled: true, createdAt: 1, updatedAt: 1)
+        let schedule = ScheduledTask(id: "shared", name: "Digest", prompt: "Review messages",
+            workspaceRoot: "/tmp", mode: .work, executionEnvironment: .local, runner: .solo,
+            provider: "ollama", model: "fixture", timezone: "UTC",
+            rule: ScheduleRule(kind: .daily, hour: 9, minute: 0), enabled: true, createdAt: 1, updatedAt: 1)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [event], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [schedule])
+        let cases: [(AgentInspectorAgent, AgentProfile, SessionSummary, SessionSummary)] = [
+            (AgentInspectorAgent(.trigger(event)), eventOwner,
+             SessionSummary(id: "legacy-event", name: "Earlier event chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentKind: "event"),
+             SessionSummary(id: "owned-event", name: "Current event chat", preview: "", mtime: 2, size: 0,
+                agentTriggerID: "shared", agentProfileID: eventOwner.id.uuidString, agentKind: "event")),
+            (AgentInspectorAgent(.schedule(schedule)), scheduleOwner,
+             SessionSummary(id: "legacy-schedule", name: "Earlier schedule chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentKind: "schedule"),
+             SessionSummary(id: "owned-schedule", name: "Current schedule chat", preview: "", mtime: 2, size: 0,
+                agentTriggerID: "shared", agentProfileID: scheduleOwner.id.uuidString, agentKind: "schedule")),
+        ]
+        model.sessions = cases.flatMap { [$0.2, $0.3] }
+
+        func groups() -> [AgentSidebarGroupModel] {
+            AgentSidebarCatalog.groups(definitions: model.agentDefinitions, sessions: model.sessions,
+                query: "", showArchived: false, runningSessionIDs: [], profiles: model.agentProfiles,
+                recentAgentIDs: model.recentSidebarAgentIDs)
+        }
+        XCTAssertEqual(groups().count, 4, "Retained unowned chats keep their standalone automation rows")
+
+        for (reference, owner, legacyChat, ownedChat) in cases {
+            let ownerIdentity = "profile:\(owner.id.uuidString)"
+            model.selectAgent(reference)
+            XCTAssertEqual(groups().first?.id, ownerIdentity,
+                "Opening an owned automation's configuration still promotes its saved agent")
+
+            model.selectAgent(reference, fromSidebarRow: true)
+            XCTAssertEqual(groups().first?.id, reference.id)
+            XCTAssertEqual(model.agentInspector.context, .agent(reference))
+
+            model.inspectAgentChat(ownedChat)
+            XCTAssertEqual(groups().first?.id, ownerIdentity)
+            model.inspectAgentChat(legacyChat)
+            XCTAssertEqual(groups().first?.id, reference.id,
+                "Opening a retained legacy chat promotes the row containing that chat")
+            XCTAssertEqual(model.agentInspector.context, .chat(reference, sessionID: legacyChat.id))
+        }
+        XCTAssertEqual(Set(model.recentSidebarAgentIDs).count, 4,
+            "Event and schedule identities must remain distinct even when their storage IDs match")
+    }
+
+    @MainActor
+    func testSelectingAgentsPromotesTheLatestSelectionAndKeepsEarlierVisitOrder() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let alpha = AgentProfile(name: "Alpha", model: "fixture")
+        let bravo = AgentProfile(name: "Bravo", model: "fixture")
+        let charlie = AgentProfile(name: "Charlie", model: "fixture")
+        model.agentProfiles = [alpha, bravo, charlie]
+
+        model.selectSavedAgent(charlie)
+        model.selectSavedAgent(bravo)
+        model.selectSavedAgent(charlie)
+        model.selectSavedAgent(charlie)
+
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(charlie.id.uuidString)", "profile:\(bravo.id.uuidString)",
+        ])
+        let groups = AgentSidebarCatalog.groups(
+            definitions: [], sessions: [], query: "", showArchived: false, runningSessionIDs: [],
+            profiles: model.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs
+        )
+        XCTAssertEqual(groups.map(\.profileID), [charlie.id, bravo.id, alpha.id])
+    }
+
+    @MainActor
+    func testOpeningAnAgentChatPromotesItsOwnerAndRejectsRemovedAgentSelections() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let first = AgentProfile(name: "First", model: "fixture")
+        let second = AgentProfile(name: "Second", model: "fixture")
+        model.agentProfiles = [first, second]
+        model.selectSavedAgent(first)
+
+        model.inspectAgentChat(cleanupSession("second-chat", owner: second.id))
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(second.id.uuidString)", "profile:\(first.id.uuidString)",
+        ])
+
+        model.agentProfiles = [second]
+        model.selectSavedAgent(first)
+        XCTAssertEqual(model.recentSidebarAgentIDs.first, "profile:\(second.id.uuidString)")
+    }
+
+    @MainActor
+    func testSelectingOverviewKeepsCurrentChatDraftModelAndRunningTask() async {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "agent-model")
+        model.agentProfiles = [profile]
+        model.sessions = [cleanupSession("agent-chat", owner: profile.id)]
+        model.installTranscriptSession("work-chat", blocks: [ChatBlock(kind: .assistant, text: "Keep this result")])
+        model.draftText = "An unfinished work draft"
+        let foregroundModel = model.selectedModel
+        model.isBusy = true
+        let ownership = model.transcriptPresentation.sessionOwnershipToken
+        let collapsed = model.inspectorCollapsed
+
+        model.selectSavedAgent(profile)
+        await Task.yield()
+
+        XCTAssertEqual(model.savedAgentOverviewProfile?.id, profile.id)
+        XCTAssertEqual(model.sidebarDestination, .agents)
+        XCTAssertEqual(model.currentSessionID, "work-chat")
+        XCTAssertEqual(model.draftText, "An unfinished work draft")
+        XCTAssertEqual(model.selectedModel, foregroundModel)
+        XCTAssertEqual(model.blocks.last?.text, "Keep this result")
+        XCTAssertEqual(model.transcriptPresentation.sessionOwnershipToken, ownership)
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.inspectorCollapsed, collapsed)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertTrue(model.creatingSavedAgentChatIDs.isEmpty)
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().isEmpty)
+    }
+
+    @MainActor
+    func testAgentTabOpensOverviewAndWorkTabReturnsToRunningDraft() {
+        let model = AppModel(startImmediately: false)
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "fixture")
+        model.agentProfiles = [profile]
+        let work = SessionSummary(id: "work-chat", name: "Work", preview: "", mtime: 1, size: 0)
+        model.sessions = [work]
+        model.installTranscriptSession(work.id, blocks: [])
+        model.draftText = "Keep this draft"
+        model.isBusy = true
+
+        model.switchSidebarDestination(.agents)
+        XCTAssertEqual(model.savedAgentOverviewProfile?.id, profile.id)
+        model.switchSidebarDestination(.ask)
+
+        XCTAssertNil(model.savedAgentOverviewProfile)
+        XCTAssertNil(model.savedAgentOverviewID)
+        XCTAssertEqual(model.currentSessionID, work.id)
+        XCTAssertEqual(model.draftText, "Keep this draft")
+        XCTAssertTrue(model.isBusy)
+        XCTAssertNil(model.activeTranscriptLoad)
+    }
+
+    @MainActor
+    func testOverviewDoesNotCreateFirstChatAndRejectsRemovedProfile() async {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "New agent", model: "fixture")
+        model.agentProfiles = [profile]
+        model.selectSavedAgent(profile)
+        await Task.yield()
+        XCTAssertEqual(model.savedAgentOverviewProfile?.id, profile.id)
+        XCTAssertTrue(model.savedAgentChats(profile.id).isEmpty)
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().isEmpty)
+
+        model.agentProfiles = []
+        model.savedAgentOverviewID = nil
+        model.selectSavedAgent(profile)
+        XCTAssertNil(model.savedAgentOverviewID)
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().isEmpty)
+    }
+
+    @MainActor
+    func testUnavailableChatKeepsOverviewUntilAnExplicitChatCanOpen() async {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "fixture")
+        model.agentProfiles = [profile]
+        model.selectSavedAgent(profile)
+        let unavailable = SessionSummary(id: "gone", name: "Gone", preview: "", mtime: 1, size: 0,
+            cwd: "/missing-locus-overview-test-\(UUID().uuidString)", agentProfileID: profile.id.uuidString)
+        model.resume(unavailable)
+        XCTAssertEqual(model.savedAgentOverviewProfile?.id, profile.id)
+        XCTAssertNil(model.activeTranscriptLoad)
+
+        let available = SessionSummary(id: "agent-chat", name: "Chat", preview: "", mtime: 1, size: 0,
+            agentProfileID: profile.id.uuidString)
+        model.sessions = [available]
+        model.resume(available)
+        XCTAssertNil(model.savedAgentOverviewID)
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().contains("/api/sessions/agent-chat/resume"))
+    }
+
+    @MainActor
+    func testSameWorldConversationClosesMainOverviewWithoutReloadingChat() async throws {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "fixture")
+        model.agentProfiles = [profile]
+        let session = SessionSummary(id: "agent-chat", name: "Chat", preview: "", mtime: 1, size: 0,
+            cwd: "/tmp", agentProfileID: profile.id.uuidString)
+        model.sessions = [session]
+        model.installTranscriptSession(session.id, blocks: [])
+        model.selectSavedAgent(profile)
+        try await model.activateAgentWorldConversation(session.id, workspace: "/tmp", expectedProfileID: profile.id)
+        XCTAssertNil(model.savedAgentOverviewID)
+        XCTAssertEqual(model.currentSessionID, session.id)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().isEmpty)
+    }
+
+    @MainActor
+    func testOverviewAutomationDraftKeepsCapturedProjectAndAgentRoute() {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "weather-model")
+        model.agentProfiles = [profile]
+        model.manageSavedAgent(profile, workspace: "/tmp/world-project")
+        let workspace = SessionSummary.canonicalWorkspacePath("/tmp/world-project")
+        XCTAssertEqual(model.configureAgentWorkspace, workspace)
+
+        model.presentSavedAgentAutomation(.schedule, profile: profile)
+
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.workspaceRoot, workspace)
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.agentProfileID, profile.id.uuidString)
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.model, "weather-model")
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.provider, "ollama")
+        XCTAssertEqual(model.schedule.scheduleEditorDraft?.runner, .solo)
+        model.dismissConfigureAgent()
+        XCTAssertNil(model.configureAgentWorkspace)
+    }
+
+    @MainActor
     func testSavedAgentSendsChatWorkPlanAndGrill() {
         for mode in [WorkMode.ask, .work, .plan, .grill] {
             let model = savedAgentModel()
@@ -112,6 +391,106 @@ final class SavedAgentTests: XCTestCase {
         XCTAssertEqual(profile.name, "Existing agent")
         XCTAssertEqual(profile.accessCeiling, .computerControl)
         XCTAssertEqual(profile.mcpPolicy?.allowsAllServices, false)
+        XCTAssertNil(profile.workspacePreferences, "Older profiles must load without rewriting existing chats")
+    }
+
+    @MainActor
+    func testAgentHomeIsStableAcrossRenameAndIndependentOfForeground() throws {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        model.agentHomesRootOverride = root
+        let profile = AgentProfile(name: "Garp", model: "fixture")
+        model.agentProfiles = [profile]
+        let first = model.savedAgentHomePath(profile)
+        model.sessions = [SessionSummary(id: "work", name: "work", preview: "", mtime: 1, size: 0, cwd: "/tmp/unrelated")]
+        model.installTranscriptSession("work", blocks: [])
+        XCTAssertEqual(model.savedAgentWorkspacePath(profile), first)
+        var renamed = profile
+        renamed.name = "Admiral"
+        model.agentProfiles = [renamed]
+        XCTAssertEqual(model.savedAgentHomePath(renamed), first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "Reading preferences must be inert")
+        let restored = try JSONDecoder().decode(AgentProfile.self, from: JSONEncoder().encode(renamed))
+        XCTAssertEqual(model.savedAgentHomePath(restored), first)
+        XCTAssertNotEqual(model.savedAgentHomePath(AgentProfile(name: "Other", model: "fixture")), first)
+    }
+
+    @MainActor
+    func testLinkingSharedProjectChangesOnlyFutureDefaultAndUnlinkKeepsFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("keep.txt")
+        try Data("Keep project content".utf8).write(to: file)
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        model.agentHomesRootOverride = root.appendingPathComponent("Homes")
+        let first = AgentProfile(name: "Garp", model: "fixture")
+        let second = AgentProfile(name: "Robin", model: "fixture")
+        model.agentProfiles = [first, second]
+        let old = cleanupSession("old", owner: first.id)
+        model.sessions = [old]
+        model.setSavedAgentDefaultWorkspace(first, path: root.path)
+        model.setSavedAgentDefaultWorkspace(second, path: root.path)
+        let canonical = SessionSummary.canonicalWorkspacePath(root.path)
+        XCTAssertEqual(model.savedAgentWorkspacePath(first), canonical)
+        XCTAssertEqual(model.savedAgentWorkspacePath(second), canonical)
+        XCTAssertEqual(model.sessions.first, old, "Changing a default never moves a saved chat")
+        let persisted = try JSONDecoder().decode([AgentProfile].self, from: JSONEncoder().encode(model.agentProfiles))
+        XCTAssertEqual(persisted.first?.workspacePreferences?.defaultProjectPath, canonical)
+        model.unlinkSavedAgentProject(first, path: root.path)
+        XCTAssertEqual(model.savedAgentWorkspacePath(first), model.savedAgentHomePath(first))
+        XCTAssertEqual(model.savedAgentWorkspacePath(second), canonical)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(model.sessions.first, old)
+    }
+
+    @MainActor
+    func testHomeCreationIsLazyAndRejectsRedirectedOrForeignHomes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = cleanupModel()
+        defer { cancelPendingWork(model); try? FileManager.default.removeItem(at: root) }
+        model.agentHomesRootOverride = root
+        let first = AgentProfile(name: "Garp", model: "fixture")
+        let second = AgentProfile(name: "Robin", model: "fixture")
+        model.agentProfiles = [first, second]
+        _ = model.savedAgentWorkspaceChoices(first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        let home = model.savedAgentHomePath(first)
+        try model.prepareSavedAgentWorkspace(first, workspace: home)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home))
+        XCTAssertThrowsError(try model.prepareSavedAgentWorkspace(second, workspace: home))
+        let otherHome = URL(fileURLWithPath: model.savedAgentHomePath(second))
+        try FileManager.default.createDirectory(at: otherHome.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: otherHome.path, withDestinationPath: home)
+        XCTAssertThrowsError(try model.prepareSavedAgentWorkspace(second, workspace: otherHome.path))
+        XCTAssertThrowsError(try model.prepareSavedAgentWorkspace(first, workspace: root.appendingPathComponent("missing-project").path))
+    }
+
+    @MainActor
+    func testAgentHomeDraftAndNewChatPinWorkspaceWithoutForegroundInheritance() async throws {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        model.agentHomesRootOverride = root
+        defer { cancelPendingWork(model); try? FileManager.default.removeItem(at: root) }
+        let profile = AgentProfile(name: "Weather", model: "fixture")
+        model.agentProfiles = [profile]
+        model.installTranscriptSession("foreground", blocks: [])
+        model.manageSavedAgent(profile)
+        model.presentSavedAgentAutomation(.event, profile: profile)
+        let home = model.savedAgentHomePath(profile)
+        XCTAssertEqual(model.eventAutomations.editorDraft?.workspaceRoot, home)
+        XCTAssertEqual(model.eventAutomations.editorDraft?.targetSessionID, EventTriggerEditorDraft.newOwnedAgentChat)
+        XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().isEmpty, "Opening a draft must not allocate a chat")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home))
+        let chat = try await model.createSavedAgentConversation(profile, workspace: model.savedAgentWorkspacePath(profile))
+        XCTAssertEqual(chat.workspacePath, home)
+        XCTAssertEqual(model.currentSessionID, "foreground")
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().last?["cwd"] as? String, home)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().last?["execution_environment"] as? String, "automatic")
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().last?["agent_home"] as? Bool, true)
     }
 
     func testNewWritableAgentsDefaultToAllServicesWithoutUndoingOptOuts() {
@@ -278,6 +657,7 @@ final class SavedAgentTests: XCTestCase {
         model.sessions = [cleanupSession("visible", owner: profile.id), cleanupSession("unrelated", owner: other.id)]
         model.installTranscriptSession("foreground", blocks: [])
         model.selectedSavedAgentID = profile.id
+        model.savedAgentOverviewID = profile.id
         model.configureAgentProfileID = profile.id
 
         try await model.removeSavedAgent(profile)
@@ -286,6 +666,7 @@ final class SavedAgentTests: XCTestCase {
         XCTAssertEqual(model.sessions.map(\.id), ["unrelated"])
         XCTAssertEqual(SavedAgentURLProtocol.archivedIDs(), ["visible", "outside-catalog"])
         XCTAssertNil(model.selectedSavedAgentID)
+        XCTAssertNil(model.savedAgentOverviewID)
         XCTAssertNil(model.configureAgentProfileID)
         XCTAssertTrue(model.removingSavedAgentIDs.isEmpty)
         XCTAssertEqual(SavedAgentURLProtocol.cleanupActions(), ["archive"])
@@ -448,12 +829,13 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
     private static var loseCleanupResponse = false
     private static var actions: [String] = []
     private static var paths: [String] = []
+    private static var detachedBodies: [[String: Any]] = []
     static func reset(rows: [[String: Any]] = [], current: String = "foreground", rejectCleanup: Bool = false,
                       failAfterReplacement: Bool = false, loseCleanupResponse: Bool = false) {
         lock.lock(); defer { lock.unlock() }
         self.rows = rows; self.current = current; self.rejectCleanup = rejectCleanup
         self.failAfterReplacement = failAfterReplacement; self.loseCleanupResponse = loseCleanupResponse
-        recoveryRows = []; actions = []; paths = []
+        recoveryRows = []; actions = []; paths = []; detachedBodies = []
     }
     static func archivedIDs() -> Set<String> {
         lock.lock(); defer { lock.unlock() }
@@ -462,6 +844,7 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
     static func rowIDs() -> [String] { lock.lock(); defer { lock.unlock() }; return rows.compactMap { $0["id"] as? String } }
     static func cleanupActions() -> [String] { lock.lock(); defer { lock.unlock() }; return actions }
     static func requestedPaths() -> [String] { lock.lock(); defer { lock.unlock() }; return paths }
+    static func detachedRequests() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return detachedBodies }
     private static func sessionInfo() -> [String: Any] {
         let info = SessionInfo(model: "fixture", host: "localhost", cwd: "/tmp", session: current,
             sessionID: current, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
@@ -490,6 +873,7 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
         let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         switch request.url!.path {
         case "/api/sessions/detached":
+            Self.detachedBodies.append(body)
             let id = "saved-\(Self.rows.count + 1)"
             Self.rows.append(["id": id, "name": id, "preview": "", "mtime": Self.rows.count + 1,
                 "size": 0, "title": body["title"] ?? "", "cwd": body["cwd"] ?? "/tmp",

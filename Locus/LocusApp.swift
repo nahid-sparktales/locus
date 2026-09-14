@@ -804,6 +804,7 @@ private struct WorkspacePanelMotion: ViewModifier {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
     @EnvironmentObject private var onboarding: OnboardingModel
 
@@ -813,6 +814,7 @@ struct RootView: View {
     @EnvironmentObject private var landingFlow: LandingFlowModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var agentInspector: AgentInspectorModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var compactSidebarPresented = false
 
@@ -821,7 +823,9 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled
+            let duplicateAgentOverview = model.savedAgentOverviewProfile != nil
+                && model.inspectorTab == .agent && agentInspector.context == .fleet
+            let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled && !duplicateAgentOverview
             let railWidth = model.justChatEnabled ? 0 : inspectorRailWidth
             let minimumSidebarWidth = CGFloat(AppSettings.minimumSidebarWidth)
             let minimumInspectorWidth = CGFloat(AppSettings.minimumInspectorWidth)
@@ -984,6 +988,11 @@ struct RootView: View {
             }
             .onChange(of: model.sidebarCollapsed) { _, collapsed in
                 if collapsed { compactSidebarPresented = false }
+            }
+            .onChange(of: sessionCatalog.sessionReveal?.id) {
+                guard sessionCatalog.sessionReveal != nil else { return }
+                model.sidebarCollapsed = false
+                if proxy.size.width < minimumThreeColumnWidth { compactSidebarPresented = true }
             }
         }
         .environment(\.locusIsLiveResizing, workspaceLayout.isLiveResizing)

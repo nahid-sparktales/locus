@@ -49,6 +49,7 @@ from .agent_config import (
     compose_system_prompt,
     render_agent_behavior,
 )
+from .agent_workspaces import home_session_workspace, local_session_workspace
 from .config import (
     DEFAULTS,
     MINIMUM_CONTEXT_WINDOW,
@@ -897,6 +898,9 @@ class AgentCore:
             memory_context=self.memory_context,
             continuity_context=self.continuity_context,
         )
+        if resolved_mode != "ask" and (output_context := self._chat_output_context()):
+            text += "\n\n" + output_context
+            layers.append({"name": "Chat output folder", "content": output_context, "editable": False})
         from .planning import planning_contract
         text += "\n\n" + planning_contract(resolved_mode, native=False,
             available_tools={s["function"]["name"] for s in self.tool_registry.schemas()})
@@ -913,6 +917,30 @@ class AgentCore:
             text += "\n\n" + GOAL_CONTRACT
         self.prompt_layers = layers
         return {"role": "system", "content": text}
+
+    def _chat_output_context(self) -> str:
+        """A saved chat's default deliverable location, subordinate to user choices."""
+        metadata = SessionMeta.get(self.session.session_id)
+        environment = metadata.get("environment")
+        if (not isinstance(environment, dict)
+                or metadata.get("workspace_root") != self.workspace_root
+                or metadata.get("execution_path") != self.cwd):
+            return ""
+        output = environment.get("output_directory")
+        if not isinstance(output, str) or not output:
+            return ""
+        try:
+            directory = Path(output)
+            if (not directory.is_absolute() or directory.resolve() != directory
+                    or Path(self.cwd).resolve() not in directory.parents):
+                return ""
+        except (OSError, RuntimeError, ValueError):
+            return ""
+        return (
+            f"This chat's output folder is {json.dumps(output)}. "
+            "Put generated deliverables there unless the user specifies another destination. "
+            "Keep project source edits in the current working copy."
+        )
 
     @staticmethod
     def _adaptive_solo_contract() -> str:
@@ -1802,6 +1830,8 @@ class AgentCore:
         if self.project_context:
             name, content = self.project_context
             sections.append(f"Instructions from the workspace's {name}:\n\n{content}")
+        if output_context := self._chat_output_context():
+            sections.append(output_context)
         if self.tool_ctx.delegate_read_only is not None:
             sections.append(self._adaptive_solo_contract())
         from .planning import planning_contract
@@ -1950,12 +1980,23 @@ class AgentCore:
                 "worktree_id": str(self.task_metadata.get("id") or ""),
                 "starting_ref": str(self.task_metadata.get("starting_ref") or "HEAD"),
             })
+        saved = SessionMeta.get(self.session.session_id)
+        saved_environment = saved.get("environment")
+        if (isinstance(saved_environment, dict)
+                and saved.get("workspace_root") == self.workspace_root
+                and saved.get("execution_path") == self.execution_path):
+            for key in ("execution_policy", "output_directory", "agent_home", "source_workspace"):
+                if isinstance(saved_environment.get(key), str):
+                    environment[key] = saved_environment[key]
+            if self.task_metadata is None and saved_environment.get("isolation") == "agent_task_folder":
+                environment["isolation"] = "agent_task_folder"
         return {
             "model": self.model,
             "host": self.host,
             "cwd": self.workspace_root,
             "workspace_root": self.workspace_root,
             "execution_path": self.execution_path,
+            "output_directory": environment.get("output_directory"),
             "task": self.task_metadata,
             "environment": environment,
             "session": str(self.session.path),
@@ -4824,6 +4865,9 @@ class AgentCore:
         if path is None:
             raise FileNotFoundError(f"session not found: {session_id}")
         messages = SessionStore.load(path)
+        metadata = SessionMeta.get(session_id)
+        home_workspace = home_session_workspace(metadata, session_id)
+        saved_workspace = home_workspace or local_session_workspace(metadata)
         self.task_journal = None
         self.tool_ctx.response_parts.clear()
         self.tool_ctx.image_generations_this_session = 0
@@ -4842,23 +4886,28 @@ class AgentCore:
                     self.identity_source_refs = source_references(message["_identity_source_refs"])
                     break
         header = SessionStore.header(path)
-        cwd = str(header.get("cwd") or "")
-        if cwd and Path(cwd).is_dir() and cwd != self.cwd:
+        cwd = str(saved_workspace[1]) if saved_workspace else str(header.get("cwd") or "")
+        if (cwd and (saved_workspace is not None or Path(cwd).is_dir())
+                and (cwd != self.cwd or saved_workspace is not None)):
             try:
                 target_cwd = os.path.abspath(os.fspath(Path(cwd).expanduser()))
                 os.chdir(cwd)
                 self.cwd = _cwd_after_chdir(target_cwd)
-                self.workspace_root = self.cwd
+                self.workspace_root = str(saved_workspace[0]) if saved_workspace else self.cwd
                 self.execution_path = self.cwd
                 self.task_metadata = None
                 self.tool_ctx.cwd = self.cwd
                 self.extensions.set_cwd(self.cwd)
                 self.reload_context()
-            except OSError:
+            except OSError as exc:
+                if saved_workspace is not None:
+                    raise ValueError("The saved chat execution folder is unavailable") from exc
                 pass
         # Transcript-only reasoning records retain their exact position for
         # the UI, but never become conversational input after resume.
         conversational = [m for m in SessionStore.load_context(path) if not m.get("_display_only")]
+        # Adopt the saved identity before building its output-folder context.
+        self.session.path = path
         self.messages = [self.system_message()] + conversational
         for record in SessionStore.context_records(path):
             if record.get("type") == "compacted_context" and isinstance(record.get("plan"), dict):
@@ -4885,8 +4934,6 @@ class AgentCore:
         self._pending_computer_screenshot = None
         self._ax_only_routes.clear()
         self._mcp_text_only_routes.clear()
-        # Continue appending to the session the user resumed.
-        self.session.path = path
         self._last_user_message = next(
             (str(m.get("content")) for m in reversed(messages) if m.get("role") == "user"),
             None,

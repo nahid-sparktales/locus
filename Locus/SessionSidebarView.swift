@@ -42,7 +42,7 @@ enum AgentSidebarCatalog {
         definitions: [AgentDefinition], sessions: [SessionSummary], query: String,
         showArchived: Bool, runningSessionIDs: Set<String>,
         connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false,
-        profiles: [AgentProfile] = []
+        profiles: [AgentProfile] = [], recentAgentIDs: [String] = []
     ) -> [AgentSidebarGroupModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let profileChats = sessions.filter { $0.savedAgentProfileID != nil && (showArchived || !$0.isArchived) }
@@ -117,7 +117,16 @@ enum AgentSidebarCatalog {
                 )
             )
         }
-        return (savedGroups + automatedGroups).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let recentRanks = Dictionary(recentAgentIDs.enumerated().map { ($0.element, $0.offset) },
+                                     uniquingKeysWith: min)
+        return (savedGroups + automatedGroups).sorted {
+            let lhsRank = recentRanks[$0.id] ?? Int.max
+            let rhsRank = recentRanks[$1.id] ?? Int.max
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            let nameOrder = $0.name.localizedStandardCompare($1.name)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            return $0.id < $1.id
+        }
     }
 
     static func sourceNeedsAttention(
@@ -503,6 +512,7 @@ struct SessionSidebarView: View {
             .buttonStyle(.locus())
             .accessibilityIdentifier("sidebar.identityVault")
 
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
                     sectionHeader(snapshot: snapshot)
@@ -630,6 +640,17 @@ struct SessionSidebarView: View {
             .accessibilityLabel(
                 model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
             )
+            .task(id: sessionCatalog.sessionReveal?.id) {
+                guard let request = sessionCatalog.sessionReveal else { return }
+                defer { sessionCatalog.finishSessionReveal(request.id) }
+                // Let the destination's expanded group and folder rows lay out.
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                withAnimation(reduceMotion ? nil : LocusMotion.scroll) {
+                    proxy.scrollTo("sidebar.session.\(request.sessionID)", anchor: .center)
+                }
+                try? await Task.sleep(for: .seconds(4))
+            }
+            }
 
             footer(snapshot: snapshot)
         }
@@ -931,6 +952,13 @@ struct SessionSidebarView: View {
                             .clipShape(Capsule())
                             .offset(x: 4, y: -4)
                             .accessibilityIdentifier("sidebar.activity.badge")
+                    } else if activityCenter.unreadResultCount > 0 {
+                        Circle()
+                            .fill(LocusTheme.accentAction)
+                            .frame(width: 8, height: 8)
+                            .overlay { Circle().stroke(LocusTheme.surfaceCard, lineWidth: 2) }
+                            .offset(x: 2, y: -2)
+                            .accessibilityIdentifier("sidebar.activity.unread")
                     }
                 }
         }
@@ -941,7 +969,9 @@ struct SessionSidebarView: View {
         .accessibilityValue(
             activityCenter.activityNeedsAttentionCount > 0
                 ? "\(activityCenter.activityNeedsAttentionCount) needs attention"
-                : "No new activity"
+                : activityCenter.unreadResultCount > 0
+                    ? "\(activityCenter.unreadResultCount) unread results"
+                    : "No new activity"
         )
     }
 
@@ -1129,6 +1159,7 @@ struct SessionSidebarView: View {
         SessionRow(
             session: session,
             isActive: session.id == model.currentSessionID,
+            isRevealed: sessionCatalog.sessionReveal?.sessionID == session.id,
             teamState: model.teamRunState(for: session),
             isRunning: model.chatIsRunning(session),
             startedAt: model.chatStartedAt(session),
@@ -1136,6 +1167,7 @@ struct SessionSidebarView: View {
         ) {
             model.resume(session)
         }
+        .id("sidebar.session.\(session.id)")
         .contextMenu {
             Button("Rename…") {
                 renameText = session.displayTitle
@@ -2485,6 +2517,7 @@ private struct SectionLabel: View {
 private struct SessionRow: View {
     let session: SessionSummary
     let isActive: Bool
+    let isRevealed: Bool
     let teamState: TeamRunState?
     let isRunning: Bool
     let startedAt: Date?
@@ -2556,11 +2589,19 @@ private struct SessionRow: View {
             }
             .padding(.horizontal, 8)
             .frame(height: showsActivity ? 38 : 30)
-            .background(isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
+            .background(isRevealed ? LocusTheme.accentAction.opacity(0.16)
+                : isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isRevealed ? LocusTheme.accentAction : Color.clear, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.locus())
         .accessibilityLabel("Resume \(session.displayTitle)")
+        .accessibilityValue(isRevealed ? "Opened from Activity Center" : "")
         .accessibilityIdentifier("session.\(session.id)")
     }
 
@@ -2609,6 +2650,7 @@ enum AgentSidebarFilter: String, CaseIterable, Identifiable {
 /// appears immediately, even before its first conversation is available.
 private struct AgentSidebarSection: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @ObservedObject var crew: AgentCrewChatModel
@@ -2631,7 +2673,7 @@ private struct AgentSidebarSection: View {
             showArchived: snapshot.showArchivedSessions,
             runningSessionIDs: model.runningChatSessionIDs,
             connections: automation.connections, connectionsLoaded: automation.hasLoaded,
-            profiles: agentTeams.agentProfiles
+            profiles: agentTeams.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs
         )
     }
 
@@ -2694,6 +2736,15 @@ private struct AgentSidebarSection: View {
         .onChange(of: snapshot.searchQuery) {
             // A fresh search should reveal matches hidden by a prior filter.
             filter = .all
+        }
+        .onChange(of: sessionCatalog.sessionReveal?.id, initial: true) {
+            guard let request = sessionCatalog.sessionReveal,
+                  let group = groups.first(where: { $0.tasks.contains { $0.id == request.sessionID } })
+            else { return }
+            filter = .all
+            collapsedIDs.remove(group.id)
+            expandedIDs.insert(group.id)
+            showingAllChatIDs.insert(group.id)
         }
         .confirmationDialog(
             savedAgentToDelete?.isUnavailableSavedAgent == true
@@ -2775,7 +2826,7 @@ private struct AgentSidebarSection: View {
                         expandedIDs.insert(agent.id)
                     }
                     if let profile = agent.profile { model.selectSavedAgent(profile) }
-                    else if let reference = agent.reference { model.selectAgent(reference) }
+                    else if let reference = agent.reference { model.selectAgent(reference, fromSidebarRow: true) }
                     else { model.showToast("This agent is unavailable. Its saved chats are still available below.") }
                 },
                 confirmDelete: confirmDelete,

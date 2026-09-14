@@ -9,6 +9,48 @@ import UserNotifications
 /// plan sync, tool-activity and file-effect recording, the run
 /// file-capture window, and turn completion of the overview.
 extension AppModel {
+    func activityViewedSessionID(appIsActive: Bool) -> String? {
+        guard appIsActive, !currentSessionID.isEmpty,
+              !activity.activityCenterPresented, !agentCrewChatPresented,
+              savedAgentOverviewID == nil, emptySidebarDestination == nil,
+              !settingsPresented, !configureAgentPresented, savedAgentEditor == nil,
+              !library.isPresented, !modelLibraryPresented,
+              transcriptInputState != .loading else { return nil }
+        return currentSessionID
+    }
+
+    /// Observe completion before either event handler replaces the live run
+    /// state. Matching the run identity avoids hiding a replayed older result
+    /// just because another turn is currently running in the same chat.
+    func recordActivityCompletion(
+        _ event: [String: Any], sessionID: String,
+        runtime: ChatWorkerRuntime? = nil, appIsActive: Bool? = nil
+    ) {
+        let type = event["type"] as? String
+        let succeeded: Bool
+        switch type {
+        case "turn_done": succeeded = (event["reason"] as? String ?? "complete") == "complete"
+        case "orchestration_completed": succeeded = (event["state"] as? String ?? "completed") == "completed"
+        case "orchestration_state": succeeded = event["state"] as? String == "completed"
+        default: return
+        }
+        let previous = taskConversationStates[sessionID]
+        let foregroundRunID = sessionID == currentSessionID ? orchestrationRunID : nil
+        guard let runID = (event["run_id"] as? String)?.nilIfEmpty
+                ?? runtime?.reservedRunID?.nilIfEmpty ?? previous?.runID ?? foregroundRunID else { return }
+        let trackedRunning = previous?.runID == runID && previous?.state.isTerminal == false
+        let runtimeRunning = runtime.map {
+            ($0.reservedRunID == runID || previous?.runID == runID) && !$0.executionState.isTerminal
+        } ?? false
+        let foregroundRunning = foregroundRunID == runID && isBusy
+        activity.recordCompletion(
+            runID: runID, succeeded: succeeded,
+            wasRunning: trackedRunning || runtimeRunning || foregroundRunning,
+            isViewed: runtime?.isAttaching != true
+                && activityViewedSessionID(appIsActive: appIsActive ?? (NSApp?.isActive == true)) == sessionID
+        )
+    }
+
     func updateTaskConversation(
         state: TeamRunState,
         event: [String: Any],

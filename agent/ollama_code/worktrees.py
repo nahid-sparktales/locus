@@ -302,6 +302,7 @@ class TaskCheckoutStore:
         *,
         base_ref: str = "HEAD",
         session_id: str | None = None,
+        reuse_existing: bool = True,
     ) -> TaskCheckout:
         if not _TASK_ID.fullmatch(task_id):
             raise WorktreeError("task id is invalid")
@@ -323,7 +324,7 @@ class TaskCheckoutStore:
         checkout = task_dir / "checkout"
         if task_dir.exists():
             existing = TaskCheckoutStore.load(task_id)
-            if existing is not None:
+            if existing is not None and reuse_existing:
                 return existing
             raise WorktreeError("managed task directory already exists")
         task_dir.mkdir(parents=True, exist_ok=False)

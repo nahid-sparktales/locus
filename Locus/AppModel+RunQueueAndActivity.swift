@@ -4,6 +4,42 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct ActivitySessionRecord: Decodable {
+    let detail: SessionDetailResponse
+    let agentTriggerID: String?
+    let agentProfileID: String?
+    let agentKind: String?
+    let agentName: String?
+    let agentPrimary: Bool?
+    let provider: String?
+    let folderID: String?
+    let sortOrder: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case agentTriggerID = "agent_trigger_id"
+        case agentProfileID = "agent_profile_id"
+        case agentKind = "agent_kind"
+        case agentName = "agent_name"
+        case agentPrimary = "agent_primary"
+        case provider
+        case folderID = "folder_id"
+        case sortOrder = "sort_order"
+    }
+
+    init(from decoder: Decoder) throws {
+        detail = try SessionDetailResponse(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agentTriggerID = try container.decodeIfPresent(String.self, forKey: .agentTriggerID)
+        agentProfileID = try container.decodeIfPresent(String.self, forKey: .agentProfileID)
+        agentKind = try container.decodeIfPresent(String.self, forKey: .agentKind)
+        agentName = try container.decodeIfPresent(String.self, forKey: .agentName)
+        agentPrimary = try container.decodeIfPresent(Bool.self, forKey: .agentPrimary)
+        provider = try container.decodeIfPresent(String.self, forKey: .provider)
+        folderID = try container.decodeIfPresent(String.self, forKey: .folderID)
+        sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder)
+    }
+}
+
 /// Run-queue control and retry, persisted-run restoration, Activity
 /// Center run actions, worktree task git operations, schedule prefill and
 /// validation, and provider-account routing verbs.
@@ -112,6 +148,7 @@ extension AppModel {
     }
 
     func presentConfigureAgent(draftText: String) {
+        configureAgentWorkspace = workspacePath
         configureAgentProfileID = sidebarDestination == .agents ? selectedSavedAgentProfile?.id : nil
         configureAgentDraftSuggestion = String(
             draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
@@ -134,6 +171,7 @@ extension AppModel {
         configureAgentPendingTriggerEdit = nil
         configureAgentFocusConfigurationID = nil
         configureAgentProfileID = nil
+        configureAgentWorkspace = nil
         if let profile = pendingSavedAgentEditor {
             pendingSavedAgentEditor = nil
             savedAgentEditor = profile
@@ -534,8 +572,12 @@ extension AppModel {
                 guard let profileID = UUID(uuidString: rawProfileID) else {
                     throw AgentWorldError.unavailable("This conversation’s saved agent identity is invalid. Review its agent before retrying.")
                 }
+                let queuedRoute: [String: JSONValue]?
+                if case .object(let route) = run.manifest?["agent_chat_route"] { queuedRoute = route }
+                else { queuedRoute = nil }
                 profileDispatch = try agentWorldProfileDispatch(profileID: profileID,
-                    mode: run.manifest?["mode"]?.string.flatMap(WorkMode.canonical) ?? .work)
+                    mode: run.manifest?["mode"]?.string.flatMap(WorkMode.canonical) ?? .work,
+                    sessionID: sessionID, queuedRoute: queuedRoute)
             } else { profileDispatch = nil }
         } catch {
             restoredQueuedRunIDs.remove(run.id)
@@ -734,7 +776,9 @@ extension AppModel {
         do {
             let _: EventDelivery = try await backend.post(
                 "/api/event-deliveries/\(deliveryID)/fail",
-                body: ["error": message, "pause_trigger": true],
+                // Account and worker failures belong to this attempt. Pausing
+                // future arrivals requires the user's explicit Pause action.
+                body: ["error": message, "pause_trigger": false, "run_id": run.id],
                 as: EventDelivery.self
             )
             await eventAutomations.refresh(announceFailure: false)
@@ -745,14 +789,62 @@ extension AppModel {
     }
 
     func openActivityRun(_ run: OrchestrationRun) {
-        guard let sessionID = run.sessionID,
-              let session = sessions.first(where: { $0.id == sessionID })
-        else { showToast("That chat is no longer available"); return }
+        let generation = UUID()
+        activityNavigationGeneration = generation
+        guard let sessionID = run.sessionID else {
+            showToast("That task has no saved chat")
+            return
+        }
+        if let session = sessions.first(where: { $0.id == sessionID }) {
+            revealActivityRun(run, in: session)
+            return
+        }
+        // Older or archived chats can be outside the sidebar's recent list.
+        // Look up this exact session instead of substituting the current chat.
+        let sourceSessionID = currentSessionID
+        let openedFromActivityCenter = activity.activityCenterPresented
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let record = try await backend.get("/api/sessions/\(sessionID)", as: ActivitySessionRecord.self)
+                guard activityNavigationGeneration == generation,
+                      !openedFromActivityCenter || activity.activityCenterPresented,
+                      currentSessionID == sourceSessionID, record.detail.id == sessionID else { return }
+                let detail = record.detail
+                let scheduleID = run.scheduleID?.nilIfEmpty
+                let triggerID = run.manifest?["event_trigger_id"]?.string?.nilIfEmpty
+                let session = SessionSummary(id: sessionID, name: detail.title ?? sessionID,
+                    preview: detail.preview, mtime: run.updatedAt, size: 0,
+                    title: detail.title, pinned: detail.pinned, archived: detail.archived,
+                    cwd: detail.cwd, task: detail.task, team: detail.team,
+                    workspaceRoot: detail.workspaceRoot, executionPath: detail.executionPath,
+                    environment: detail.environment, folderID: record.folderID, sortOrder: record.sortOrder,
+                    agentTriggerID: record.agentTriggerID ?? scheduleID ?? triggerID,
+                    agentProfileID: record.agentProfileID,
+                    agentKind: record.agentKind ?? (scheduleID != nil ? "schedule" : triggerID != nil ? "event" : nil),
+                    agentName: record.agentName, agentPrimary: record.agentPrimary,
+                    model: detail.model, provider: record.provider)
+                if !sessions.contains(where: { $0.id == sessionID }) { sessions.append(session) }
+                revealActivityRun(run, in: session)
+            } catch {
+                guard activityNavigationGeneration == generation,
+                      !openedFromActivityCenter || activity.activityCenterPresented,
+                      currentSessionID == sourceSessionID else { return }
+                showToast("Could not open that task’s saved chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func revealActivityRun(_ run: OrchestrationRun, in session: SessionSummary) {
+        resume(session)
+        guard currentSessionID == session.id else { return }
         activity.markActivitySeen(run)
         activity.activityCenterPresented = false
-        resume(session)
-        inspectAgentRun(run)
-        Task { await loadOrchestrationRun(run.id) }
+        sessionCatalog.revealSession(session)
+        inspectAgentRun(run, reveal: false)
+        runs.runDetailsByID[run.id] = run
+        runs.selectedOrchestrationRun = run
+        selectInspectorTab(.runs, selecting: run.id)
     }
 
     func openNotification(sessionID: String, runID: String) {

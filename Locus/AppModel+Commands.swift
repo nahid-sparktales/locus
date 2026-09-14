@@ -177,6 +177,19 @@ extension AppModel {
     }
 
     func selectModel(_ model: String) {
+        if let reason = modelSelectionLockReason { showToast(reason); return }
+        let chatAccount = currentAgentChatProfile?.route.accountID.flatMap { id in providerAccounts.first { $0.id == id } }
+        if currentAgentChatProfile?.route.accountID != nil, chatAccount == nil {
+            showToast("This chat’s selected account is unavailable. Choose another account in the model picker.")
+            return
+        }
+        if selectAgentChatModel(account: currentAgentChatProfile == nil ? activeAccount : chatAccount, model: model) { return }
+        selectControlModel(model)
+    }
+
+    /// Provider completion may arrive after navigation. It belongs to the
+    /// control service and must never become a choice for the newly open chat.
+    private func selectControlModel(_ model: String) {
         if model != selectedModel { pauseGoalForRouteChange() }
         rememberManualModelRoute(accountID: activeAccount?.id, model: model)
         if isBusy {
@@ -198,6 +211,8 @@ extension AppModel {
     /// agent's client, which it refuses to do mid-turn — so a switch requested
     /// during a run is held and applied when the turn finishes.
     func selectModel(account: ProviderAccount?, model: String) {
+        if let reason = modelSelectionLockReason { showToast(reason); return }
+        if selectAgentChatModel(account: account, model: model) { return }
         if account?.id != activeAccount?.id || model != selectedModel { pauseGoalForRouteChange() }
         rememberManualModelRoute(accountID: account?.id, model: model)
         let sameSource = account?.id.uuidString == settings.activeAccountID
@@ -214,10 +229,10 @@ extension AppModel {
                     await self?.applyProvider(announce: false)
                     // After the provider call, so the transcript records the
                     // switch against the model the agent has actually adopted.
-                    self?.selectModel(model)
+                    self?.selectControlModel(model)
                 }
             } else {
-                selectModel(model)
+                selectControlModel(model)
             }
             return
         }
@@ -271,7 +286,7 @@ extension AppModel {
             // The remote provider adopts its configured model as it connects;
             // the local runtime keeps whatever it had, so name it explicitly.
             if accountID == nil, !model.isEmpty, model != selectedModel {
-                selectModel(model)
+                selectControlModel(model)
             }
             persistCurrentWorkspaceProfile()
         }

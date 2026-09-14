@@ -210,7 +210,8 @@ class ClaudeManager:
                  "supportedReasoningEfforts": [{"effort": value} for value in row.get("supportedEffortLevels", [])]
                     if row.get("supportsEffort") else []}
                 for row in rows if isinstance(row, dict) and (row.get("value") or row.get("id"))] or [
-                    {"model": "default", "displayName": "Claude default", "isDefault": True}]
+                    {"model": "default", "displayName": "Claude default", "isDefault": True,
+                     "isFallback": True}]
 
     def usage(self):
         return dict(self._limits)
@@ -409,8 +410,9 @@ class ClaudeManager:
                     state["uncertain"] = True
                     self._save(thread_id, state)
                     await client.query(prompt())
-                    message_id = uuid.uuid4().hex
-                    blocks: dict[int, dict] = {}
+                    message_id = None
+                    message_blocks: dict[str, dict[int, dict]] = {}
+                    completed_block_messages: set[str] = set()
                     result = None
                     account_error = None
                     async for message in client.receive_response():
@@ -423,14 +425,19 @@ class ClaudeManager:
                             index = event.get("index", 0)
                             if event.get("type") == "message_start":
                                 message_id = event.get("message", {}).get("id") or uuid.uuid4().hex
-                                blocks = {}
+                                message_blocks.setdefault(message_id, {})
                             elif event.get("type") == "content_block_start":
+                                if message_id is None:
+                                    message_id = uuid.uuid4().hex
+                                blocks = message_blocks.setdefault(message_id, {})
                                 block = event.get("content_block", {})
-                                blocks[index] = {"id": f"{message_id}-{index}", "type": block.get("type"), "text": ""}
+                                blocks.setdefault(index, {"id": f"{message_id}-{index}",
+                                    "type": block.get("type"), "text": "", "completed": False})
                             elif event.get("type") == "content_block_delta":
+                                blocks = message_blocks.get(message_id, {})
                                 block = blocks.get(index)
                                 delta = event.get("delta", {})
-                                if block and block["type"] in {"text", "thinking"}:
+                                if block and not block["completed"] and block["type"] in {"text", "thinking"}:
                                     value = delta.get("text") or delta.get("thinking") or ""
                                     block["text"] += value
                                     emit("item/agentMessage/delta" if block["type"] == "text" else "item/reasoning/summaryTextDelta",
@@ -442,23 +449,43 @@ class ClaudeManager:
                             elif account_error == "rate_limit":
                                 self._limits = {"status": "rejected", "observed_at": time.time()}
                                 self._notify("account/rateLimits/updated")
-                            has_tools = any(type(block).__name__ == "ToolUseBlock" for block in message.content)
-                            for index, block in enumerate(message.content):
+                            block_message_id = getattr(message, "uuid", None)
+                            if block_message_id and block_message_id in completed_block_messages:
+                                continue
+                            if block_message_id:
+                                completed_block_messages.add(block_message_id)
+                            provider_message_id = getattr(message, "message_id", None) or message_id or uuid.uuid4().hex
+                            blocks = message_blocks.setdefault(provider_message_id, {})
+                            has_tools = getattr(message, "stop_reason", None) == "tool_use" or any(
+                                type(block).__name__ == "ToolUseBlock" for block in message.content)
+                            for block in message.content:
                                 block_kind = type(block).__name__
                                 if block_kind not in {"TextBlock", "ThinkingBlock"}:
                                     continue
-                                item_id = blocks.get(index, {}).get("id", f"{message_id}-{index}")
+                                # The SDK yields one AssistantMessage per completed
+                                # content block, not necessarily one for the whole
+                                # provider message. Its local content index restarts
+                                # at zero. Keep the streamed provider indices until
+                                # the next message and consume each block in order.
+                                content_kind = "text" if block_kind == "TextBlock" else "thinking"
+                                streamed = next((blocks[index] for index in sorted(blocks)
+                                    if blocks[index]["type"] == content_kind and not blocks[index]["completed"]), None)
+                                if streamed is None:
+                                    index = max(blocks, default=-1) + 1
+                                    streamed = {"id": f"{provider_message_id}-{index}",
+                                        "type": content_kind, "text": "", "completed": False}
+                                    blocks[index] = streamed
+                                item_id = streamed["id"]
                                 value = getattr(block, "text", None) or getattr(block, "thinking", "")
-                                if index not in blocks:
+                                if not streamed["text"]:
                                     emit("item/agentMessage/delta" if block_kind == "TextBlock" else "item/reasoning/summaryTextDelta", itemId=item_id, delta=value)
+                                streamed["completed"] = True
                                 item = {"id": item_id, "type": "agentMessage" if block_kind == "TextBlock" else "reasoning"}
                                 if block_kind == "TextBlock":
                                     item.update(text=value, phase="commentary" if has_tools else "final_answer")
                                 else:
                                     item["summary"] = [{"text": value}]
                                 emit("item/completed", item=item)
-                            blocks = {}
-                            message_id = uuid.uuid4().hex
                         elif kind == "RateLimitEvent":
                             info = message.rate_limit_info
                             self._limits = {"status": info.status, "observed_at": time.time(),

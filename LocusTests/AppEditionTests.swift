@@ -75,6 +75,7 @@ final class AppEditionTests: XCTestCase {
         XCTAssertEqual(edition.backendHomes(in: support, sandboxed: false), [
             "OLLAMA_CODE_HOME": support.path + "/LocusX/Agent",
             "LOCUS_CODEX_HOME": support.path + "/LocusX/Codex",
+            "LOCUS_AGENT_HOMES_ROOT": support.path + "/LocusX/AgentHomes",
         ])
     }
 

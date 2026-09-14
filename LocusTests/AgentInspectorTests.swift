@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import Locus
@@ -299,6 +300,220 @@ final class AgentInspectorTests: XCTestCase {
         XCTAssertEqual(model.displayedAttentionItems.map(\.id), ["a"])
         model.openActivityCenter()
         XCTAssertNil(model.focus)
+    }
+
+    @MainActor
+    func testActivityNavigationSelectsTheExactOlderRunInItsChat() async throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        let selected = try activityNavigationRun(id: "selected-run", sessionID: "selected-chat")
+        let newer = try activityNavigationRun(id: "newer-run", sessionID: "selected-chat", updatedAt: 30)
+        model.sessions = [SessionSummary(id: "selected-chat", name: "Chat", preview: "", mtime: 1, size: 0)]
+        model.selectedOrchestrationRun = newer
+        model.orchestrationRunID = newer.id
+        model.activity.activityCenterPresented = true
+        try stubActivityNavigation(selected, list: [newer, selected])
+
+        model.openActivityRun(selected)
+
+        XCTAssertEqual(model.currentSessionID, "selected-chat")
+        XCTAssertEqual(model.selectedOrchestrationRun?.id, "selected-run")
+        XCTAssertEqual(model.runsNavigationRequest?.runID, "selected-run")
+        XCTAssertEqual(model.inspectorTab, .runs)
+        XCTAssertFalse(model.inspectorCollapsed)
+        XCTAssertFalse(model.activity.activityIsUnseen(selected))
+        XCTAssertFalse(model.activity.activityCenterPresented)
+        let load = try XCTUnwrap(model.activeTranscriptLoad)
+        await load.task.value
+        await model.refreshOrchestrationRuns(select: selected.id)
+        XCTAssertEqual(model.selectedOrchestrationRun?.id, "selected-run", "The newer run must not replace the requested result")
+        XCTAssertTrue(BackendStub.requestPaths.contains("/api/orchestrations/selected-run"))
+    }
+
+    @MainActor
+    func testActivityNavigationRevealsAnArchivedChatHiddenBySearchAndCollapsedFolders() async throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        let selected = try activityNavigationRun(id: "archived-run", sessionID: "archived-chat")
+        let session = SessionSummary(id: "archived-chat", name: "Saved chat", preview: "", mtime: 1, size: 0,
+            title: "Saved chat", archived: true, folderID: "child")
+        model.sessions = [session]
+        model.sessionCatalog.replaceChatFolders([
+            ChatFolderRecord(id: "parent", workspace: "/tmp", parentID: nil, name: "Parent", order: 0),
+            ChatFolderRecord(id: "child", workspace: "/tmp", parentID: "parent", name: "Child", order: 0),
+        ])
+        model.searchQuery = "does not match"
+        model.showArchivedSessions = false
+        XCTAssertTrue(model.sessionCatalog.snapshot.filteredSessions.isEmpty)
+        try stubActivityNavigation(selected)
+
+        model.openActivityRun(selected)
+
+        XCTAssertEqual(model.currentSessionID, session.id)
+        XCTAssertEqual(model.searchQuery, "")
+        XCTAssertTrue(model.showArchivedSessions)
+        XCTAssertEqual(model.sessionCatalog.snapshot.filteredSessions.map(\.id), [session.id])
+        XCTAssertTrue(model.sessionCatalog.snapshot.expandedChatFolderIDs.isSuperset(of: ["parent", "child"]))
+        XCTAssertEqual(model.sessionCatalog.sessionReveal?.sessionID, session.id)
+        XCTAssertTrue(model.sessions[0].isArchived, "Revealing a chat must not change its saved archive status")
+        if let load = model.activeTranscriptLoad { await load.task.value }
+        await model.refreshOrchestrationRuns(select: selected.id)
+    }
+
+    @MainActor
+    func testActivityNavigationLooksUpMissingCachedChatAndPreservesItsSavedAgent() async throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        let owner = AgentProfile(name: "Jinbei")
+        let other = AgentProfile(name: "Luffy")
+        model.agentProfiles = [owner, other]
+        model.selectedSavedAgentID = other.id
+        model.installTranscriptSession("previous-chat", blocks: [])
+        var selected = try activityNavigationRun(id: "older-run", sessionID: "older-chat")
+        selected.scheduleID = "schedule-1"
+        selected.occurrenceID = "occurrence-1"
+        BackendStub.respond(toPath: "/api/sessions/older-chat") { _ in
+            ["id": "older-chat", "messages": [], "preview": "Older result", "title": "Older task",
+             "agent_profile_id": owner.id.uuidString, "archived": true]
+        }
+        try stubActivityNavigation(selected)
+        let revealed = expectation(description: "The exact missing chat was looked up and revealed")
+        let observation = model.sessionCatalog.$sessionReveal.compactMap { $0 }
+            .filter { $0.sessionID == "older-chat" }.first().sink { _ in revealed.fulfill() }
+
+        model.openActivityRun(selected)
+        await fulfillment(of: [revealed], timeout: 3)
+        observation.cancel()
+
+        XCTAssertTrue(BackendStub.requestPaths.contains("/api/sessions/older-chat"))
+        XCTAssertEqual(model.currentSessionID, "older-chat")
+        XCTAssertEqual(model.sessions.first?.savedAgentProfileID, owner.id)
+        XCTAssertEqual(model.sessions.first?.agentTriggerID, "schedule-1")
+        XCTAssertEqual(model.sessions.first?.agentKind, "schedule")
+        XCTAssertEqual(model.selectedSavedAgentID, owner.id)
+        XCTAssertEqual(model.sidebarDestination, .agents)
+        XCTAssertEqual(model.selectedOrchestrationRun?.id, "older-run")
+        XCTAssertEqual(model.runsNavigationRequest?.runID, "older-run")
+        if let load = model.activeTranscriptLoad { await load.task.value }
+        await model.refreshOrchestrationRuns(select: selected.id)
+    }
+
+    @MainActor
+    func testActivityNavigationLeavesAnUnavailableWorkspaceResultUnread() throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        model.installTranscriptSession("current-chat", blocks: [])
+        let selected = try activityNavigationRun(id: "unavailable-run", sessionID: "unavailable-chat")
+        model.sessions = [SessionSummary(id: "unavailable-chat", name: "Unavailable", preview: "", mtime: 1, size: 0,
+            cwd: "/nonexistent-locus-activity-test-\(UUID().uuidString)")]
+        model.activity.activityCenterPresented = true
+
+        model.openActivityRun(selected)
+
+        XCTAssertEqual(model.currentSessionID, "current-chat")
+        XCTAssertTrue(model.activity.activityIsUnseen(selected))
+        XCTAssertTrue(model.activity.activityCenterPresented)
+        XCTAssertNil(model.sessionCatalog.sessionReveal)
+        XCTAssertNil(model.selectedOrchestrationRun)
+        XCTAssertEqual(model.toastMessage, "That chat's workspace is no longer available")
+        XCTAssertNoBackendTraffic()
+    }
+
+    @MainActor
+    func testActivityCompletionRequiresTheChatToActuallyBeVisible() {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        model.installTranscriptSession("viewed-chat", blocks: [])
+        XCTAssertEqual(model.activityViewedSessionID(appIsActive: true), "viewed-chat")
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: false))
+        model.overviewPresented = true
+        XCTAssertEqual(model.activityViewedSessionID(appIsActive: true), "viewed-chat", "The side overview keeps the chat visible")
+        model.library.isPresented = true
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.library.isPresented = false
+        model.activity.activityCenterPresented = true
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.activity.activityCenterPresented = false
+        model.agentCrewChatPresented = true
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.agentCrewChatPresented = false
+        model.savedAgentOverviewID = UUID()
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.savedAgentOverviewID = nil
+        model.emptySidebarDestination = .agents
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.emptySidebarDestination = nil
+        model.settingsPresented = true
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+        model.settingsPresented = false
+        _ = model.beginTranscriptSessionLoad("loading-chat")
+        XCTAssertNil(model.activityViewedSessionID(appIsActive: true))
+    }
+
+    @MainActor
+    func testActivityCompletionSuppressesOnlyTheExactLiveRunViewedWhenItFinishes() {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        model.installTranscriptSession("viewed-chat", blocks: [])
+        model.isBusy = true
+        model.orchestrationRunID = "current-run"
+        model.taskConversationStates["viewed-chat"] = TaskConversationState(
+            sessionID: "viewed-chat", runID: "current-run", state: .running, updatedAt: Date())
+        model.taskConversationStates["background-chat"] = TaskConversationState(
+            sessionID: "background-chat", runID: "background-run", state: .running, updatedAt: Date())
+
+        model.recordActivityCompletion(["type": "turn_done", "run_id": "old-run", "reason": "complete"],
+            sessionID: "viewed-chat", appIsActive: true)
+        model.recordActivityCompletion(["type": "turn_done", "run_id": "background-run", "reason": "complete"],
+            sessionID: "background-chat", appIsActive: true)
+        model.recordActivityCompletion(["type": "turn_done", "run_id": "current-run", "reason": "complete"],
+            sessionID: "viewed-chat", appIsActive: true)
+
+        XCTAssertEqual(model.activity.dismissedActivityRunIDs, ["current-run"])
+        model.installTranscriptSession("background-chat", blocks: [])
+        model.orchestrationRunID = "background-run"
+        model.recordActivityCompletion(["type": "orchestration_completed", "run_id": "background-run", "state": "completed"],
+            sessionID: "background-chat", appIsActive: true)
+        XCTAssertEqual(model.activity.dismissedActivityRunIDs, ["current-run"], "A later view cannot reclassify the background completion")
+    }
+
+    @MainActor
+    private func activityNavigationModel() -> AppModel {
+        BackendStub.reset()
+        return AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+    }
+
+    @MainActor
+    private func stopActivityNavigationModel(_ model: AppModel) {
+        model.activeTranscriptLoad?.task.cancel()
+        model.runs.cancelAll()
+        model.knowledge.cancelAll()
+        model.agentInstructions.cancelAll()
+        model.transcriptSearch.cancelAll()
+        model.eventAutomations.stop()
+        model.toastCenter.cancelPendingDismissal()
+    }
+
+    private func activityNavigationRun(id: String, sessionID: String, updatedAt: Double = 10) throws -> OrchestrationRun {
+        try JSONDecoder().decode(OrchestrationRun.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "session_id": sessionID, "state": "completed", "request": "Saved result",
+            "created_at": 1, "updated_at": updatedAt, "last_seq": 0, "pinned": false,
+            "legacy": false, "recoverable": false, "run_kind": "solo",
+        ]))
+    }
+
+    private func stubActivityNavigation(_ run: OrchestrationRun, list: [OrchestrationRun]? = nil) throws {
+        let sessionID = try XCTUnwrap(run.sessionID)
+        let detail = try JSONEncoder().encode(run)
+        let runs = try JSONEncoder().encode(OrchestrationRunsResponse(runs: list ?? [run], readOnly: false))
+        BackendStub.respond(toPath: "/api/sessions/\(sessionID)/resume") { _ in
+            ["ok": true, "messages": [], "session_info": ["session_id": sessionID, "cwd": "/tmp", "model": "fixture"]]
+        }
+        BackendStub.respond(toPath: "/api/orchestrations") { _ in runs }
+        BackendStub.respond(toPath: "/api/orchestrations/\(run.id)") { _ in detail }
+        BackendStub.respond(toPath: "/api/orchestrations/\(run.id)/events") { _ in
+            ["run_id": run.id, "events": [], "last_seq": 0]
+        }
     }
 
     private static func snapshot(total: Int, cursor: String? = nil) -> AgentInspectorSnapshot {

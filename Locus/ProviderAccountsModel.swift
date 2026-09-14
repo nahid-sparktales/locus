@@ -124,11 +124,14 @@ final class ProviderAccountsModel: ObservableObject {
                     as: ChatGPTModelsResponse.self
                 )
                 let names = response.models.map(\.id)
-                accountModels[account.id] = names.isEmpty ? account.kind.curatedModels : names
-                accountModelCatalogs[account.id] = response.models
+                if response.catalogComplete != false, !names.isEmpty {
+                    accountModels[account.id] = names
+                    accountModelCatalogs[account.id] = response.models
+                }
+                // Keep a previously discovered catalog on an incomplete response.
+                // Picker fallback choices must never become a routing allowlist.
                 await refreshChatGPTAccount(for: account)
             } catch {
-                accountModels[account.id] = account.kind.curatedModels
                 accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
             }
         }

@@ -70,6 +70,44 @@ final class ScheduleModelTests: XCTestCase {
         XCTAssertNoBackendTraffic()
     }
 
+    func testSavingSchedulePinsCapturedWorkspaceAndExecutionEnvironment() async throws {
+        let profileID = UUID().uuidString
+        for editing in [false, true] {
+            BackendStub.reset()
+            var payload = Self.scheduleJSON(id: "pinned")
+            payload["workspace_root"] = "/tmp/chosen-project"
+            payload["execution_environment"] = "worktree"
+            let existing = try XCTUnwrap(decode(ScheduledTask.self, from: payload))
+            var draft = ScheduleEditorDraft(task: existing)
+            draft.id = editing ? existing.id : nil
+            draft.agentProfileID = profileID
+            let path = editing ? "/api/schedules/pinned" : "/api/schedules"
+            BackendStub.respond(toPath: path) { _ in payload }
+            let model = makeModel()
+
+            let saved = await model.saveSchedule(draft)
+
+            XCTAssertTrue(saved)
+            let request = try XCTUnwrap(BackendStub.requests.first { $0.url?.path == path })
+            var data = request.httpBody ?? Data()
+            if data.isEmpty, let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    data.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(body["workspace_root"] as? String, "/tmp/chosen-project")
+            XCTAssertEqual(body["execution_environment"] as? String, "worktree")
+            XCTAssertEqual(request.httpMethod, editing ? "PATCH" : "POST")
+            if !editing { XCTAssertEqual(body["agent_profile_id"] as? String, profileID) }
+        }
+    }
+
     func testDueScheduleDispatchesAndAdmitsQueuedRun() async throws {
         BackendStub.respond(toPath: "/api/schedules") { _ in
             ["schedules": [Self.scheduleJSON(id: "sched-1")], "read_only": false]

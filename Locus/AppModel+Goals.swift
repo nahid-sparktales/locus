@@ -57,7 +57,7 @@ extension AppModel {
         if let behavior = encodedJSONObject(primaryAgentBehavior) { execution["agent_config"] = behavior }
         if let profileID = savedAgentProfileID(for: currentSessionID) {
             do {
-                let dispatch = try agentWorldProfileDispatch(profileID: profileID, mode: .work)
+                let dispatch = try agentWorldProfileDispatch(profileID: profileID, mode: .work, sessionID: currentSessionID)
                 execution["provider"] = dispatch.provider
                 execution["provider_account_id"] = dispatch.accountID
                 execution["model"] = dispatch.profile.model
@@ -222,7 +222,7 @@ extension AppModel {
                   let profile = agentProfiles.first(where: { $0.id == id }) else {
                 return "The goal's saved agent is unavailable."
             }
-            if execution["agent_profile_configuration"]?.string != goalAgentConfiguration(profile) {
+            if execution["agent_profile_configuration"]?.string != goalAgentConfiguration(agentChatProfile(profile, sessionID: goal.sessionID)) {
                 return "The saved agent's configuration changed. Edit the goal before resuming."
             }
         }

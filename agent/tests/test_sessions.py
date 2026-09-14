@@ -450,6 +450,38 @@ def test_session_detail_includes_export_provenance(tmp_path) -> None:
     assert detail["messages"] == [{"role": "user", "content": "document this"}]
 
 
+@pytest.mark.parametrize("primary", [True, False])
+def test_session_detail_preserves_agent_and_folder_identity(tmp_path, primary) -> None:
+    directory = str(tmp_path)
+    core = AgentCore(cwd=directory, model="qwen:test", config={})
+    core._add_message({"role": "user", "content": "saved agent work"})
+    session_id = core.session.path.stem
+    sessions_module.SessionMeta.update(
+        session_id,
+        agent_profile_id="saved-profile",
+        agent_trigger_id="scheduled-agent",
+        agent_kind="schedule",
+        agent_name="Morning Review",
+        agent_primary=primary,
+        provider="ollama",
+        archived=True,
+    )
+    folder = ChatOrganizationStore.create_folder(directory, "Earlier tasks")
+    placement = ChatOrganizationStore.move_session(session_id, folder["id"])
+
+    detail = server.session_detail(session_id)
+
+    assert detail["agent_profile_id"] == "saved-profile"
+    assert detail["agent_trigger_id"] == "scheduled-agent"
+    assert detail["agent_kind"] == "schedule"
+    assert detail["agent_name"] == "Morning Review"
+    assert detail["agent_primary"] is primary
+    assert detail["provider"] == "ollama"
+    assert detail["archived"] is True
+    assert detail["folder_id"] == folder["id"]
+    assert detail["sort_order"] == placement["order"]
+
+
 def test_metadata_endpoint_validates_and_updates_fields(tmp_path) -> None:
     core = AgentCore(cwd=str(tmp_path), config={})
     server.app.state.service = server.ChatService(core)

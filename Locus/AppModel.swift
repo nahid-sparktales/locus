@@ -103,6 +103,7 @@ final class AppModel: ObservableObject {
     let optionalQuestions = OptionalQuestionModel()
     let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
+    var activityNavigationGeneration = UUID()
     let evaluations = EvaluationsModel()
     let runtimes = RuntimeModel()
     let knowledge = WorkspaceKnowledgeModel()
@@ -334,6 +335,14 @@ final class AppModel: ObservableObject {
         }
     }
     var lastSidebarSessionIDs: [String: String] = [:]
+    /// Typed agent identities in selection order, newest first. Keeping this
+    /// separate from chat activity lets opening an overview promote its agent.
+    @Published var recentSidebarAgentIDs: [String] = [] {
+        didSet {
+            guard persistenceEnabled else { return }
+            UserDefaults.standard.set(recentSidebarAgentIDs, forKey: "Locus.recentSidebarAgentIDs")
+        }
+    }
     @Published var emptySidebarDestination: SidebarDestination?
     /// The agent selected as a whole in the sidebar. This is deliberately
     /// independent of the open chat: selecting an agent changes its inspector
@@ -491,7 +500,11 @@ final class AppModel: ObservableObject {
     var savedAgentRuntimeSyncPending = false
     var pendingSavedAgentEditor: AgentProfile?
     @Published var selectedSavedAgentID: UUID?
+    /// Viewing an agent does not resume a conversation, replace its draft, or
+    /// interrupt a running task. Only an explicit chat action changes sessions.
+    @Published var savedAgentOverviewID: UUID?
     @Published var configureAgentProfileID: UUID?
+    var configureAgentWorkspace: String?
     @Published var creatingSavedAgentChatIDs: Set<UUID> = []
     @Published var removingSavedAgentIDs: Set<UUID> = []
     var savedAgentConversationCreationCounts: [UUID: Int] = [:]
@@ -787,6 +800,9 @@ final class AppModel: ObservableObject {
     /// credential file: a test must not read — or delete — the secrets of
     /// whoever is running the suite.
     let persistenceEnabled: Bool
+    /// Test hosts keep explicitly created agent homes out of the user's files.
+    var agentHomesRootOverride: URL?
+    let transientAgentHomesID = UUID()
     let isUITesting: Bool  // internal(for: AppModel extension files)
     var isShuttingDown = false  // internal(for: AppModel extension files)
     private var settingsUpdatePreparation: (
@@ -835,6 +851,7 @@ final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         if persistenceEnabled {
             lastSidebarSessionIDs = defaults.dictionary(forKey: "Locus.lastSidebarSessionIDs") as? [String: String] ?? [:]
+            recentSidebarAgentIDs = defaults.stringArray(forKey: "Locus.recentSidebarAgentIDs") ?? []
         }
         let existingInstallation = defaults.data(forKey: "Locus.settings") != nil
             || defaults.data(forKey: "Locus.sessionOverviewStates.v1") != nil
@@ -1531,7 +1548,14 @@ final class AppModel: ObservableObject {
     /// Whether the session is running this model through this source. Both
     /// halves matter: two accounts can offer a model of the same name.
     func isCurrentRoute(account: ProviderAccount?, model: String) -> Bool {
-        account?.id.uuidString == settings.activeAccountID && model == selectedModel
+        if let route = modelPickerTaskRoute {
+            return model == route.model && (route.accountID.map { $0 == account?.id }
+                ?? (account == nil && route.provider == "ollama"))
+        }
+        if let profile = currentAgentChatProfile {
+            return account?.id == profile.route.accountID && model == profile.model
+        }
+        return account?.id.uuidString == settings.activeAccountID && model == selectedModel
     }
 
     /// The model an agent created or repointed right now would run on: what
@@ -1545,9 +1569,20 @@ final class AppModel: ObservableObject {
     /// The closed picker's label. With an account it leads with the account's
     /// short name, because the model name alone no longer says where it runs.
     var modelPickerLabel: String {
+        if let route = modelPickerTaskRoute {
+            return taskModelPickerLabel(model: route.model, accountID: route.accountID, provider: route.provider)
+        }
+        if selectedMode == .duo { return "Duo models" }
         if let team = selectedAgentTeam {
             let count = selectedTeamModelNames.count
             return "\(team.name) · \(count) \(count == 1 ? "model" : "models")"
+        }
+        if let profile = currentAgentChatProfile {
+            if let accountID = profile.route.accountID {
+                let source = providerAccounts.first { $0.id == accountID }?.shortName ?? "Unavailable account"
+                return "\(source) · \(profile.model)"
+            }
+            return profile.model
         }
         guard let account = activeAccount else {
             return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel

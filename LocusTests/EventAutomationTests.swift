@@ -24,6 +24,61 @@ private actor EventDispatchGate {
 }
 
 final class EventAutomationTests: XCTestCase {
+    @MainActor
+    func testQueuedEventAccountFailureDoesNotPauseFutureArrivals() async throws {
+        BackendStub.reset()
+        let runPayload: [String: Any] = [
+            "id": "unavailable-account-run", "session_id": "chat-a", "workspace_root": "/tmp",
+            "state": "queued", "request": "Handle event", "created_at": 10, "updated_at": 10,
+            "last_seq": 0, "pinned": false, "legacy": false, "recoverable": false,
+            "manifest": ["event_delivery_id": "delivery-a", "mode": "work"],
+        ]
+        var cancelledRun = runPayload
+        cancelledRun["state"] = "cancelled"
+        BackendStub.respond(toPath: "/api/sessions/chat-a", status: 503) { _ in
+            ["detail": "Claude account is unavailable. Sign in again."]
+        }
+        BackendStub.respond(toPath: "/api/runs/unavailable-account-run/queue") { _ in cancelledRun }
+        let failedDelivery = deliveryPayload(id: "delivery-a", triggerID: "trigger-a",
+                                            targetSessionID: "chat-a", state: "failed")
+        BackendStub.respond(toPath: "/api/event-deliveries/delivery-a/fail") { _ in failedDelivery }
+        BackendStub.respond(toPath: "/api/connectors") { _ in ["connections": []] }
+        let enabledTrigger = triggerPayload(id: "trigger-a", enabled: true, lastError: "Sign in again")
+        BackendStub.respond(toPath: "/api/event-triggers") { _ in ["triggers": [enabledTrigger]] }
+        BackendStub.respond(toPath: "/api/event-deliveries") { _ in ["deliveries": [failedDelivery]] }
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer { model.eventAutomations.stop(); model.schedule.cancelAll() }
+        let run = try XCTUnwrap(decode(OrchestrationRun.self, from: runPayload))
+        model.restoredQueuedRunIDs.insert(run.id)
+
+        await model.dispatchPersistedQueuedRun(run)
+
+        let failure = try XCTUnwrap(BackendStub.requests.first {
+            $0.url?.path == "/api/event-deliveries/delivery-a/fail"
+        })
+        var data = failure.httpBody ?? Data()
+        if data.isEmpty, let stream = failure.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["pause_trigger"] as? Bool, false,
+                       "An unavailable account must fail the attempt without disabling future events")
+        XCTAssertEqual(body["run_id"] as? String, run.id,
+                       "A delayed failure must not terminalize a newer retry")
+        XCTAssertFalse((body["error"] as? String ?? "").isEmpty)
+        XCTAssertTrue(BackendStub.requestPaths.contains("/api/runs/unavailable-account-run/queue"),
+                      "The failed queued attempt must not survive as a stuck queue entry")
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0.hasSuffix("/pause") })
+        XCTAssertFalse(model.restoredQueuedRunIDs.contains(run.id))
+    }
+
     private func gmailClient() throws -> EventConnectorClient {
         BackendStub.reset()
         let credentials = InMemoryConnectorCredentialStore()
@@ -688,6 +743,40 @@ final class EventAutomationTests: XCTestCase {
         XCTAssertFalse(draft?.creationID.isEmpty ?? true)
     }
 
+    func testOwnedEventDraftSelectsOnlyEligibleChatsAndKeepsTheirProjectRoot() {
+        let owner = UUID()
+        var draft = EventTriggerEditorDraft()
+        draft.agentProfileID = owner.uuidString
+        draft.creationID = "owned-event"
+        let chosen = SessionSummary(id: "chosen", name: "Chosen", preview: "", mtime: 1, size: 0,
+            cwd: "/tmp/project", workspaceRoot: "/tmp/project", executionPath: "/tmp/isolated-copy",
+            environment: ["type": "worktree"], agentProfileID: owner.uuidString)
+        let chats = [chosen,
+            SessionSummary(id: "foreign", name: "Foreign", preview: "", mtime: 1, size: 0,
+                cwd: "/tmp/foreign", agentProfileID: UUID().uuidString),
+            SessionSummary(id: "archived", name: "Archived", preview: "", mtime: 1, size: 0,
+                archived: true, cwd: "/tmp/old", agentProfileID: owner.uuidString),
+            SessionSummary(id: "other-rule", name: "Other", preview: "", mtime: 1, size: 0,
+                cwd: "/tmp/project", agentTriggerID: "different-rule", agentProfileID: owner.uuidString,
+                agentKind: "event")]
+        XCTAssertEqual(draft.receivingChats(in: chats).map(\.id), ["chosen"])
+        draft.selectReceivingChat(chosen)
+        XCTAssertEqual(draft.targetSessionID, "chosen")
+        XCTAssertEqual(draft.workspaceRoot, "/tmp/project", "The project root is distinct from this chat’s working copy")
+        XCTAssertEqual(draft.receivingSession(in: chats)?.executionPath, "/tmp/isolated-copy")
+    }
+
+    @MainActor
+    func testSavingOwnedEventRetargetUsesExactSelectedChatWithoutCopyingIt() async throws {
+        let owner = UUID().uuidString
+        let body = try await savedActionRequest(actions: [], isEditing: true,
+            receivingSessionID: "chosen-owned-chat", agentProfileID: owner)
+        XCTAssertEqual(body["target_session_id"] as? String, "chosen-owned-chat")
+        XCTAssertEqual(body["agent_profile_id"] as? String, owner)
+        XCTAssertEqual((body["profile_route"] as? [String: String])?["model"], "captured-model")
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0.hasSuffix("target-session") || $0.hasSuffix("detached") })
+    }
+
     @MainActor
     func testEditingDedicatedAgentRepairsItsStableTarget() {
         let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
@@ -801,12 +890,13 @@ final class EventAutomationTests: XCTestCase {
     @MainActor
     private func savedActionRequest(
         actions: [String], kind: EventTriggerKind = .event, isEditing: Bool = false,
-        workflow: AutomationWorkflow? = nil
+        workflow: AutomationWorkflow? = nil, receivingSessionID: String = "chat-a", agentProfileID: String? = nil
     ) async throws -> [String: Any] {
         BackendStub.reset()
         var reply = triggerPayload(id: "permissions", enabled: false, lastError: nil)
         reply["action_connection_ids"] = actions
         reply["trigger_kind"] = kind.rawValue
+        reply["target_session_id"] = receivingSessionID
         let path = isEditing ? "/api/event-triggers/permissions" : "/api/event-triggers"
         BackendStub.respond(toPath: path) { _ in reply }
         let model = EventAutomationModel(credentials: InMemoryConnectorCredentialStore())
@@ -833,7 +923,9 @@ final class EventAutomationTests: XCTestCase {
         draft.name = "Inbox summary"
         draft.instruction = "Summarize only"
         draft.connectionID = kind == .price ? "prices" : "gmail"
-        draft.targetSessionID = "chat-a"
+        draft.targetSessionID = receivingSessionID
+        draft.agentProfileID = agentProfileID
+        if agentProfileID != nil { draft.profileRoute = ["provider": "ollama", "model": "captured-model"] }
         draft.triggerKind = kind
         draft.actionConnectionIDs = actions
         draft.enabled = false

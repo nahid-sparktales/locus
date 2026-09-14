@@ -198,7 +198,7 @@ extension AppModel {
                 id: AgentWorldSignals.token("attention", sessionID, key), agentID: profileID.uuidString,
                 kind: kind, title: title, sessionID: sessionID))
         }
-        for (sessionID, worker) in taskWorkers where SessionSummary.canonicalWorkspacePath(worker.workspacePath) == workspace {
+        for (sessionID, worker) in taskWorkers where agentWorldSessionMatchesWorkspace(sessionID, workspace: workspace, fallback: worker.workspacePath) {
             // Foreground requests are represented by the composer below; the
             // parked event is consumed when its worker becomes foreground.
             guard sessionID != currentSessionID else { continue }
@@ -219,7 +219,7 @@ extension AppModel {
                     type == "question_required" ? "A crew member needs your answer" : "A crew member needs your approval")
             }
         }
-        if SessionSummary.canonicalWorkspacePath(workspacePath) == workspace {
+        if agentWorldSessionMatchesWorkspace(currentSessionID, workspace: workspace, fallback: workspacePath) {
             if let request = activePermissionRequest, let id = request.requestID {
                 let key = "permission_request:" + id
                 add(currentSessionID, agentWorldAttentionOwner(currentSessionID, workspace: workspace, requestKey: key), key, "approval", "A crew member needs your approval")
@@ -240,7 +240,9 @@ extension AppModel {
         for run in runs.orchestrationRuns where knownRuns[run.id] == nil { knownRuns[run.id] = run }
         for run in agentWorldRunSignals.values { knownRuns[run.id] = run }
         if let run = runs.selectedOrchestrationRun { knownRuns[run.id] = run }
-        signals.transfers = knownRuns.values.flatMap { AgentWorldSignals.transfers(in: $0, profiles: profileIDs, workspace: workspace) }
+        signals.transfers = knownRuns.values.filter { agentWorldRunMatchesWorkspace($0, workspace: workspace) }.flatMap {
+            AgentWorldSignals.transfers(in: $0, profiles: profileIDs, workspace: SessionSummary.canonicalWorkspacePath($0.workspaceRoot ?? workspace))
+        }
         for handoff in agentCrewChat.handoffs(for: workspace) {
             guard profileIDs.contains(handoff.fromAgentID), profileIDs.contains(handoff.toAgentID) else { continue }
             signals.transfers.append(AgentWorldTransfer(
@@ -262,7 +264,7 @@ extension AppModel {
         let canonical = SessionSummary.canonicalWorkspacePath(workspace)
         let ids = taskConversationStates.values.filter { state in
             let path = taskWorkers[state.sessionID]?.workspacePath ?? sessionCatalog.snapshot.sessionsByID[state.sessionID]?.workspacePath
-            return path.map { SessionSummary.canonicalWorkspacePath($0) == canonical } == true
+            return agentWorldSessionMatchesWorkspace(state.sessionID, workspace: canonical, fallback: path)
         }.sorted { $0.updatedAt > $1.updatedAt }.compactMap(\.runID)
         guard !ids.isEmpty else { return }
         agentWorldSignalsRefreshTask = Task { [weak self] in
@@ -272,7 +274,7 @@ extension AppModel {
             for id in ids.filter({ seen.insert($0).inserted }).prefix(8) {
                 guard !Task.isCancelled else { return }
                 if let run = try? await self.backend.get("/api/runs/\(id)", as: OrchestrationRun.self),
-                   run.workspaceRoot.map({ SessionSummary.canonicalWorkspacePath($0) == canonical }) == true {
+                   self.agentWorldRunMatchesWorkspace(run, workspace: canonical) {
                     self.agentWorldRunSignals[id] = run
                 }
             }
@@ -281,5 +283,19 @@ extension AppModel {
                 self.agentWorldRunSignals = Dictionary(uniqueKeysWithValues: recent.map { ($0.id, $0) })
             }
         }
+    }
+
+    private func agentWorldSessionMatchesWorkspace(_ sessionID: String, workspace: String, fallback: String?) -> Bool {
+        if let session = sessionCatalog.snapshot.sessionsByID[sessionID] { return session.belongsToWorkspace(workspace) }
+        return fallback.map { SessionSummary.canonicalWorkspacePath($0) == workspace } ?? false
+    }
+
+    private func agentWorldRunMatchesWorkspace(_ run: OrchestrationRun, workspace: String) -> Bool {
+        guard let root = run.workspaceRoot else { return false }
+        let canonicalRoot = SessionSummary.canonicalWorkspacePath(root)
+        if canonicalRoot == workspace { return true }
+        guard let id = run.sessionID, let session = sessionCatalog.snapshot.sessionsByID[id],
+              session.workspacePath == canonicalRoot else { return false }
+        return session.belongsToWorkspace(workspace)
     }
 }

@@ -122,7 +122,7 @@ struct Vocabulary: Equatable {
 struct AgentOverview: Equatable {
     enum Status: Equatable {
         case active
-        /// The person paused it. Nothing is wrong.
+        /// Automatic starts are disabled; the initiating actor is not recorded.
         case paused
         /// Locus stopped it after a failure and will not restart it by itself.
         case stopped
@@ -154,8 +154,8 @@ struct AgentOverview: Equatable {
                 vocabulary == .runs ? "Running on schedule" : "Listening for matching events"
             case .paused:
                 vocabulary == .runs
-                    ? "You paused this agent. It skips its scheduled runs until you resume it."
-                    : "You paused this agent. Events are recorded but no chat starts."
+                    ? "Automatic starts are paused. Scheduled runs are skipped until you resume."
+                    : "Automatic starts are paused. New events won’t start runs until you resume."
             case .stopped:
                 vocabulary == .runs
                     ? "Locus stopped this agent after a failure. Resume to run on schedule again."

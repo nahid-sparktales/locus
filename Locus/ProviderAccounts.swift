@@ -716,7 +716,19 @@ struct ModelPickerSection: Identifiable {
             )
         ]
         for account in accounts {
-            let models = accountModels[account.id] ?? []
+            let reported = accountModels[account.id] ?? []
+            let models: [String]
+            if reported.isEmpty && account.kind.isManagedPlan {
+                // Metadata discovery can fail while the runtime remains usable.
+                // These choices decorate the picker only; they do not turn an
+                // incomplete response into the routing catalog's allowlist.
+                var seen: Set<String> = []
+                models = ([account.preferredModel] + account.kind.curatedModels)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+            } else {
+                models = reported
+            }
             let empty: String?
             if !models.isEmpty {
                 empty = nil

@@ -1457,7 +1457,7 @@ extension AppModel {
         guard let fixture = runFixture ?? ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_RUN_FIXTURE"],
               [
                 "completed", "recoverable", "dispatcher-repair", "dispatch-plan",
-                "activity", "orphaned-activity", "swarm-live", "swarm-recoverable",
+                "activity", "orphaned-activity", "activity-paused", "swarm-live", "swarm-recoverable",
                 "solo-swarm-live", "solo-swarm-completed", "solo-swarm-empty",
                 "solo-swarm-work",
               ].contains(fixture)
@@ -1473,6 +1473,7 @@ extension AppModel {
         case "recoverable", "swarm-recoverable": .interrupted
         case "dispatch-plan": .waitingDispatchApproval
         case "activity", "orphaned-activity": .failed
+        case "activity-paused": .paused
         case "swarm-live", "solo-swarm-live": .running
         default: .dispatching
         }
@@ -1618,10 +1619,10 @@ extension AppModel {
         orchestrationRunID = run.id
         orchestrationState = state
         if fixture == "swarm-live" || fixture == "solo-swarm-live" { isBusy = true }
-        if ["activity", "orphaned-activity", "swarm-live", "solo-swarm-live"].contains(fixture) {
+        if ["activity", "orphaned-activity", "activity-paused", "completed", "swarm-live", "solo-swarm-live"].contains(fixture) {
             activity.activityRuns = [run]
         }
-        if ["activity", "orphaned-activity"].contains(fixture) {
+        if ["activity", "orphaned-activity", "activity-paused"].contains(fixture) {
             return
         }
         var rawEvents: [[String: Any]]

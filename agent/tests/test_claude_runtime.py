@@ -28,7 +28,8 @@ def manager(monkeypatch, tmp_path):
 def sdk(monkeypatch):
     import claude_agent_sdk
     captured = SimpleNamespace(options=[], prompts=[], calls=[], resume=[], interrupt=0,
-                               response=[], tool_reply=None, tool_input={'path': 'README.md'}, fail=False, result_error=False)
+                               response=[], tool_reply=None, tool_input={'path': 'README.md'},
+                               tool_name=None, fail=False, result_error=False)
 
     class Client:
         def __init__(self, *, options):
@@ -54,8 +55,10 @@ def sdk(monkeypatch):
             if captured.fail:
                 raise RuntimeError('transport closed')
             yield msg('SystemMessage', subtype='init', data={'session_id': 'sdk-session'})
-            if captured.calls:
-                captured.tool_reply = await captured.calls[0].handler(captured.tool_input)
+            selected = next((tool for tool in captured.calls
+                             if captured.tool_name is None or tool.name == captured.tool_name), None)
+            if selected is not None:
+                captured.tool_reply = await selected.handler(captured.tool_input)
             for value in captured.response:
                 yield value
             yield msg('ResultMessage', session_id='sdk-session', usage={'input_tokens': 5,
@@ -204,9 +207,105 @@ def test_streaming_and_complete_messages_are_not_duplicated(manager, sdk):
     assert manager._load(thread)['input'] == 16
 
 
+def streamed_block(message_id, index, kind, text):
+    return [
+        msg('StreamEvent', event={'type': 'content_block_start', 'index': index,
+                                 'content_block': {'type': kind}}),
+        msg('StreamEvent', event={'type': 'content_block_delta', 'index': index,
+                                 'delta': {kind if kind == 'text' else 'thinking': text}}),
+        msg('StreamEvent', event={'type': 'content_block_stop', 'index': index}),
+        msg('AssistantMessage', message_id=message_id, uuid=f'{message_id}-{index}',
+            content=[msg('TextBlock', text=text) if kind == 'text'
+                     else msg('ThinkingBlock', thinking=text)]),
+    ]
+
+
+def test_per_block_claude_completions_preserve_streamed_identity_in_saved_chat(
+    manager, sdk, monkeypatch, tmp_path,
+):
+    # The SDK emits each completed content block as its own AssistantMessage.
+    # Reasoning completing at index 0 must not reset the mapping for text at 1.
+    answer = 'Toronto is 14.1 °C.\n\nMexico City was not fetched.'
+    sdk.response = [msg('StreamEvent', event={'type': 'message_start', 'message': {'id': 'weather'}})]
+    sdk.response += streamed_block('weather', 0, 'thinking', 'Check the requested cities.')
+    sdk.response += streamed_block('weather', 1, 'text', answer)
+    sdk.response += [msg('StreamEvent', event={'type': 'message_stop'})]
+    monkeypatch.setattr(manager, 'account', lambda: {'account': {'type': 'claude_plan'}})
+    core = AgentCore(cwd=str(tmp_path), config={'provider': 'ollama', 'model': 'local'})
+    core.use_claude_plan(account_id='account-a', model='default', account_label='Claude', manager=manager)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn('Check the temperature.', allow_tools=False)
+
+    answers = [event for event in events if event['type'] == 'assistant_item_end'
+               and event['kind'] == 'message']
+    assert [(event['item_id'], event['text']) for event in answers] == [('weather-1', answer)]
+    assert [message['content'] for message in core.messages if message['role'] == 'assistant'] == [answer]
+    saved = core.session.load(core.session.path)
+    assert [message['content'] for message in saved if message['role'] == 'assistant'
+            and message.get('content')] == [answer]
+
+
+def test_claude_block_replay_is_ignored_but_distinct_identical_blocks_are_kept(manager, sdk):
+    sdk.response = [msg('StreamEvent', event={'type': 'message_start', 'message': {'id': 'm'}})]
+    first = streamed_block('m', 0, 'text', 'Again.')
+    sdk.response += first + [first[-1]] + streamed_block('m', 1, 'text', 'Again.')
+    thread = manager.start_thread(model='default', cwd='/workspace')
+    events = []
+
+    manager.run_turn(thread_id=thread, text='repeat', event_handler=events.append)
+
+    completed = [event['params']['item'] for event in events if event['method'] == 'item/completed']
+    assert [(item['id'], item['text']) for item in completed] == [('m-0', 'Again.'), ('m-1', 'Again.')]
+    deltas = [event['params'] for event in events if event['method'] == 'item/agentMessage/delta']
+    assert [(delta['itemId'], delta['delta']) for delta in deltas] == [('m-0', 'Again.'), ('m-1', 'Again.')]
+
+
+def test_claude_nonstreamed_blocks_and_successive_messages_keep_distinct_ids(manager, sdk):
+    sdk.response = [
+        msg('AssistantMessage', message_id='first', content=[msg('ThinkingBlock', thinking='Check.')]),
+        msg('AssistantMessage', message_id='first', content=[msg('TextBlock', text='First answer.')]),
+        msg('AssistantMessage', message_id='second', content=[msg('TextBlock', text='Next answer.')]),
+    ]
+    thread = manager.start_thread(model='default', cwd='/workspace')
+    events = []
+
+    manager.run_turn(thread_id=thread, text='continue', event_handler=events.append)
+
+    completed = [event['params']['item'] for event in events if event['method'] == 'item/completed']
+    assert [(item['id'], item['type']) for item in completed] == [
+        ('first-0', 'reasoning'), ('first-1', 'agentMessage'), ('second-0', 'agentMessage')]
+
+
 def test_model_discovery_never_uses_api_catalog(manager, sdk):
     assert manager.models()[0]['model'] == 'entitled-model'
 
+
+
+def test_missing_model_metadata_is_explicitly_incomplete(manager, sdk, monkeypatch):
+    import claude_agent_sdk
+
+    async def unavailable(self):
+        raise RuntimeError('metadata unavailable')
+
+    monkeypatch.setattr(claude_agent_sdk.ClaudeSDKClient, 'get_server_info', unavailable)
+    rows = manager.models()
+    assert rows[0]['model'] == 'default'
+    assert rows[0]['isFallback'] is True
+    monkeypatch.setattr(claude, 'account_payload', lambda *args: {'status': 'signed_in'})
+    monkeypatch.setattr(claude, 'manager_for', lambda *args: manager)
+    response = claude.models(None, account_id='account-a')
+    assert response['catalog_complete'] is False
+    assert response['models'][0]['id'] == 'default'
+
+
+def test_discovered_model_catalog_is_complete(manager, sdk, monkeypatch):
+    monkeypatch.setattr(claude, 'account_payload', lambda *args: {'status': 'signed_in'})
+    monkeypatch.setattr(claude, 'manager_for', lambda *args: manager)
+    response = claude.models(None, account_id='account-a')
+    assert response['catalog_complete'] is True
+    assert response['models'][0]['id'] == 'entitled-model'
 
 def test_uncertain_turn_is_never_replayed(manager, sdk):
     sdk.fail = True
@@ -296,6 +395,51 @@ def test_scheduled_and_team_routes_are_subscription_only():
     assert profile.input_cost_per_million == profile.output_cost_per_million == 0
     with pytest.raises(Exception, match='credentials'):
         _validate_route({**route, 'api_key': 'not-allowed'}, 'Claude')
+
+
+@pytest.mark.parametrize('network', [True, False])
+def test_saved_read_only_claude_profile_can_fetch_weather_when_network_enabled(manager, sdk, monkeypatch, tmp_path, network):
+    from ollama_code import tools
+    from ollama_code.agent_profile_runtime import parse_solo_profile, solo_profile_boundary
+
+    monkeypatch.setattr(manager, 'account', lambda: {'account': {'type': 'claude_plan'}})
+    core = AgentCore(cwd=str(tmp_path), config={'model': 'local', 'permission_mode': 'ask'})
+    core.mcp.close()
+    core.use_claude_plan(account_id='account-a', model='default', account_label='Claude', manager=manager)
+    profile = parse_solo_profile({
+        'id': 'weather-reader', 'name': 'Weather reader', 'model': 'default',
+        'role': 'generalist', 'access_ceiling': 'read_only',
+        'behavior': {'capability_policy': {'network': network}},
+    }, 'default')
+    sdk.tool_name = 'web_fetch'
+    sdk.tool_input = {'url': 'https://weather.example/current'}
+    sdk.response = [msg('AssistantMessage', content=[msg('TextBlock', text='Weather checked.')])]
+    fetches, decisions = [], []
+    monkeypatch.setitem(tools._IMPLS, 'web_fetch', lambda args, ctx:
+                        fetches.append(args) or 'Temperature: 21 C')
+
+    def approve(*args):
+        decisions.append(args)
+        return 'once'
+
+    # Scheduled and direct turns use the same saved-profile boundary before
+    # constructing the SDK's Locus server. No SDK/model or weather request runs.
+    with solo_profile_boundary(core, profile) as configuration:
+        core.configure_agent(configuration, mode='work')
+        core.run_turn('Get the current temperature.', approve)
+
+    options = sdk.options[-1]
+    assert ('mcp__locus__web_fetch' in options.allowed_tools) is network
+    assert not set(options.allowed_tools).intersection({
+        'mcp__locus__bash', 'mcp__locus__write_file', 'mcp__locus__browser_navigate',
+    })
+    assert options.tools == [] and options.strict_mcp_config
+    assert fetches == ([sdk.tool_input] if network else [])
+    assert len(decisions) == int(network)
+    if network:
+        assert sdk.tool_reply['content'][0]['text'] == 'Temperature: 21 C'
+    else:
+        assert sdk.tool_reply is None
 
 
 def test_no_tools_mode_and_interruption(manager, sdk):

@@ -2,6 +2,11 @@ import Combine
 import Foundation
 import os
 
+struct SidebarSessionReveal: Equatable, Identifiable {
+    let id = UUID()
+    let sessionID: String
+}
+
 struct SessionSidebarFolderSnapshot: Identifiable, Equatable {
     let folder: ChatFolderRecord
     let children: [SessionSidebarFolderSnapshot]
@@ -92,6 +97,7 @@ final class SessionCatalogModel: ObservableObject {
     )
 
     @Published private(set) var snapshot = SessionCatalogSnapshot.empty
+    @Published private(set) var sessionReveal: SidebarSessionReveal?
 
     /// Deterministic structural metric used by tests. Timings stay advisory;
     /// this counter is the CI gate for accidental rebuilds.
@@ -172,6 +178,34 @@ final class SessionCatalogModel: ObservableObject {
         let previous = state.searchQuery
         commit { $0.searchQuery = value }
         if value != previous { searchQueryDidChange(value) }
+    }
+
+    /// Activity links reveal their destination even when search, archive, or
+    /// nested folder state previously hid it. No session metadata is changed.
+    func revealSession(_ session: SessionSummary) {
+        let previousQuery = state.searchQuery
+        let workspaceID = snapshot.workspaceIDBySessionID[session.id]
+            ?? session.workspacePath.map(SessionSummary.canonicalWorkspacePath)
+            ?? Self.otherWorkspaceID
+        commit { state in
+            state.searchQuery = ""
+            if session.isArchived { state.showArchivedSessions = true }
+            state.expandedWorkspaceIDs.insert(workspaceID)
+            var folderID = session.folderID
+            var visited: Set<String> = []
+            while let id = folderID, visited.insert(id).inserted {
+                state.expandedChatFolderIDs.insert(id)
+                folderID = state.chatFolders.first { $0.id == id }?.parentID
+            }
+        }
+        if !previousQuery.isEmpty { searchQueryDidChange("") }
+        persistExpansionState()
+        sessionReveal = SidebarSessionReveal(sessionID: session.id)
+    }
+
+    func finishSessionReveal(_ id: UUID) {
+        guard sessionReveal?.id == id else { return }
+        sessionReveal = nil
     }
 
     func requestSearchFocus() {

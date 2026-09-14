@@ -332,7 +332,7 @@ private struct AgentDetailView: View {
                                 ? "Skip scheduled runs until you resume it"
                                 : "Run on schedule again")
                             : (definition.enabled
-                                ? "Keep recording events without starting chats"
+                                ? "Pause automatic starts for matching events"
                                 : "Start chats for matching events again"),
                         identifier: "agentOverview.toggle"
                     ) {
@@ -833,7 +833,7 @@ private struct AgentDetailView: View {
                 Text(overview.schedule != nil
                     ? "No runs yet. Each run continues this agent's chat and appears here with its outcome."
                     : (overview.definition?.enabled == false
-                        ? "Paused agents keep recording events; none have arrived yet."
+                        ? "Automatic starts are paused. New events won’t start runs until you resume."
                         : "Nothing has reached this agent yet. Matching events will appear here with their outcome."))
                     .font(.locus(size: 12))
                     .foregroundStyle(LocusTheme.textSecondary)

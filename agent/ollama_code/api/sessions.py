@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from ..agent_workspaces import AgentChatWorkspace, validate_agent_home
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..core import AgentCore
@@ -276,10 +277,15 @@ def session_detached(
     """Create a saved conversation for a dedicated worker without switching the foreground."""
     raw_cwd = body.get("cwd")
     title = body.get("title")
-    if not isinstance(raw_cwd, str) or not raw_cwd.strip():
+    if not isinstance(raw_cwd, str) or not raw_cwd.strip() or len(raw_cwd) > 4096 \
+            or any(ord(character) < 32 for character in raw_cwd):
         raise HTTPException(422, "cwd must identify an existing workspace directory")
-    workspace = Path(raw_cwd).expanduser().resolve()
-    if not workspace.is_dir():
+    try:
+        workspace = Path(raw_cwd).expanduser().resolve()
+        available = workspace.is_dir()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(422, "The conversation workspace is unavailable") from exc
+    if not available:
         raise HTTPException(422, "The conversation workspace is unavailable")
     if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120 \
             or any(ord(character) < 32 or ord(character) == 127 for character in title):
@@ -290,27 +296,50 @@ def session_detached(
             profile_id = str(uuid.UUID(profile_id))
         except (ValueError, AttributeError, TypeError) as exc:
             raise HTTPException(422, "agent_profile_id must be a UUID") from exc
+    policy = body.get("execution_environment")
+    if "execution_environment" in body and (
+        not isinstance(policy, str) or policy not in {"automatic", "local", "worktree"}
+    ):
+        raise HTTPException(422, "execution_environment must be automatic, local, or worktree")
+    agent_home = body.get("agent_home", False)
+    if not isinstance(agent_home, bool):
+        raise HTTPException(422, "agent_home must be true or false")
+    if agent_home:
+        try:
+            validate_agent_home(workspace, profile_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if policy == "worktree":
+            raise HTTPException(422, "Agent homes use a separate task folder; choose automatic or local")
     session = SessionStore(str(workspace))
+    allocation = None
     try:
+        allocation = AgentChatWorkspace.create(
+            workspace, session.session_id, policy=policy, agent_home=agent_home,
+        )
         # SessionStore's ordinary logging is best effort; creation must prove
         # that the dedicated worker can resume a durable, valid transcript.
         session.append_strict({"type": "detached_session_created"})
         saved_metadata = SessionMeta.update(
             session.session_id,
             title=title.strip(),
-            workspace_root=str(workspace),
-            execution_path=str(workspace),
-            environment={"type": "local", "isolation": "local"},
+            **allocation.metadata(),
             **({"agent_profile_id": profile_id, "agent_world_profile_id": profile_id}
                if profile_id is not None else {}),
         )
         if SessionMeta.get(session.session_id) != saved_metadata:
             raise OSError("conversation metadata was not persisted")
-    except OSError as exc:
+    except Exception as exc:
+        if allocation is not None:
+            allocation.cleanup()
         session.path.unlink(missing_ok=True)
         SessionMeta.forget([session.session_id])
+        if isinstance(exc, ValueError):
+            raise HTTPException(422, str(exc)) from exc
+        if isinstance(exc, WorktreeError):
+            raise HTTPException(409, str(exc)) from exc
         raise HTTPException(500, "The conversation could not be saved") from exc
-    return {"session_id": session.session_id}
+    return {"session_id": session.session_id, **allocation.metadata()}
 
 
 def sessions_clear(service: ServiceDependency) -> dict[str, Any]:
@@ -505,6 +534,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
         raise HTTPException(404, f"session not found: {session_id}")
     header = SessionStore.provenance(path)
     meta = SessionMeta.get(session_id)
+    placement = ChatOrganizationStore.placement(session_id)
     try:
         messages = SessionStore.load(path)
     except SessionTooLargeError as exc:
@@ -524,8 +554,16 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "team": meta.get("team"),
         "workspace_root": meta.get("workspace_root"),
         "execution_path": meta.get("execution_path"),
+        "output_directory": meta.get("output_directory"),
         "environment": meta.get("environment"),
+        "agent_trigger_id": meta.get("agent_trigger_id"),
         "agent_profile_id": meta.get("agent_profile_id"),
+        "agent_kind": session_agent_kind(meta),
+        "agent_name": meta.get("agent_name"),
+        "agent_primary": bool(meta.get("agent_primary") or False),
+        "provider": meta.get("provider"),
+        "folder_id": placement.get("folder_id") if placement else None,
+        "sort_order": int(placement.get("order") or 0) if placement else None,
         "agent_activities": activity["activities"],
         "orchestration_state": activity.get("orchestration_state"),
         "orchestration_run_id": activity.get("run_id"),

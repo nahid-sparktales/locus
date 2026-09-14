@@ -423,9 +423,24 @@ struct SessionDetailResponse: Codable {
     let team: SessionTeamReference?
     let workspaceRoot: String?
     let executionPath: String?
+    var environment: [String: String]? = nil
+
+    func belongsToWorkspace(_ workspace: String) -> Bool {
+        SessionSummary.matchesWorkspace(root: workspaceRoot?.nilIfEmpty ?? cwd, environment: environment, requested: workspace)
+    }
+
+    var executionQueueContext: [String: Any] {
+        var context: [String: Any] = [
+            "workspace_root": workspaceRoot?.nilIfEmpty ?? cwd ?? "",
+            "execution_path": executionPath?.nilIfEmpty ?? cwd ?? "",
+            "execution_environment": environment?["type"] ?? (task == nil ? "local" : "worktree"),
+        ]
+        if let task { context["task_id"] = task.id }
+        return context
+    }
 
     enum CodingKeys: String, CodingKey {
-        case id, messages, preview, title, pinned, archived, cwd, model, started, task, team
+        case id, messages, preview, title, pinned, archived, cwd, model, started, task, team, environment
         case agentActivities = "agent_activities"
         case orchestrationState = "orchestration_state"
         case orchestrationRunID = "orchestration_run_id"

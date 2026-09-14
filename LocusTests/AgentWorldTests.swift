@@ -9,6 +9,37 @@ final class AgentWorldTests: XCTestCase {
     private let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 1,
                                                capabilities: ["agents.read", "agents.interact", "world.preferences"])
 
+    func testIsolatedProjectIdentityKeepsSelectedSubfolderWithoutChangingExecutionContext() throws {
+        let owner = UUID()
+        let payload: [String: Any] = [
+            "id": "isolated-chat", "name": "isolated-chat", "preview": "", "mtime": 1, "size": 0, "messages": [],
+            "cwd": "/tmp/old-location", "workspace_root": "/tmp/repository", "execution_path": "/tmp/checkouts/task-a",
+            "agent_profile_id": owner.uuidString,
+            "environment": ["type": "worktree", "source_workspace": "/tmp/repository/subproject"],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let session = try JSONDecoder().decode(SessionSummary.self, from: data)
+        let detail = try JSONDecoder().decode(SessionDetailResponse.self, from: data)
+        let crew = try JSONDecoder().decode(AgentCrewChatSessionIdentity.self, from: data)
+        XCTAssertEqual(session.workspacePath, SessionSummary.canonicalWorkspacePath("/tmp/repository"))
+        for workspace in ["/tmp/repository", "/tmp/repository/subproject"] {
+            XCTAssertTrue(session.belongsToWorkspace(workspace))
+            XCTAssertTrue(detail.belongsToWorkspace(workspace))
+            XCTAssertTrue(crew.matches(sessionID: session.id, profileID: owner, workspace: workspace))
+        }
+        for workspace in ["/tmp/old-location", "/tmp/checkouts/task-a", "/tmp/repository/another", "/tmp/elsewhere"] {
+            XCTAssertFalse(session.belongsToWorkspace(workspace))
+            XCTAssertFalse(detail.belongsToWorkspace(workspace))
+            XCTAssertFalse(crew.matches(sessionID: session.id, profileID: owner, workspace: workspace))
+        }
+        XCTAssertFalse(crew.matches(sessionID: session.id, profileID: UUID(), workspace: "/tmp/repository/subproject"))
+        XCTAssertEqual(detail.executionQueueContext["workspace_root"] as? String, "/tmp/repository")
+        XCTAssertEqual(detail.executionQueueContext["execution_path"] as? String, "/tmp/checkouts/task-a")
+        XCTAssertEqual(detail.executionQueueContext["execution_environment"] as? String, "worktree")
+        XCTAssertFalse(SessionSummary.matchesWorkspace(root: "/tmp/repository", environment: ["type": "local", "source_workspace": "/tmp/repository/subproject"], requested: "/tmp/repository/subproject"))
+        XCTAssertFalse(SessionSummary.matchesWorkspace(root: "/tmp/repository", environment: ["type": "worktree", "source_workspace": "/tmp/repository-other"], requested: "/tmp/repository-other"))
+    }
+
     func testBridgeRejectsUnknownCapabilitiesVersionsAndPayloads() {
         XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "ready"], screen: screen), .ready)
         XCTAssertNil(PluginScreenMessage.decode(["version": true, "type": "ready"], screen: screen))
@@ -550,6 +581,15 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(app.selectedSavedAgentID, fixture.profiles[1].id, "The Vivre card uses its own selected profile")
         XCTAssertEqual(app.currentSessionID, "luffy-foreground")
         XCTAssertTrue(createdFor.isEmpty)
+
+        world.showSelectedTools()
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertTrue(world.conversationPresented)
+        XCTAssertEqual(world.selectedProfile?.name, "Jinbei")
+        XCTAssertEqual(app.currentSessionID, "luffy-foreground")
+        XCTAssertTrue(createdFor.isEmpty, "Reviewing saved activity must not create a chat")
+        world.openAgentProfile()
+        XCTAssertTrue(world.profilePresented, "Activity returns to the same resident's overview")
 
         world.newConversation(for: fixture.profiles[0].id.uuidString)
         await waitForConversationPreparation(world)
