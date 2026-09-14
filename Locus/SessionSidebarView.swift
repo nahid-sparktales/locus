@@ -139,6 +139,40 @@ enum AgentSidebarCatalog {
     }
 }
 
+
+/// Presentation of a configured task in the agent/task picker. The receiving
+/// chat owns the task; an unrelated side conversation must not rename its agent.
+enum AgentTaskPickerPresentation {
+    static func symbol(for definition: AgentDefinition) -> String {
+        if definition.isSchedule { return "calendar.badge.clock" }
+        return definition.trigger?.triggerKind == .price ? "chart.line.uptrend.xyaxis" : "bolt.badge.clock"
+    }
+
+    static func ownerLabel(
+        for definition: AgentDefinition, definitions: [AgentDefinition],
+        sessions: [SessionSummary], profiles: [AgentProfile]
+    ) -> String {
+        let receivingChats: [SessionSummary]
+        if let targetID = definition.trigger?.targetSessionID {
+            receivingChats = sessions.filter { $0.id == targetID }
+        } else {
+            let reference = AgentInspectorAgent(definition)
+            let associated = sessions.filter { $0.agentReference(in: definitions) == reference }
+            let primary = associated.filter(\.isAgentEventChat)
+            receivingChats = primary.isEmpty ? associated : primary
+        }
+        guard !receivingChats.isEmpty else { return "Agent link unavailable" }
+        let ownerIDs = Set(receivingChats.compactMap(\.savedAgentProfileID))
+        guard ownerIDs.count <= 1 else { return "Agent link unavailable" }
+        guard let ownerID = ownerIDs.first else { return "No agent linked" }
+        guard receivingChats.allSatisfy({ $0.savedAgentProfileID == ownerID }) else {
+            return "Agent link unavailable"
+        }
+        guard let profile = profiles.first(where: { $0.id == ownerID }) else { return "Unavailable agent" }
+        return "Agent: \(profile.name)"
+    }
+}
+
 #if DEBUG
 /// A metadata-only probe for the compact sidebar's native hit ownership.
 /// It never forces layout, exposes content, synthesizes input, or consumes an
@@ -648,7 +682,6 @@ struct SessionSidebarView: View {
                 withAnimation(reduceMotion ? nil : LocusMotion.scroll) {
                     proxy.scrollTo("sidebar.session.\(request.sessionID)", anchor: .center)
                 }
-                try? await Task.sleep(for: .seconds(4))
             }
             }
 
@@ -1159,7 +1192,6 @@ struct SessionSidebarView: View {
         SessionRow(
             session: session,
             isActive: session.id == model.currentSessionID,
-            isRevealed: sessionCatalog.sessionReveal?.sessionID == session.id,
             teamState: model.teamRunState(for: session),
             isRunning: model.chatIsRunning(session),
             startedAt: model.chatStartedAt(session),
@@ -1478,6 +1510,7 @@ struct SessionSidebarView: View {
             return entries.filter {
                 text.isEmpty || $0.name.localizedCaseInsensitiveContains(text)
                     || $0.summary.localizedCaseInsensitiveContains(text)
+                    || ownerLabel($0).localizedCaseInsensitiveContains(text)
             }
         }
 
@@ -1500,16 +1533,40 @@ struct SessionSidebarView: View {
         private var selectedName: String {
             if let profile = model.selectedSavedAgentProfile { return profile.name }
             if let selectedEntry { return selectedEntry.name }
-            guard let selectedReference else { return "Choose an agent" }
+            guard let selectedReference else { return "Choose an agent or task" }
             return sessionCatalog.snapshot.sessions.first {
                 $0.agentReference(in: model.agentDefinitions) == selectedReference
-            }?.agentName?.nilIfBlank ?? "Choose an agent"
+            }?.agentName?.nilIfBlank ?? "Choose an agent or task"
         }
         private var selectedContext: String {
             if let profile = model.selectedSavedAgentProfile { return "\(profile.role.title) · \(profile.model)" }
             guard let selectedEntry else { return "For your next conversation" }
-            let ownership = currentReference == selectedEntry.inspectorID ? "This chat" : "New chats"
-            return "\(ownership) · \(statusTitle(selectedEntry))"
+            return "Task · \(ownerLabel(selectedEntry))"
+        }
+
+        private var selectedSymbol: Image {
+            if model.selectedSavedAgentProfile == nil, let selectedEntry {
+                return Image(systemName: AgentTaskPickerPresentation.symbol(for: selectedEntry.definition))
+            }
+            return Image(locusSymbol: LocusSymbol.robot)
+        }
+
+        private func ownerLabel(_ entry: AgentFleetEntry) -> String {
+            AgentTaskPickerPresentation.ownerLabel(
+                for: entry.definition, definitions: entries.map(\.definition),
+                sessions: sessionCatalog.snapshot.sessions, profiles: profiles
+            )
+        }
+
+        private func sectionHeading(_ title: String, count: Int) -> some View {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(count)").monospacedDigit()
+            }
+            .font(.locus(size: 9, weight: .semibold))
+            .foregroundStyle(LocusTheme.muted)
+            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 5)
         }
 
         var body: some View {
@@ -1519,7 +1576,7 @@ struct SessionSidebarView: View {
                 isPresented.toggle()
             } label: {
                 HStack(spacing: 9) {
-                    Image(locusSymbol: LocusSymbol.robot)
+                    selectedSymbol
                         .font(.locus(size: 13, weight: .semibold))
                         .foregroundStyle(selectedEntry.map(showsWarning) == true
                             ? LocusTheme.warning : LocusTheme.accentAction)
@@ -1555,8 +1612,8 @@ struct SessionSidebarView: View {
                 }
             }
             .buttonStyle(.locus())
-            .help("Choose an agent for new chats, or manage its instructions, triggers, and access")
-            .accessibilityLabel("Agent menu")
+            .help("Choose an agent to open its chats, or a task to view its activity and settings")
+            .accessibilityLabel("Agents and tasks menu")
             .accessibilityValue("\(selectedName), \(selectedContext), \(entries.count + profiles.count) configured")
             .accessibilityIdentifier("sidebar.agentMenu")
             .popover(isPresented: $isPresented, arrowEdge: .trailing) { picker }
@@ -1565,7 +1622,7 @@ struct SessionSidebarView: View {
         private var picker: some View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("Choose an agent")
+                    Text("Choose an agent or task")
                         .font(.locus(size: 13, weight: .semibold))
                     Spacer()
                     Text("\(entries.count + profiles.count)")
@@ -1575,7 +1632,7 @@ struct SessionSidebarView: View {
                 .padding(.horizontal, 16).padding(.top, 15).padding(.bottom, 12)
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
-                    TextField("Search agents", text: $query)
+                    TextField("Search agents and tasks", text: $query)
                         .textFieldStyle(.plain)
                         .focused($searchFocused)
                         .onSubmit {
@@ -1590,7 +1647,7 @@ struct SessionSidebarView: View {
                         Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.locus(.icon))
                             .foregroundStyle(LocusTheme.muted)
-                            .accessibilityLabel("Clear agent search")
+                            .accessibilityLabel("Clear agent and task search")
                     }
                 }
                 .font(.locus(size: 11))
@@ -1604,7 +1661,7 @@ struct SessionSidebarView: View {
                             Image(systemName: "bubble.left").padding(.top, 2)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Open chat: \(currentEntry.name)").fontWeight(.medium)
-                                Text("Use this chat’s agent").foregroundStyle(LocusTheme.accentAction)
+                                Text("View this chat’s task").foregroundStyle(LocusTheme.accentAction)
                             }
                             Spacer(minLength: 0)
                             Image(systemName: "arrow.turn.up.left")
@@ -1618,7 +1675,8 @@ struct SessionSidebarView: View {
                     .buttonStyle(.locus())
                     .padding(.horizontal, 12).padding(.bottom, 8)
                     .accessibilityIdentifier("sidebar.agentPicker.currentChat")
-                } else if selectedReference != nil && currentReference == nil {
+                } else if selectedReference != nil && currentReference == nil
+                    && sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?.savedAgentProfileID == nil {
                     Label("Your open conversation is a Work chat.", systemImage: "bubble.left")
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
@@ -1627,6 +1685,7 @@ struct SessionSidebarView: View {
                 }
 
                 if !filteredProfiles.isEmpty {
+                    sectionHeading("Agents", count: filteredProfiles.count)
                     ScrollView {
                         VStack(spacing: 2) {
                             ForEach(filteredProfiles) { profile in
@@ -1648,17 +1707,18 @@ struct SessionSidebarView: View {
                 }
                 if filteredEntries.isEmpty && filteredProfiles.isEmpty {
                     VStack(spacing: 7) {
-                        Text(entries.isEmpty && profiles.isEmpty ? "No agents yet" : "No matching agents")
+                        Text(entries.isEmpty && profiles.isEmpty ? "No agents or tasks yet" : "No matching agents or tasks")
                             .font(.locus(size: 11, weight: .medium))
                         Text(entries.isEmpty && profiles.isEmpty
                             ? "Create an agent with its own instructions, access, and triggers."
-                            : "Try an agent name or trigger type.")
+                            : "Try an agent name, task name, or trigger type.")
                             .font(.locus(size: 10))
                             .foregroundStyle(LocusTheme.muted)
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity).padding(22)
-                } else {
+                } else if !filteredEntries.isEmpty {
+                    sectionHeading("Tasks", count: filteredEntries.count)
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(spacing: 2) {
@@ -1668,14 +1728,14 @@ struct SessionSidebarView: View {
                             }
                             .padding(.horizontal, 6).padding(.bottom, 6)
                         }
-                        .frame(height: min(CGFloat(filteredEntries.count) * 56 + 8, 320))
+                        .frame(height: min(CGFloat(filteredEntries.count) * 72 + 8, 320))
                         .onChange(of: keyboardReference) {
                             if let keyboardReference { proxy.scrollTo(keyboardReference, anchor: .center) }
                         }
                     }
                 }
                 Rectangle().fill(LocusTheme.line).frame(height: 1)
-                Text("Choose a saved agent to open its chats, or select an automation.")
+                Text("Choose an agent to open its chats, or a task to view its activity and settings.")
                     .font(.locus(size: 9))
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1713,13 +1773,17 @@ struct SessionSidebarView: View {
             let focused = keyboardReference == entry.inspectorID
             return Button { choose(entry.inspectorID) } label: {
                 HStack(spacing: 9) {
-                    Image(locusSymbol: LocusSymbol.robot)
+                    Image(systemName: AgentTaskPickerPresentation.symbol(for: entry.definition))
                         .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.accentAction)
                         .frame(width: 28, height: 28)
                         .background(LocusTheme.accentAction.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(entry.name).font(.locus(size: 11, weight: .medium)).lineLimit(1)
+                        Text(ownerLabel(entry))
+                            .font(.locus(size: 9))
+                            .foregroundStyle(LocusTheme.muted)
+                            .lineLimit(1)
                         Text("\(statusTitle(entry)) · \(environmentTitle(entry)) · \(entry.definition.kindTitle)")
                             .font(.locus(size: 9))
                             .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.muted)
@@ -1732,7 +1796,7 @@ struct SessionSidebarView: View {
                             .foregroundStyle(LocusTheme.accentAction)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
                 .padding(.horizontal, 9)
                 .background(focused ? LocusTheme.paperDeep.opacity(0.7)
                     : selected ? LocusTheme.accentAction.opacity(0.07) : Color.clear,
@@ -1741,7 +1805,7 @@ struct SessionSidebarView: View {
             }
             .buttonStyle(.locus())
             .accessibilityLabel(entry.name)
-            .accessibilityValue("\(statusTitle(entry)), \(environmentTitle(entry)), \(selected ? "selected" : "not selected")")
+            .accessibilityValue("Task, \(ownerLabel(entry)), \(statusTitle(entry)), \(environmentTitle(entry)), \(entry.definition.kindTitle), \(selected ? "selected" : "not selected")")
             .accessibilityIdentifier("agent.menu.\(entry.id)")
         }
 
@@ -2517,7 +2581,6 @@ private struct SectionLabel: View {
 private struct SessionRow: View {
     let session: SessionSummary
     let isActive: Bool
-    let isRevealed: Bool
     let teamState: TeamRunState?
     let isRunning: Bool
     let startedAt: Date?
@@ -2589,19 +2652,12 @@ private struct SessionRow: View {
             }
             .padding(.horizontal, 8)
             .frame(height: showsActivity ? 38 : 30)
-            .background(isRevealed ? LocusTheme.accentAction.opacity(0.16)
-                : isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
+            .background(isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(isRevealed ? LocusTheme.accentAction : Color.clear, lineWidth: 2)
-                    .allowsHitTesting(false)
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.locus())
         .accessibilityLabel("Resume \(session.displayTitle)")
-        .accessibilityValue(isRevealed ? "Opened from Activity Center" : "")
         .accessibilityIdentifier("session.\(session.id)")
     }
 
@@ -2681,7 +2737,23 @@ private struct AgentSidebarSection: View {
         let all = groups
         let visible = all.filter(filter.includes)
         LazyVStack(spacing: 3) {
-            CrewChatSidebarEntry().padding(.bottom, 6)
+            HStack {
+                Text("Group chats")
+                    .font(.locus(size: 9, weight: .medium))
+                Spacer()
+                Text("1")
+                    .font(.locus(size: 8, design: .monospaced))
+                    .accessibilityLabel("1 group chat")
+            }
+            .foregroundStyle(LocusTheme.muted)
+            .padding(.horizontal, 9)
+            .padding(.bottom, 5)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sidebar.groupChats.header")
+            CrewChatSidebarEntry(
+                selected: model.agentCrewChatPresented || crew.boundProfileID(for: model.currentSessionID) != nil
+            )
+            .padding(.bottom, 10)
             if !all.isEmpty || filter != .all {
                 HStack {
                     Menu {

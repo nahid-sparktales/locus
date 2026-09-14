@@ -2540,6 +2540,64 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
     }
 
+    func testGroupChatsAreSeparateFromIndividualAgents() {
+        relaunchWithAgentFixture("saved-profile")
+        revealSidebarForNavigation()
+        let header = anyElement("sidebar.groupChats.header")
+        let crew = anyElement("sidebar.crewChat")
+        let agents = anyElement("sidebar.agentFilter")
+        XCTAssertTrue(header.waitForExistence(timeout: 3))
+        XCTAssertTrue(crew.exists)
+        XCTAssertTrue(agents.exists)
+        XCTAssertLessThan(header.frame.maxY, crew.frame.minY)
+        XCTAssertLessThan(crew.frame.maxY, agents.frame.minY)
+        XCTAssertTrue(waitUntilHittable(crew))
+        crew.click()
+        XCTAssertTrue(anyElement("crewChat.workspace").waitForExistence(timeout: 3))
+        XCTAssertEqual(crew.value as? String, "Selected")
+    }
+
+    func testAgentProviderSwitchKeepsItsOwnModelChoices() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_PROVIDER_CHOICES"] = "1"
+        app.launch()
+        revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
+        anyElement("sidebar.newSession").click()
+        XCTAssertTrue(anyElement("agent.editor").waitForExistence(timeout: 5))
+        let provider = anyElement("agent.providerRoute")
+        let picker = anyElement("agent.model.picker")
+        let scroll = anyElement("agent.scroll")
+        if !provider.exists {
+            let environment = anyElement("agent.environment")
+            revealSettingsControl(environment, in: scroll)
+            environment.click()
+        }
+        revealSettingsControl(provider, in: scroll)
+        provider.click()
+        app.menuItems["ChatGPT plan — ChatGPT fixture"].click()
+        XCTAssertTrue(waitUntil { "\(picker.value ?? "")".contains("gpt-5.6-sol") })
+        picker.click()
+        XCTAssertTrue(app.menuItems["gpt-5.6-terra"].exists)
+        XCTAssertFalse(app.menuItems["opus[1m]"].exists)
+        app.menuItems["gpt-5.6-terra"].click()
+        provider.click()
+        app.menuItems["Claude plan — Claude fixture"].click()
+        XCTAssertTrue(waitUntil { "\(picker.value ?? "")".contains("opus[1m]") })
+        picker.click()
+        XCTAssertTrue(app.menuItems["sonnet"].exists)
+        XCTAssertFalse(app.menuItems["gpt-5.6-terra"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        provider.click()
+        app.menuItems["ChatGPT plan — ChatGPT fixture"].click()
+        XCTAssertTrue(waitUntil { "\(picker.value ?? "")".contains("gpt-5.6-sol") })
+        let connection = anyElement("agent.testConnection")
+        revealSettingsControl(connection, in: scroll)
+        XCTAssertTrue(connection.isEnabled, "Plan accounts can test without an API key")
+        XCTAssertFalse(app.staticTexts["No API key"].exists)
+        anyElement("agent.cancel").click()
+    }
+
     func testAgentDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()
@@ -4313,6 +4371,7 @@ final class LocusUITests: XCTestCase {
     func testActivityCompletedResultMovesToReadAndCanBeMarkedUnread() {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
+        app.launchEnvironment["LOCUS_UI_TESTING_ACTIVITY_RESULTS"] = "1"
         relaunchWithRunFixture("completed")
         revealSidebarForNavigation()
         anyElement("sidebar.activity").click()
@@ -4328,11 +4387,29 @@ final class LocusUITests: XCTestCase {
         row.click()
         // Check the temporary feedback before querying the stable destination
         // controls so a slower accessibility snapshot cannot miss the highlight.
-        XCTAssertTrue(waitUntil {
-            self.app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count == 1
-        }, "The destination chat should be visibly highlighted")
+        let resultHighlight = anyElement("activity.resultHighlight.seed-run")
+        XCTAssertTrue(resultHighlight.waitForExistence(timeout: 3), "The output itself should be highlighted")
+        XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.intersects(resultHighlight.frame) },
+                      "The selected output must be scrolled into the transcript viewport")
+        XCTAssertTrue(anyElement("taskResult.header.seed-run").exists)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count, 0)
         XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
-        XCTAssertTrue(anyElement("runs.openTask").waitForExistence(timeout: 3))
+        // Markdown prose is a native NSTextView, not SwiftUI StaticText.
+        let resultText = "The stock check is complete. Two items are available."
+        let transcript = anyElement("conversation.scroll")
+        let output = transcript.descendants(matching: .textView)
+            .matching(NSPredicate(format: "value CONTAINS %@", resultText)).firstMatch
+        XCTAssertTrue(output.waitForExistence(timeout: 3))
+        XCTAssertEqual((output.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), resultText)
+        XCTAssertTrue(transcript.frame.contains(output.frame),
+                      "The exact selected output should be fully inside the transcript viewport")
+        XCTAssertTrue(output.isHittable,
+                      "The result must be readable without a sidebar or inspector covering it")
+        let resultScreenshot = XCTAttachment(screenshot: app.screenshot())
+        resultScreenshot.name = "Activity opened task output"
+        resultScreenshot.lifetime = .keepAlways
+        add(resultScreenshot)
+        revealSidebarForNavigation()
         anyElement("sidebar.activity").click()
         XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
         anyElement("activity.tab.read").click()

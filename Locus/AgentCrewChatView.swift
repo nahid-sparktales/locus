@@ -289,24 +289,48 @@ private struct CrewTranscriptMessage: View {
 
 struct CrewChatSidebarEntry: View {
     @EnvironmentObject private var model: AppModel
+    let selected: Bool
 
     var body: some View {
         Button { model.openAgentCrewChat() } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "bubble.left.and.bubble.right").font(.locus(size: 12, weight: .medium))
-                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 18)
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.locus(size: 12, weight: .semibold))
+                    .foregroundStyle(LocusTheme.accentAction)
+                    .frame(width: 25, height: 25)
+                    .background(LocusTheme.accentAction.opacity(selected ? 0.12 : 0.06),
+                                in: RoundedRectangle(cornerRadius: 7))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Crew Chat").font(.locus(size: 12, weight: .semibold))
-                    Text("A shared conversation for your agents").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    Text("Crew Chat")
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.ink)
+                        .lineLimit(1)
+                    Text("Shared conversation")
+                        .font(.locus(size: 8))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.locus(size: 8, weight: .medium)).foregroundStyle(LocusTheme.muted)
+                Image(systemName: "chevron.right")
+                    .font(.locus(size: 8, weight: .medium))
+                    .foregroundStyle(LocusTheme.muted)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 10).padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(LocusTheme.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+            // Match the agent icon and title columns without adding a
+            // disclosure button to a group that opens directly.
+            .padding(.leading, 23)
+            .padding(.trailing, 4)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(selected ? LocusTheme.accentAction.opacity(0.09) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.locus())
+        .help("Open the shared conversation for your agents")
+        .accessibilityLabel("Crew Chat group chat")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityIdentifier("sidebar.crewChat")
     }
 }

@@ -3211,6 +3211,8 @@ private struct ConversationView: View {
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
+    @EnvironmentObject private var sessionCatalog: SessionCatalogModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
@@ -3237,6 +3239,7 @@ private struct ConversationView: View {
         let token = transcript.renderToken
         let bottomID = TranscriptScrollTarget.end(token.sessionGeneration)
         let predecessorID = items.dropLast().last?.id
+        let taskResults = taskResults(in: transcript)
         return ScrollViewReader { proxy in
             let realizePredecessor: (() -> Void)? = predecessorID.map { id in
                 // Discover the row's leading edge without using its still-
@@ -3252,7 +3255,7 @@ private struct ConversationView: View {
                     // Keep repeating rows directly visible to the lazy
                     // container's ID traversal even before they are realized.
                     ForEach(transcript.rows) { row in
-                        renderRow(row, in: transcript)
+                        renderRow(row, in: transcript, taskResults: taskResults)
                     }
                     if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
                 }
@@ -3352,6 +3355,20 @@ private struct ConversationView: View {
                 scrollCoordinator.detach()
                 scrollToOverviewTarget(proxy)
             }
+            .task(id: model.activityResultReveal?.id) {
+                guard let request = model.activityResultReveal,
+                      request.sessionID == transcript.sessionID else { return }
+                defer {
+                    scrollCoordinator.finishActivityResultReveal(request.id)
+                    model.finishActivityResultReveal(request.id)
+                }
+                // Let the loaded transcript and any inspector width change
+                // settle before targeting an older answer in a lazy history.
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                scrollCoordinator.beginActivityResultReveal(request.id)
+                scrollToActivityResult(request, proxy: proxy)
+                try? await Task.sleep(for: .seconds(4))
+            }
             .onChange(of: token.sessionGeneration) {
                 selection.reset()
                 streamingPresentationRows = []
@@ -3403,7 +3420,15 @@ private struct ConversationView: View {
         }
     }
 
-    private func renderRow(_ row: TranscriptRenderRow, in transcript: TranscriptPresentationSnapshot) -> some View {
+    private func taskResults(in transcript: TranscriptPresentationSnapshot) -> [UUID: TranscriptTaskResult] {
+        var records = Dictionary(runs.orchestrationRuns.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        records.merge(runs.runDetailsByID, uniquingKeysWith: { _, detail in detail })
+        return ChatTranscriptBuilder.taskResults(in: transcript.blocks, runs: Array(records.values),
+            session: sessionCatalog.snapshot.sessionsByID[transcript.sessionID], profiles: agentTeams.agentProfiles)
+    }
+
+    private func renderRow(_ row: TranscriptRenderRow, in transcript: TranscriptPresentationSnapshot,
+                           taskResults: [UUID: TranscriptTaskResult]) -> some View {
         let item = row.item
         let token = transcript.renderToken
         let content = presentationRow(
@@ -3411,7 +3436,8 @@ private struct ConversationView: View {
             assistantMarkerItemIDs: transcript.assistantMarkerItemIDs,
             assistantActionItemIDs: transcript.assistantActionItemIDs,
             toolActivityVisibility: transcript.toolActivityVisibility,
-            thinkingVisibility: transcript.thinkingVisibility
+            thinkingVisibility: transcript.thinkingVisibility,
+            taskResults: taskResults
         )
             .padding(.top, topSpacing(
                 before: item,
@@ -3589,7 +3615,8 @@ private struct ConversationView: View {
         assistantMarkerItemIDs: Set<TranscriptPresentationItem.ID>,
         assistantActionItemIDs: Set<TranscriptPresentationItem.ID>,
         toolActivityVisibility: ToolActivityVisibility,
-        thinkingVisibility: ThinkingVisibility
+        thinkingVisibility: ThinkingVisibility,
+        taskResults: [UUID: TranscriptTaskResult]
     ) -> some View {
         switch item {
         case .block(let block):
@@ -3608,7 +3635,8 @@ private struct ConversationView: View {
                         : "turnCompletion.\(block.id.uuidString)",
                     thinkingVisibility: thinkingVisibility,
                     showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
-                    showsAssistantActions: assistantActionItemIDs.contains(item.id)
+                    showsAssistantActions: assistantActionItemIDs.contains(item.id),
+                    taskResult: taskResults[block.id]
                 )
             }
         case .assistantSegment(let segment):
@@ -3621,7 +3649,8 @@ private struct ConversationView: View {
                     : "message.\(segment.id.sourceBlockID.uuidString).segment.\(segment.id.ordinal)",
                 thinkingVisibility: thinkingVisibility,
                 showsAssistantMarker: assistantMarkerItemIDs.contains(item.id),
-                showsAssistantActions: assistantActionItemIDs.contains(item.id)
+                showsAssistantActions: assistantActionItemIDs.contains(item.id),
+                taskResult: taskResults[segment.sourceBlock.id]
             )
         case .toolGroup(let id, let tools):
             ToolActivityView(
@@ -3668,9 +3697,32 @@ private struct ConversationView: View {
         accessibilityIdentifier: String,
         thinkingVisibility: ThinkingVisibility,
         showsAssistantMarker: Bool,
-        showsAssistantActions: Bool
+        showsAssistantActions: Bool,
+        taskResult: TranscriptTaskResult?
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let result = taskResult {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Label("Task result", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(LocusTheme.success)
+                        Spacer(minLength: 8)
+                        if let date = result.completedAt {
+                            Text(date.formatted(date: .abbreviated, time: .shortened))
+                                .foregroundStyle(LocusTheme.muted)
+                        }
+                    }
+                    .font(.locus(size: 8, weight: .medium))
+                    Text(result.title).font(.locus(size: 11, weight: .semibold))
+                    if let name = result.agentName {
+                        Text("Completed by \(name)")
+                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    }
+                    Divider().padding(.top, 5)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("taskResult.header.\(result.runID)")
+            }
             if sourceBlock.kind == .assistant,
                (sourceBlock.id == model.activeStreamingAssistantID
                 || (streamingPresentationRows.contains(presentationID.stableKey)
@@ -3738,8 +3790,49 @@ private struct ConversationView: View {
                 }
             }
         }
+        .padding(taskResult == nil ? 0 : 14)
+        .background {
+            if let request = model.activityResultReveal,
+               request.sessionID == transcriptPresentation.snapshot.sessionID,
+               request.blockID == sourceBlock.id,
+               transcriptPresentation.snapshot.items.first(where: { item in
+                   switch item {
+                   case .block(let block): return block.id == sourceBlock.id
+                   case .assistantSegment(let segment): return segment.sourceBlock.id == sourceBlock.id
+                   case .toolGroup, .thinkingGroup: return false
+                   }
+               })?.id == presentationID {
+                TranscriptActivityResultProbe(coordinator: scrollCoordinator,
+                    token: transcriptPresentation.snapshot.renderToken, requestID: request.id)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .background {
+            if taskResult != nil {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(LocusTheme.white.opacity(0.5))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(LocusTheme.line, lineWidth: 1)
+                    }
+            }
+        }
         .overlay {
-            if let style = model.transcriptMatchStyle(for: sourceBlock.id) {
+            if let request = model.activityResultReveal,
+               request.sessionID == transcriptPresentation.snapshot.sessionID,
+               request.blockID == sourceBlock.id {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(LocusTheme.accentAction.opacity(0.06))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(LocusTheme.accentAction, lineWidth: 2)
+                    }
+                    .padding(-7)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("Task result opened from Activity Center")
+                    .accessibilityIdentifier("activity.resultHighlight.\(request.runID)")
+            } else if let style = model.transcriptMatchStyle(for: sourceBlock.id) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(
                         style == .current
@@ -3772,6 +3865,23 @@ private struct ConversationView: View {
                 transcriptPresentation.snapshot.renderToken.sessionGeneration, destination
             ), anchor: .center)
         }
+    }
+
+    private func scrollToActivityResult(_ request: ActivityResultReveal, proxy: ScrollViewProxy) {
+        let transcript = transcriptPresentation.snapshot
+        guard request.sessionID == transcript.sessionID,
+              let destination = transcript.items.first(where: { item in
+                  switch item {
+                  case .block(let block): return block.id == request.blockID
+                  case .assistantSegment(let segment): return segment.sourceBlock.id == request.blockID
+                  case .toolGroup, .thinkingGroup: return false
+                  }
+              })?.id else { return }
+        // Realize the row; its native layout probe settles the actual top once
+        // lazy estimates and the inspector's width change have been resolved.
+        proxy.scrollTo(TranscriptScrollTarget.item(
+            transcript.renderToken.sessionGeneration, destination
+        ), anchor: .top)
     }
 
     private func scrollToOverviewTarget(_ proxy: ScrollViewProxy) {
@@ -3949,6 +4059,9 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private var selectionViewportOwnership: SelectionViewportOwnership?
+    private var activityResultOwnership: (id: UUID, generation: UInt64, readerRevision: UInt64)?
+    private weak var activityResultProbe: TranscriptTailLayoutView?
+    private var isRestoringActivityResult = false
     private var isRestoringSelectionViewport = false
     private weak var scrollView: NSScrollView?
     private weak var documentView: NSView?
@@ -4394,6 +4507,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
                 self.restoreSelectionViewportAfterLayout(
                     token: token, attachment: attachment, publishDerivedState: false
                 )
+                self.restoreActivityResultAfterLayout()
             }
             Task { @MainActor [weak self] in
                 guard let self, self.attachmentRevision == attachment else { return }
@@ -4500,6 +4614,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detach() {
+        activityResultOwnership = nil
         selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
@@ -4508,6 +4623,52 @@ final class TranscriptScrollCoordinator: ObservableObject {
         displayLink?.isPaused = true
         lastAlignment = nil
         mutateState { $0.detach() }
+    }
+
+    func beginActivityResultReveal(_ id: UUID) {
+        detach()
+        guard let token = renderToken else { return }
+        activityResultOwnership = (id, token.sessionGeneration, readerIntentRevision)
+        activityResultProbe?.requestObservation()
+    }
+
+    func finishActivityResultReveal(_ id: UUID) {
+        guard activityResultOwnership?.id == id else { return }
+        activityResultOwnership = nil
+    }
+
+    func registerActivityResultProbe(_ probe: TranscriptTailLayoutView) {
+        activityResultProbe = probe
+    }
+
+    func unregisterActivityResultProbe(_ probe: TranscriptTailLayoutView) {
+        if activityResultProbe === probe { activityResultProbe = nil }
+    }
+
+    func activityResultDidLayout(_ probe: TranscriptTailLayoutView, attachment: UInt64) {
+        guard probe === activityResultProbe, attachment == attachmentRevision else { return }
+        restoreActivityResultAfterLayout()
+    }
+
+    private func restoreActivityResultAfterLayout() {
+        guard !isRestoringActivityResult, let ownership = activityResultOwnership,
+              let token = renderToken, ownership.generation == token.sessionGeneration,
+              ownership.readerRevision == readerIntentRevision,
+              !isUserLiveScrolling, !isSelectionDragActive,
+              let probe = activityResultProbe, probe.activityRevealID == ownership.id,
+              let scrollView, let documentView,
+              let rect = probe.measuredRect(token: token, in: scrollView) else { return }
+        let clip = scrollView.contentView
+        var proposed = clip.bounds
+        proposed.origin.y = documentView.isFlipped
+            ? rect.minY - 12 : rect.maxY - clip.bounds.height + 12
+        let target = clip.constrainBoundsRect(proposed).origin
+        guard target.y.isFinite, abs(target.y - clip.bounds.origin.y) > 1 else { return }
+        isRestoringActivityResult = true
+        defer { isRestoringActivityResult = false }
+        clip.scroll(to: target)
+        scrollView.reflectScrolledClipView(clip)
+        lastOriginY = clip.bounds.origin.y
     }
 
     /// Selection gives the reader control of the viewport. Releasing the
@@ -4590,6 +4751,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func jumpToLatest(animated: Bool = false) {
+        activityResultOwnership = nil
         selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         mutateState { $0.jumpToLatest() }
@@ -4606,6 +4768,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func resetForSession() {
+        activityResultOwnership = nil
         selectionViewportOwnership = nil
         pendingSessionFollowReset = nil
         scrollIntentRevision &+= 1
@@ -4626,6 +4789,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     func detachAll() {
+        activityResultOwnership = nil
+        activityResultProbe = nil
         #if DEBUG
         recordGeometry("detachAll")
         #endif
@@ -4651,6 +4816,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func wheelMoved(deltaY: CGFloat) {
+        activityResultOwnership = nil
         selectionViewportOwnership = nil
         updateNearBottom()
         if deltaY > 0 {
@@ -4661,6 +4827,7 @@ final class TranscriptScrollCoordinator: ObservableObject {
     }
 
     private func liveScrollStarted() {
+        activityResultOwnership = nil
         selectionViewportOwnership = nil
         readerIntentRevision &+= 1
         scrollIntentRevision &+= 1
@@ -5143,10 +5310,45 @@ private struct TranscriptTailLayoutProbe: NSViewRepresentable {
     }
 }
 
+private struct TranscriptActivityResultProbe: NSViewRepresentable {
+    let coordinator: TranscriptScrollCoordinator
+    let token: TranscriptRenderToken
+    let requestID: UUID
+
+    func makeNSView(context: Context) -> TranscriptTailLayoutView {
+        let view = TranscriptTailLayoutView(frame: .zero)
+        configure(view)
+        return view
+    }
+
+    func updateNSView(_ view: TranscriptTailLayoutView, context: Context) { configure(view) }
+
+    private func configure(_ view: TranscriptTailLayoutView) {
+        view.transcriptCoordinator = coordinator
+        view.token = token
+        view.activityRevealID = requestID
+        coordinator.registerActivityResultProbe(view)
+        view.requestObservation()
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TranscriptTailLayoutView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height,
+              width.isFinite, height.isFinite else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    static func dismantleNSView(_ view: TranscriptTailLayoutView, coordinator: ()) {
+        view.transcriptCoordinator?.unregisterActivityResultProbe(view)
+        view.transcriptCoordinator = nil
+        view.token = nil
+    }
+}
+
 final class TranscriptTailLayoutView: NSView {
     weak var transcriptCoordinator: TranscriptScrollCoordinator?
     var token: TranscriptRenderToken?
     var kind: TranscriptTailLayoutKind = .content
+    var activityRevealID: UUID?
     private var observationRevision: UInt64 = 0
     private var ancestorObservers: [NSObjectProtocol] = []
 
@@ -5225,7 +5427,11 @@ final class TranscriptTailLayoutView: NSView {
                 self.requestObservation()
                 return
             }
-            coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+            if self.activityRevealID != nil {
+                coordinator.activityResultDidLayout(self, attachment: attachment)
+            } else {
+                coordinator.tailProbesDidLayout(token: token, attachment: attachment, in: scroll)
+            }
         }
     }
 

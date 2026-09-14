@@ -11,6 +11,18 @@ enum ProviderModelCatalog {
     struct Result {
         let models: [String]
         let status: ProviderAccountStatus
+
+        func hasCompleteCatalog(for account: ProviderAccount) -> Bool {
+            guard case .connected = status else { return false }
+            // Scoping can replace an unrelated or non-chat-only response with
+            // curated suggestions. Those suggestions must not become evidence
+            // that a model missing from them is unavailable.
+            return models.contains { value in
+                let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !name.isEmpty && (account.kind == .custom
+                    || ProviderModelFilter.matches(kind: account.kind, name: name))
+            }
+        }
     }
 
     private static let session = ProxyAwareSession(
@@ -23,6 +35,9 @@ enum ProviderModelCatalog {
         for account: ProviderAccount,
         credentialStore: any CredentialStoring = CredentialStore.shared
     ) async -> Result {
+        guard !account.kind.isManagedPlan else {
+            return Result(models: [], status: .runtimeUnavailable("Check this plan through its signed-in account."))
+        }
         let key = credentialStore.get(account: account.credentialAccount) ?? ""
         // A custom endpoint may genuinely have no key — a local llama.cpp or
         // LM Studio server, say — so probe it unauthenticated rather than

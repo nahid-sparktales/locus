@@ -23,6 +23,9 @@ final class ProviderAccountsModel: ObservableObject {
     /// The full ChatGPT catalog rows, kept beside the plain name list because
     /// the account editor needs each model's supported reasoning efforts.
     @Published var accountModelCatalogs: [UUID: [ChatGPTModelsResponse.Model]] = [:]
+    /// Cached choices can outlive a failed refresh. Only a complete provider
+    /// response can establish that an unlisted selection is unavailable.
+    @Published private(set) var accountCatalogComplete: [UUID: Bool] = [:]
     @Published var accountStatus: [UUID: ProviderAccountStatus] = [:]
     /// ChatGPT plan state is per account: each one signs in to its own
     /// isolated credential home, so a single set of these would report the
@@ -41,6 +44,7 @@ final class ProviderAccountsModel: ObservableObject {
         }
     }
     private var accountCatalogFetchedAt: [UUID: Date] = [:]
+    private var accountCatalogRequests: [UUID: UUID] = [:]
 
     private var backend: BackendService?
     private var persistenceEnabled = false
@@ -107,35 +111,23 @@ final class ProviderAccountsModel: ObservableObject {
     }
 
     /// Refreshes every account's model list, unless it was fetched recently.
-    func refreshAccountCatalogs(force: Bool = false) async {
-        guard let backend, persistenceEnabled else { return }
+    func refreshAccountCatalogs(force: Bool = false, accountID: UUID? = nil) async {
+        guard backend != nil, persistenceEnabled else { return }
         let stale = Date().addingTimeInterval(-Self.accountCatalogTTL)
         let due = providerAccounts.filter { account in
-            force || (accountCatalogFetchedAt[account.id] ?? .distantPast) < stale
+            (accountID == nil || account.id == accountID)
+                && (force || (accountCatalogFetchedAt[account.id] ?? .distantPast) < stale)
         }
         guard !due.isEmpty else { return }
         let now = Date()
         for account in due { accountCatalogFetchedAt[account.id] = now }
         for account in due where account.kind.isManagedPlan {
-            do {
-                let response = try await backend.get(
-                    account.kind.managedAPIPath + "/models",
-                    query: [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)],
-                    as: ChatGPTModelsResponse.self
-                )
-                let names = response.models.map(\.id)
-                if response.catalogComplete != false, !names.isEmpty {
-                    accountModels[account.id] = names
-                    accountModelCatalogs[account.id] = response.models
-                }
-                // Keep a previously discovered catalog on an incomplete response.
-                // Picker fallback choices must never become a routing allowlist.
-                await refreshChatGPTAccount(for: account)
-            } catch {
-                accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
-            }
+            _ = await refreshManagedCatalog(for: account)
         }
         let endpointAccounts = due.filter { !$0.kind.isManagedPlan }
+        let requests = Dictionary(uniqueKeysWithValues: endpointAccounts.map {
+            ($0.id, beginCatalogRequest(for: $0))
+        })
         await withTaskGroup(of: (UUID, ProviderModelCatalog.Result).self) { group in
             for account in endpointAccounts {
                 let credentialStore = credentialStore
@@ -144,7 +136,8 @@ final class ProviderAccountsModel: ObservableObject {
                 }
             }
             for await (id, result) in group {
-                guard let account = providerAccounts.first(where: { $0.id == id }) else {
+                guard let account = endpointAccounts.first(where: { $0.id == id }),
+                      let request = requests[id], isCurrentCatalogRequest(request, for: account) else {
                     continue
                 }
                 let routedModels = routedModelsProvider(id)
@@ -155,6 +148,7 @@ final class ProviderAccountsModel: ObservableObject {
                 )
                 accountModels[id] = scoped
                 accountStatus[id] = result.status
+                accountCatalogComplete[id] = result.hasCompleteCatalog(for: account)
                 if let replacement = scoped.first,
                    !scoped.contains(where: {
                        $0.caseInsensitiveCompare(account.preferredModel) == .orderedSame
@@ -168,6 +162,117 @@ final class ProviderAccountsModel: ObservableObject {
         }
     }
 
+    func hasAuthoritativeModelCatalog(for accountID: UUID) -> Bool {
+        accountCatalogComplete[accountID] == true
+    }
+
+    private func beginCatalogRequest(for account: ProviderAccount) -> UUID {
+        let request = UUID()
+        accountCatalogRequests[account.id] = request
+        accountCatalogComplete[account.id] = false
+        return request
+    }
+
+    private func isCurrentAccount(
+        _ account: ProviderAccount,
+        catalogRequestID: UUID? = nil,
+        allowUnsavedAccount: Bool = false
+    ) -> Bool {
+        guard let current = providerAccounts.first(where: { $0.id == account.id }) else {
+            return allowUnsavedAccount && catalogRequestID == nil
+        }
+        if let catalogRequestID, accountCatalogRequests[account.id] != catalogRequestID { return false }
+        return current.kind == account.kind
+            && current.resolvedBaseURL == account.resolvedBaseURL
+            && current.managedHomeIdentifier == account.managedHomeIdentifier
+            && current.credentialAccount == account.credentialAccount
+    }
+
+    private func isCurrentCatalogRequest(_ request: UUID, for account: ProviderAccount) -> Bool {
+        accountCatalogRequests[account.id] == request && isCurrentAccount(account)
+    }
+
+    private func refreshManagedCatalog(for account: ProviderAccount) async -> ChatGPTModelsResponse? {
+        guard let backend, account.kind.isManagedPlan, isCurrentAccount(account) else { return nil }
+        let request = beginCatalogRequest(for: account)
+        do {
+            let response = try await backend.get(
+                account.kind.managedAPIPath + "/models",
+                query: [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)],
+                as: ChatGPTModelsResponse.self
+            )
+            guard isCurrentCatalogRequest(request, for: account) else { return nil }
+            let rows = response.models.filter {
+                ProviderModelFilter.matchesCatalog(kind: account.kind, name: $0.id)
+            }
+            if response.catalogComplete != false, !rows.isEmpty {
+                accountModels[account.id] = rows.map(\.id)
+                accountModelCatalogs[account.id] = rows
+                accountCatalogComplete[account.id] = true
+            }
+            // Keep working choices on an incomplete response without using
+            // that fallback to reject models or overwrite the selected account.
+            await refreshChatGPTAccount(for: account, catalogRequestID: request)
+            guard isCurrentCatalogRequest(request, for: account) else { return nil }
+            return response
+        } catch {
+            guard isCurrentCatalogRequest(request, for: account) else { return nil }
+            accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// Test the selected account through its own authentication route. Plan
+    /// accounts never use the API-key catalog fetcher or its curated fallback.
+    func testConnection(for accountID: UUID, model: String) async -> String {
+        guard let account = providerAccounts.first(where: { $0.id == accountID }) else {
+            return "That provider account is unavailable."
+        }
+        if account.kind.isManagedPlan {
+            guard backend != nil else { return "The subscription runtime is unavailable." }
+            let response = await refreshManagedCatalog(for: account)
+            guard isCurrentAccount(account) else { return "The provider account changed. Test the connection again." }
+            guard let status = accountStatus[accountID] else { return "Could not check this account. Try again." }
+            guard status.isHealthy else { return status.summary }
+            guard let response, response.catalogComplete != false, !response.models.isEmpty else {
+                return "\(status.summary). The model list could not be verified. Try refreshing it again."
+            }
+            guard response.models.contains(where: {
+                ProviderModelFilter.matchesCatalog(kind: account.kind, name: $0.id)
+                    && $0.id.caseInsensitiveCompare(model) == .orderedSame
+            }) else {
+                return "Connected to \(account.displayName), but \(model) was not in this account’s model list."
+            }
+            return "Connected to \(account.displayName). \(model) is available."
+        }
+        let request = beginCatalogRequest(for: account)
+        let result = await ProviderModelCatalog.fetch(for: account, credentialStore: credentialStore)
+        guard isCurrentCatalogRequest(request, for: account) else {
+            return "The provider account changed. Test the connection again."
+        }
+        let scoped = ProviderModelCatalog.scopedModels(
+            for: account, result: result, routedModels: routedModelsProvider(accountID)
+        )
+        accountModels[accountID] = scoped
+        accountStatus[accountID] = result.status
+        accountCatalogComplete[accountID] = result.hasCompleteCatalog(for: account)
+        guard result.status.isHealthy else { return result.status.summary }
+        if result.hasCompleteCatalog(for: account) {
+            guard scoped.contains(where: { $0.caseInsensitiveCompare(model) == .orderedSame }) else {
+                return "Connected, but the exact model was not in this account’s model list."
+            }
+            return result.status.summary
+        }
+        let outcome = await RemoteEndpointTester.test(
+            baseURL: account.resolvedBaseURL, model: model,
+            apiKey: credentialStore.get(account: account.credentialAccount) ?? "", kind: account.kind
+        )
+        guard isCurrentCatalogRequest(request, for: account) else {
+            return "The provider account changed. Test the connection again."
+        }
+        return outcome.message
+    }
+
     /// Long enough that the 15-second metadata poll cannot hammer a provider,
     /// short enough that a new model shows up without a relaunch.
     static let accountCatalogTTL: TimeInterval = 300
@@ -176,6 +281,8 @@ final class ProviderAccountsModel: ObservableObject {
         accountCatalogFetchedAt[id] = nil
         accountModels[id] = nil
         accountModelCatalogs[id] = nil
+        accountCatalogComplete[id] = nil
+        accountCatalogRequests[id] = nil
         accountStatus[id] = nil
     }
 
@@ -193,9 +300,15 @@ final class ProviderAccountsModel: ObservableObject {
 
     func refreshChatGPTAccount(
         for account: ProviderAccount,
-        forceTokenRefresh: Bool = false
+        forceTokenRefresh: Bool = false,
+        catalogRequestID: UUID? = nil,
+        allowUnsavedAccount: Bool = false
     ) async {
-        guard let backend else { return }
+        // The account editor signs a new account in before Save. Opt in only
+        // for an account absent at the start; removing a saved account while
+        // this request runs must still invalidate its response.
+        let isDraft = allowUnsavedAccount && !providerAccounts.contains { $0.id == account.id }
+        guard let backend, isCurrentAccount(account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft) else { return }
         var query = [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)]
         if forceTokenRefresh {
             query.append(URLQueryItem(name: "refresh", value: "true"))
@@ -206,6 +319,7 @@ final class ProviderAccountsModel: ObservableObject {
                 query: query,
                 as: ChatGPTAccountResponse.self
             )
+            guard isCurrentAccount(account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft) else { return }
             chatGPTAccounts[account.id] = state
             if account.kind == .claudePlan && state.status == "signed_out" {
                 chatGPTLoginIDs[account.id] = nil
@@ -219,14 +333,15 @@ final class ProviderAccountsModel: ObservableObject {
             }
             if state.status == "signed_in" {
                 chatGPTLoginIDs[account.id] = nil
-                await refreshChatGPTUsage(for: account)
+                await refreshChatGPTUsage(for: account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft)
             }
         } catch {
+            guard isCurrentAccount(account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft) else { return }
             accountStatus[account.id] = .runtimeUnavailable(error.localizedDescription)
         }
     }
 
-    func startChatGPTLogin(for account: ProviderAccount) async {
+    func startChatGPTLogin(for account: ProviderAccount, allowUnsavedAccount: Bool = false) async {
         guard let backend else { return }
         do {
             let response = try await backend.post(
@@ -243,11 +358,11 @@ final class ProviderAccountsModel: ObservableObject {
             }
         } catch {
             toastHandler("Could not start subscription sign-in: \(error.localizedDescription)")
-            await refreshChatGPTAccount(for: account)
+            await refreshChatGPTAccount(for: account, allowUnsavedAccount: allowUnsavedAccount)
         }
     }
 
-    func cancelChatGPTLogin(for account: ProviderAccount) async {
+    func cancelChatGPTLogin(for account: ProviderAccount, allowUnsavedAccount: Bool = false) async {
         guard let backend else { return }
         guard let loginID = chatGPTLoginIDs[account.id] else { return }
         do {
@@ -261,7 +376,7 @@ final class ProviderAccountsModel: ObservableObject {
             )
             chatGPTLoginIDs[account.id] = nil
             chatGPTAccounts[account.id] = state
-            await refreshChatGPTAccount(for: account)
+            await refreshChatGPTAccount(for: account, allowUnsavedAccount: allowUnsavedAccount)
         } catch {
             toastHandler("Could not cancel subscription sign-in: \(error.localizedDescription)")
         }
@@ -299,18 +414,20 @@ final class ProviderAccountsModel: ObservableObject {
         await refreshChatGPTUsage(for: account)
     }
 
-    func refreshChatGPTUsage(for account: ProviderAccount) async {
-        guard let backend else { return }
-        guard providerAccounts.contains(where: { $0.id == account.id }) else {
-            chatGPTUsageByAccount[account.id] = nil
-            return
-        }
+    func refreshChatGPTUsage(
+        for account: ProviderAccount,
+        catalogRequestID: UUID? = nil,
+        allowUnsavedAccount: Bool = false
+    ) async {
+        let isDraft = allowUnsavedAccount && !providerAccounts.contains { $0.id == account.id }
+        guard let backend, isCurrentAccount(account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft) else { return }
         do {
             let usage = try await backend.get(
                 account.kind.managedAPIPath + "/usage",
                 query: [URLQueryItem(name: "account_id", value: account.managedHomeIdentifier)],
                 as: ChatGPTUsageResponse.self
             )
+            guard isCurrentAccount(account, catalogRequestID: catalogRequestID, allowUnsavedAccount: isDraft) else { return }
             chatGPTUsageByAccount[account.id] = usage
             if usage.limitStatus == "rejected" {
                 accountStatus[account.id] = .rateLimited(resetAt: usage.rateLimits.rateLimits?.primary?.resetsAt.map { Date(timeIntervalSince1970: Double($0)) })

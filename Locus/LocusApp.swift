@@ -995,8 +995,17 @@ struct RootView: View {
             }
             .onChange(of: sessionCatalog.sessionReveal?.id) {
                 guard sessionCatalog.sessionReveal != nil else { return }
-                model.sidebarCollapsed = false
-                if proxy.size.width < minimumThreeColumnWidth { compactSidebarPresented = true }
+                // Activity links bring the output forward. A compact sidebar
+                // would cover it, so only reveal the sidebar when it docks.
+                compactSidebarPresented = false
+                if proxy.size.width >= minimumThreeColumnWidth { model.sidebarCollapsed = false }
+            }
+            .onChange(of: model.activityResultReveal?.id) {
+                guard let request = model.activityResultReveal,
+                      request.sessionID == model.currentSessionID else { return }
+                // Keep the selected run available, but let its result own the
+                // foreground when the inspector would cover the conversation.
+                if !docksInspector { model.inspectorCollapsed = true }
             }
         }
         .environment(\.locusIsLiveResizing, workspaceLayout.isLiveResizing)

@@ -290,7 +290,7 @@ struct AccountEditorView: View {
                 nativeMode = account.codexNativeModeEnabled
                 webSearch = account.codexWebSearchEnabled
                 reasoningEffort = account.codexReasoningEffortValue
-                Task { await providerAccounts.refreshChatGPTAccount(for: account) }
+                Task { await providerAccounts.refreshChatGPTAccount(for: account, allowUnsavedAccount: isNew) }
             }
         }
     }
@@ -315,7 +315,8 @@ struct AccountEditorView: View {
                         Task {
                             await providerAccounts.refreshChatGPTAccount(
                                 for: account,
-                                forceTokenRefresh: true
+                                forceTokenRefresh: true,
+                                allowUnsavedAccount: isNew
                             )
                         }
                     }
@@ -328,10 +329,10 @@ struct AccountEditorView: View {
                     .font(.locus(size: 10, weight: .semibold))
                 HStack {
                     Button("Refresh Status") {
-                        Task { await providerAccounts.refreshChatGPTAccount(for: account) }
+                        Task { await providerAccounts.refreshChatGPTAccount(for: account, allowUnsavedAccount: isNew) }
                     }
                     Button("Cancel Login") {
-                        Task { await providerAccounts.cancelChatGPTLogin(for: account) }
+                        Task { await providerAccounts.cancelChatGPTLogin(for: account, allowUnsavedAccount: isNew) }
                     }
                 }
             } else if kind == .claudePlan && model.claudeComponentMissing {
@@ -346,7 +347,7 @@ struct AccountEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button(kind == .claudePlan ? "Sign in with Claude" : "Sign in with ChatGPT") {
-                    Task { await providerAccounts.startChatGPTLogin(for: account) }
+                    Task { await providerAccounts.startChatGPTLogin(for: account, allowUnsavedAccount: isNew) }
                 }
                 .disabled(status?.runtimeAvailable == false)
                 .accessibilityIdentifier("accountEditor.chatGPT.signIn")
@@ -390,7 +391,7 @@ struct AccountEditorView: View {
     @ViewBuilder
     private var claudeComponentDownload: some View {
 #if !LOCUS_APP_STORE
-        ClaudeComponentDownloadView(account: account)
+        ClaudeComponentDownloadView(account: account, allowUnsavedAccount: isNew)
 #endif
     }
 
@@ -432,7 +433,7 @@ struct AccountEditorView: View {
                 .foregroundStyle(LocusTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 Button("Download and Continue") {
-                    Task { await model.installCodexComponent(for: account) }
+                    Task { await model.installCodexComponent(for: account, allowUnsavedAccount: isNew) }
                 }
                 .accessibilityIdentifier("accountEditor.chatGPT.downloadComponent")
             case .checking:
@@ -457,7 +458,7 @@ struct AccountEditorView: View {
                     .foregroundStyle(LocusTheme.danger)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try Again") {
-                    Task { await model.installCodexComponent(for: account) }
+                    Task { await model.installCodexComponent(for: account, allowUnsavedAccount: isNew) }
                 }
                 .accessibilityIdentifier("accountEditor.chatGPT.retryComponent")
             }

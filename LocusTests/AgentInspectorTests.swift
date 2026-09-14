@@ -312,7 +312,12 @@ final class AgentInspectorTests: XCTestCase {
         model.selectedOrchestrationRun = newer
         model.orchestrationRunID = newer.id
         model.activity.activityCenterPresented = true
-        try stubActivityNavigation(selected, list: [newer, selected])
+        try stubActivityNavigation(selected, list: [newer, selected], messages: [
+            ["role": "user", "content": "Earlier request", "run_id": selected.id],
+            ["role": "assistant", "content": "Earlier result", "run_id": selected.id, "phase": "final_answer"],
+            ["role": "user", "content": "New request", "run_id": newer.id],
+            ["role": "assistant", "content": "New result", "run_id": newer.id, "phase": "final_answer"],
+        ])
 
         model.openActivityRun(selected)
 
@@ -325,9 +330,126 @@ final class AgentInspectorTests: XCTestCase {
         XCTAssertFalse(model.activity.activityCenterPresented)
         let load = try XCTUnwrap(model.activeTranscriptLoad)
         await load.task.value
+        XCTAssertEqual(model.activityResultReveal?.runID, selected.id)
+        XCTAssertEqual(model.activityResultReveal?.blockID, model.blocks.first { $0.text == "Earlier result" }?.id)
+        XCTAssertNil(model.pendingActivityResultRun)
         await model.refreshOrchestrationRuns(select: selected.id)
         XCTAssertEqual(model.selectedOrchestrationRun?.id, "selected-run", "The newer run must not replace the requested result")
         XCTAssertTrue(BackendStub.requestPaths.contains("/api/orchestrations/selected-run"))
+    }
+
+    func testActivityResultUsesTheFinalAnswerAndIgnoresOtherRunsAndCommentary() throws {
+        let run = try activityNavigationRun(id: "chosen", sessionID: "chat")
+        let answer = ChatBlock(kind: .assistant, text: "Selected result", assistantPhase: .finalAnswer, runID: run.id)
+        let blocks = [
+            ChatBlock(kind: .assistant, text: "Previous result", runID: "previous"),
+            answer,
+            ChatBlock(kind: .assistant, text: "Late progress update", assistantPhase: .commentary, runID: run.id),
+            ChatBlock(kind: .assistant, text: "Newer result", runID: "newer"),
+        ]
+        XCTAssertEqual(ChatTranscriptBuilder.activityResultBlockID(for: run, in: blocks), answer.id)
+    }
+
+    func testActivityResultUsesLegacyUserRunAnchorWithoutCrossingIntoTheNextTurn() throws {
+        let run = try activityNavigationRun(id: "chosen", sessionID: "chat")
+        let answer = ChatBlock(kind: .assistant, text: "Selected legacy result")
+        let blocks = [
+            ChatBlock(kind: .user, text: "Repeated request", runID: run.id), answer,
+            ChatBlock(kind: .user, text: "Repeated request", runID: "newer"),
+            ChatBlock(kind: .assistant, text: "Latest answer"),
+        ]
+        XCTAssertEqual(ChatTranscriptBuilder.activityResultBlockID(for: run, in: blocks), answer.id)
+        XCTAssertNil(ChatTranscriptBuilder.activityResultBlockID(for: run, in: [blocks[0]] + Array(blocks.dropFirst(2))))
+    }
+
+    func testActivityResultDoesNotGuessBetweenRepeatedLegacyRequests() throws {
+        let run = try activityNavigationRun(id: "chosen", sessionID: "chat")
+        let answer = ChatBlock(kind: .assistant, text: "Legacy answer")
+        let blocks = [ChatBlock(kind: .user, text: run.request), answer]
+        XCTAssertEqual(ChatTranscriptBuilder.activityResultBlockID(for: run, in: blocks), answer.id)
+        XCTAssertNil(ChatTranscriptBuilder.activityResultBlockID(for: run, in: blocks + [
+            ChatBlock(kind: .user, text: run.request), ChatBlock(kind: .assistant, text: "Other answer"),
+        ]))
+    }
+
+    @MainActor
+    func testTaskResultCardsSeparateAutomationsAndKeepOrdinaryRepliesUnboxed() throws {
+        let owner = AgentProfile(name: "Jinbei")
+        let session = SessionSummary(id: "chat", name: "Task chat", preview: "", mtime: 1, size: 0,
+            agentProfileID: owner.id.uuidString)
+        var first = try activityNavigationRun(id: "first", sessionID: session.id)
+        first.scheduleID = "schedule"
+        var second = try activityNavigationRun(id: "second", sessionID: session.id)
+        second.manifest = ["event_trigger_id": .string("event")]
+        let ordinary = try activityNavigationRun(id: "ordinary", sessionID: session.id)
+        let firstAnswer = ChatBlock(kind: .assistant, text: "First task result", runID: first.id)
+        let secondAnswer = ChatBlock(kind: .assistant, text: "Second task result", runID: second.id)
+        let reply = ChatBlock(kind: .assistant, text: "Ordinary chat reply", runID: ordinary.id)
+        let cards = ChatTranscriptBuilder.taskResults(in: [firstAnswer, secondAnswer, reply],
+            runs: [first, second, ordinary], session: session, profiles: [owner])
+        XCTAssertEqual(Set(cards.keys), [firstAnswer.id, secondAnswer.id])
+        XCTAssertEqual(cards[firstAnswer.id]?.runID, first.id)
+        XCTAssertEqual(cards[secondAnswer.id]?.runID, second.id)
+        XCTAssertEqual(cards[firstAnswer.id]?.agentName, owner.name)
+        XCTAssertNil(cards[reply.id])
+    }
+
+    @MainActor
+    func testTaskResultCardsUsePersistedEventTurnsBeforeRunRecordsLoad() {
+        let owner = AgentProfile(name: "Jinbei")
+        let session = SessionSummary(id: "chat", name: "Email check", preview: "", mtime: 1, size: 0,
+            agentProfileID: owner.id.uuidString)
+        let event = InboundEvent(source: .gmail, sourceEventID: "email", eventType: "message",
+            occurredAt: 1, actor: [:], subject: "An email", text: "Email body", recipients: [],
+            labels: [], attachments: [], data: [:])
+        let context = EventTranscriptContext(triggerID: "trigger", deliveryID: "delivery", source: .gmail,
+            sourceEventID: "email", instruction: "Summarize the new email", event: event)
+        let answer = ChatBlock(kind: .assistant, text: "Email summary", runID: "older-run")
+        let ordinary = ChatBlock(kind: .assistant, text: "Unrelated later reply")
+        let blocks = [
+            ChatBlock(kind: .user, text: "Task", runID: "older-run", eventTrigger: context), answer,
+            ChatBlock(kind: .user, text: "Ordinary follow-up"), ordinary,
+        ]
+        let cards = ChatTranscriptBuilder.taskResults(in: blocks, runs: [], session: session, profiles: [owner])
+        XCTAssertEqual(Set(cards.keys), [answer.id])
+        XCTAssertEqual(cards[answer.id]?.runID, "older-run")
+        XCTAssertEqual(cards[answer.id]?.agentName, owner.name)
+        XCTAssertNil(cards[answer.id]?.completedAt, "An event arrival time is not a completion time")
+        XCTAssertNil(cards[ordinary.id])
+    }
+
+    @MainActor
+    func testPrimaryTaskResultsStaySeparateWithoutAnyRunList() {
+        let session = SessionSummary(id: "chat", name: "Daily check", preview: "", mtime: 1, size: 0,
+            agentTriggerID: "schedule", agentKind: "schedule", agentName: "Daily check", agentPrimary: true)
+        let first = ChatBlock(kind: .assistant, text: "First check result")
+        let second = ChatBlock(kind: .assistant, text: "Second check result")
+        let cards = ChatTranscriptBuilder.taskResults(in: [
+            ChatBlock(kind: .user, text: "Scheduled check", runID: "first"), first,
+            ChatBlock(kind: .user, text: "Scheduled check", runID: "second"), second,
+        ], runs: [], session: session, profiles: [])
+        XCTAssertEqual(Set(cards.keys), [first.id, second.id])
+        XCTAssertEqual(cards[first.id]?.runID, "first")
+        XCTAssertEqual(cards[second.id]?.runID, "second")
+    }
+
+    @MainActor
+    func testActivityResultRevealClearsOnNavigationAndOlderExpiryCannotClearANewerResult() throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        model.installTranscriptSession("chat", blocks: [])
+        let first = ActivityResultReveal(sessionID: "chat", runID: "first", blockID: UUID())
+        let second = ActivityResultReveal(sessionID: "chat", runID: "second", blockID: UUID())
+        model.activityResultReveal = second
+        model.finishActivityResultReveal(first.id)
+        XCTAssertEqual(model.activityResultReveal, second)
+        model.finishActivityResultReveal(second.id)
+        XCTAssertNil(model.activityResultReveal)
+        model.activityResultReveal = second
+        model.pendingActivityResultRun = try activityNavigationRun(id: "second", sessionID: "chat")
+        model.installTranscriptSession("another-chat", blocks: [])
+        XCTAssertNil(model.activityResultReveal)
+        XCTAssertNil(model.pendingActivityResultRun)
     }
 
     @MainActor
@@ -502,12 +624,13 @@ final class AgentInspectorTests: XCTestCase {
         ]))
     }
 
-    private func stubActivityNavigation(_ run: OrchestrationRun, list: [OrchestrationRun]? = nil) throws {
+    private func stubActivityNavigation(_ run: OrchestrationRun, list: [OrchestrationRun]? = nil,
+                                        messages: [[String: Any]] = []) throws {
         let sessionID = try XCTUnwrap(run.sessionID)
         let detail = try JSONEncoder().encode(run)
         let runs = try JSONEncoder().encode(OrchestrationRunsResponse(runs: list ?? [run], readOnly: false))
         BackendStub.respond(toPath: "/api/sessions/\(sessionID)/resume") { _ in
-            ["ok": true, "messages": [], "session_info": ["session_id": sessionID, "cwd": "/tmp", "model": "fixture"]]
+            ["ok": true, "messages": messages, "session_info": ["session_id": sessionID, "cwd": "/tmp", "model": "fixture"]]
         }
         BackendStub.respond(toPath: "/api/orchestrations") { _ in runs }
         BackendStub.respond(toPath: "/api/orchestrations/\(run.id)") { _ in detail }

@@ -43,8 +43,9 @@ enum ClaudeComponent: PlanComponentDescriptor {
 struct ClaudeComponentDownloadView: View {
     @EnvironmentObject private var claudeComponent: ClaudeComponentInstaller
     let account: ProviderAccount
+    var allowUnsavedAccount = false
     var body: some View {
-        ClaudeComponentInstallControls(installer: claudeComponent, account: account)
+        ClaudeComponentInstallControls(installer: claudeComponent, account: account, allowUnsavedAccount: allowUnsavedAccount)
     }
 }
 
@@ -52,6 +53,7 @@ private struct ClaudeComponentInstallControls: View {
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @ObservedObject var installer: ClaudeComponentInstaller
     let account: ProviderAccount
+    var allowUnsavedAccount = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Download Claude plan support to connect your subscription.")
@@ -64,7 +66,7 @@ private struct ClaudeComponentInstallControls: View {
                     Task {
                         installer.install()
                         await installer.waitForCompletion()
-                        await providerAccounts.refreshChatGPTAccount(for: account)
+                        await providerAccounts.refreshChatGPTAccount(for: account, allowUnsavedAccount: allowUnsavedAccount)
                     }
                 }
                 .accessibilityIdentifier("accountEditor.claude.downloadComponent")

@@ -413,6 +413,70 @@ final class TranscriptFollowTests: XCTestCase {
         XCTAssertEqual(requests, initial + 2, "Queued work must not invoke a dismantled bridge's proxy")
     }
 
+    func testActivityResultUsesMeasuredLayoutAndReleasesViewportOnReaderIntent() throws {
+        final class FlippedDocument: NSView { override var isFlipped: Bool { true } }
+        for flipped in [false, true] {
+            let scroll = mountNativeScroll()
+            let frame = NSRect(x: 0, y: 0, width: 360, height: 1_600)
+            let document: NSView = flipped ? FlippedDocument(frame: frame) : NSView(frame: frame)
+            scroll.documentView = document
+            let anchor = NSView(frame: document.bounds)
+            document.addSubview(anchor)
+            let coordinator = TranscriptScrollCoordinator()
+            defer { coordinator.detachAll() }
+            let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: .block(UUID()))
+            coordinator.installRenderTarget(token, realizeTail: {}, scrollToBottom: {})
+            coordinator.attach(from: anchor)
+            let requestID = UUID()
+            let probe = TranscriptTailLayoutView(frame: NSRect(x: 10, y: 650, width: 300, height: 100))
+            probe.transcriptCoordinator = coordinator
+            probe.token = token
+            probe.activityRevealID = requestID
+            document.addSubview(probe)
+            coordinator.registerActivityResultProbe(probe)
+            coordinator.beginActivityResultReveal(requestID)
+
+            func settleAndCheckTop() {
+                probe.layoutSubtreeIfNeeded()
+                pump(3)
+                coordinator.activityResultDidLayout(probe, attachment: coordinator.layoutAttachmentRevision)
+                let rect = probe.convert(probe.bounds, to: document)
+                let visible = scroll.documentVisibleRect
+                let inset = flipped ? rect.minY - visible.minY : visible.maxY - rect.maxY
+                XCTAssertEqual(inset, 12, accuracy: 1, "Measured result top must stay visible after lazy layout")
+            }
+            settleAndCheckTop()
+            // Lazy layout revised the height of preceding rows after the
+            // initial proxy scroll. The measured card owns the correction.
+            probe.setFrameOrigin(NSPoint(x: 10, y: 900))
+            settleAndCheckTop()
+            // Native clip anchoring can also move the viewport independently.
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 100))
+            pump(3)
+            settleAndCheckTop()
+
+            coordinator.setSelectionDragActive(true)
+            let readerOrigin = scroll.contentView.bounds.origin
+            probe.setFrameOrigin(NSPoint(x: 10, y: 700))
+            probe.layoutSubtreeIfNeeded()
+            pump(3)
+            coordinator.activityResultDidLayout(probe, attachment: coordinator.layoutAttachmentRevision)
+            XCTAssertEqual(scroll.contentView.bounds.origin, readerOrigin,
+                           "Selection must cancel Activity viewport ownership")
+            coordinator.setSelectionDragActive(false)
+            coordinator.beginActivityResultReveal(requestID)
+            settleAndCheckTop()
+            coordinator.finishActivityResultReveal(requestID)
+            let expiredOrigin = scroll.contentView.bounds.origin
+            probe.setFrameOrigin(NSPoint(x: 10, y: 800))
+            probe.layoutSubtreeIfNeeded()
+            pump(3)
+            coordinator.activityResultDidLayout(probe, attachment: coordinator.layoutAttachmentRevision)
+            XCTAssertEqual(scroll.contentView.bounds.origin, expiredOrigin,
+                           "An expired reveal must never re-arm itself during later layout")
+        }
+    }
+
     func testNativeLiveScrollNotificationsSynchronouslyAdmitAndReleaseReaderOwnership() throws {
         let scroll = mountNativeScroll()
         let document = try XCTUnwrap(scroll.documentView)

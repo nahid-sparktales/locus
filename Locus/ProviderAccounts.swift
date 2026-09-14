@@ -363,6 +363,35 @@ enum ProviderModelFilter {
         }
     }
 
+    /// Saved history is not a provider catalog. In particular, Claude's
+    /// runtime accepts aliases, but that must not admit a stale GPT selection
+    /// from a different account into its fallback menu.
+    static func matchesFallback(kind: ProviderKind, name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !name.isEmpty else { return false }
+        if kind == .custom { return true }
+        guard kind == .claudePlan else { return matches(kind: kind, name: name) }
+        return name == "default" || ["claude", "opus", "sonnet", "haiku", "fable"].contains {
+            name == $0 || name.hasPrefix($0 + "-") || name.hasPrefix($0 + "[")
+        }
+    }
+
+    /// Runtime catalogs may add aliases before this app knows their names.
+    /// Reject recognizable cross-provider leftovers without restricting those
+    /// new aliases to the bundled fallback list.
+    static func matchesCatalog(kind: ProviderKind, name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !name.isEmpty else { return false }
+        if kind == .custom { return true }
+        guard kind.isManagedPlan else { return matches(kind: kind, name: name) }
+        let isClaude = ["claude", "opus", "sonnet", "haiku", "fable"].contains {
+            name == $0 || name.hasPrefix($0 + "-") || name.hasPrefix($0 + "[")
+        }
+        let isOpenAI = codexPrefixes.contains { name.hasPrefix($0) }
+        let isKimi = ["kimi", "moonshot", "k3", "k2"].contains { name.hasPrefix($0) }
+        return kind == .chatGPT ? !isClaude && !isKimi : !isOpenAI && !isKimi
+    }
+
     /// Parses the `{"data": [{"id": …}]}` listing all three providers return.
     static func parseModelList(_ data: Data) -> [String] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -716,7 +745,9 @@ struct ModelPickerSection: Identifiable {
             )
         ]
         for account in accounts {
-            let reported = accountModels[account.id] ?? []
+            let reported = (accountModels[account.id] ?? []).filter {
+                !account.kind.isManagedPlan || ProviderModelFilter.matchesCatalog(kind: account.kind, name: $0)
+            }
             let models: [String]
             if reported.isEmpty && account.kind.isManagedPlan {
                 // Metadata discovery can fail while the runtime remains usable.
@@ -725,7 +756,10 @@ struct ModelPickerSection: Identifiable {
                 var seen: Set<String> = []
                 models = ([account.preferredModel] + account.kind.curatedModels)
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+                    .filter {
+                        ProviderModelFilter.matchesFallback(kind: account.kind, name: $0)
+                            && seen.insert($0.lowercased()).inserted
+                    }
             } else {
                 models = reported
             }

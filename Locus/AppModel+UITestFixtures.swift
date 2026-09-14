@@ -180,6 +180,15 @@ extension AppModel {
                 )]
             }
         }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_PROVIDER_CHOICES"] == "1" {
+            let chatGPT = ProviderAccount(kind: .chatGPT, name: "ChatGPT fixture", preferredModel: "gpt-5.6-sol")
+            let claude = ProviderAccount(kind: .claudePlan, name: "Claude fixture", preferredModel: "opus[1m]")
+            providerAccounts = [chatGPT, claude]
+            accountModels[chatGPT.id] = ["gpt-5.6-sol", "gpt-5.6-terra"]
+            accountModels[claude.id] = ["opus[1m]", "sonnet"]
+            accountStatus[chatGPT.id] = .signedIn(email: nil, plan: "pro")
+            accountStatus[claude.id] = .signedIn(email: nil, plan: "max")
+        }
         if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_IMAGE_MODELS"] == "1" {
             let account = ProviderAccount(kind: .codex, name: "Image API fixture",
                                           baseURLOverride: "https://images.example.invalid/v1")
@@ -1612,6 +1621,16 @@ extension AppModel {
             updateTranscriptBlocks {
                 $0[requestIndex].text = run.request
                 $0[requestIndex].runID = run.id
+            }
+        }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_ACTIVITY_RESULTS"] == "1" {
+            blocks = [
+                ChatBlock(kind: .user, text: run.request, runID: run.id),
+                ChatBlock(kind: .assistant, text: "The stock check is complete. Two items are available.",
+                    assistantPhase: .finalAnswer, runID: run.id),
+            ] + (1...24).flatMap { index in
+                [ChatBlock(kind: .user, text: "Later conversation \(index)"),
+                 ChatBlock(kind: .assistant, text: "This is a later reply, unrelated to the selected task result.")]
             }
         }
         orchestrationRuns = [run]

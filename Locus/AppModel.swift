@@ -65,11 +65,11 @@ final class AppModel: ObservableObject {
     /// again once it re-stats the helper path, and without this the user is
     /// left looking at a sign-in button that is still disabled from the check
     /// made before the component existed.
-    func installCodexComponent(for account: ProviderAccount) async {
+    func installCodexComponent(for account: ProviderAccount, allowUnsavedAccount: Bool = false) async {
         codexComponent.install()
         await codexComponent.waitForCompletion()
         if case .installed = codexComponent.state {
-            await providerAccountsModel.refreshChatGPTAccount(for: account)
+            await providerAccountsModel.refreshChatGPTAccount(for: account, allowUnsavedAccount: allowUnsavedAccount)
         }
     }
     #endif
@@ -104,6 +104,8 @@ final class AppModel: ObservableObject {
     let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
     var activityNavigationGeneration = UUID()
+    var pendingActivityResultRun: OrchestrationRun?
+    @Published var activityResultReveal: ActivityResultReveal?
     let evaluations = EvaluationsModel()
     let runtimes = RuntimeModel()
     let knowledge = WorkspaceKnowledgeModel()
@@ -240,9 +242,11 @@ final class AppModel: ObservableObject {
     ) -> Bool {
         guard transcriptPresentation.ownsSessionLoad(token),
               transcriptPresentation.loadingSessionID != nil else { return false }
-        return commitTranscriptIdentityTransition {
+        let completed = commitTranscriptIdentityTransition {
             transcriptPresentation.completeSessionLoad(token, sessionID: sessionID, blocks: blocks)
         }
+        if completed { applyPendingActivityResultReveal() }
+        return completed
     }
 
     /// Notify compatibility consumers only for an identity change that this
@@ -252,7 +256,11 @@ final class AppModel: ObservableObject {
     private func commitTranscriptIdentityTransition<Result>(_ mutation: () -> Result) -> Result {
         let previousID = currentSessionID
         let result = mutation()
-        if currentSessionID != previousID { transcriptSessionTransitionRevision &+= 1 }
+        if currentSessionID != previousID {
+            transcriptSessionTransitionRevision &+= 1
+            pendingActivityResultRun = nil
+            if activityResultReveal != nil { activityResultReveal = nil }
+        }
         return result
     }
 

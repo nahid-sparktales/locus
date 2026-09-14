@@ -35,20 +35,7 @@ extension AppModel {
                 return "Could not connect to Ollama: \(error.localizedDescription)"
             }
         case .providerAccount(let id):
-            guard let account = providerAccounts.first(where: { $0.id == id }) else {
-                return "That provider account is unavailable."
-            }
-            let result = await ProviderModelCatalog.fetch(for: account, credentialStore: credentialStore)
-            accountModels[id] = result.models
-            accountStatus[id] = result.status
-            guard result.status.isHealthy else { return result.status.summary }
-            if account.kind.listsModels,
-               !profile.model.isEmpty,
-               !result.models.contains(where: { $0.caseInsensitiveCompare(profile.model) == .orderedSame })
-            {
-                return "Connected, but the exact model was not in this account's catalog."
-            }
-            return result.status.summary
+            return await providerAccountsModel.testConnection(for: id, model: profile.model)
         }
     }
 

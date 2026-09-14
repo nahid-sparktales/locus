@@ -1622,7 +1622,7 @@ struct AgentProfileEditor: View {
     @State private var draft: AgentProfile
     @State private var tags: String
     @State private var connectionResult: String?
-    @State private var testingConnection = false
+    @State private var connectionTestID: UUID?
     @State private var mcpTools: String
     @State private var mcpResources: String
     @State private var mcpPrompts: String
@@ -1634,7 +1634,7 @@ struct AgentProfileEditor: View {
     @State private var permissionsExpanded = false
     @State private var connectionsExpanded = false
     @State private var previousInstructions: String?
-    @State private var refreshingModels = false
+    @State private var modelRefreshID: UUID?
     @FocusState private var nameFocused: Bool
     let isNew: Bool
     let existingProfiles: [AgentProfile]
@@ -1702,16 +1702,8 @@ struct AgentProfileEditor: View {
         .background(LocusTheme.surfaceCanvas)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.editor")
-        .task {
-            nameFocused = isNew
-            await refreshModels()
-        }
-        .onChange(of: draft.route) { _, _ in
-            draft.model = ""
-            connectionResult = nil
-            Task { await refreshModels() }
-        }
-        .onChange(of: draft.model) { _, _ in connectionResult = nil }
+        .task { nameFocused = isNew }
+        .task(id: draft.route) { await refreshModels() }
         .onReceive(model.eventAutomations.$connections) { connectedServices = $0 }
         .onChange(of: draft.accessCeiling) { _, _ in
             if isNew { draft.applyNewAgentServiceDefaults() }
@@ -1788,7 +1780,7 @@ struct AgentProfileEditor: View {
                 identifier: "agent.environment"
             )
             if environmentExpanded {
-                Picker("Provider", selection: $draft.route) {
+                Picker("Provider", selection: providerRouteBinding) {
                     Text("Local Ollama").tag(AgentRoute.localOllama)
                     if providerUnavailable {
                         Text("Unavailable account").tag(draft.route)
@@ -1805,7 +1797,7 @@ struct AgentProfileEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Button(testingConnection ? "Testing…" : "Test Connection") { testConnection() }
-                        .disabled(testingConnection || modelValidationMessage != nil)
+                        .disabled(testingConnection || providerUnavailable || draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityIdentifier("agent.testConnection")
                     if testingConnection { ProgressView().controlSize(.small) }
                 }
@@ -1815,6 +1807,17 @@ struct AgentProfileEditor: View {
                         .foregroundStyle(LocusTheme.textTertiary)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("agent.connectionResult")
+                }
+                if refreshingModels {
+                    Text("Checking this provider’s model list…")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                } else if modelOptions.availability(of: draft.model) == .unverified,
+                          !draft.model.isEmpty, connectionResult == nil {
+                    Text("This provider’s model list has not been confirmed yet. Test the connection to check this model.")
+                        .font(.locus(size: 9))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let message = modelValidationMessage {
@@ -1947,13 +1950,15 @@ struct AgentProfileEditor: View {
         LabeledContent("Model") {
             HStack(spacing: 7) {
                 if modelChoices.isEmpty {
-                    TextField("Exact model ID", text: $draft.model)
+                    TextField("Exact model ID", text: modelBinding)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("agent.model.manual")
                 } else {
-                    Picker("Model", selection: $draft.model) {
-                        if modelSelectionUnavailable {
-                            Text("\(draft.model) — unavailable")
+                    Picker("Model", selection: modelBinding) {
+                        if !draft.model.isEmpty, !modelChoices.contains(where: {
+                            $0.caseInsensitiveCompare(draft.model) == .orderedSame
+                        }) {
+                            Text("\(draft.model) — \(modelSelectionUnavailable ? "unavailable" : "not confirmed")")
                                 .tag(draft.model)
                         }
                         Text("Choose a model…").tag("")
@@ -2314,63 +2319,81 @@ struct AgentProfileEditor: View {
     }
 
     private func testConnection() {
-        guard !testingConnection, modelValidationMessage == nil else { return }
-        testingConnection = true
+        guard !testingConnection, !providerUnavailable,
+              !draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let requestID = UUID()
+        connectionTestID = requestID
         connectionResult = nil
         let testedProfile = draft
         Task {
             let result = await model.testAgentProfileConnection(testedProfile)
+            guard connectionTestID == requestID else { return }
             if draft.route == testedProfile.route, draft.model == testedProfile.model {
                 connectionResult = result
             }
-            testingConnection = false
+            connectionTestID = nil
         }
     }
 
-    private var modelChoices: [String] {
-        let values: [String]
-        switch draft.route {
+    private var testingConnection: Bool { connectionTestID != nil }
+    private var refreshingModels: Bool { modelRefreshID != nil }
+
+    private var providerRouteBinding: Binding<AgentRoute> {
+        Binding(get: { draft.route }, set: { route in
+            guard route != draft.route else { return }
+            // Replace the pair in one action; an onChange reset briefly leaves
+            // the old provider's model attached to the newly chosen account.
+            draft = modelOptions(for: route).selecting(route, in: draft)
+            connectionResult = nil
+            connectionTestID = nil
+        })
+    }
+
+    private var modelBinding: Binding<String> {
+        Binding(get: { draft.model }, set: { value in
+            draft.model = value
+            connectionResult = nil
+            connectionTestID = nil
+        })
+    }
+
+    private var modelOptions: AgentProfileModelOptions { modelOptions(for: draft.route) }
+    private var modelChoices: [String] { modelOptions.choices }
+
+    private func modelOptions(for route: AgentRoute) -> AgentProfileModelOptions {
+        switch route {
         case .localOllama:
-            values = providerAccounts.localModels.map(\.name)
+            return AgentProfileModelOptions(
+                account: nil,
+                reportedModels: providerAccounts.localModels.map(\.name),
+                hasAuthoritativeCatalog: !refreshingModels && !providerAccounts.localModels.isEmpty
+            )
         case .providerAccount(let id):
-            guard let account = providerAccounts.providerAccounts.first(where: { $0.id == id }) else {
-                return []
-            }
-            if account.kind.listsModels,
-               let reported = providerAccounts.accountModels[id],
-               !reported.isEmpty
-            {
-                values = account.kind == .custom ? reported : reported.filter {
-                    ProviderModelFilter.matches(kind: account.kind, name: $0)
-                }
-            } else {
-                values = ([account.preferredModel] + account.kind.curatedModels).filter {
-                    account.kind == .custom
-                        || ProviderModelFilter.matches(kind: account.kind, name: $0)
-                }
-            }
-        }
-        var seen: Set<String> = []
-        return values.filter { value in
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !trimmed.isEmpty && seen.insert(trimmed.lowercased()).inserted
+            return AgentProfileModelOptions(
+                account: providerAccounts.providerAccounts.first { $0.id == id },
+                reportedModels: providerAccounts.accountModels[id] ?? [],
+                hasAuthoritativeCatalog: !refreshingModels && providerAccounts.hasAuthoritativeModelCatalog(for: id)
+            )
         }
     }
 
     private var modelSelectionUnavailable: Bool {
-        !draft.model.isEmpty && !modelChoices.isEmpty && !modelChoices.contains(where: {
-            $0.caseInsensitiveCompare(draft.model) == .orderedSame
-        })
+        modelOptions.availability(of: draft.model) == .unavailable
     }
 
     private func refreshModels() async {
-        refreshingModels = true
-        defer { refreshingModels = false }
+        let requestID = UUID()
+        modelRefreshID = requestID
+        connectionResult = nil
+        connectionTestID = nil
+        defer {
+            if modelRefreshID == requestID { modelRefreshID = nil }
+        }
         switch draft.route {
         case .localOllama:
             await model.refreshMetadata()
-        case .providerAccount:
-            await providerAccounts.refreshAccountCatalogs(force: true)
+        case .providerAccount(let id):
+            await providerAccounts.refreshAccountCatalogs(force: true, accountID: id)
         }
     }
 

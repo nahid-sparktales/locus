@@ -4,6 +4,13 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct ActivityResultReveal: Equatable, Identifiable {
+    let id = UUID()
+    let sessionID: String
+    let runID: String
+    let blockID: UUID
+}
+
 private struct ActivitySessionRecord: Decodable {
     let detail: SessionDetailResponse
     let agentTriggerID: String?
@@ -791,6 +798,8 @@ extension AppModel {
     func openActivityRun(_ run: OrchestrationRun) {
         let generation = UUID()
         activityNavigationGeneration = generation
+        pendingActivityResultRun = nil
+        if activityResultReveal != nil { activityResultReveal = nil }
         guard let sessionID = run.sessionID else {
             showToast("That task has no saved chat")
             return
@@ -836,7 +845,12 @@ extension AppModel {
     }
 
     private func revealActivityRun(_ run: OrchestrationRun, in session: SessionSummary) {
-        resume(session)
+        if currentSessionID == session.id, transcriptPresentation.loadingSessionID == nil {
+            agentCrewChatPresented = false
+            savedAgentOverviewID = nil
+        } else {
+            resume(session)
+        }
         guard currentSessionID == session.id else { return }
         activity.markActivitySeen(run)
         activity.activityCenterPresented = false
@@ -845,6 +859,27 @@ extension AppModel {
         runs.runDetailsByID[run.id] = run
         runs.selectedOrchestrationRun = run
         selectInspectorTab(.runs, selecting: run.id)
+        if run.state == "completed" {
+            pendingActivityResultRun = run
+            applyPendingActivityResultReveal()
+        }
+    }
+
+    func applyPendingActivityResultReveal() {
+        guard let run = pendingActivityResultRun,
+              run.sessionID == currentSessionID,
+              transcriptPresentation.loadingSessionID == nil else { return }
+        pendingActivityResultRun = nil
+        guard let blockID = ChatTranscriptBuilder.activityResultBlockID(for: run, in: blocks) else {
+            showToast("This task’s output is no longer in the chat. Its saved run details are open.")
+            return
+        }
+        activityResultReveal = ActivityResultReveal(sessionID: currentSessionID, runID: run.id, blockID: blockID)
+    }
+
+    func finishActivityResultReveal(_ id: UUID) {
+        guard activityResultReveal?.id == id else { return }
+        activityResultReveal = nil
     }
 
     func openNotification(sessionID: String, runID: String) {
