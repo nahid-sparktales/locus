@@ -2,10 +2,15 @@
 
 ## Unreleased
 
-## 3.0.2 — 2026-09-14
+## 3.1.0 — 2026-09-14
 
 ### Added
 
+- Completed tasks open their exact answer in the conversation and briefly
+  highlight the output. Separate task result cards show the task, agent, and
+  completion time, with reliable positioning in long chats.
+- The agent picker separates Agents and Tasks, shows each task's linked agent,
+  and uses distinct task icons. Crew Chat appears under Group chats.
 - Each saved agent has one overview for connection health, automations, latest
   results, conversations, and exact recovery actions. It is available from the
   Agent page, inspector, and Captain's Quarters.
@@ -22,6 +27,15 @@
 
 ### Fixed
 
+- Agent chats use the selected account and model for subsequent work. Task
+  model choices explain when they are controlled by the task configuration.
+- Account changes select models from that account. Subscription connection
+  tests use the signed-in plan, and incomplete model lists remain unverified
+  instead of incorrectly reporting available models as unavailable.
+- Activity Center can clear read results without deleting tasks. Completions
+  seen while the chat is open do not create redundant activity notifications.
+- Activity controls and expandable instruction rows respond across their full
+  clickable area, including in compact windows.
 - A temporary model sign-out no longer permanently disables incoming email
   rules. Failed attempts release abandoned reservations, and explicit retries
   remain separate from resuming future automatic starts.
