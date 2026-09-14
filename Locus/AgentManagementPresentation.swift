@@ -267,8 +267,8 @@ struct SavedAgentOverviewSnapshot {
             $0.updatedAt >= $1.updatedAt ? $0 : $1
         })
         let sources: [String: (sessionID: String?, runID: String?)] = Dictionary(
-            ownDeliveries.map { ("event:\($0.id)", ($0.conversationSessionID, $0.runID)) }
-                + ownOccurrences.map { ("schedule:\($0.id)", ($0.sessionID, $0.runID)) },
+            ownDeliveries.map { ("event:\($0.id)", (sessionID: $0.conversationSessionID, runID: $0.runID)) }
+                + ownOccurrences.map { ("schedule:\($0.id)", (sessionID: $0.sessionID, runID: $0.runID)) },
             uniquingKeysWith: { first, _ in first }
         )
         var activity: [AgentActivityRecord] = []
