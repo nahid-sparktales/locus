@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 3.0.2 — 2026-09-14
+
+### Added
+
+- Each saved agent has one overview for connection health, automations, latest
+  results, conversations, and exact recovery actions. It is available from the
+  Agent page, inspector, and Captain's Quarters.
+- Hybrid workspaces give agents stable personal homes and linked shared
+  projects. Choose a default for future chats or override it for one chat.
+  Home chats use separate task folders; Git projects use separate working
+  copies. Other project folders are shared, with separate output directories.
+- Automation editors show their working folder explicitly. Incoming rules can
+  select an owned receiving chat or create one on Save. Existing conversations,
+  automations, project files, and outputs retain their locations.
+
+### Fixed
+
+- A temporary model sign-out no longer permanently disables incoming email
+  rules. Failed attempts release abandoned reservations, and explicit retries
+  remain separate from resuming future automatic starts.
+- Historical automation errors no longer appear as current model failures
+  after reconnecting. Incomplete Claude model lists no longer reject a saved
+  model merely because discovery returned fallback choices.
+- Read-only agents with networking enabled can access read-only web tools.
+  Background Solo agents keep their saved account, tools, and access settings.
+- Recovery actions open the exact failed run or approval instead of losing
+  context in a general activity list.
+- Resumed chats honor their saved working folder. Agent World and Crew Chat
+  preserve project ownership while using each chat's actual working copy.
+- New automation side chats use separate task folders. Scheduled Git outputs,
+  including ignored reports, survive working-copy refreshes.
+
 ## 3.0.1 — 2026-09-14
 
 ### Added

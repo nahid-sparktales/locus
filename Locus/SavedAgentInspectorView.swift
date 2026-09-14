@@ -76,7 +76,7 @@ struct AgentWorkspacePreferencesEditor: View {
                             }
                             Spacer()
                             Button("Unlink") { unlink(path) }
-                                .buttonStyle(.borderless).help("Unlink project; files and existing chats are kept")
+                                .buttonStyle(.locus(.quiet)).help("Unlink project; files and existing chats are kept")
                                 .accessibilityLabel("Unlink \(URL(fileURLWithPath: path).lastPathComponent)")
                         }.padding(.top, 8)
                     }
