@@ -1894,7 +1894,8 @@ struct InspectorRunsTab: View {
         let tasks = runs.mcpTasksByRunID[run.id] ?? []
         if let error = runs.mcpTaskErrorsByRunID[run.id] {
             HStack {
-                Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                extensionTaskError(error)
+                    .accessibilityIdentifier("runs.extensionTasks.error")
                 Button("Retry") { Task { await runs.refreshMCPTasks(runID: run.id) } }
             }
             .padding(.horizontal, 12)
@@ -1937,8 +1938,9 @@ struct InspectorRunsTab: View {
                                 .disabled(runs.activeMCPTaskActions.contains(task.id))
                                 .buttonStyle(.locus())
                                 if let error = runs.mcpTaskErrorsByID[task.id] {
-                                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                                    extensionTaskError(error)
                                         .textSelection(.enabled)
+                                        .accessibilityIdentifier("mcpTask.error.\(task.id)")
                                 }
                                 if let response = runs.mcpTaskResultsByID[task.id] {
                                     if let result = response.result {
@@ -1970,6 +1972,19 @@ struct InspectorRunsTab: View {
             .padding(.bottom, 8)
             .accessibilityIdentifier("runs.mcpTasks")
         }
+    }
+
+    private func extensionTaskError(_ message: String) -> some View {
+        Label {
+            Text(message)
+                .foregroundStyle(LocusTheme.textPrimary)
+        } icon: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(LocusTheme.dangerForeground)
+                .accessibilityHidden(true)
+        }
+        .font(.locus(size: 11))
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func runSummary(_ run: OrchestrationRun) -> some View {
