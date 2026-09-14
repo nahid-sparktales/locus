@@ -334,6 +334,14 @@ final class AppModel: ObservableObject {
         }
     }
     var lastSidebarSessionIDs: [String: String] = [:]
+    /// Typed agent identities in selection order, newest first. Keeping this
+    /// separate from chat activity lets opening an overview promote its agent.
+    @Published var recentSidebarAgentIDs: [String] = [] {
+        didSet {
+            guard persistenceEnabled else { return }
+            UserDefaults.standard.set(recentSidebarAgentIDs, forKey: "Locus.recentSidebarAgentIDs")
+        }
+    }
     @Published var emptySidebarDestination: SidebarDestination?
     /// The agent selected as a whole in the sidebar. This is deliberately
     /// independent of the open chat: selecting an agent changes its inspector
@@ -842,6 +850,7 @@ final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         if persistenceEnabled {
             lastSidebarSessionIDs = defaults.dictionary(forKey: "Locus.lastSidebarSessionIDs") as? [String: String] ?? [:]
+            recentSidebarAgentIDs = defaults.stringArray(forKey: "Locus.recentSidebarAgentIDs") ?? []
         }
         let existingInstallation = defaults.data(forKey: "Locus.settings") != nil
             || defaults.data(forKey: "Locus.sessionOverviewStates.v1") != nil

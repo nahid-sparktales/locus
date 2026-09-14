@@ -16,6 +16,9 @@
 - Automation editors show their working folder explicitly. Incoming rules can
   select an owned receiving chat or create one on Save. Existing conversations,
   automations, project files, and outputs retain their locations.
+- Activity Center separates Inbox, In progress, and Read, with search,
+  read/unread controls, and an unread indicator. Opening a finished task marks
+  it as read; unresolved requests remain visible until handled.
 
 ### Fixed
 
@@ -33,6 +36,13 @@
   preserve project ownership while using each chat's actual working copy.
 - New automation side chats use separate task folders. Scheduled Git outputs,
   including ignored reports, survive working-copy refreshes.
+- Selected agents move to the top of the sidebar and retain their order.
+  Automation search uses consistent labels, and expandable settings respond
+  across the whole header row.
+- Claude streaming replies retain their identity across thinking and text
+  completions, preventing duplicate final responses.
+- Agent workspace paths and guidance use readable colors in light, dark,
+  and ocean themes.
 
 ## 3.0.1 — 2026-09-14
 

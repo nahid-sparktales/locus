@@ -30,19 +30,24 @@ final class ActivityCenterModel: ObservableObject {
         }
     }
     enum Tab: String, CaseIterable, Identifiable {
-        case attention = "Attention"
-        case activity = "Activity"
+        case inbox = "Inbox"
+        case inProgress = "In progress"
+        case read = "Read"
         var id: String { rawValue }
     }
 
     @Published var activityCenterPresented = false
-    @Published var selectedTab: Tab = .activity
+    @Published var selectedTab: Tab = .inbox
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var refreshError: String?
+    @Published private(set) var hasLoadedActivity = false
     @Published private(set) var focus: Focus?
     @Published private(set) var focusedAttention: [AttentionItem] = []
     @Published private(set) var focusError: String?
     @Published private(set) var isRefreshingFocus = false
     @Published private(set) var focusedRun: OrchestrationRun?
     private var focusGeneration = UUID()
+    private var refreshCount = 0
     @Published var activityRuns: [OrchestrationRun] = []
     @Published private(set) var persistedAttentionItems: [AttentionItem] = []
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
@@ -57,6 +62,13 @@ final class ActivityCenterModel: ObservableObject {
 
     var activityNeedsAttentionCount: Int {
         attentionItems.count
+    }
+
+    var unreadResultCount: Int {
+        let requestRunIDs = Set(attentionItems.compactMap(\.runID))
+        return visibleActivityRuns.filter {
+            isFinished($0) && activityIsUnseen($0) && !requestRunIDs.contains($0.id)
+        }.count
     }
 
     var attentionItems: [AttentionItem] {
@@ -108,6 +120,28 @@ final class ActivityCenterModel: ObservableObject {
         }
     }
 
+    /// Requests stay in the inbox until resolved, independently of read status.
+    var inboxRuns: [OrchestrationRun] {
+        let requestRunIDs = Set(displayedAttentionItems.compactMap(\.runID))
+        return displayedActivityRuns.filter {
+            isFinished($0) && activityIsUnseen($0) && !requestRunIDs.contains($0.id)
+        }
+    }
+
+    var inProgressRuns: [OrchestrationRun] {
+        displayedActivityRuns.filter { !isFinished($0) }
+    }
+
+    var readRuns: [OrchestrationRun] {
+        displayedActivityRuns.filter { isFinished($0) && !activityIsUnseen($0) }
+    }
+
+    var inboxCount: Int { displayedAttentionItems.count + inboxRuns.count }
+
+    func isFinished(_ run: OrchestrationRun) -> Bool {
+        TeamRunState(rawValue: run.state)?.isTerminal == true
+    }
+
     func restore(persistenceEnabled: Bool, defaults: UserDefaults = .standard) {
         self.persistenceEnabled = persistenceEnabled
         self.defaults = defaults
@@ -136,24 +170,28 @@ final class ActivityCenterModel: ObservableObject {
 
     func refreshActivityRuns(announceFailure: Bool = true) async {
         guard let backend else { return }
+        refreshCount += 1
+        isRefreshing = true
+        defer {
+            refreshCount -= 1
+            isRefreshing = refreshCount > 0
+        }
         do {
             let response: OrchestrationRunsResponse = try await backend.get(
                 "/api/runs", query: [URLQueryItem(name: "limit", value: "200")],
                 as: OrchestrationRunsResponse.self
             )
             activityRuns = response.runs
-            if activityCenterPresented, selectedTab == .activity { markAllActivitySeen() }
-            if let attention: AttentionResponse = try? await backend.get(
+            hasLoadedActivity = true
+            let attention: AttentionResponse = try await backend.get(
                 "/api/attention", query: [URLQueryItem(name: "limit", value: "500")],
                 as: AttentionResponse.self
-            ) {
-                persistedAttentionItems = attention.items
-            }
-        } catch where announceFailure {
-            toastHandler("Could not load activity: \(error.localizedDescription)")
+            )
+            persistedAttentionItems = attention.items
+            refreshError = nil
         } catch {
-            // Coordinator refreshes are best-effort. Runtime recovery owns
-            // persistent service errors so a hidden app never repeats toasts.
+            refreshError = "Couldn’t refresh activity. Showing the last available updates."
+            if announceFailure { toastHandler("Could not load activity: \(error.localizedDescription)") }
         }
         await refreshFocusedAttention()
     }
@@ -166,17 +204,18 @@ final class ActivityCenterModel: ObservableObject {
         focusError = nil
         isRefreshingFocus = false
         let generation = focusGeneration
-        // Resolve the opening tab after the fresh inbox projection arrives.
-        // Starting on Attention prevents a cold first open from marking
-        // ordinary Activity as seen before we know whether blockers exist.
-        selectedTab = .attention
+        selectedTab = .inbox
         activityCenterPresented = true
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await refreshActivityRuns()
-            guard generation == focusGeneration else { return }
-            selectedTab = focus != nil || !attentionItems.isEmpty ? .attention : .activity
-            if selectedTab == .activity { markAllActivitySeen() }
+            await refreshActivityRuns(announceFailure: false)
+            guard generation == focusGeneration, selectedTab == .inbox else { return }
+            // A deep link must reveal the selected work even if it was already read.
+            if focus != nil, displayedAttentionItems.isEmpty, inboxRuns.isEmpty {
+                selectedTab = !inProgressRuns.isEmpty ? .inProgress : !readRuns.isEmpty ? .read : .inbox
+            } else {
+                selectedTab = .inbox
+            }
         }
     }
 
@@ -216,7 +255,6 @@ final class ActivityCenterModel: ObservableObject {
 
     func selectTab(_ tab: Tab) {
         selectedTab = tab
-        if tab == .activity { markAllActivitySeen() }
     }
 
     func toggleActivityCenter() {
@@ -240,11 +278,18 @@ final class ActivityCenterModel: ObservableObject {
 
     func markAllActivitySeen() {
         var changed = false
-        for run in displayedActivityRuns where activityIsUnseen(run) {
+        for run in inboxRuns {
             activitySeenUpdates[run.id] = run.updatedAt
             changed = true
         }
         if changed { persistActivityPresentationState() }
+    }
+
+    func markActivityUnread(_ run: OrchestrationRun) {
+        guard isFinished(run) else { return }
+        activitySeenUpdates.removeValue(forKey: run.id)
+        dismissedActivityRunIDs.remove(run.id)
+        persistActivityPresentationState()
     }
 
     func acknowledgeRunWarning(_ runID: String) {

@@ -13,6 +13,26 @@ struct PendingEventTriggerEdit: Equatable {
 /// sessions tagged with its trigger, so "new chat" in Agents mode means the
 /// agent's next chat rather than a fresh workspace conversation.
 extension AppModel {
+    func rememberSidebarAgent(_ identity: String) {
+        guard !identity.isEmpty, recentSidebarAgentIDs.first != identity else { return }
+        recentSidebarAgentIDs = [identity] + recentSidebarAgentIDs.filter { $0 != identity }
+    }
+
+    private func rememberSidebarAgent(_ reference: AgentInspectorAgent) {
+        let definition = inspectorAgentDefinition(reference)
+        let ownerID: UUID?
+        if let targetID = definition?.trigger?.targetSessionID,
+           let target = sessionCatalog.snapshot.sessionsByID[targetID] {
+            ownerID = target.savedAgentProfileID
+        } else {
+            let definitions = agentDefinitions
+            let owners = Set(sessions.filter { $0.agentReference(in: definitions) == reference }
+                .compactMap(\.savedAgentProfileID))
+            ownerID = owners.count == 1 ? owners.first : nil
+        }
+        rememberSidebarAgent(ownerID.map { "profile:\($0.uuidString)" } ?? reference.id)
+    }
+
     var agentDefinitions: [AgentDefinition] {
         eventAutomations.triggers.map(AgentDefinition.trigger) + schedule.scheduledTasks.map(AgentDefinition.schedule)
     }
@@ -42,7 +62,14 @@ extension AppModel {
         selectAgent(AgentInspectorAgent(definition))
     }
 
-    func selectAgent(_ reference: AgentInspectorAgent) {
+    func selectAgent(_ reference: AgentInspectorAgent, fromSidebarRow: Bool = false) {
+        if fromSidebarRow {
+            // Legacy unowned chats can keep this automation's own row visible
+            // beside the saved agent that owns its current receiving chat.
+            rememberSidebarAgent(reference.id)
+        } else {
+            rememberSidebarAgent(reference)
+        }
         savedAgentOverviewID = nil
         selectedSavedAgentID = nil
         let agentID = reference.agentID
@@ -55,6 +82,7 @@ extension AppModel {
     func inspectAgentChat(_ session: SessionSummary) {
         guard session.isAgentChat else { return }
         if let profileID = session.savedAgentProfileID {
+            rememberSidebarAgent("profile:\(profileID.uuidString)")
             selectedSavedAgentID = profileID
             selectedAgentID = nil
             agentInspector.clearAgentSelection()
@@ -69,6 +97,7 @@ extension AppModel {
             showToast("This saved chat’s agent kind is unavailable. Choose an agent to start a new conversation.")
             return
         }
+        rememberSidebarAgent(reference.id)
         agentInspector.show(.chat(reference, sessionID: session.id))
     }
 

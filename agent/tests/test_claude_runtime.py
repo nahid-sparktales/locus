@@ -207,6 +207,77 @@ def test_streaming_and_complete_messages_are_not_duplicated(manager, sdk):
     assert manager._load(thread)['input'] == 16
 
 
+def streamed_block(message_id, index, kind, text):
+    return [
+        msg('StreamEvent', event={'type': 'content_block_start', 'index': index,
+                                 'content_block': {'type': kind}}),
+        msg('StreamEvent', event={'type': 'content_block_delta', 'index': index,
+                                 'delta': {kind if kind == 'text' else 'thinking': text}}),
+        msg('StreamEvent', event={'type': 'content_block_stop', 'index': index}),
+        msg('AssistantMessage', message_id=message_id, uuid=f'{message_id}-{index}',
+            content=[msg('TextBlock', text=text) if kind == 'text'
+                     else msg('ThinkingBlock', thinking=text)]),
+    ]
+
+
+def test_per_block_claude_completions_preserve_streamed_identity_in_saved_chat(
+    manager, sdk, monkeypatch, tmp_path,
+):
+    # The SDK emits each completed content block as its own AssistantMessage.
+    # Reasoning completing at index 0 must not reset the mapping for text at 1.
+    answer = 'Toronto is 14.1 °C.\n\nMexico City was not fetched.'
+    sdk.response = [msg('StreamEvent', event={'type': 'message_start', 'message': {'id': 'weather'}})]
+    sdk.response += streamed_block('weather', 0, 'thinking', 'Check the requested cities.')
+    sdk.response += streamed_block('weather', 1, 'text', answer)
+    sdk.response += [msg('StreamEvent', event={'type': 'message_stop'})]
+    monkeypatch.setattr(manager, 'account', lambda: {'account': {'type': 'claude_plan'}})
+    core = AgentCore(cwd=str(tmp_path), config={'provider': 'ollama', 'model': 'local'})
+    core.use_claude_plan(account_id='account-a', model='default', account_label='Claude', manager=manager)
+    events = []
+    core.on_event(events.append)
+
+    core.run_turn('Check the temperature.', allow_tools=False)
+
+    answers = [event for event in events if event['type'] == 'assistant_item_end'
+               and event['kind'] == 'message']
+    assert [(event['item_id'], event['text']) for event in answers] == [('weather-1', answer)]
+    assert [message['content'] for message in core.messages if message['role'] == 'assistant'] == [answer]
+    saved = core.session.load(core.session.path)
+    assert [message['content'] for message in saved if message['role'] == 'assistant'
+            and message.get('content')] == [answer]
+
+
+def test_claude_block_replay_is_ignored_but_distinct_identical_blocks_are_kept(manager, sdk):
+    sdk.response = [msg('StreamEvent', event={'type': 'message_start', 'message': {'id': 'm'}})]
+    first = streamed_block('m', 0, 'text', 'Again.')
+    sdk.response += first + [first[-1]] + streamed_block('m', 1, 'text', 'Again.')
+    thread = manager.start_thread(model='default', cwd='/workspace')
+    events = []
+
+    manager.run_turn(thread_id=thread, text='repeat', event_handler=events.append)
+
+    completed = [event['params']['item'] for event in events if event['method'] == 'item/completed']
+    assert [(item['id'], item['text']) for item in completed] == [('m-0', 'Again.'), ('m-1', 'Again.')]
+    deltas = [event['params'] for event in events if event['method'] == 'item/agentMessage/delta']
+    assert [(delta['itemId'], delta['delta']) for delta in deltas] == [('m-0', 'Again.'), ('m-1', 'Again.')]
+
+
+def test_claude_nonstreamed_blocks_and_successive_messages_keep_distinct_ids(manager, sdk):
+    sdk.response = [
+        msg('AssistantMessage', message_id='first', content=[msg('ThinkingBlock', thinking='Check.')]),
+        msg('AssistantMessage', message_id='first', content=[msg('TextBlock', text='First answer.')]),
+        msg('AssistantMessage', message_id='second', content=[msg('TextBlock', text='Next answer.')]),
+    ]
+    thread = manager.start_thread(model='default', cwd='/workspace')
+    events = []
+
+    manager.run_turn(thread_id=thread, text='continue', event_handler=events.append)
+
+    completed = [event['params']['item'] for event in events if event['method'] == 'item/completed']
+    assert [(item['id'], item['type']) for item in completed] == [
+        ('first-0', 'reasoning'), ('first-1', 'agentMessage'), ('second-0', 'agentMessage')]
+
+
 def test_model_discovery_never_uses_api_catalog(manager, sdk):
     assert manager.models()[0]['model'] == 'entitled-model'
 

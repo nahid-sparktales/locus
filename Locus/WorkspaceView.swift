@@ -1208,7 +1208,7 @@ private enum ActivityGroup: String, CaseIterable, Identifiable {
     case attention = "Needs Attention"
     case running = "Running"
     case queued = "Queued"
-    case recent = "Recent"
+    case recent = "Finished"
 
     var id: String { rawValue }
 }
@@ -1234,45 +1234,28 @@ struct ActivityCenterView: View {
     @EnvironmentObject private var activityCenter: ActivityCenterModel
     @State private var workflowRetryConfirmation: AttentionItem?
     @State private var clearUnavailableConfirmationPresented = false
+    @State private var searchText = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Activity Center")
-                        .font(.locus(size: 15, weight: .bold))
-                    Text(activityCenter.selectedTab == .attention
-                        ? "Unresolved decisions and recoverable work only."
-                        : "Work keeps running when you move between chats.")
-                        .font(.locus(size: 9))
+                        .font(.locus(size: 16, weight: .bold))
+                    Text("Your work, across all chats.")
+                        .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.muted)
                 }
-                Spacer()
-                if activityCenter.focus == nil, activityCenter.selectedTab == .activity,
-                   activityCenter.visibleActivityRuns.contains(where: { activityCenter.activityIsUnseen($0) }) {
-                    Button("Mark All Seen") { activityCenter.markAllActivitySeen() }
-                        .accessibilityIdentifier("activity.markAllSeen")
-                }
-                if activityCenter.focus == nil, activityCenter.selectedTab == .activity,
-                   activityCenter.visibleActivityRuns.contains(where: {
-                    TeamRunState(rawValue: $0.state)?.isTerminal == true
-                }) {
-                    Button("Clear Finished") { model.clearFinishedActivityRuns() }
-                        .accessibilityIdentifier("activity.clearFinished")
-                }
-                if activityCenter.focus == nil, activityCenter.selectedTab == .attention,
-                   !unavailableAttentionItems.isEmpty {
-                    Button("Clear Unavailable") {
-                        clearUnavailableConfirmationPresented = true
-                    }
-                    .disabled(model.isClearingUnavailableAttention)
-                    .accessibilityIdentifier("attention.clearUnavailable")
-                }
+                Spacer(minLength: 0)
                 Button {
                     Task { await activityCenter.refreshActivityRuns() }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 28, height: 28)
                 }
+                .disabled(activityCenter.isRefreshing)
+                .help(activityCenter.isRefreshing ? "Refreshing activity…" : "Refresh activity")
+                .accessibilityLabel("Refresh activity")
                 .accessibilityIdentifier("activity.refresh")
                 Button {
                     withAnimation(LocusMotion.spatial) {
@@ -1280,88 +1263,116 @@ struct ActivityCenterView: View {
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .frame(width: 22, height: 22)
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.locus())
-                .help("Close Activities")
-                .accessibilityLabel("Close Activities")
+                .help("Close Activity Center")
+                .accessibilityLabel("Close Activity Center")
                 .accessibilityIdentifier("activity.close")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(LocusTheme.paperDeep.opacity(0.55))
+            .buttonStyle(.locus())
+            .padding(16)
 
-            Picker("Inbox view", selection: Binding(
-                get: { activityCenter.selectedTab },
-                set: { activityCenter.selectTab($0) }
-            )) {
-                Text("Attention \(activityCenter.activityNeedsAttentionCount)")
-                    .tag(ActivityCenterModel.Tab.attention)
-                Text("Activity").tag(ActivityCenterModel.Tab.activity)
+            HStack(spacing: 4) {
+                activityTab(.inbox, count: activityCenter.inboxCount)
+                activityTab(.inProgress, count: activityCenter.inProgressRuns.count)
+                activityTab(.read, count: activityCenter.readRuns.count)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(4)
+            .background(LocusTheme.paperDeep.opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 16)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("activity.tabSwitcher")
 
-            if let focus = activityCenter.focus {
-                HStack {
-                    Text(focusLabel(focus)).font(.locus(size: 13))
-                    Spacer()
-                    Button("Show all") { activityCenter.clearFocus() }
-                        .accessibilityIdentifier("activity.showAll")
+            VStack(alignment: .leading, spacing: 10) {
+                if let focus = activityCenter.focus {
+                    HStack {
+                        Text(focusLabel(focus)).font(.locus(size: 11))
+                        Spacer()
+                        Button("Show all") { activityCenter.clearFocus() }
+                            .accessibilityIdentifier("activity.showAll")
+                    }
+                    .accessibilityIdentifier("activity.focus")
                 }
-                .padding(.horizontal, 20).padding(.vertical, 8)
-                .accessibilityIdentifier("activity.focus")
-                if let error = activityCenter.focusError {
-                    Text(error).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
-                        .padding(.horizontal, 20)
+                Text(tabDescription)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                    TextField("Search activity", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .accessibilityIdentifier("activity.search")
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.locus(.icon))
+                            .accessibilityLabel("Clear search")
+                    }
+                }
+                .font(.locus(size: 11))
+                .padding(9)
+                .background(LocusTheme.white.opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
+                if let error = activityCenter.focusError ?? activityCenter.refreshError {
+                    Label(error, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.warning)
+                }
+                if activityCenter.selectedTab == .inbox {
+                    HStack {
+                        if !activityCenter.inboxRuns.isEmpty, searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Mark all as read") { activityCenter.markAllActivitySeen() }
+                                .help("Move all new results to Read. Requests still need to be resolved.")
+                                .accessibilityIdentifier("activity.markAllSeen")
+                        }
+                        Spacer(minLength: 0)
+                        if activityCenter.focus == nil, !unavailableAttentionItems.isEmpty {
+                            Button("Clear Unavailable") { clearUnavailableConfirmationPresented = true }
+                                .disabled(model.isClearingUnavailableAttention)
+                                .accessibilityIdentifier("attention.clearUnavailable")
+                        }
+                    }
+                    .font(.locus(size: 10, weight: .medium))
+                    .buttonStyle(ActivityActionButtonStyle())
                 }
             }
+            .padding(16)
+            Divider().overlay(LocusTheme.line)
 
-            if activityCenter.selectedTab == .attention {
-                attentionContent
-            } else if activityCenter.displayedActivityRuns.isEmpty {
-                ContentUnavailableView(
-                    "No Activity Yet",
-                    systemImage: "waveform.path.ecg.rectangle",
-                    description: Text("Queued, running, and recent work appears here across all chats.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("activity.empty")
+            if filteredRuns.isEmpty && filteredAttentionItems.isEmpty {
+                emptyContent
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            if activityCenter.selectedTab == .inbox {
+                                attentionSections
+                            }
                             ForEach(ActivityGroup.allCases) { group in
-                                let runs = runs(in: group)
-                                if !runs.isEmpty {
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        HStack {
-                                            Text(group.rawValue.uppercased())
-                                                .font(.locus(size: 8, weight: .bold))
-                                                .tracking(0.8)
-                                                .foregroundStyle(group == .attention
-                                                    ? LocusTheme.warning : LocusTheme.muted)
-                                            Text("\(runs.count)")
-                                                .font(.locus(size: 8, design: .monospaced))
-                                                .foregroundStyle(LocusTheme.muted)
-                                        }
-                                        ForEach(runs) { run in
+                                let values = runs(in: group)
+                                if !values.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        sectionHeading(
+                                            activityCenter.selectedTab == .inbox && group == .recent
+                                                ? "New results" : group.rawValue,
+                                            count: values.count
+                                        )
+                                        ForEach(values) { run in
                                             activityRow(run, now: context.date)
                                         }
                                     }
                                 }
                             }
                         }
-                        .padding(20)
+                        .padding(16)
                     }
                 }
             }
         }
         .task {
             while !Task.isCancelled {
-                await activityCenter.refreshActivityRuns()
+                await activityCenter.refreshActivityRuns(announceFailure: false)
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -1398,9 +1409,10 @@ struct ActivityCenterView: View {
         } message: {
             Text(
                 "They will leave Attention because their original chats no longer exist. "
-                + "Their discarded run history will remain in Activity."
+                + "Their discarded run history will remain in the Activity Center."
             )
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("activity.center")
     }
 
@@ -1410,45 +1422,108 @@ struct ActivityCenterView: View {
         }
     }
 
-    private var attentionContent: some View {
-        Group {
-            if activityCenter.displayedAttentionItems.isEmpty && activityCenter.isRefreshingFocus {
-                ProgressView("Loading this work’s requests…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if activityCenter.displayedAttentionItems.isEmpty {
-                ContentUnavailableView(
-                    activityCenter.focusError != nil ? "Requests Unavailable"
-                        : activityCenter.focus == nil ? "Nothing Needs Attention" : "No Pending Request",
-                    systemImage: "checkmark.circle",
-                    description: Text(activityCenter.focus == nil
-                        ? "Approvals, questions, recoveries, and configuration warnings appear here."
-                        : "No unresolved request is available for the work you selected.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("attention.empty")
+    private func activityTab(_ tab: ActivityCenterModel.Tab, count: Int) -> some View {
+        Button {
+            activityCenter.selectTab(tab)
+        } label: {
+            HStack(spacing: 5) {
+                Text(tab.rawValue)
+                if count > 0 {
+                    Text("\(count)")
+                        .monospacedDigit()
+                        .foregroundStyle(activityCenter.selectedTab == tab ? LocusTheme.ink : LocusTheme.muted)
+                }
+            }
+            .font(.locus(size: 11, weight: activityCenter.selectedTab == tab ? .semibold : .medium))
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(activityCenter.selectedTab == tab ? LocusTheme.white : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.locus(.quiet))
+        .accessibilityLabel(tab.rawValue)
+        .accessibilityValue("\(count) items, \(activityCenter.selectedTab == tab ? "selected" : "not selected")")
+        .accessibilityAddTraits(activityCenter.selectedTab == tab ? [.isSelected] : [])
+        .accessibilityIdentifier("activity.tab.\(tab == .inbox ? "inbox" : tab == .inProgress ? "inProgress" : "read")")
+    }
+
+    private var tabDescription: String {
+        switch activityCenter.selectedTab {
+        case .inbox: "Requests that need you and new results. Open a finished task to move it to Read."
+        case .inProgress: "Live work and queued tasks. They keep running when you leave this panel."
+        case .read: "Finished tasks you’ve opened or marked as read. Mark one unread to return it to the Inbox."
+        }
+    }
+
+    private var filteredAttentionItems: [AttentionItem] {
+        guard activityCenter.selectedTab == .inbox else { return [] }
+        return activityCenter.displayedAttentionItems.filter { item in
+            let chatTitle = item.sessionID.flatMap {
+                sessionCatalog.snapshot.sessionsByID[$0]?.displayTitle
+            } ?? ""
+            return matchesSearch([item.title, item.detail, chatTitle])
+        }
+    }
+
+    private var filteredRuns: [OrchestrationRun] {
+        let values: [OrchestrationRun]
+        switch activityCenter.selectedTab {
+        case .inbox: values = activityCenter.inboxRuns
+        case .inProgress: values = activityCenter.inProgressRuns
+        case .read: values = activityCenter.readRuns
+        }
+        return values.filter { matchesSearch([chatTitle(for: $0), workspaceTitle(for: $0), $0.request, statusTitle(for: $0)]) }
+    }
+
+    private func matchesSearch(_ values: [String]) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || values.contains { $0.localizedStandardContains(query) }
+    }
+
+    private var emptyContent: some View {
+        VStack(spacing: 12) {
+            if activityCenter.isRefreshing && !activityCenter.hasLoadedActivity && activityCenter.activityRuns.isEmpty && activityCenter.refreshError == nil {
+                ProgressView("Loading activity…")
+            } else if activityCenter.refreshError != nil && !activityCenter.hasLoadedActivity && activityCenter.activityRuns.isEmpty {
+                ContentUnavailableView("Activity unavailable", systemImage: "wifi.exclamationmark",
+                    description: Text("Try refreshing to load your tasks and requests."))
+            } else if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ContentUnavailableView.search(text: searchText)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(AttentionGroup.allCases) { group in
-                            let items = activityCenter.displayedAttentionItems.filter { $0.group == group }
-                            if !items.isEmpty {
-                                VStack(alignment: .leading, spacing: 7) {
-                                    HStack {
-                                        Text(group.title.uppercased())
-                                            .font(.locus(size: 8, weight: .bold))
-                                            .tracking(0.8)
-                                            .foregroundStyle(group == .decisions
-                                                ? LocusTheme.warning : LocusTheme.muted)
-                                        Text("\(items.count)")
-                                            .font(.locus(size: 8, design: .monospaced))
-                                            .foregroundStyle(LocusTheme.muted)
-                                    }
-                                    ForEach(items) { attentionRow($0) }
-                                }
-                            }
-                        }
-                    }
-                    .padding(20)
+                ContentUnavailableView(
+                    activityCenter.selectedTab == .inbox ? "You’re all caught up"
+                        : activityCenter.selectedTab == .inProgress ? "Nothing in progress" : "No read activity yet",
+                    systemImage: activityCenter.selectedTab == .inbox ? "checkmark.circle"
+                        : activityCenter.selectedTab == .inProgress ? "clock" : "tray",
+                    description: Text(activityCenter.selectedTab == .inbox
+                        ? "New results and requests will appear here."
+                        : activityCenter.selectedTab == .inProgress ? "Tasks appear here when they start or join the queue."
+                        : "Open a finished task in your Inbox or mark it as read to keep it here.")
+                )
+                if activityCenter.selectedTab == .inbox && !activityCenter.inProgressRuns.isEmpty {
+                    Button("View work in progress") { activityCenter.selectTab(.inProgress) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("activity.empty")
+    }
+
+    private func sectionHeading(_ title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.locus(size: 11, weight: .semibold))
+            Text("\(count)").font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var attentionSections: some View {
+        ForEach(AttentionGroup.allCases) { group in
+            let items = filteredAttentionItems.filter { $0.group == group }
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeading(group == .decisions ? "Needs your decision" : group == .recoveries ? "Needs recovery" : "Check configuration", count: items.count)
+                    ForEach(items) { attentionRow($0) }
                 }
             }
         }
@@ -1465,15 +1540,17 @@ struct ActivityCenterView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
-                        .font(.locus(size: 11, weight: .bold))
+                        .font(.locus(size: 13, weight: .semibold))
                     Text(item.detail)
-                        .font(.locus(size: 9))
+                        .font(.locus(size: 11))
                         .foregroundStyle(LocusTheme.inkSoft)
                         .textSelection(.enabled)
-                    if let runID = item.runID {
-                        Text("Run \(runID.prefix(8))")
-                            .font(.locus(size: 8, design: .monospaced))
+                    if let sessionID = item.sessionID,
+                       let session = sessionCatalog.snapshot.sessionsByID[sessionID] {
+                        Text(session.displayTitle)
+                            .font(.locus(size: 10))
                             .foregroundStyle(LocusTheme.muted)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
@@ -1512,7 +1589,7 @@ struct ActivityCenterView: View {
 
     @ViewBuilder
     private func attentionActions(_ item: AttentionItem) -> some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), alignment: .leading)], alignment: .leading, spacing: 4) {
             ForEach(item.actions, id: \.self) { action in
                 if action != "answer" {
                     if ["reject", "deny", "cancel", "clear"].contains(action) {
@@ -1530,9 +1607,8 @@ struct ActivityCenterView: View {
                     }
                 }
             }
-            Spacer()
         }
-        .font(.locus(size: 8, weight: .semibold))
+        .font(.locus(size: 10, weight: .medium))
         .buttonStyle(ActivityActionButtonStyle())
     }
 
@@ -1567,7 +1643,7 @@ struct ActivityCenterView: View {
     }
 
     private func runs(in group: ActivityGroup) -> [OrchestrationRun] {
-        let values = activityCenter.displayedActivityRuns.filter { activityGroup(for: $0) == group }
+        let values = filteredRuns.filter { activityGroup(for: $0) == group }
         if group == .queued {
             return values.sorted {
                 ($0.queuePosition ?? .max, $0.createdAt)
@@ -1585,7 +1661,8 @@ struct ActivityCenterView: View {
     }
 
     private func activityGroup(for run: OrchestrationRun) -> ActivityGroup {
-        switch run.state {
+        if activityCenter.isFinished(run) { return .recent }
+        return switch run.state {
         case "waiting_permission", "waiting_computer", "waiting_dispatch_approval",
              "paused", "interrupted", "failed":
             .attention
@@ -1599,97 +1676,110 @@ struct ActivityCenterView: View {
     }
 
     private func activityRow(_ run: OrchestrationRun, now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: symbol(for: run))
-                    .font(.locus(size: 13, weight: .semibold))
-                    .foregroundStyle(color(for: run))
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { model.openActivityRun(run) } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: symbol(for: run))
+                        .font(.locus(size: 15, weight: .semibold))
+                        .foregroundStyle(color(for: run))
+                        .frame(width: 22, height: 24)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
                         Text(chatTitle(for: run))
-                            .font(.locus(size: 11, weight: .bold))
-                            .lineLimit(1)
-                        Text(run.state.replacingOccurrences(of: "_", with: " ").uppercased())
-                            .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                            .foregroundStyle(color(for: run))
-                        if activityCenter.activityIsUnseen(run) {
-                            Text("NEW")
-                                .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                                .foregroundStyle(LocusTheme.brandInk)
-                                .padding(.horizontal, 5)
-                                .frame(height: 16)
-                                .background(LocusTheme.signal)
-                                .clipShape(Capsule())
+                            .font(.locus(size: 13, weight: .semibold))
+                            .foregroundStyle(LocusTheme.ink)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        HStack(spacing: 6) {
+                            Text(statusTitle(for: run)).foregroundStyle(color(for: run))
+                            Text("·")
+                            Text(Date(timeIntervalSince1970: run.updatedAt), format: .relative(presentation: .named))
                         }
-                    }
-                    HStack(spacing: 6) {
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                        .lineLimit(1)
                         Text(workspaceTitle(for: run))
-                        Text("·")
-                        Text((run.runKind ?? "solo").replacingOccurrences(of: "_", with: " "))
-                        Text("·")
-                        Text(run.executionEnvironment == "worktree" ? "Worktree" : "Local")
-                        if let position = run.queuePosition {
-                            Text("· queue #\(position)")
+                            .font(.locus(size: 10))
+                            .foregroundStyle(LocusTheme.muted)
+                            .lineLimit(1)
+                        if run.state != "completed" {
+                            Text(run.recoveryReason?.nilIfEmpty ?? meaningfulStatus(for: run))
+                                .font(.locus(size: 11))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
                         }
-                        Text("· \(elapsed(run, now: now))")
                     }
-                    .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
-                    Text(run.recoveryReason?.nilIfEmpty ?? meaningfulStatus(for: run))
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    if activityCenter.isFinished(run), activityCenter.activityIsUnseen(run) {
+                        Circle().fill(LocusTheme.accentAction).frame(width: 7, height: 7)
+                            .padding(.top, 8)
+                            .accessibilityLabel("Unread")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(LocusTheme.muted)
+                        .padding(.top, 6)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.locus(.card))
+            .help(activityCenter.isFinished(run) ? "Open task and mark as read" : "Open task")
+            .accessibilityIdentifier("activity.open.\(run.id)")
 
             HStack(spacing: 8) {
-                Button("Open Chat") { model.openActivityRun(run) }
-                Button("Timeline") {
-                    model.openActivityRun(run)
-                    model.selectInspectorTab(.runs)
-                }
-                if run.state == "queued" {
-                    Button("Top") { model.updateQueuedRun(run, action: "move_top") }
-                    Button("Up") { model.updateQueuedRun(run, action: "move_up") }
-                    Button("Down") { model.updateQueuedRun(run, action: "move_down") }
-                    Button("Remove", role: .destructive) {
-                        model.updateQueuedRun(run, action: "cancel")
+                Button(run.state == "completed" ? "View result" : "Open chat") { model.openActivityRun(run) }
+                    .foregroundStyle(LocusTheme.accentAction)
+                if activityCenter.isFinished(run) {
+                    if activityCenter.activityIsUnseen(run) {
+                        Button("Mark as read") { activityCenter.markActivitySeen(run) }
+                            .accessibilityIdentifier("activity.markRead.\(run.id)")
+                    } else {
+                        Button("Mark unread") { activityCenter.markActivityUnread(run) }
+                            .accessibilityIdentifier("activity.markUnread.\(run.id)")
                     }
                 } else if ["running", "dispatching", "reviewing"].contains(run.state) {
-                    if run.runKind == "team" {
+                    Button("Stop", role: .destructive) { model.stopActivityRun(run) }
+                } else if run.state == "paused", run.runKind == "team" {
+                    Button("Resume") { model.resumeOrchestration(run) }
+                }
+                Spacer(minLength: 0)
+                Menu {
+                    Button("View timeline") {
+                        model.openActivityRun(run)
+                        model.selectInspectorTab(.runs)
+                    }
+                    if run.state == "queued" {
+                        Button("Move to top") { model.updateQueuedRun(run, action: "move_top") }
+                        Button("Move up") { model.updateQueuedRun(run, action: "move_up") }
+                        Button("Move down") { model.updateQueuedRun(run, action: "move_down") }
+                        Button("Cancel queued task", role: .destructive) { model.updateQueuedRun(run, action: "cancel") }
+                    }
+                    if ["running", "dispatching", "reviewing"].contains(run.state), run.runKind == "team" {
                         Button("Pause") { model.pauseOrchestration(run.id) }
                     }
-                    Button("Stop", role: .destructive) { model.stopActivityRun(run) }
-                } else if ["paused", "interrupted"].contains(run.state), run.runKind == "team" {
-                    Button("Resume") { model.resumeOrchestration(run) }
-                } else if ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
-                    Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry") {
-                        model.retryRun(run)
+                    if ["paused", "interrupted"].contains(run.state), run.runKind == "team" {
+                        Button("Resume") { model.resumeOrchestration(run) }
+                    } else if ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
+                        Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry") { model.retryRun(run) }
+                            .disabled(model.retryingRunIDs.contains(run.id))
                     }
-                    .disabled(model.retryingRunIDs.contains(run.id))
+                    Divider()
+                    Text("Duration: \(elapsed(run, now: now))")
+                    Text(run.executionEnvironment == "worktree" ? "Runs in a worktree" : "Runs locally")
+                    if let position = run.queuePosition { Text("Queue position: \(position)") }
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 24)
                 }
-                if TeamRunState(rawValue: run.state)?.isTerminal == true {
-                    Button("Remove") { model.dismissActivityRun(run) }
-                        .help("Remove from Activity; the run timeline is preserved")
-                        .accessibilityIdentifier("activity.remove.\(run.id)")
-                }
-                if run.state == "waiting_permission" {
-                    Button("Allow Once") { model.answerActivityPermission(run, decision: "once") }
-                    Button("Always Allow") { model.answerActivityPermission(run, decision: "always") }
-                    Button("Deny", role: .destructive) {
-                        model.answerActivityPermission(run, decision: "deny")
-                    }
-                }
-                if ["waiting_computer", "waiting_dispatch_approval"].contains(run.state) {
-                    Button(run.state == "waiting_computer" ? "Open Chat to Continue" : "Open Chat to Review") {
-                        model.openActivityRun(run)
-                    }
-                }
-                Spacer()
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More task actions and details")
+                .accessibilityLabel("More actions for \(chatTitle(for: run))")
+                .accessibilityIdentifier("activity.more.\(run.id)")
             }
-            .font(.locus(size: 8, weight: .semibold))
+            .font(.locus(size: 10, weight: .medium))
             .buttonStyle(ActivityActionButtonStyle())
         }
         .padding(12)
@@ -1698,6 +1788,17 @@ struct ActivityCenterView: View {
         .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("activity.run.\(run.id)")
+    }
+
+    private func statusTitle(for run: OrchestrationRun) -> String {
+        switch run.state {
+        case "completed": "Completed"
+        case "cancelled", "discarded": "Stopped"
+        case "waiting_permission": "Needs permission"
+        case "waiting_computer": "Needs computer control"
+        case "waiting_dispatch_approval": "Needs plan approval"
+        default: TeamRunState(rawValue: run.state)?.title ?? "Updating"
+        }
     }
 
     private func chatTitle(for run: OrchestrationRun) -> String {
@@ -1720,21 +1821,24 @@ struct ActivityCenterView: View {
 
     private func meaningfulStatus(for run: OrchestrationRun) -> String {
         switch run.state {
-        case "queued": "Waiting for an execution slot"
-        case "waiting_permission": "A permission answer is required"
-        case "waiting_computer": "Computer Control requires this chat in the foreground"
+        case "queued": "Waiting for a slot to start"
+        case "waiting_permission": "Review this task’s permission request in your Inbox"
+        case "waiting_computer": "Open the chat to continue with computer control"
         case "waiting_dispatch_approval": "The team plan is ready for review"
         case "paused": "Paused and ready to resume"
-        case "interrupted": "The worker stopped; this run can be recovered"
-        case "failed": "The run failed; inspect its timeline or retry"
+        case "interrupted": "Work stopped unexpectedly. Open the chat to review or resume"
+        case "failed": "This task couldn’t finish. Open the chat to see what happened"
         case "completed": "Completed successfully"
         case "cancelled": "Stopped"
-        default: "The worker is processing this run"
+        case "dispatching": "Preparing to start…"
+        case "reviewing": "Checking the result…"
+        default: "Working on your task…"
         }
     }
 
     private func symbol(for run: OrchestrationRun) -> String {
-        switch activityGroup(for: run) {
+        if ["failed", "interrupted"].contains(run.state) { return "exclamationmark.triangle.fill" }
+        return switch activityGroup(for: run) {
         case .attention: "exclamationmark.triangle.fill"
         case .running: "waveform.path.ecg"
         case .queued: "clock.fill"
@@ -1743,7 +1847,8 @@ struct ActivityCenterView: View {
     }
 
     private func color(for run: OrchestrationRun) -> Color {
-        switch activityGroup(for: run) {
+        if ["failed", "interrupted"].contains(run.state) { return LocusTheme.warning }
+        return switch activityGroup(for: run) {
         case .attention: LocusTheme.warning
         case .running: LocusTheme.signalDeep
         case .queued: LocusTheme.blue

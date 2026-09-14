@@ -360,6 +360,7 @@ extension AppModel {
     func selectSavedAgent(_ profile: AgentProfile) {
         guard agentProfiles.contains(where: { $0.id == profile.id }),
               !removingSavedAgentIDs.contains(profile.id) else { return }
+        rememberSidebarAgent("profile:\(profile.id.uuidString)")
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         agentCrewChatPresented = false
         emptySidebarDestination = nil

@@ -10,6 +10,33 @@ final class AgentSidebarCatalogTests: XCTestCase {
         XCTAssertEqual(groups.first?.totalChatCount, 0)
     }
 
+    func testRecentSelectionOrdersSavedAndAutomatedAgentsBeforeUnvisitedAgents() {
+        let alpha = AgentProfile(name: "Alpha", model: "fixture")
+        let zulu = AgentProfile(name: "Zulu", model: "fixture")
+        let groups = AgentSidebarCatalog.groups(
+            definitions: [.trigger(trigger()), .schedule(schedule())], sessions: [], query: "",
+            showArchived: false, runningSessionIDs: [], profiles: [alpha, zulu],
+            recentAgentIDs: ["deleted-agent", "profile:\(zulu.id.uuidString)", "schedule:inbox", "schedule:inbox"]
+        )
+
+        XCTAssertEqual(groups.map(\.id), [
+            "profile:\(zulu.id.uuidString)", "schedule:inbox", "profile:\(alpha.id.uuidString)", "event:inbox",
+        ], "Visited agents lead; unvisited agents remain alphabetical, with distinct event and schedule identities")
+    }
+
+    func testSearchPreservesTheRecentOrderOfMatchingAgents() {
+        let first = AgentProfile(name: "Alpha assistant", model: "fixture")
+        let second = AgentProfile(name: "Zulu assistant", model: "fixture")
+        let hidden = AgentProfile(name: "Weather", model: "fixture")
+        let groups = AgentSidebarCatalog.groups(
+            definitions: [], sessions: [], query: "assistant",
+            showArchived: false, runningSessionIDs: [], profiles: [first, second, hidden],
+            recentAgentIDs: ["profile:\(hidden.id.uuidString)", "profile:\(second.id.uuidString)"]
+        )
+
+        XCTAssertEqual(groups.map(\.profileID), [second.id, first.id])
+    }
+
     func testAgentNameSearchUsesCurrentDefinitionAndIncludesItsChats() {
         let groups = project([.trigger(trigger())], sessions: [chat("first"), chat("second")], query: "  INBOX  ")
         XCTAssertEqual(groups.count, 1)

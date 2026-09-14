@@ -81,6 +81,87 @@ final class ActivityCenterModelTests: XCTestCase {
         XCTAssertTrue(model.activityIsUnseen(model.activityRuns[1]))
     }
 
+    func testOpeningSwitchingTabsAndRefreshingNeverReadsResults() async throws {
+        let finished = run(id: "finished")
+        let data = try JSONEncoder().encode(OrchestrationRunsResponse(runs: [finished], readOnly: false))
+        BackendStub.respond(toPath: "/api/runs") { _ in data }
+        BackendStub.respond(toPath: "/api/attention") { _ in ["items": [], "unresolved_count": 0, "read_only": false] }
+        let model = makeModel()
+        model.activityRuns = [finished]
+        model.openActivityCenter()
+        let refreshed = expectation(description: "Opening refresh finished")
+        let observer = model.$selectedTab.dropFirst().first().sink { _ in refreshed.fulfill() }
+        await fulfillment(of: [refreshed], timeout: 3)
+        observer.cancel()
+        for tab in ActivityCenterModel.Tab.allCases { model.selectTab(tab) }
+        await model.refreshActivityRuns()
+        XCTAssertTrue(model.activityIsUnseen(finished))
+        XCTAssertEqual(model.inboxRuns.map(\.id), [finished.id])
+        XCTAssertTrue(model.readRuns.isEmpty)
+    }
+
+    func testReadUnreadAndLaterUpdatesMoveResultsBetweenListsAndPersist() {
+        let model = makeModel()
+        let finished = run(id: "finished")
+        model.activityRuns = [finished, run(id: "active", state: "running"), run(id: "queued", state: "queued")]
+        XCTAssertEqual(model.inProgressRuns.map(\.id), ["active", "queued"])
+        XCTAssertEqual(model.unreadResultCount, 1)
+        model.markActivitySeen(finished)
+        XCTAssertTrue(model.inboxRuns.isEmpty)
+        XCTAssertEqual(model.readRuns.map(\.id), ["finished"])
+        XCTAssertEqual(model.unreadResultCount, 0)
+
+        let restored = makeModel()
+        restored.activityRuns = model.activityRuns
+        XCTAssertEqual(restored.readRuns.map(\.id), ["finished"])
+        restored.markActivityUnread(finished)
+        XCTAssertEqual(restored.inboxRuns.map(\.id), ["finished"])
+        XCTAssertTrue(restored.readRuns.isEmpty)
+        restored.markActivitySeen(finished)
+        restored.activityRuns[0] = run(id: "finished", updatedAt: 20)
+        XCTAssertEqual(restored.inboxRuns.map(\.id), ["finished"])
+    }
+
+    func testBulkReadOnlyAcknowledgesResultsAndNeverResolvesRequests() {
+        let request = AttentionItem(id: "recovery", kind: "recoverable_run", group: .recoveries,
+            runID: "failed", title: "Needs recovery", detail: "Failed", actions: ["retry"])
+        let model = makeModel(liveAttention: { [request] })
+        model.activityRuns = [run(id: "done"), run(id: "failed", state: "failed"), run(id: "active", state: "running")]
+        XCTAssertEqual(model.inboxCount, 2, "One request and one new result, with no duplicate failed row")
+        model.markAllActivitySeen()
+        XCTAssertEqual(model.readRuns.map(\.id), ["done"])
+        XCTAssertEqual(model.inboxCount, 1)
+        XCTAssertEqual(model.displayedAttentionItems, [request])
+        XCTAssertTrue(model.activityIsUnseen(model.activityRuns[2]))
+        model.markActivitySeen(model.activityRuns[1])
+        XCTAssertEqual(model.displayedAttentionItems, [request], "Reading a failed task cannot resolve recovery")
+    }
+
+    func testReadingAnActiveRunDoesNotHideItsCompletion() {
+        let model = makeModel()
+        let active = run(id: "work", state: "running")
+        model.activityRuns = [active]
+        model.markActivitySeen(active)
+        XCTAssertEqual(model.inProgressRuns.map(\.id), ["work"])
+        XCTAssertTrue(model.readRuns.isEmpty)
+        model.activityRuns = [run(id: "work", updatedAt: 11)]
+        XCTAssertEqual(model.inboxRuns.map(\.id), ["work"])
+    }
+
+    func testOpeningReadRunFocusRevealsItWithoutChangingReadState() async throws {
+        let finished = run(id: "finished")
+        let detail = try JSONEncoder().encode(finished)
+        BackendStub.respond(toPath: "/api/runs") { _ in ["runs": [], "read_only": false] }
+        BackendStub.respond(toPath: "/api/runs/finished") { _ in detail }
+        BackendStub.respond(toPath: "/api/attention") { _ in ["items": [], "unresolved_count": 0, "read_only": false] }
+        let model = makeModel()
+        model.markActivitySeen(finished)
+        await openAndFinishRefresh(model, focus: .run("finished"))
+        XCTAssertEqual(model.selectedTab, .read)
+        XCTAssertEqual(model.readRuns.map(\.id), ["finished"])
+        XCTAssertEqual(model.unreadResultCount, 0)
+    }
+
     func testRestoreReadsTheKeysThisModelNowOwns() throws {
         let seen = try JSONEncoder().encode(["run-9": 42.0])
         defaults.set(seen, forKey: "Locus.activitySeenUpdates")

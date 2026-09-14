@@ -42,7 +42,7 @@ enum AgentSidebarCatalog {
         definitions: [AgentDefinition], sessions: [SessionSummary], query: String,
         showArchived: Bool, runningSessionIDs: Set<String>,
         connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false,
-        profiles: [AgentProfile] = []
+        profiles: [AgentProfile] = [], recentAgentIDs: [String] = []
     ) -> [AgentSidebarGroupModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let profileChats = sessions.filter { $0.savedAgentProfileID != nil && (showArchived || !$0.isArchived) }
@@ -117,7 +117,16 @@ enum AgentSidebarCatalog {
                 )
             )
         }
-        return (savedGroups + automatedGroups).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let recentRanks = Dictionary(recentAgentIDs.enumerated().map { ($0.element, $0.offset) },
+                                     uniquingKeysWith: min)
+        return (savedGroups + automatedGroups).sorted {
+            let lhsRank = recentRanks[$0.id] ?? Int.max
+            let rhsRank = recentRanks[$1.id] ?? Int.max
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            let nameOrder = $0.name.localizedStandardCompare($1.name)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            return $0.id < $1.id
+        }
     }
 
     static func sourceNeedsAttention(
@@ -931,6 +940,13 @@ struct SessionSidebarView: View {
                             .clipShape(Capsule())
                             .offset(x: 4, y: -4)
                             .accessibilityIdentifier("sidebar.activity.badge")
+                    } else if activityCenter.unreadResultCount > 0 {
+                        Circle()
+                            .fill(LocusTheme.accentAction)
+                            .frame(width: 8, height: 8)
+                            .overlay { Circle().stroke(LocusTheme.surfaceCard, lineWidth: 2) }
+                            .offset(x: 2, y: -2)
+                            .accessibilityIdentifier("sidebar.activity.unread")
                     }
                 }
         }
@@ -941,7 +957,9 @@ struct SessionSidebarView: View {
         .accessibilityValue(
             activityCenter.activityNeedsAttentionCount > 0
                 ? "\(activityCenter.activityNeedsAttentionCount) needs attention"
-                : "No new activity"
+                : activityCenter.unreadResultCount > 0
+                    ? "\(activityCenter.unreadResultCount) unread results"
+                    : "No new activity"
         )
     }
 
@@ -2631,7 +2649,7 @@ private struct AgentSidebarSection: View {
             showArchived: snapshot.showArchivedSessions,
             runningSessionIDs: model.runningChatSessionIDs,
             connections: automation.connections, connectionsLoaded: automation.hasLoaded,
-            profiles: agentTeams.agentProfiles
+            profiles: agentTeams.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs
         )
     }
 
@@ -2775,7 +2793,7 @@ private struct AgentSidebarSection: View {
                         expandedIDs.insert(agent.id)
                     }
                     if let profile = agent.profile { model.selectSavedAgent(profile) }
-                    else if let reference = agent.reference { model.selectAgent(reference) }
+                    else if let reference = agent.reference { model.selectAgent(reference, fromSidebarRow: true) }
                     else { model.showToast("This agent is unavailable. Its saved chats are still available below.") }
                 },
                 confirmDelete: confirmDelete,

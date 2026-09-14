@@ -4253,31 +4253,113 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Clear"].exists)
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
 
-        let activityTab = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", "Activity")
-        ).firstMatch
-        XCTAssertTrue(activityTab.waitForExistence(timeout: 3))
-        activityTab.click()
-        XCTAssertTrue(anyElement("activity.run.seed-run").waitForExistence(timeout: 3))
-        XCTAssertTrue(app.textViews["composer.input"].exists)
+        // Read status never hides an unresolved request from the inbox.
+        anyElement("activity.tab.read").click()
+        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.inbox").click()
+        XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
         XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
-
-        destination.click()
+        anyElement("activity.close").click()
         XCTAssertFalse(anyElement("activity.center").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
+    }
 
-        destination.click()
-        XCTAssertTrue(activityTab.waitForExistence(timeout: 3))
-        activityTab.click()
-        let remove = anyElement("activity.remove.seed-run")
-        XCTAssertTrue(remove.waitForExistence(timeout: 3))
-        // The activity center is a SwiftUI overlay. macOS 15 and 26 can mark
-        // its visible buttons non-hittable in XCUI even though AppKit routes a
-        // pointer at the same frame correctly. Exercise the real hit-testing
-        // path at the button's center and verify the resulting removal.
-        remove.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        XCTAssertTrue(app.staticTexts["No Activity Yet"].waitForExistence(timeout: 3))
-        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
+    func testActivityInboxSearchMatchesVisibleChatTitle() {
+        relaunchWithRunFixture("activity")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        let request = anyElement("attention.item.run:seed-run")
+        XCTAssertTrue(request.waitForExistence(timeout: 5))
+        XCTAssertTrue(request.staticTexts["Workspace review"].exists)
+
+        let search = anyElement("activity.search")
+        search.click()
+        search.typeText("no matching request")
+        XCTAssertTrue(waitUntil { !request.exists })
+        search.typeKey("a", modifierFlags: .command)
+        search.typeText("Workspace review")
+
+        XCTAssertTrue(request.waitForExistence(timeout: 3),
+            "Searching the visible chat title must keep its unresolved request")
+        XCTAssertTrue(request.staticTexts["Work needs recovery"].exists)
+        XCTAssertTrue(request.buttons["Retry"].exists)
+        XCTAssertFalse(anyElement("activity.run.seed-run").exists,
+            "The recovery stays a single request rather than a duplicate result")
+    }
+
+    func testActivityPausedTeamOffersResumeWithoutGenericRetry() {
+        relaunchWithRunFixture("activity-paused")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 5))
+        anyElement("activity.tab.inProgress").click()
+        let row = anyElement("activity.run.seed-run")
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertTrue(row.buttons["Resume"].exists,
+            "A paused team must keep its checkpoint resume action")
+
+        let more = anyElement("activity.more.seed-run")
+        more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(app.menuItems["View timeline"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.menuItems["Resume"].exists)
+        XCTAssertFalse(app.menuItems["Retry"].exists,
+            "Generic Retry would start the original prompt again instead of resuming the paused team")
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    func testActivityCompletedResultMovesToReadAndCanBeMarkedUnread() {
+        relaunchWithRunFixture("completed")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        let row = anyElement("activity.open.seed-run")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let inboxScreenshot = XCTAttachment(screenshot: app.screenshot())
+        inboxScreenshot.name = "Activity Inbox"
+        inboxScreenshot.lifetime = .keepAlways
+        add(inboxScreenshot)
+
+        // Opening the result is the acknowledgement, not opening the panel.
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
+        anyElement("sidebar.activity").click()
+        XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.read").click()
+        XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
+        let readScreenshot = XCTAttachment(screenshot: app.screenshot())
+        readScreenshot.name = "Activity Read"
+        readScreenshot.lifetime = .keepAlways
+        add(readScreenshot)
+        anyElement("activity.markUnread.seed-run").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.inbox").click()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        let search = anyElement("activity.search")
+        search.click()
+        search.typeText("no matching activity")
+        XCTAssertFalse(row.exists)
+        app.buttons["Clear search"].click()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        anyElement("activity.markAllSeen").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.read").click()
+        XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
+    }
+
+    func testActivitySeparatesLiveWorkFromReadResults() {
+        relaunchWithRunFixture("swarm-live")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.inProgress").click()
+        XCTAssertTrue(anyElement("activity.run.seed-run").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Stop"].exists)
+        XCTAssertFalse(anyElement("activity.markRead.seed-run").exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Activity In Progress"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        anyElement("activity.tab.read").click()
+        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
     }
 
     func testOrphanedRecoveryOffersIndividualAndBulkClear() {
@@ -4343,6 +4425,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.detail").exists)
 
         let search = anyElement("configureAgent.search")
+        XCTAssertEqual(search.label, "Search automations")
         search.click()
         search.typeText("Inbox")
         XCTAssertTrue(anyElement("configureAgent.eventTrigger.seed-agent").exists)
@@ -4351,6 +4434,73 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.detail.open").exists)
         XCTAssertTrue(anyElement("configureAgent.detail.edit").exists)
         XCTAssertTrue(anyElement("configureAgent.detail.toggle").exists)
+    }
+
+    func testAutomationSectionsToggleFromTheWholeHeaderRow() {
+        relaunchWithAgentFixture()
+        revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
+        anyElement("sidebar.configureAgent").click()
+        let automation = anyElement("configureAgent.eventTrigger.seed-agent")
+        XCTAssertTrue(automation.waitForExistence(timeout: 5))
+        automation.click()
+        anyElement("configureAgent.detail.edit").click()
+        let editor = anyElement("eventAutomations.editor")
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        let form = editor.scrollViews.firstMatch
+
+        func expanded(_ header: XCUIElement) -> Bool {
+            let value = String(describing: header.value ?? "")
+            XCTAssertTrue(["0", "1", "on", "off", "Expanded", "Collapsed"].contains(value),
+                "The disclosure must expose its expanded state, received: \(value)")
+            return ["1", "on", "Expanded"].contains(value)
+        }
+
+        // macOS includes expanded content in a disclosure's accessibility
+        // frame. Exercise the 40-point header, without clicking its fields.
+        func revealHeader(_ header: XCUIElement) {
+            for _ in 0..<16 {
+                if header.exists {
+                    let frame = header.frame
+                    let row = CGRect(x: frame.minX, y: frame.minY, width: frame.width,
+                                     height: min(40, frame.height))
+                    if form.frame.contains(row), header.isHittable { return }
+                    form.scroll(byDeltaX: 0, deltaY: row.minY < form.frame.minY ? 100 : -100)
+                } else {
+                    form.scroll(byDeltaX: 0, deltaY: -100)
+                }
+            }
+            XCTFail("Could not reveal disclosure header \(header.identifier)")
+        }
+
+        func clickHeader(_ header: XCUIElement, x: CGFloat) {
+            header.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: min(40, header.frame.height) / 2)).click()
+        }
+
+        for identifier in ["eventTrigger.filters", "eventTrigger.actions", "eventTrigger.environment"] {
+            let header = app.descendants(matching: .disclosureTriangle)[identifier].firstMatch
+            revealHeader(header)
+            XCTAssertGreaterThan(header.frame.width, 500, "The disclosure button must span the form row")
+            let initiallyExpanded = expanded(header)
+            // Click blank space between the text and trailing chevron, then
+            // the title side: neither should require hitting the arrow.
+            clickHeader(header, x: 0.8)
+            let toggled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                expanded(header) != initiallyExpanded
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [toggled], timeout: 3), .completed)
+            revealHeader(header)
+            clickHeader(header, x: 0.1)
+            let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                expanded(header) == initiallyExpanded
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 3), .completed)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Automation full-row disclosure headers"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testAgentEventQueueFanOutAndSharedLimitAreVisible() {

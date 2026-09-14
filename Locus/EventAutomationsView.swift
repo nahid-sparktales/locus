@@ -266,15 +266,16 @@ struct ConfigureAgentView: View {
         VStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
-                TextField("Find an Agent", text: $search).textFieldStyle(.plain)
+                TextField("Search automations", text: $search).textFieldStyle(.plain)
+                    .accessibilityLabel("Search automations")
                     .accessibilityIdentifier("configureAgent.search")
                 if !search.isEmpty {
                     Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.locus(.icon)).accessibilityLabel("Clear Agent search")
+                        .buttonStyle(.locus(.icon)).accessibilityLabel("Clear automation search")
                 }
             }.padding(9).background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 7))
-            Picker("Filter Agents", selection: $agentFilter) {
-                Text("All Agents").tag("all")
+            Picker("Filter automations", selection: $agentFilter) {
+                Text("All automations").tag("all")
                 Text("Enabled").tag("enabled")
                 Text("Paused").tag("paused")
                 Text("Needs attention").tag("attention")
@@ -287,7 +288,7 @@ struct ConfigureAgentView: View {
                         }
                     }
                     if filteredReferences.isEmpty {
-                        Text("No matching Agents").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).padding(.vertical, 24)
+                        Text("No matching automations").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).padding(.vertical, 24)
                         Button("Clear filters") { search = ""; agentFilter = "all" }.buttonStyle(.bordered)
                     }
                 }
@@ -1095,6 +1096,40 @@ private struct PriceSecretDraft: Identifiable, Hashable {
     var value = ""
 }
 
+/// Match the agent editor: the entire highlighted header opens the section.
+private struct AutomationDisclosureGroupStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    configuration.label
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.right")
+                        .font(.locus(size: 9, weight: .semibold))
+                        .foregroundStyle(LocusTheme.textTertiary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus(.quiet))
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
+    }
+}
+
 private struct EventTriggerEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppModel
@@ -1268,6 +1303,7 @@ private struct EventTriggerEditorView: View {
                         .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                 }
             }
+            .disclosureGroupStyle(AutomationDisclosureGroupStyle())
             .formStyle(.grouped).scrollContentBackground(.hidden).background(LocusTheme.surfaceCanvas)
             .disabled(isSaving)
             Divider()

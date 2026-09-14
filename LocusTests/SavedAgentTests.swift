@@ -4,6 +4,145 @@ import XCTest
 
 final class SavedAgentTests: XCTestCase {
     @MainActor
+    func testOpeningOwnedAutomationPromotesTheVisibleSavedAgent() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let eventOwner = AgentProfile(name: "Alpha", model: "fixture")
+        let scheduleOwner = AgentProfile(name: "Zulu", model: "fixture")
+        model.agentProfiles = [eventOwner, scheduleOwner]
+        let event = EventTrigger(id: "shared", name: "Inbox", connectionID: "gmail",
+            targetSessionID: "event-chat", instruction: "Review messages", mode: .work,
+            triggerKind: .event, filters: EventTriggerFilters(), runtimeState: PriceTriggerState(), actionConnectionIDs: [],
+            enabled: true, createdAt: 1, updatedAt: 1)
+        let schedule = ScheduledTask(id: "shared", name: "Digest", prompt: "Review messages",
+            workspaceRoot: "/tmp", mode: .work, executionEnvironment: .local, runner: .solo,
+            provider: "ollama", model: "fixture", timezone: "UTC",
+            rule: ScheduleRule(kind: .daily, hour: 9, minute: 0), enabled: true, createdAt: 1, updatedAt: 1)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [event], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [schedule])
+        model.sessions = [
+            SessionSummary(id: "event-chat", name: "event-chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentProfileID: eventOwner.id.uuidString, agentKind: "event"),
+            SessionSummary(id: "schedule-chat", name: "schedule-chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentProfileID: scheduleOwner.id.uuidString, agentKind: "schedule"),
+        ]
+
+        model.selectAgent(AgentInspectorAgent(.trigger(event)))
+        model.selectAgent(AgentInspectorAgent(.schedule(schedule)))
+
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(scheduleOwner.id.uuidString)", "profile:\(eventOwner.id.uuidString)",
+        ])
+        let groups = AgentSidebarCatalog.groups(definitions: model.agentDefinitions, sessions: model.sessions,
+            query: "", showArchived: false, runningSessionIDs: [], profiles: model.agentProfiles,
+            recentAgentIDs: model.recentSidebarAgentIDs)
+        XCTAssertEqual(groups.map(\.profileID), [scheduleOwner.id, eventOwner.id])
+        XCTAssertEqual(model.agentInspector.context, .agent(AgentInspectorAgent(.schedule(schedule))))
+    }
+
+    @MainActor
+    func testMixedOwnershipRecencyFollowsTheOpenedSidebarRowOrChat() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let eventOwner = AgentProfile(name: "Event owner", model: "fixture")
+        let scheduleOwner = AgentProfile(name: "Schedule owner", model: "fixture")
+        model.agentProfiles = [eventOwner, scheduleOwner]
+        let event = EventTrigger(id: "shared", name: "Inbox", connectionID: "gmail",
+            targetSessionID: "owned-event", instruction: "Review messages", mode: .work,
+            triggerKind: .event, filters: EventTriggerFilters(), runtimeState: PriceTriggerState(), actionConnectionIDs: [],
+            enabled: true, createdAt: 1, updatedAt: 1)
+        let schedule = ScheduledTask(id: "shared", name: "Digest", prompt: "Review messages",
+            workspaceRoot: "/tmp", mode: .work, executionEnvironment: .local, runner: .solo,
+            provider: "ollama", model: "fixture", timezone: "UTC",
+            rule: ScheduleRule(kind: .daily, hour: 9, minute: 0), enabled: true, createdAt: 1, updatedAt: 1)
+        model.eventAutomations.seedForUITesting(connections: [], triggers: [event], deliveries: [])
+        model.schedule.seedForUITesting(tasks: [schedule])
+        let cases: [(AgentInspectorAgent, AgentProfile, SessionSummary, SessionSummary)] = [
+            (AgentInspectorAgent(.trigger(event)), eventOwner,
+             SessionSummary(id: "legacy-event", name: "Earlier event chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentKind: "event"),
+             SessionSummary(id: "owned-event", name: "Current event chat", preview: "", mtime: 2, size: 0,
+                agentTriggerID: "shared", agentProfileID: eventOwner.id.uuidString, agentKind: "event")),
+            (AgentInspectorAgent(.schedule(schedule)), scheduleOwner,
+             SessionSummary(id: "legacy-schedule", name: "Earlier schedule chat", preview: "", mtime: 1, size: 0,
+                agentTriggerID: "shared", agentKind: "schedule"),
+             SessionSummary(id: "owned-schedule", name: "Current schedule chat", preview: "", mtime: 2, size: 0,
+                agentTriggerID: "shared", agentProfileID: scheduleOwner.id.uuidString, agentKind: "schedule")),
+        ]
+        model.sessions = cases.flatMap { [$0.2, $0.3] }
+
+        func groups() -> [AgentSidebarGroupModel] {
+            AgentSidebarCatalog.groups(definitions: model.agentDefinitions, sessions: model.sessions,
+                query: "", showArchived: false, runningSessionIDs: [], profiles: model.agentProfiles,
+                recentAgentIDs: model.recentSidebarAgentIDs)
+        }
+        XCTAssertEqual(groups().count, 4, "Retained unowned chats keep their standalone automation rows")
+
+        for (reference, owner, legacyChat, ownedChat) in cases {
+            let ownerIdentity = "profile:\(owner.id.uuidString)"
+            model.selectAgent(reference)
+            XCTAssertEqual(groups().first?.id, ownerIdentity,
+                "Opening an owned automation's configuration still promotes its saved agent")
+
+            model.selectAgent(reference, fromSidebarRow: true)
+            XCTAssertEqual(groups().first?.id, reference.id)
+            XCTAssertEqual(model.agentInspector.context, .agent(reference))
+
+            model.inspectAgentChat(ownedChat)
+            XCTAssertEqual(groups().first?.id, ownerIdentity)
+            model.inspectAgentChat(legacyChat)
+            XCTAssertEqual(groups().first?.id, reference.id,
+                "Opening a retained legacy chat promotes the row containing that chat")
+            XCTAssertEqual(model.agentInspector.context, .chat(reference, sessionID: legacyChat.id))
+        }
+        XCTAssertEqual(Set(model.recentSidebarAgentIDs).count, 4,
+            "Event and schedule identities must remain distinct even when their storage IDs match")
+    }
+
+    @MainActor
+    func testSelectingAgentsPromotesTheLatestSelectionAndKeepsEarlierVisitOrder() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let alpha = AgentProfile(name: "Alpha", model: "fixture")
+        let bravo = AgentProfile(name: "Bravo", model: "fixture")
+        let charlie = AgentProfile(name: "Charlie", model: "fixture")
+        model.agentProfiles = [alpha, bravo, charlie]
+
+        model.selectSavedAgent(charlie)
+        model.selectSavedAgent(bravo)
+        model.selectSavedAgent(charlie)
+        model.selectSavedAgent(charlie)
+
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(charlie.id.uuidString)", "profile:\(bravo.id.uuidString)",
+        ])
+        let groups = AgentSidebarCatalog.groups(
+            definitions: [], sessions: [], query: "", showArchived: false, runningSessionIDs: [],
+            profiles: model.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs
+        )
+        XCTAssertEqual(groups.map(\.profileID), [charlie.id, bravo.id, alpha.id])
+    }
+
+    @MainActor
+    func testOpeningAnAgentChatPromotesItsOwnerAndRejectsRemovedAgentSelections() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let first = AgentProfile(name: "First", model: "fixture")
+        let second = AgentProfile(name: "Second", model: "fixture")
+        model.agentProfiles = [first, second]
+        model.selectSavedAgent(first)
+
+        model.inspectAgentChat(cleanupSession("second-chat", owner: second.id))
+        XCTAssertEqual(model.recentSidebarAgentIDs, [
+            "profile:\(second.id.uuidString)", "profile:\(first.id.uuidString)",
+        ])
+
+        model.agentProfiles = [second]
+        model.selectSavedAgent(first)
+        XCTAssertEqual(model.recentSidebarAgentIDs.first, "profile:\(second.id.uuidString)")
+    }
+
+    @MainActor
     func testSelectingOverviewKeepsCurrentChatDraftModelAndRunningTask() async {
         SavedAgentURLProtocol.reset()
         let model = cleanupModel()
