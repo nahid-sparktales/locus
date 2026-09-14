@@ -7,15 +7,15 @@ struct AgentCrewChatSessionIdentity: Decodable {
     let agentProfileID: UUID?
     let cwd: String?
     let workspaceRoot: String?
+    var environment: [String: String]? = nil
     enum CodingKeys: String, CodingKey {
-        case id, cwd
+        case id, cwd, environment
         case agentProfileID = "agent_profile_id"
         case workspaceRoot = "workspace_root"
     }
     func matches(sessionID: String, profileID: UUID, workspace: String) -> Bool {
-        guard let path = workspaceRoot ?? cwd, !path.isEmpty else { return false }
         return id == sessionID && agentProfileID == profileID
-            && SessionSummary.canonicalWorkspacePath(path) == SessionSummary.canonicalWorkspacePath(workspace)
+            && SessionSummary.matchesWorkspace(root: workspaceRoot?.nilIfEmpty ?? cwd, environment: environment, requested: workspace)
     }
 }
 

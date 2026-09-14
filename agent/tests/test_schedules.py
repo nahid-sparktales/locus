@@ -450,6 +450,123 @@ def test_a_worktree_agent_keeps_one_checkout_that_follows_the_workspace(
     assert service.run_store.schedule(schedule["id"])["enabled"] is True
 
 
+def test_new_git_schedule_keeps_its_output_folder_and_ignored_deliverables(
+    tmp_path, monkeypatch
+) -> None:
+    from ollama_code import worktrees
+    from ollama_code.api.schedules import _dispatch_schedule, schedule_create, schedule_update
+    from ollama_code.sessions import SessionMeta
+    from ollama_code.worktrees import TaskCheckoutStore
+
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    root, run = _repo(tmp_path, monkeypatch)
+    (root / ".gitignore").write_text("Outputs/\n", encoding="utf-8")
+    run("add", ".gitignore")
+    run("commit", "-q", "-m", "ignore generated outputs")
+    service = _service(tmp_path)
+    schedule = schedule_create(
+        service,
+        schedule_value(tmp_path, workspace_root=str(root), execution_environment="worktree"),
+    )
+    primary = _primary_session(schedule["id"])
+    metadata = SessionMeta.get(primary)
+    checkout = Path(metadata["execution_path"])
+    output = checkout / "Outputs" / primary
+    task_id = metadata["task"]["id"]
+    assert metadata["output_directory"] == str(output)
+    assert metadata["environment"]["output_directory"] == str(output)
+    assert output.is_dir()
+
+    schedule_update(schedule["id"], service, {"name": "Project reports"})
+    assert SessionMeta.get(primary)["output_directory"] == str(output)
+
+    # Empty output folders are not tracked by Git, so clean refresh and restore
+    # must recreate the same recorded location for the next run.
+    (root / "second.txt").write_text("two\n", encoding="utf-8")
+    run("add", "second.txt")
+    run("commit", "-q", "-m", "second")
+    first = _dispatch_schedule(service, schedule["id"], trigger="manual", request_id="one")
+    assert (checkout / "second.txt").is_file()
+    assert output.is_dir()
+    assert SessionMeta.get(primary)["environment"]["output_directory"] == str(output)
+
+    TaskCheckoutStore.snapshot_and_remove(task_id)
+    service.run_store.set_state(first["run"]["id"], "completed")
+    second = _dispatch_schedule(service, schedule["id"], trigger="manual", request_id="two")
+    assert output.is_dir()
+    assert SessionMeta.get(primary)["output_directory"] == str(output)
+
+    # A report ignored by Git is still saved work. An otherwise clean checkout
+    # must not be rebuilt over it when the next scheduled run starts.
+    report = output / "report.txt"
+    report.write_text("Keep this report.\n", encoding="utf-8")
+    patch, _ = TaskCheckoutStore.load(task_id).patch()
+    assert not patch.strip()
+    service.run_store.set_state(second["run"]["id"], "completed")
+    third = _dispatch_schedule(service, schedule["id"], trigger="manual", request_id="three")
+    assert third["run"]["execution_path"] == str(checkout)
+    assert report.read_text(encoding="utf-8") == "Keep this report.\n"
+    assert SessionMeta.get(primary)["environment"]["output_directory"] == str(output)
+
+
+def test_existing_git_schedule_does_not_acquire_an_output_folder(
+    tmp_path, monkeypatch
+) -> None:
+    from ollama_code import worktrees
+    from ollama_code.api.schedules import _dispatch_schedule, schedule_list, schedule_update
+    from ollama_code.sessions import SessionMeta
+
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    root, _ = _repo(tmp_path, monkeypatch)
+    service = _service(tmp_path)
+    schedule = service.run_store.create_schedule(
+        schedule_value(tmp_path, workspace_root=str(root), execution_environment="worktree")
+    )
+
+    # Adoption, routine editing, and dispatch all keep the old layout.
+    schedule_list(service)
+    primary = _primary_session(schedule["id"])
+    schedule_update(schedule["id"], service, {"name": "Existing project review"})
+    _dispatch_schedule(service, schedule["id"], trigger="manual", request_id="one")
+    metadata = SessionMeta.get(primary)
+    assert not metadata.get("schedule_outputs")
+    assert not metadata.get("output_directory")
+    assert "output_directory" not in metadata["environment"]
+    assert not (Path(metadata["execution_path"]) / "Outputs").exists()
+
+
+def test_git_schedule_does_not_follow_a_replaced_output_folder(
+    tmp_path, monkeypatch
+) -> None:
+    from fastapi import HTTPException
+
+    from ollama_code import worktrees
+    from ollama_code.api.schedules import _dispatch_schedule, schedule_create
+    from ollama_code.sessions import SessionMeta
+
+    monkeypatch.setattr(worktrees, "TASKS_DIR", tmp_path / "tasks")
+    root, _ = _repo(tmp_path, monkeypatch)
+    service = _service(tmp_path)
+    schedule = schedule_create(
+        service,
+        schedule_value(tmp_path, workspace_root=str(root), execution_environment="worktree"),
+    )
+    primary = _primary_session(schedule["id"])
+    output = Path(SessionMeta.get(primary)["output_directory"])
+    external = tmp_path / "other-agent-outputs"
+    external.mkdir()
+    output.rmdir()
+    output.parent.rmdir()
+    output.parent.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(HTTPException) as refused:
+        _dispatch_schedule(service, schedule["id"], trigger="manual", request_id="one")
+    assert refused.value.status_code == 409
+    assert not (external / primary).exists()
+    assert SessionMeta.get(primary)["output_directory"] == str(output)
+    assert service.run_store.schedule(schedule["id"])["enabled"] is False
+
+
 def test_archiving_the_chat_an_agent_runs_in_is_refused(tmp_path) -> None:
     from fastapi import HTTPException
 
@@ -650,3 +767,89 @@ def test_schedule_rejects_invalid_profile_before_creating_anything(tmp_path):
         schedule_create(service, schedule_value(tmp_path, agent_profile_id="not-a-profile"))
     assert error.value.status_code == 422
     assert service.run_store.schedules() == []
+
+
+def test_home_schedules_and_side_chats_have_separate_persistent_task_folders(tmp_path, monkeypatch):
+    import uuid
+    from pathlib import Path
+
+    from ollama_code.api.schedules import (
+        _dispatch_schedule,
+        schedule_create,
+        schedule_task_create,
+        schedule_update,
+    )
+    from ollama_code.sessions import SessionMeta
+
+    owner = str(uuid.uuid4())
+    homes = tmp_path / "AgentHomes"
+    monkeypatch.setenv("LOCUS_AGENT_HOMES_ROOT", str(homes))
+    home = homes / owner / "Workspace"
+    home.mkdir(parents=True)
+    service = _service(tmp_path)
+    first = schedule_create(service, schedule_value(home, agent_profile_id=owner))
+    second = schedule_create(service, schedule_value(home, agent_profile_id=owner))
+    first_id, second_id = _primary_session(first["id"]), _primary_session(second["id"])
+    before = SessionMeta.get(first_id)
+    other = SessionMeta.get(second_id)
+    assert before["execution_path"] != other["execution_path"]
+    assert before["execution_path"] == str(home / "Tasks" / first_id)
+    artifact = Path(before["output_directory"]) / "report.md"
+    artifact.write_text("Keep this output")
+    schedule_update(first["id"], service, {"name": "Renamed"})
+    assert SessionMeta.get(first_id)["execution_path"] == before["execution_path"]
+    assert SessionMeta.get(first_id)["output_directory"] == before["output_directory"]
+    dispatched = _dispatch_schedule(service, first["id"], trigger="manual", request_id="home-run")
+    assert dispatched["run"]["execution_path"] == before["execution_path"]
+    side = schedule_task_create(first["id"], service, {})["session"]
+    assert SessionMeta.get(side["id"])["execution_path"] not in {before["execution_path"], other["execution_path"], str(home)}
+    assert artifact.read_text() == "Keep this output"
+
+
+def test_explicit_home_project_home_schedule_change_reuses_only_its_recorded_task(tmp_path, monkeypatch):
+    import uuid
+    from pathlib import Path
+
+    from ollama_code.api.schedules import schedule_create, schedule_update
+    from ollama_code.sessions import SessionMeta
+
+    owner = str(uuid.uuid4())
+    homes = tmp_path / "AgentHomes"
+    monkeypatch.setenv("LOCUS_AGENT_HOMES_ROOT", str(homes))
+    home = homes / owner / "Workspace"
+    home.mkdir(parents=True)
+    project = tmp_path / "shared-project"
+    project.mkdir()
+    service = _service(tmp_path)
+    schedule = schedule_create(service, schedule_value(home, agent_profile_id=owner))
+    session_id = _primary_session(schedule["id"])
+    before = SessionMeta.get(session_id)
+    artifact = Path(before["output_directory"]) / "keep.txt"
+    artifact.write_text("Original home output")
+    schedule_update(schedule["id"], service, {"workspace_root": str(project)})
+    assert SessionMeta.get(session_id)["execution_path"] == str(project)
+    schedule_update(schedule["id"], service, {"workspace_root": str(home)})
+    restored = SessionMeta.get(session_id)
+    assert restored["execution_path"] == before["execution_path"]
+    assert restored["output_directory"] == before["output_directory"]
+    assert artifact.read_text() == "Original home output"
+
+
+def test_existing_home_schedule_is_not_moved_by_routine_edit(tmp_path, monkeypatch):
+    import uuid
+
+    from ollama_code.api.schedules import schedule_create, schedule_update
+    from ollama_code.sessions import SessionMeta
+
+    owner = str(uuid.uuid4())
+    homes = tmp_path / "AgentHomes"
+    monkeypatch.setenv("LOCUS_AGENT_HOMES_ROOT", str(homes))
+    home = homes / owner / "Workspace"
+    home.mkdir(parents=True)
+    service = _service(tmp_path)
+    legacy = schedule_create(service, schedule_value(home))
+    session_id = _primary_session(legacy["id"])
+    SessionMeta.update(session_id, agent_profile_id=owner)
+    schedule_update(legacy["id"], service, {"name": "Existing layout"})
+    assert SessionMeta.get(session_id)["execution_path"] == str(home)
+    assert not (home / "Tasks").exists()

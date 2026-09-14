@@ -121,7 +121,9 @@ class RuntimeAutomation:
             if not profile_configuration or profile_configuration.get("unavailable"):
                 runtime.store.state(session_id, "waiting_for_locus", "Open Locus and review this conversation’s saved agent and account.")
                 return
-            if run.get("run_kind") == "team" or manifest.get("solo_swarm"):
+            # Every Solo schedule now carries solo_swarm as an eligibility
+            # marker. It does not replace the saved profile with a team runner.
+            if run.get("run_kind") == "team" or manifest.get("runner") == "team":
                 runtime.store.state(session_id, "waiting_for_locus", "This automation belongs to a saved agent and requires its solo runner.")
                 return
         automation_configuration = saved.get(f"automation:schedule:{manifest.get('schedule_id', '')}") or saved.get(f"automation:event:{manifest.get('event_trigger_id', '')}") or {}

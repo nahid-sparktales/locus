@@ -112,6 +112,7 @@ extension AppModel {
     }
 
     func presentConfigureAgent(draftText: String) {
+        configureAgentWorkspace = workspacePath
         configureAgentProfileID = sidebarDestination == .agents ? selectedSavedAgentProfile?.id : nil
         configureAgentDraftSuggestion = String(
             draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
@@ -134,6 +135,7 @@ extension AppModel {
         configureAgentPendingTriggerEdit = nil
         configureAgentFocusConfigurationID = nil
         configureAgentProfileID = nil
+        configureAgentWorkspace = nil
         if let profile = pendingSavedAgentEditor {
             pendingSavedAgentEditor = nil
             savedAgentEditor = profile
@@ -734,7 +736,9 @@ extension AppModel {
         do {
             let _: EventDelivery = try await backend.post(
                 "/api/event-deliveries/\(deliveryID)/fail",
-                body: ["error": message, "pause_trigger": true],
+                // Account and worker failures belong to this attempt. Pausing
+                // future arrivals requires the user's explicit Pause action.
+                body: ["error": message, "pause_trigger": false, "run_id": run.id],
                 as: EventDelivery.self
             )
             await eventAutomations.refresh(announceFailure: false)

@@ -210,7 +210,8 @@ class ClaudeManager:
                  "supportedReasoningEfforts": [{"effort": value} for value in row.get("supportedEffortLevels", [])]
                     if row.get("supportsEffort") else []}
                 for row in rows if isinstance(row, dict) and (row.get("value") or row.get("id"))] or [
-                    {"model": "default", "displayName": "Claude default", "isDefault": True}]
+                    {"model": "default", "displayName": "Claude default", "isDefault": True,
+                     "isFallback": True}]
 
     def usage(self):
         return dict(self._limits)

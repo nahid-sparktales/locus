@@ -1669,6 +1669,8 @@ struct AgentProfileEditor: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         identityFields
+                        AgentWorkspacePreferencesEditor(profile: $draft)
+                        Divider()
                         instructionsEditor
                         Divider()
                         environmentDisclosure

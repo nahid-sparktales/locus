@@ -1,16 +1,19 @@
 """Connector connection, event trigger, delivery, and dispatch routes."""
 
 import json
+import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from ..agent_workspaces import AgentChatWorkspace, validate_agent_home
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..event_triggers import EventTriggerValidationError, valid_identifier
 from ..runstore import TERMINAL_STATES, RunStoreError
 from ..sessions import ChatOrganizationStore, SessionMeta, SessionStore, session_agent_kind
+from ..worktrees import WorktreeError
 from .automation_workflows import start_execution
 from .dependencies import get_service
 
@@ -29,12 +32,70 @@ def _existing_session(session_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return SessionStore.header(path), SessionMeta.get(session_id)
 
 
-def _validate_trigger_target(value: dict[str, Any], existing: dict[str, Any] | None = None) -> None:
+def _validate_trigger_target(value: dict[str, Any], existing: dict[str, Any] | None = None) -> str | None:
     session_id = str(
         value.get("target_session_id") or (existing or {}).get("target_session_id") or ""
     )
-    if session_id:
-        _existing_session(session_id)
+    if not session_id:
+        return None
+    _, metadata = _existing_session(session_id)
+    previous_id = str((existing or {}).get("target_session_id") or "")
+    previous_owner = SessionMeta.get(previous_id).get("agent_profile_id") if previous_id else None
+    profile_id = value.get("agent_profile_id", previous_owner)
+    if profile_id is None:
+        return None
+    try:
+        owner = str(uuid.UUID(profile_id))
+        target_owner = str(uuid.UUID(str(metadata.get("agent_profile_id") or "")))
+        if previous_owner and str(uuid.UUID(previous_owner)) != owner:
+            raise ValueError("owner changed")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(422, "Choose a receiving chat owned by this saved agent.") from exc
+    if target_owner != owner:
+        raise HTTPException(409, "The receiving chat belongs to another saved agent.")
+    bound = str(metadata.get("agent_trigger_id") or "")
+    trigger_id = str((existing or {}).get("id") or value.get("id") or "")
+    if session_id != previous_id and bound and (
+        bound != trigger_id or session_agent_kind(metadata) == "schedule"
+    ):
+        raise HTTPException(409, "This chat already receives work from another automation.")
+    return owner
+
+
+def _profile_target_route(
+    body: dict[str, Any], profile_id: str | None, existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    target = str(body.get("target_session_id") or (existing or {}).get("target_session_id") or "")
+    if profile_id is None:
+        return {}
+    header, metadata = _existing_session(target)
+    if target == str((existing or {}).get("target_session_id") or "") and (metadata.get("model") or header.get("model")):
+        return {}
+    route = body.get("profile_route") or {}
+    if not isinstance(route, dict) or set(route) - {"provider", "model", "provider_account_id", "account_label"}:
+        raise HTTPException(422, "The saved agent route is invalid.")
+    provider, model, account, label = _agent_route(route, header, metadata)
+    return {"provider": provider, "model": model, "provider_account_id": account or None,
+            "provider_account_label": label or None}
+
+
+def _bind_profile_target(trigger: dict[str, Any], profile_id: str | None, route: dict[str, Any]) -> None:
+    if profile_id is None:
+        return
+    # Bind the exact selected conversation. Its execution folder, worktree,
+    # output directory and previous transcript remain untouched.
+    _save_agent_metadata(
+        str(trigger["target_session_id"]), agent_profile_id=profile_id,
+        agent_trigger_id=str(trigger["id"]), agent_kind="event",
+        agent_name=str(trigger["name"]), agent_primary=True, **route,
+    )
+
+
+def _save_agent_metadata(session_id: str, **fields: Any) -> dict[str, Any]:
+    saved = SessionMeta.update(session_id, **fields)
+    if SessionMeta.get(session_id) != saved:
+        raise OSError("The receiving chat metadata could not be saved")
+    return saved
 
 
 def _detach_agent_session(session_id: str, workspace: str) -> None:
@@ -233,40 +294,41 @@ def trigger_target_create(
     header, metadata = _existing_session(template_id)
     cwd = str(header.get("cwd") or metadata.get("workspace_root") or "")
     workspace_root = str(metadata.get("workspace_root") or cwd)
-    execution_path = str(metadata.get("execution_path") or workspace_root)
     if not cwd or not workspace_root or not Path(workspace_root).is_dir():
         raise HTTPException(409, "the template chat workspace is unavailable")
     provider, model, account_id, account_label = _agent_route(body, header, metadata)
 
     store = SessionStore(
-        cwd,
+        workspace_root,
         model,
         provider=provider,
         account=account_label,
         account_id=account_id,
     )
     session_id = store.session_id
-    SessionMeta.update(
-        session_id,
-        title=name,
-        workspace_root=workspace_root,
-        execution_path=execution_path,
-        environment=metadata.get("environment")
-        or {
-            "type": "local",
-            "isolation": "local",
-        },
-        provider=provider,
-        model=model,
-        provider_account_id=account_id or None,
-        provider_account_label=account_label or None,
-        agent_trigger_id=trigger_id,
-        agent_profile_id=metadata.get("agent_profile_id"),
-        agent_world_profile_id=metadata.get("agent_world_profile_id"),
-        agent_kind="event",
-        agent_name=name,
-        agent_primary=True,
-    )
+    allocation = None
+    try:
+        home = (metadata.get("environment") or {}).get("agent_home") == "true"
+        if home:
+            validate_agent_home(Path(workspace_root), metadata.get("agent_profile_id"))
+        allocation = AgentChatWorkspace.create(
+            Path(workspace_root), session_id, policy="automatic", agent_home=home,
+        )
+        store.append_strict({"type": "agent_target_created"})
+        _save_agent_metadata(
+            session_id, title=name, **allocation.metadata(),
+            provider=provider, model=model, provider_account_id=account_id or None,
+            provider_account_label=account_label or None, agent_trigger_id=trigger_id,
+            agent_profile_id=metadata.get("agent_profile_id"),
+            agent_world_profile_id=metadata.get("agent_world_profile_id"),
+            agent_kind="event", agent_name=name, agent_primary=True,
+        )
+    except (OSError, ValueError, WorktreeError) as exc:
+        if allocation is not None:
+            allocation.cleanup()
+        store.path.unlink(missing_ok=True)
+        SessionMeta.forget([session_id])
+        raise HTTPException(409, f"The receiving chat could not be created: {exc}") from exc
 
     _detach_agent_session(session_id, cwd)
 
@@ -305,7 +367,6 @@ def trigger_task_create(
 
     cwd = str(header.get("cwd") or metadata.get("workspace_root") or "")
     workspace_root = str(metadata.get("workspace_root") or cwd)
-    execution_path = str(metadata.get("execution_path") or workspace_root)
     if not cwd or not workspace_root or not Path(workspace_root).is_dir():
         raise HTTPException(409, "the agent workspace is unavailable")
     provider, model, account_id, account_label = _agent_route(body, header, metadata)
@@ -313,29 +374,35 @@ def trigger_task_create(
     agent_name = str(metadata.get("agent_name") or trigger.get("name") or "Agent")[:120]
 
     store = SessionStore(
-        cwd,
+        workspace_root,
         model,
         provider=provider,
         account=account_label,
         account_id=account_id,
     )
     session_id = store.session_id
-    SessionMeta.update(
-        session_id,
-        title=title,
-        workspace_root=workspace_root,
-        execution_path=execution_path,
-        environment=metadata.get("environment") or {"type": "local", "isolation": "local"},
-        provider=provider,
-        model=model,
-        provider_account_id=account_id or None,
-        provider_account_label=account_label or None,
-        agent_trigger_id=trigger_id,
-        agent_profile_id=metadata.get("agent_profile_id"),
-        agent_world_profile_id=metadata.get("agent_world_profile_id"),
-        agent_kind="event",
-        agent_name=agent_name,
-    )
+    allocation = None
+    try:
+        home = (metadata.get("environment") or {}).get("agent_home") == "true"
+        if home:
+            validate_agent_home(Path(workspace_root), metadata.get("agent_profile_id"))
+        allocation = AgentChatWorkspace.create(
+            Path(workspace_root), session_id, policy="automatic", agent_home=home,
+        )
+        store.append_strict({"type": "agent_side_chat_created"})
+        _save_agent_metadata(
+            session_id, title=title, **allocation.metadata(), provider=provider, model=model,
+            provider_account_id=account_id or None, provider_account_label=account_label or None,
+            agent_trigger_id=trigger_id, agent_profile_id=metadata.get("agent_profile_id"),
+            agent_world_profile_id=metadata.get("agent_world_profile_id"),
+            agent_kind="event", agent_name=agent_name,
+        )
+    except (OSError, ValueError, WorktreeError) as exc:
+        if allocation is not None:
+            allocation.cleanup()
+        store.path.unlink(missing_ok=True)
+        SessionMeta.forget([session_id])
+        raise HTTPException(409, f"The side chat could not be created: {exc}") from exc
     _detach_agent_session(session_id, cwd)
     summary = next(
         item
@@ -354,11 +421,17 @@ def trigger_create(
         and {"workflow", "runner", "team_id", "team_name"} & set(body)
     ):
         raise HTTPException(422, "capability is disabled: automation_workflows_v1")
-    _validate_trigger_target(body)
+    profile_id = _validate_trigger_target(body)
+    route = _profile_target_route(body, profile_id)
+    payload = {key: value for key, value in body.items() if key not in {"agent_profile_id", "profile_route"}}
     try:
-        return service.run_store.create_event_trigger(body)
+        trigger = service.run_store.create_event_trigger(payload)
+        _bind_profile_target(trigger, profile_id, route)
+        return trigger
     except RunStoreError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "The rule was saved, but its chat binding was not confirmed. Save again to finish.") from exc
 
 
 def trigger_update(
@@ -375,11 +448,17 @@ def trigger_update(
     existing = service.run_store.event_trigger(trigger_id)
     if existing is None:
         raise HTTPException(404, "event trigger not found")
-    _validate_trigger_target(body, existing)
+    profile_id = _validate_trigger_target(body, existing)
+    route = _profile_target_route(body, profile_id, existing)
+    payload = {key: value for key, value in body.items() if key not in {"agent_profile_id", "profile_route"}}
     try:
-        return service.run_store.update_event_trigger(trigger_id, body)
+        trigger = service.run_store.update_event_trigger(trigger_id, payload)
+        _bind_profile_target(trigger, profile_id, route)
+        return trigger
     except RunStoreError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(503, "The rule was saved, but its chat binding was not confirmed. Save again to finish.") from exc
 
 
 def trigger_pause(
@@ -638,22 +717,37 @@ def delivery_fail(
     service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
-    """Native dispatch handoff failed after the durable run was queued."""
+    """Fail one native handoff without silently pausing future arrivals.
+
+    Account sign-in and worker availability can recover independently of this
+    attempt. Keep the stopped delivery visible for explicit Retry, and leave
+    the trigger's enabled setting alone unless the caller requests a pause.
+    """
     _require_capability()
     delivery = service.run_store.event_delivery(delivery_id)
     if delivery is None:
         raise HTTPException(404, "event delivery not found")
     error = str(body.get("error") or "The event run needs attention.").strip()[:4_000]
     run_id = str(delivery.get("run_id") or "")
-    if run_id:
-        run = service.run_store.run(run_id)
-        if isinstance(run, dict) and run.get("state") not in TERMINAL_STATES:
-            service.run_store.set_state(run_id, "interrupted", recoverable=False)
+    expected_run_id = body.get("run_id")
+    if expected_run_id is not None and str(expected_run_id) != run_id:
+        raise HTTPException(409, "event delivery has a newer run")
     try:
+        if run_id:
+            run = service.run_store.run(run_id)
+            if isinstance(run, dict):
+                if run.get("state") in {"completed", "discarded"}:
+                    raise RunStoreError("that event run is already finished")
+                if run.get("state") not in TERMINAL_STATES:
+                    service.run_store.fail_unstarted_dispatch(run_id, error, include_queued=True)
+                execution_id = str((run.get("manifest") or {}).get("workflow_execution_id") or "")
+                if execution_id:
+                    service.run_store.fail_automation_step(execution_id, error, run_id=run_id)
         updated = service.run_store.finish_event_dispatch(
-            delivery_id, state="failed", run_id=run_id, error=error
+            delivery_id, state="failed", run_id=run_id, error=error,
+            expected_run_id=run_id,
         )
-        if body.get("pause_trigger", True):
+        if body.get("pause_trigger", False):
             service.run_store.pause_event_trigger(str(delivery["trigger_id"]), error)
         return updated
     except RunStoreError as exc:

@@ -469,7 +469,7 @@ struct ConfigureAgentView: View {
             sectionHeading("Activity", detail: "Recent scheduled runs and incoming events, together. Inspect a record for actions, outputs and errors.")
             HStack {
                 Picker("Agent", selection: $historyAgentID) {
-                    Text("All Agents").tag("")
+                    Text(app.configureAgentProfileID == nil ? "All agents" : "All this agent’s automations").tag("")
                     ForEach(references) { Text($0.title).tag($0.id) }
                 }.labelsHidden().frame(maxWidth: 250)
                     .accessibilityIdentifier("configureAgent.history.configuration")
@@ -730,7 +730,9 @@ struct ConfigureAgentView: View {
         if choseNewChat {
             choseNewChat = false
             guard app.configureAgentPresented else { return }
-            if let profile = app.configuredSavedAgent { app.newSavedAgentChat(profile) }
+            if let profile = app.configuredSavedAgent {
+                app.newSavedAgentChat(profile, workspace: app.configureAgentWorkspace)
+            }
             else if app.inspectedAgentReference != nil { app.newAgentChat() }
             else if let profile = agentTeams.agentProfiles.first { app.newSavedAgentChat(profile) }
             else { app.presentNewAgent() }
@@ -800,8 +802,10 @@ struct ConfigureAgentView: View {
         return value.status == .active ? LocusTheme.success : LocusTheme.muted
     }
     private var activityRecords: [AgentActivityRecord] {
-        AgentActivityRecord.merged(deliveries: automation.deliveries,
+        let records = AgentActivityRecord.merged(deliveries: automation.deliveries,
             occurrences: schedule.occurrencesBySchedule.values.flatMap { $0 }, definitions: app.agentDefinitions)
+        return AgentActivityRecord.scoped(records, to: app.configureAgentProfileID,
+            sessions: sessionCatalog.snapshot.sessions, definitions: app.agentDefinitions)
     }
     private var filteredActivity: [AgentActivityRecord] {
         activityRecords.filter { record in
@@ -1103,6 +1107,8 @@ private struct EventTriggerEditorView: View {
     @State private var showWorkflow = false
     @State private var confirmsDiscard = false
     @State private var saveError: String?
+    @State private var isSubmitting = false
+    @State private var createdReceivingChats: [SessionSummary] = []
     @FocusState private var nameFocused: Bool
     private let originalDraft: EventTriggerEditorDraft
     @ObservedObject var automation: EventAutomationModel
@@ -1115,6 +1121,13 @@ private struct EventTriggerEditorView: View {
         ownedDraft.agentProfileID = draft.agentProfileID ?? sessions.first {
             $0.id == draft.targetSessionID || $0.id == draft.templateSessionID
         }?.agentProfileID
+        if ownedDraft.agentProfileID != nil,
+           ownedDraft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+            ownedDraft.targetSessionID = ownedDraft.templateSessionID
+        }
+        if ownedDraft.workspaceRoot.isEmpty, let target = ownedDraft.receivingSession(in: sessions) {
+            ownedDraft.workspaceRoot = target.workspaceRoot?.nilIfEmpty ?? target.workspacePath ?? ""
+        }
         _draft = State(initialValue: ownedDraft)
         originalDraft = ownedDraft
         self.automation = automation
@@ -1161,6 +1174,7 @@ private struct EventTriggerEditorView: View {
                             .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                     }
                 }
+                Section("Working in") { workspaceFields }
                 Section("Trigger") {
                     if draft.id == nil {
                         Picker("Start work", selection: $draft.triggerKind) {
@@ -1255,6 +1269,7 @@ private struct EventTriggerEditorView: View {
                 }
             }
             .formStyle(.grouped).scrollContentBackground(.hidden).background(LocusTheme.surfaceCanvas)
+            .disabled(isSaving)
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 if let saveError {
@@ -1266,23 +1281,18 @@ private struct EventTriggerEditorView: View {
                         .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                         .accessibilityIdentifier("eventTrigger.requirement")
                     Spacer(minLength: 4)
-                    if automation.isSaving { ProgressView().controlSize(.small) }
-                    Button("Cancel", action: cancel).keyboardShortcut(.cancelAction).disabled(automation.isSaving)
-                    Button(automation.isSaving ? "Saving…" : (draft.id == nil ? "Create Agent" : "Save changes")) {
-                        saveError = nil
-                        Task {
-                            if await automation.saveTrigger(draft) { dismiss() }
-                            else { saveError = "Couldn’t save this Agent. Review its source and destination, then try again." }
-                        }
-                    }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                        .disabled(automation.isSaving || missingRequirement != nil)
+                    if isSaving { ProgressView().controlSize(.small) }
+                    Button("Cancel", action: cancel).keyboardShortcut(.cancelAction).disabled(isSaving)
+                    Button(isSaving ? "Saving…" : (draft.id == nil ? "Create Agent" : "Save changes"), action: save)
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .disabled(isSaving || missingRequirement != nil)
                         .accessibilityIdentifier("eventTrigger.save")
                 }
             }.padding(18)
         }
         .frame(width: 680, height: 620).background(LocusTheme.panel)
         .tint(LocusTheme.accentAction)
-        .interactiveDismissDisabled(draft != originalDraft || automation.isSaving)
+        .interactiveDismissDisabled(draft != originalDraft || isSaving)
         .alert("Discard changes?", isPresented: $confirmsDiscard) {
             Button("Keep editing", role: .cancel) {}
             Button("Discard", role: .destructive) { dismiss() }
@@ -1321,12 +1331,98 @@ private struct EventTriggerEditorView: View {
     private func cancel() {
         if draft != originalDraft { confirmsDiscard = true } else { dismiss() }
     }
+    private var isSaving: Bool { isSubmitting || automation.isSaving }
+    private var owner: AgentProfile? {
+        guard let id = draft.agentProfileID.flatMap(UUID.init(uuidString:)) else { return nil }
+        return agentTeams.agentProfiles.first { $0.id == id }
+    }
+    private var receivingSessions: [SessionSummary] {
+        sessions + createdReceivingChats.filter { created in !sessions.contains { $0.id == created.id } }
+    }
+    @ViewBuilder private var workspaceFields: some View {
+        if let owner {
+            Picker("Receiving chat", selection: Binding(get: { draft.targetSessionID }, set: { id in
+                if let chat = draft.receivingChats(in: receivingSessions).first(where: { $0.id == id }) {
+                    draft.selectReceivingChat(chat)
+                } else { draft.targetSessionID = id }
+            })) {
+                Text("New chat in chosen folder").tag(EventTriggerEditorDraft.newOwnedAgentChat)
+                ForEach(draft.receivingChats(in: receivingSessions)) { Text($0.displayTitle).tag($0.id) }
+            }.accessibilityIdentifier("eventTrigger.receivingChat")
+            if draft.targetSessionID == EventTriggerEditorDraft.newOwnedAgentChat {
+                Menu {
+                    ForEach(app.savedAgentWorkspaceChoices(owner), id: \.path) { choice in
+                        Button(choice.title) { draft.workspaceRoot = choice.path }
+                    }
+                    Divider()
+                    Button("Choose project folder…") { chooseReceivingWorkspace() }
+                } label: {
+                    Label(draft.workspaceRoot == app.savedAgentHomePath(owner) ? "Agent home" : "Shared project",
+                          systemImage: "folder")
+                }.accessibilityIdentifier("eventTrigger.workspaceChoice")
+                Text(draft.workspaceRoot).font(.locus(size: 11)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("eventTrigger.workspacePath")
+                Text("Saving creates a new receiving chat here. Previous conversations keep their files and history.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            } else { receivingWorkspaceSummary }
+        } else {
+            receivingWorkspaceSummary
+            Text("The receiving chat sets this rule’s folder. Choose another conversation below to change it.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+        }
+    }
+    @ViewBuilder private var receivingWorkspaceSummary: some View {
+        if let chat = draft.receivingSession(in: receivingSessions) {
+            let root = chat.workspaceRoot?.nilIfEmpty ?? chat.workspacePath ?? "Folder unavailable"
+            Text(root).font(.locus(size: 11)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("eventTrigger.workspacePath")
+            if let execution = chat.executionPath?.nilIfEmpty, execution != root {
+                Text("Files for this chat: \(execution)").font(.locus(size: 9)).textSelection(.enabled)
+                    .foregroundStyle(LocusTheme.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Future events continue this chat. Choosing another receiving chat applies when you save.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+        } else { Text("Choose a receiving chat.").foregroundStyle(LocusTheme.muted) }
+    }
+    private func chooseReceivingWorkspace() {
+        guard let path = app.chooseSavedAgentProjectFolder() else { return }
+        draft.workspaceRoot = path
+    }
+    private func save() {
+        guard !isSaving, missingRequirement == nil else { return }
+        isSubmitting = true
+        saveError = nil
+        Task { @MainActor in
+            defer { isSubmitting = false }
+            do {
+                if let owner, draft.profileRoute == nil {
+                    let route = try app.agentProfileProvider(owner)
+                    draft.profileRoute = ["provider": route.provider, "model": owner.model,
+                                          "provider_account_id": route.accountID ?? ""]
+                }
+                if draft.targetSessionID == EventTriggerEditorDraft.newOwnedAgentChat {
+                    guard let owner else { throw AgentWorldError.unavailable("This saved agent is no longer available.") }
+                    try app.prepareSavedAgentWorkspace(owner, workspace: draft.workspaceRoot)
+                    let chat = try await app.createSavedAgentConversation(owner, workspace: draft.workspaceRoot)
+                    createdReceivingChats.append(chat)
+                    // If saving the rule fails, retry with this exact new chat.
+                    draft.selectReceivingChat(chat)
+                }
+                if await automation.saveTrigger(draft) { dismiss() }
+                else { saveError = "Couldn’t save this automation. Review its source and receiving chat, then try again." }
+            } catch { saveError = error.localizedDescription }
+        }
+    }
     @ViewBuilder private var environmentFields: some View {
+        if draft.agentProfileID == nil {
         Picker("Conversation", selection: $draft.targetSessionID) {
             Text("Its own Agent chat").tag(EventTriggerEditorDraft.dedicatedAgentChat)
             Text("Choose an existing chat").tag("")
             ForEach(sessions.filter { !$0.isArchived }) { Text($0.displayTitle).tag($0.id) }
-        }.disabled(draft.agentProfileID != nil)
+        }
+        }
         if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
             Text("Matching events continue the same Agent chat. Side conversations stay separate. The Agent uses the selected workspace’s files and instructions.")
                 .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
@@ -1456,7 +1552,8 @@ private struct EventTriggerEditorView: View {
 
     /// The model recorded on the agent's own chat, when editing one.
     private var existingAgentModel: String? {
-        sessions.first { $0.id == draft.templateSessionID }?.model?.nilIfEmpty
+        draft.profileRoute?["model"]?.nilIfEmpty
+            ?? draft.receivingSession(in: receivingSessions)?.model?.nilIfEmpty
     }
 
     /// Which sources can start this kind of agent. Price alerts read a feed or
@@ -1482,11 +1579,14 @@ private struct EventTriggerEditorView: View {
         if draft.targetSessionID.isEmpty {
             return "Choose where this Agent’s events arrive."
         }
-        if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
+        if draft.targetSessionID == EventTriggerEditorDraft.newOwnedAgentChat {
+            if owner == nil { return "Choose an available saved agent." }
+            if draft.workspaceRoot.isEmpty { return "Choose a folder for the receiving chat." }
+        } else if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
             if draft.templateSessionID.isEmpty || !sessions.contains(where: { $0.id == draft.templateSessionID }) {
                 return "Open a workspace chat before creating this Agent."
             }
-        } else if !sessions.contains(where: { $0.id == draft.targetSessionID && !$0.isArchived }) {
+        } else if !draft.receivingChats(in: receivingSessions).contains(where: { $0.id == draft.targetSessionID }) {
             return "Choose an available receiving chat."
         }
         let instruction = app.automationWorkflowsEnabled

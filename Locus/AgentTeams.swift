@@ -588,6 +588,37 @@ struct QuickTeamBuild: Equatable {
     let createdProfileIDs: [UUID]
 }
 
+/// Agent identity is independent of the projects it can work in. A missing
+/// preference on an older profile means home for future chats, never a move of
+/// any existing conversation or automation.
+struct AgentWorkspacePreferences: Codable, Hashable {
+    var projectPaths: [String] = []
+    var defaultProjectPath: String? = nil
+
+    init(projectPaths: [String] = [], defaultProjectPath: String? = nil) {
+        self.projectPaths = projectPaths
+        self.defaultProjectPath = defaultProjectPath
+        normalize()
+    }
+
+    private enum CodingKeys: String, CodingKey { case projectPaths, defaultProjectPath }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(projectPaths: try values.decodeIfPresent([String].self, forKey: .projectPaths) ?? [],
+                  defaultProjectPath: try values.decodeIfPresent(String.self, forKey: .defaultProjectPath))
+    }
+
+    mutating func normalize() {
+        func path(_ value: String) -> String? {
+            let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard value.hasPrefix("/"), !value.contains("\0") else { return nil }
+            return SessionSummary.canonicalWorkspacePath(value)
+        }
+        defaultProjectPath = defaultProjectPath.flatMap(path)
+        projectPaths = Array(Set(projectPaths.compactMap(path) + (defaultProjectPath.map { [$0] } ?? []))).sorted()
+    }
+}
+
 struct AgentProfile: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -604,6 +635,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     var outputCostPerMillion: Double?
     var mcpPolicy: MCPAgentPolicy? = nil
     var behavior: AgentBehavior? = nil
+    var workspacePreferences: AgentWorkspacePreferences? = nil
 
     init(
         id: UUID = UUID(),
@@ -620,7 +652,8 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         inputCostPerMillion: Double? = nil,
         outputCostPerMillion: Double? = nil,
         mcpPolicy: MCPAgentPolicy? = nil,
-        behavior: AgentBehavior? = nil
+        behavior: AgentBehavior? = nil,
+        workspacePreferences: AgentWorkspacePreferences? = nil
     ) {
         self.id = id
         self.name = name
@@ -637,6 +670,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         self.outputCostPerMillion = outputCostPerMillion
         self.mcpPolicy = mcpPolicy
         self.behavior = behavior ?? .migrated(name: name, instructions: instructions ?? role.defaultInstructions)
+        self.workspacePreferences = workspacePreferences
         clamp()
     }
 
@@ -654,6 +688,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
             outputCostPerMillion = nil
         }
         mcpPolicy?.clamp()
+        workspacePreferences?.normalize()
         var resolved = behavior ?? .migrated(name: name, instructions: instructions)
         resolved.displayName = name
         // Legacy callers still edit `instructions`; a saved behavior remains

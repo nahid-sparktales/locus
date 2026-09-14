@@ -150,10 +150,27 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     var isAgentEventChat: Bool { isAgentChat && agentPrimary == true }
 
     var workspacePath: String? {
-        guard let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !cwd.isEmpty else {
+        guard let path = workspaceRoot?.nilIfEmpty ?? cwd?.nilIfEmpty else {
             return nil
         }
-        return Self.canonicalWorkspacePath(cwd)
+        return Self.canonicalWorkspacePath(path)
+    }
+
+    func belongsToWorkspace(_ workspace: String) -> Bool {
+        Self.matchesWorkspace(root: workspacePath, environment: environment, requested: workspace)
+    }
+
+    /// A Git project selected inside a repository keeps that exact map identity.
+    /// The source alias never changes the root or execution folder used by tools.
+    static func matchesWorkspace(root: String?, environment: [String: String]?, requested: String) -> Bool {
+        guard let root = root?.nilIfEmpty, root.hasPrefix("/"), requested.hasPrefix("/") else { return false }
+        let canonicalRoot = canonicalWorkspacePath(root)
+        let target = canonicalWorkspacePath(requested)
+        if canonicalRoot == target { return true }
+        guard environment?["type"] == "worktree", let source = environment?["source_workspace"],
+              source.hasPrefix("/") else { return false }
+        let canonicalSource = canonicalWorkspacePath(source)
+        return canonicalSource == target && canonicalSource.hasPrefix(canonicalRoot + "/")
     }
 
     func withOrganization(folderID: String?, sortOrder: Int?) -> SessionSummary {

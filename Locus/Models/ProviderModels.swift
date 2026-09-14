@@ -303,6 +303,13 @@ struct ChatGPTModelsResponse: Codable, Hashable {
     let status: String
     let models: [Model]
     let message: String?
+    /// A fallback choice is not evidence that every other saved model is unavailable.
+    var catalogComplete: Bool? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case status, models, message
+        case catalogComplete = "catalog_complete"
+    }
 }
 
 struct ChatGPTUsageResponse: Codable, Hashable {

@@ -12,12 +12,25 @@ extension AppModel {
     /// background workers, and cancellation of superseded transcript loads.
     func switchSidebarDestination(_ destination: SidebarDestination) {
         guard destination != sidebarDestination else { return }
+        if destination == .agents, let profile = agentProfiles.first(where: { $0.id == selectedSavedAgentID })
+            ?? agentProfiles.first {
+            selectSavedAgent(profile)
+            return
+        }
+        if destination == .ask, savedAgentOverviewProfile != nil,
+           let current = sessions.first(where: { $0.id == currentSessionID }), !current.isAgentChat {
+            savedAgentOverviewID = nil
+            emptySidebarDestination = nil
+            sidebarDestination = .ask
+            return
+        }
         guard !pendingSessionReset,
               (!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil else {
             showToast("Finish or stop the active run before switching chats")
             return
         }
         agentCrewChatPresented = false
+        savedAgentOverviewID = nil
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         let candidates = sessions.filter {
             $0.archived != true && ($0.isAgentChat ? SidebarDestination.agents : .ask) == destination
@@ -207,6 +220,7 @@ extension AppModel {
         }
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         emptySidebarDestination = nil
+        savedAgentOverviewID = nil
         sidebarDestination = .ask
         persistCurrentWorkspaceProfile()
         pendingWorkspacePath = path
@@ -311,6 +325,7 @@ extension AppModel {
             expandedWorkspaceIDs.insert(path)
             persistExpandedWorkspaces()
         }
+        savedAgentOverviewID = nil
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         rememberSidebarSession(session)
         emptySidebarDestination = nil

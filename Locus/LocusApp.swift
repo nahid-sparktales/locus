@@ -813,6 +813,7 @@ struct RootView: View {
     @EnvironmentObject private var landingFlow: LandingFlowModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var schedule: ScheduleModel
+    @EnvironmentObject private var agentInspector: AgentInspectorModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var compactSidebarPresented = false
 
@@ -821,7 +822,9 @@ struct RootView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled
+            let duplicateAgentOverview = model.savedAgentOverviewProfile != nil
+                && model.inspectorTab == .agent && agentInspector.context == .fleet
+            let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled && !duplicateAgentOverview
             let railWidth = model.justChatEnabled ? 0 : inspectorRailWidth
             let minimumSidebarWidth = CGFloat(AppSettings.minimumSidebarWidth)
             let minimumInspectorWidth = CGFloat(AppSettings.minimumInspectorWidth)

@@ -438,9 +438,19 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
+    /// Inspect saved activity without starting or resuming a conversation.
+    func showSelectedTools() {
+        guard canInteract, selectedProfile != nil else { return }
+        selectionTask?.cancel(); selectionToken = UUID(); preparingConversation = false
+        activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
+        profilePresented = false
+        sharedChatPresented = false
+        conversationPresented = true
+    }
+
     func openResidentConversation(_ session: SessionSummary) {
         guard canInteract, let profile = selectedProfile, (session.savedAgentProfileID ?? boundProfileID(for: session.id)) == profile.id,
-              !session.isArchived, session.workspacePath.map(SessionSummary.canonicalWorkspacePath) == workspace else { return }
+              !session.isArchived, session.belongsToWorkspace(workspace) else { return }
         profilePresented = false
         showConversation(session.id, profileID: profile.id.uuidString)
     }
@@ -575,7 +585,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard conversationPresented, !sharedChatPresented, !profilePresented, !preparingConversation, !activatingConversation, let appModel,
               appModel.agentWorldOwnsPresentations, let selection,
               appModel.savedAgentProfileID(for: appModel.currentSessionID)?.uuidString == selection,
-              SessionSummary.canonicalWorkspacePath(appModel.workspacePath) == workspace else { return }
+              appModel.sessions.first(where: { $0.id == appModel.currentSessionID })?.belongsToWorkspace(workspace) == true else { return }
         selectedSessionOverride = appModel.currentSessionID
         refresh()
     }

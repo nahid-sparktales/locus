@@ -11,8 +11,18 @@ struct InspectorRail: View {
     static let width: CGFloat = 44
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
+    @EnvironmentObject private var agentInspector: AgentInspectorModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredTab: InspectorTab?
+    var suppressDuplicateAgentOverview = true
+
+    private var centralAgentOverviewVisible: Bool {
+        suppressDuplicateAgentOverview && model.savedAgentOverviewProfile != nil
+    }
+
+    private var duplicateAgentOverviewSuppressed: Bool {
+        centralAgentOverviewVisible && model.inspectorTab == .agent && agentInspector.context == .fleet
+    }
 
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
@@ -50,10 +60,13 @@ struct InspectorRail: View {
     }
 
     private var panelToggleButton: some View {
-        let selected = !model.inspectorCollapsed
+        let selected = !model.inspectorCollapsed && !duplicateAgentOverviewSuppressed
+        let label = duplicateAgentOverviewSuppressed ? "Open workspace panel"
+            : selected ? "Close panel" : "Open last panel"
         return Button {
             withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
-                model.toggleInspectorPanel()
+                if duplicateAgentOverviewSuppressed { model.selectInspectorTab(.files) }
+                else { model.toggleInspectorPanel() }
             }
         } label: {
             Image(systemName: "sidebar.right")
@@ -77,8 +90,8 @@ struct InspectorRail: View {
                 .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .help(selected ? "Close panel" : "Open last panel")
-        .accessibilityLabel(selected ? "Close panel" : "Open last panel")
+        .help(label)
+        .accessibilityLabel(label)
         .accessibilityValue(selected ? "Open" : "Closed")
         .accessibilityIdentifier("inspector.rail.toggle")
     }
@@ -101,14 +114,21 @@ struct InspectorRail: View {
         .help(model.inspectorZoomed ? "Restore panel (⌘⌥E)" : "Expand panel (⌘⌥E)")
         .accessibilityLabel(model.inspectorZoomed ? "Restore panel" : "Expand panel")
         .accessibilityIdentifier("inspector.zoom")
+        .disabled(duplicateAgentOverviewSuppressed)
     }
 
     private func railTab(_ tab: InspectorTab) -> some View {
-        let selected = !model.inspectorCollapsed && model.inspectorTab == tab
+        let representsOverview = tab == .agent && centralAgentOverviewVisible
+        let selected = representsOverview
+            || (!model.inspectorCollapsed && !duplicateAgentOverviewSuppressed && model.inspectorTab == tab)
         let hovered = hoveredTab == tab
         return Button {
             withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
-                model.toggleInspectorTab(tab)
+                if representsOverview, let profile = model.savedAgentOverviewProfile {
+                    model.selectSavedAgent(profile)
+                } else {
+                    model.toggleInspectorTab(tab)
+                }
             }
         } label: {
             Image(locusSymbol: tab.symbol)
@@ -139,8 +159,8 @@ struct InspectorRail: View {
         }
         .buttonStyle(.locus())
         .onHover { isInside in hoveredTab = isInside ? tab : nil }
-        .help(tab.help)
-        .accessibilityLabel("\(tab.title) inspector")
+        .help(representsOverview ? "Agent overview" : tab.help)
+        .accessibilityLabel(representsOverview ? "Agent overview" : "\(tab.title) inspector")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityIdentifier("inspector.rail.\(tab.rawValue)")
     }

@@ -19,10 +19,13 @@ extension AppModel {
                 }
                 self.savedAgentConversationCreationCounts[profile.id, default: 0] += 1
                 defer { self.savedAgentConversationCreationCounts[profile.id, default: 0] -= 1 }
+                try self.prepareSavedAgentWorkspace(profile, workspace: workspace)
                 struct Created: Decodable { let session_id: String }
                 let result = try await self.backend.post("/api/sessions/detached", body: [
                     "cwd": workspace, "title": "Crew Chat · \(profile.name)",
                     "agent_profile_id": profile.id.uuidString,
+                    "execution_environment": "automatic",
+                    "agent_home": SessionSummary.canonicalWorkspacePath(workspace) == self.savedAgentHomePath(profile),
                 ], as: Created.self)
                 // The crew owns this binding. Creating a group contribution
                 // must not replace the captain's private conversation.
@@ -65,6 +68,7 @@ extension AppModel {
     }
 
     func openAgentCrewChat(workspace: String? = nil) {
+        savedAgentOverviewID = nil
         voiceControl.exitVoiceMode()
         agentCrewChat.activate(workspace: workspace ?? workspacePath)
         emptySidebarDestination = nil
@@ -90,8 +94,7 @@ extension AppModel {
         if let expectedProfileID, (session.savedAgentProfileID ?? agentWorld.boundProfileID(for: sessionID)) != expectedProfileID {
             throw AgentWorldError.unavailable("This chat belongs to another agent. Start a new chat for the selected resident.")
         }
-        guard let sessionWorkspace = session.workspacePath,
-              SessionSummary.canonicalWorkspacePath(sessionWorkspace) == SessionSummary.canonicalWorkspacePath(workspace) else {
+        guard session.belongsToWorkspace(workspace) else {
             throw AgentWorldError.unavailable("This conversation is unavailable in this project.")
         }
         if currentSessionID != sessionID {
@@ -107,6 +110,7 @@ extension AppModel {
         }
         // Resume owns a cancellable asynchronous transcript load. The World
         // displays its normal loading guard until that exact load completes.
+        savedAgentOverviewID = nil
         selectedSavedAgentID = session.savedAgentProfileID
         agentCrewChatPresented = false
         sidebarDestination = .agents

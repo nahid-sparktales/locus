@@ -8,6 +8,7 @@ struct AgentWorldWorkspacePane: View {
     @ObservedObject var model: AppModel
     let title: String
     @State private var showsTools = false
+    @State private var activityContext: AgentInspectorContext?
     private var ocean: Bool { world.theme == "grand-line" }
     private var palette: AgentWorldPalette { .init(ocean: ocean) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
@@ -28,7 +29,7 @@ struct AgentWorldWorkspacePane: View {
     }
     private var isSelectedConversationActive: Bool {
         world.selectedSessionID != nil && world.selectedSessionID == model.currentSessionID
-            && SessionSummary.canonicalWorkspacePath(model.workspacePath) == world.workspace
+            && model.sessions.first(where: { $0.id == model.currentSessionID })?.belongsToWorkspace(world.workspace) == true
     }
 
     var body: some View {
@@ -168,23 +169,43 @@ struct AgentWorldWorkspacePane: View {
             SavedAgentInspectorView(profile: profile, workspace: world.workspace,
                                     newChat: { world.newConversation(for: profile.id.uuidString) },
                                     openChat: world.openResidentConversation,
-                                    newChatDisabled: !world.canStartConversation(for: profile.id.uuidString))
+                                    newChatDisabled: !world.canStartConversation(for: profile.id.uuidString),
+                                    inspectActivity: { context in
+                                        activityContext = context
+                                        model.agentInspector.show(context)
+                                        model.selectInspectorTab(.agent)
+                                        world.showSelectedTools()
+                                        showsTools = true
+                                    })
                 .id(profile.id)
                 .accessibilityIdentifier("agentWorld.workspace.profile")
+        } else if showsTools {
+            if isSelectedConversationActive {
+                HStack(spacing: 0) {
+                    InspectorView(resizeWidth: max(300, width - InspectorRail.width))
+                    InspectorRail(suppressDuplicateAgentOverview: false)
+                }
+                .accessibilityIdentifier("agentWorld.workspace.inspector")
+            } else if let activityContext, activityContext == model.agentInspector.context {
+                // Read-only activity needs no active chat. General workspace
+                // tools must remain tied to an activated resident conversation.
+                InspectorAgentTab()
+            } else {
+                ContentUnavailableView {
+                    Label("Agent activity", systemImage: "clock.arrow.circlepath")
+                } description: {
+                    Text("Open this resident’s overview to choose saved activity, or open its chat to use workspace tools.")
+                } actions: {
+                    Button("Open overview") { world.openAgentProfile() }
+                }
+            }
         } else if world.activatingConversation || world.preparingConversation {
             VStack(spacing: 12) { ProgressView(); Text("Opening your conversation…").foregroundStyle(palette.muted) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isSelectedConversationActive {
-            if showsTools {
-                HStack(spacing: 0) {
-                    InspectorView(resizeWidth: max(300, width - InspectorRail.width))
-                    InspectorRail()
-                }
-                .accessibilityIdentifier("agentWorld.workspace.inspector")
-            } else {
-                WorkspaceView(sidebarVisible: true, showSidebar: {})
-                    .accessibilityIdentifier("agentWorld.workspace.chat")
-            }
+            WorkspaceView(sidebarVisible: true, showSidebar: {}, presentsAgentOverview: false,
+                          openAgentOverview: { world.openAgentProfile() })
+                .accessibilityIdentifier("agentWorld.workspace.chat")
         } else {
             ContentUnavailableView {
                 Label(world.selectedProfile == nil ? "Meet an agent" : world.selectedSessionID == nil ? "Start a chat" : "Resume this conversation", systemImage: "bubble.left.and.bubble.right")

@@ -28,7 +28,8 @@ def manager(monkeypatch, tmp_path):
 def sdk(monkeypatch):
     import claude_agent_sdk
     captured = SimpleNamespace(options=[], prompts=[], calls=[], resume=[], interrupt=0,
-                               response=[], tool_reply=None, tool_input={'path': 'README.md'}, fail=False, result_error=False)
+                               response=[], tool_reply=None, tool_input={'path': 'README.md'},
+                               tool_name=None, fail=False, result_error=False)
 
     class Client:
         def __init__(self, *, options):
@@ -54,8 +55,10 @@ def sdk(monkeypatch):
             if captured.fail:
                 raise RuntimeError('transport closed')
             yield msg('SystemMessage', subtype='init', data={'session_id': 'sdk-session'})
-            if captured.calls:
-                captured.tool_reply = await captured.calls[0].handler(captured.tool_input)
+            selected = next((tool for tool in captured.calls
+                             if captured.tool_name is None or tool.name == captured.tool_name), None)
+            if selected is not None:
+                captured.tool_reply = await selected.handler(captured.tool_input)
             for value in captured.response:
                 yield value
             yield msg('ResultMessage', session_id='sdk-session', usage={'input_tokens': 5,
@@ -208,6 +211,31 @@ def test_model_discovery_never_uses_api_catalog(manager, sdk):
     assert manager.models()[0]['model'] == 'entitled-model'
 
 
+
+def test_missing_model_metadata_is_explicitly_incomplete(manager, sdk, monkeypatch):
+    import claude_agent_sdk
+
+    async def unavailable(self):
+        raise RuntimeError('metadata unavailable')
+
+    monkeypatch.setattr(claude_agent_sdk.ClaudeSDKClient, 'get_server_info', unavailable)
+    rows = manager.models()
+    assert rows[0]['model'] == 'default'
+    assert rows[0]['isFallback'] is True
+    monkeypatch.setattr(claude, 'account_payload', lambda *args: {'status': 'signed_in'})
+    monkeypatch.setattr(claude, 'manager_for', lambda *args: manager)
+    response = claude.models(None, account_id='account-a')
+    assert response['catalog_complete'] is False
+    assert response['models'][0]['id'] == 'default'
+
+
+def test_discovered_model_catalog_is_complete(manager, sdk, monkeypatch):
+    monkeypatch.setattr(claude, 'account_payload', lambda *args: {'status': 'signed_in'})
+    monkeypatch.setattr(claude, 'manager_for', lambda *args: manager)
+    response = claude.models(None, account_id='account-a')
+    assert response['catalog_complete'] is True
+    assert response['models'][0]['id'] == 'entitled-model'
+
 def test_uncertain_turn_is_never_replayed(manager, sdk):
     sdk.fail = True
     thread = manager.start_thread(model='default', cwd='/workspace')
@@ -296,6 +324,51 @@ def test_scheduled_and_team_routes_are_subscription_only():
     assert profile.input_cost_per_million == profile.output_cost_per_million == 0
     with pytest.raises(Exception, match='credentials'):
         _validate_route({**route, 'api_key': 'not-allowed'}, 'Claude')
+
+
+@pytest.mark.parametrize('network', [True, False])
+def test_saved_read_only_claude_profile_can_fetch_weather_when_network_enabled(manager, sdk, monkeypatch, tmp_path, network):
+    from ollama_code import tools
+    from ollama_code.agent_profile_runtime import parse_solo_profile, solo_profile_boundary
+
+    monkeypatch.setattr(manager, 'account', lambda: {'account': {'type': 'claude_plan'}})
+    core = AgentCore(cwd=str(tmp_path), config={'model': 'local', 'permission_mode': 'ask'})
+    core.mcp.close()
+    core.use_claude_plan(account_id='account-a', model='default', account_label='Claude', manager=manager)
+    profile = parse_solo_profile({
+        'id': 'weather-reader', 'name': 'Weather reader', 'model': 'default',
+        'role': 'generalist', 'access_ceiling': 'read_only',
+        'behavior': {'capability_policy': {'network': network}},
+    }, 'default')
+    sdk.tool_name = 'web_fetch'
+    sdk.tool_input = {'url': 'https://weather.example/current'}
+    sdk.response = [msg('AssistantMessage', content=[msg('TextBlock', text='Weather checked.')])]
+    fetches, decisions = [], []
+    monkeypatch.setitem(tools._IMPLS, 'web_fetch', lambda args, ctx:
+                        fetches.append(args) or 'Temperature: 21 C')
+
+    def approve(*args):
+        decisions.append(args)
+        return 'once'
+
+    # Scheduled and direct turns use the same saved-profile boundary before
+    # constructing the SDK's Locus server. No SDK/model or weather request runs.
+    with solo_profile_boundary(core, profile) as configuration:
+        core.configure_agent(configuration, mode='work')
+        core.run_turn('Get the current temperature.', approve)
+
+    options = sdk.options[-1]
+    assert ('mcp__locus__web_fetch' in options.allowed_tools) is network
+    assert not set(options.allowed_tools).intersection({
+        'mcp__locus__bash', 'mcp__locus__write_file', 'mcp__locus__browser_navigate',
+    })
+    assert options.tools == [] and options.strict_mcp_config
+    assert fetches == ([sdk.tool_input] if network else [])
+    assert len(decisions) == int(network)
+    if network:
+        assert sdk.tool_reply['content'][0]['text'] == 'Temperature: 21 C'
+    else:
+        assert sdk.tool_reply is None
 
 
 def test_no_tools_mode_and_interruption(manager, sdk):

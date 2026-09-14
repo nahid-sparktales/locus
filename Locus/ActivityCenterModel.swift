@@ -60,18 +60,32 @@ final class ActivityCenterModel: ObservableObject {
     }
 
     var attentionItems: [AttentionItem] {
-        let live = liveAttentionProvider()
-        var seenKeys: Set<String> = []
-        var combined: [AttentionItem] = []
-        for item in live + persistedAttentionItems {
+        Self.mergedAttention(liveAttentionProvider() + persistedAttentionItems)
+    }
+
+    private static func mergedAttention(_ items: [AttentionItem]) -> [AttentionItem] {
+        func priority(_ item: AttentionItem) -> Int {
+            switch item.kind {
+            case "permission_request", "structured_question", "completed_question",
+                 "computer_control", "team_plan", "workflow_approval": 0
+            case "workflow_failure": 1
+            case "recoverable_run": 2
+            case "schedule_warning", "event_warning": 3
+            default: 4
+            }
+        }
+        var combined: [String: AttentionItem] = [:]
+        for item in items {
             let key = item.runID.map { "run:\($0)" } ?? item.id
-            guard seenKeys.insert(key).inserted else { continue }
-            combined.append(item)
+            // Keep live questions on ties, but replace a synthetic run recovery
+            // with the workflow's actual decision and supported recovery actions.
+            if let existing = combined[key], priority(existing) <= priority(item) { continue }
+            combined[key] = item
         }
         let groupOrder: [AttentionGroup: Int] = [
             .decisions: 0, .recoveries: 1, .configuration: 2,
         ]
-        return combined.sorted {
+        return combined.values.sorted {
             (groupOrder[$0.group, default: 3], $0.timestamp, $0.id)
                 < (groupOrder[$1.group, default: 3], $1.timestamp, $1.id)
         }
@@ -83,10 +97,7 @@ final class ActivityCenterModel: ObservableObject {
 
     var displayedAttentionItems: [AttentionItem] {
         guard let focus else { return attentionItems }
-        var seen: Set<String> = []
-        return (attentionItems + focusedAttention).filter {
-            focus.includes($0) && seen.insert($0.runID.map { "run:\($0)" } ?? $0.id).inserted
-        }
+        return Self.mergedAttention((attentionItems + focusedAttention).filter { focus.includes($0) })
     }
 
     var displayedActivityRuns: [OrchestrationRun] {
@@ -191,7 +202,8 @@ final class ActivityCenterModel: ObservableObject {
             focusedAttention = response.items
             focusError = nil
             if case .run(let id) = focus {
-                let segment = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id
+                let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+                let segment = id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id
                 let run = try await backend.get("/api/runs/\(segment)", as: OrchestrationRun.self)
                 guard generation == focusGeneration else { return }
                 focusedRun = run

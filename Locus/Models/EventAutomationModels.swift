@@ -475,6 +475,7 @@ struct EventDeliveryRetryResponse: Codable {
 
 struct EventTriggerEditorDraft: Identifiable, Hashable {
     static let dedicatedAgentChat = "__dedicated_agent_chat__"
+    static let newOwnedAgentChat = "__new_owned_agent_chat__"
 
     var id: String?
     var creationID = UUID().uuidString.lowercased()
@@ -484,6 +485,8 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
     var connectionID = ""
     var targetSessionID = ""
     var templateSessionID = ""
+    /// Captured when this editor opens; used only to create a new receiving chat.
+    var workspaceRoot = ""
     var instruction = ""
     var mode: WorkMode = .work
     var runner: ScheduleRunner = .solo
@@ -519,6 +522,28 @@ struct EventTriggerEditorDraft: Identifiable, Hashable {
         workflow = trigger.workflow ?? .singleAgent(
             instruction: trigger.instruction, mode: trigger.mode
         )
+    }
+
+    func receivingChats(in sessions: [SessionSummary]) -> [SessionSummary] {
+        sessions.filter { session in
+            guard !session.isArchived else { return false }
+            guard let agentProfileID else { return true }
+            guard let owner = UUID(uuidString: agentProfileID), session.savedAgentProfileID == owner else { return false }
+            // A receiving chat may be a manual conversation or already belong
+            // to this event rule. Another automation keeps its own chat.
+            return session.agentTriggerID?.isEmpty != false
+                || (session.agentTriggerID == creationID && session.agentKind != "schedule")
+        }
+    }
+
+    func receivingSession(in sessions: [SessionSummary]) -> SessionSummary? {
+        let id = targetSessionID == Self.dedicatedAgentChat ? templateSessionID : targetSessionID
+        return sessions.first { $0.id == id }
+    }
+
+    mutating func selectReceivingChat(_ session: SessionSummary) {
+        targetSessionID = session.id
+        workspaceRoot = session.workspaceRoot?.nilIfEmpty ?? session.workspacePath ?? ""
     }
 }
 

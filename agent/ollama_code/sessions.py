@@ -1329,6 +1329,7 @@ class SessionStore:
                 "team": entry.get("team"),
                 "workspace_root": entry.get("workspace_root"),
                 "execution_path": entry.get("execution_path"),
+                "output_directory": entry.get("output_directory"),
                 "environment": entry.get("environment"),
                 "agent_trigger_id": entry.get("agent_trigger_id"),
                 "agent_profile_id": entry.get("agent_profile_id"),

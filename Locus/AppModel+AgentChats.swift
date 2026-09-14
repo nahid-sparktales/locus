@@ -43,6 +43,7 @@ extension AppModel {
     }
 
     func selectAgent(_ reference: AgentInspectorAgent) {
+        savedAgentOverviewID = nil
         selectedSavedAgentID = nil
         let agentID = reference.agentID
         selectedAgentID = agentID

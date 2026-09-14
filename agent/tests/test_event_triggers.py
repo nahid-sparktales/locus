@@ -5,13 +5,18 @@ import hmac
 import sqlite3
 
 import pytest
+from fastapi import HTTPException
 
 from ollama_code import runstore as runstore_module
+from ollama_code.api.automation_workflows import execution_complete_step, execution_retry
 from ollama_code.api.event_triggers import (
     delivery_dispatch,
+    delivery_fail,
+    delivery_retry,
     trigger_target_create,
     trigger_task_create,
 )
+from ollama_code.automation_workflows import implicit_workflow
 from ollama_code.chat_service import ChatService
 from ollama_code.core import AgentCore
 from ollama_code.event_triggers import (
@@ -608,6 +613,149 @@ def test_delivery_manifest_uses_stable_provider_account_id(tmp_path) -> None:
     )
 
 
+def test_auth_handoff_failure_keeps_email_arrivals_and_recovers_after_login(tmp_path) -> None:
+    target = SessionStore(
+        str(tmp_path), model="claude-test", provider="claude_plan", account_id="claude-account"
+    )
+    SessionMeta.update(
+        target.session_id, workspace_root=str(tmp_path), execution_path=str(tmp_path),
+        environment={"type": "local", "isolation": "local"},
+    )
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    store = service.run_store
+    _connection(store)
+    _trigger(store, session_id=target.session_id)
+    original = store.ingest_event("source", _event("before-login"), now=10)[0]
+    delayed = store.ingest_event("source", _event("waiting-for-login"), now=11)[0]
+    first = delivery_dispatch(original["id"], service)
+
+    # Native account preparation failed before the worker accepted any work.
+    failed = delivery_fail(original["id"], service, {"error": "Claude needs sign-in."})
+
+    assert failed["state"] == "failed"
+    assert store.run(first["run"]["id"])["state"] == "interrupted"
+    assert store.event_trigger("trigger")["enabled"] is True
+    assert [d["id"] for d in store.pending_event_deliveries()] == [delayed["id"]]
+    duplicate = store.ingest_event("source", _event("before-login"), now=12)[0]
+    assert duplicate["id"] == original["id"]
+    assert duplicate["state"] == "failed"
+    assert duplicate["attempt"] == 0
+
+    # Account recovery updates the saved route; dispatch uses that current
+    # metadata and the failed handoff no longer holds the chat's FIFO queue.
+    SessionMeta.update(
+        target.session_id, provider="claude_plan", model="claude-ready",
+        provider_account_id="claude-account",
+    )
+    recovered = delivery_dispatch(delayed["id"], service)
+    assert recovered["run"]["manifest"]["model"] == "claude-ready"
+    assert recovered["run"]["manifest"]["provider_account_id"] == "claude-account"
+    assert recovered["delivery"]["state"] == "queued"
+    store.set_state(recovered["run"]["id"], "completed")
+    latest = store.ingest_event("source", _event("after-login"), now=13)[0]
+    following = delivery_dispatch(latest["id"], service)
+    assert following["delivery"]["state"] == "queued"
+    store.set_state(following["run"]["id"], "completed")
+
+    # Login alone does not replay the failed email. Its explicit Retry remains
+    # a distinct attempt linked to the original interrupted run.
+    retried = delivery_retry(original["id"], service)
+    assert retried["delivery"]["attempt"] == 1
+    with pytest.raises(HTTPException) as duplicate_retry:
+        delivery_retry(original["id"], service)
+    assert duplicate_retry.value.status_code == 409
+    replay = delivery_dispatch(original["id"], service)
+    assert replay["run"]["id"] != first["run"]["id"]
+    assert replay["run"]["retry_parent_id"] == first["run"]["id"]
+
+
+@pytest.mark.parametrize("pause_before_failure", [False, True])
+def test_delivery_failure_preserves_explicit_pause(tmp_path, pause_before_failure) -> None:
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    store = service.run_store
+    _connection(store)
+    _trigger(store)
+    original = store.ingest_event("source", _event("message-1"))[0]
+    _, _, run_id = store.claim_event_delivery(original["id"])
+    store.queue_run(run_id, session_id="session")
+    store.finish_event_dispatch(original["id"], state="queued", run_id=run_id)
+    if pause_before_failure:
+        store.update_event_trigger("trigger", {"enabled": False})
+
+    body = {"error": "Account unavailable."}
+    if not pause_before_failure:
+        body["pause_trigger"] = True
+    delivery_fail(original["id"], service, body)
+
+    assert store.event_trigger("trigger")["enabled"] is False
+    assert store.ingest_event("source", _event("message-2")) == []
+    assert delivery_retry(original["id"], service)["trigger"]["enabled"] is False
+
+
+def test_workflow_auth_failure_releases_chat_and_retry_reacquires_it(tmp_path) -> None:
+    target = SessionStore(str(tmp_path), model="claude-test", provider="claude_plan")
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    store = service.run_store
+    _connection(store)
+    _trigger(store, session_id=target.session_id)
+    store.update_event_trigger("trigger", {"workflow": implicit_workflow("Summarize mail", "work")})
+    original = store.ingest_event("source", _event("before-login"), now=10)[0]
+    delayed = store.ingest_event("source", _event("waiting-for-login"), now=11)[0]
+    first = delivery_dispatch(original["id"], service)
+    first_run = first["run"]["id"]
+    execution_id = first["workflow_execution"]["id"]
+    # This is the native failure order observed in the saved database: cancel
+    # the unaccepted queue item, then fail the corresponding delivery.
+    store.reorder_queue(first_run, "cancel")
+    delivery_fail(original["id"], service, {"run_id": first_run, "error": "Claude needs sign-in."})
+
+    assert store.automation_execution(execution_id)["state"] == "failed"
+    assert store.event_trigger("trigger")["enabled"] is True
+    assert store.automation_execution(execution_id)["attempts"][0]["state"] == "failed"
+    recovered = delivery_dispatch(delayed["id"], service)
+    assert recovered["workflow_execution"]["state"] == "running"
+    with pytest.raises(HTTPException) as busy:
+        execution_retry(execution_id, service)
+    assert busy.value.status_code == 409
+    assert store.automation_execution(execution_id)["state"] == "failed"
+
+    store.set_state(recovered["run"]["id"], "completed")
+    execution_complete_step(recovered["workflow_execution"]["id"], service,
+                            {"run_id": recovered["run"]["id"], "result": {}})
+    retry = execution_retry(execution_id, service)
+    assert retry["run"]["id"] != first_run
+    assert retry["execution"]["state"] == "running"
+    with pytest.raises(HTTPException) as stale:
+        delivery_fail(original["id"], service,
+                      {"run_id": first_run, "error": "Late failure from the old attempt."})
+    assert stale.value.status_code == 409
+    assert store.run(retry["run"]["id"])["state"] == "queued"
+    assert store.automation_execution(execution_id)["current_run_id"] == retry["run"]["id"]
+    with pytest.raises(RunStoreError, match="no longer running"):
+        store.fail_automation_step(execution_id, "old failure", run_id=first_run)
+
+
+def test_event_handoff_failure_cannot_interrupt_an_accepted_run(tmp_path) -> None:
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "local"}))
+    store = service.run_store
+    _connection(store)
+    _trigger(store)
+    delivery = store.ingest_event("source", _event("accepted"))[0]
+    _, _, run_id = store.claim_event_delivery(delivery["id"])
+    store.queue_run(run_id, session_id="session")
+    store.finish_event_dispatch(delivery["id"], state="queued", run_id=run_id)
+    store.admit(run_id)
+    store.append_event(run_id, {"type": "message_start"})
+
+    with pytest.raises(HTTPException) as accepted:
+        delivery_fail(delivery["id"], service, {"run_id": run_id, "error": "Late timeout."})
+
+    assert accepted.value.status_code == 409
+    assert store.run(run_id)["state"] == "dispatching"
+    assert store.event_delivery(delivery["id"])["state"] == "queued"
+    assert store.event_trigger("trigger")["enabled"] is True
+
+
 def test_multiple_triggers_share_one_chat_fifo(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.sqlite3")
     _connection(store)
@@ -934,3 +1082,100 @@ def test_saved_profile_owns_event_destination_and_side_chats(tmp_path):
         assert side["agent_profile_id"] == profile_id
         assert SessionMeta.get(side["id"])["agent_world_profile_id"] == profile_id
     assert SessionMeta.get(template.session_id).get("agent_trigger_id") is None
+
+
+def test_owned_event_retarget_preserves_old_chat_and_uses_exact_new_task(tmp_path):
+    import uuid
+
+    from ollama_code.api.event_triggers import trigger_create, trigger_update
+    from ollama_code.api.sessions import session_detached
+
+    owner = str(uuid.uuid4())
+    other_folder = tmp_path / "other-project"
+    other_folder.mkdir()
+    def chat(folder):
+        return session_detached({"cwd": str(folder), "title": "Receiving chat",
+            "agent_profile_id": owner, "execution_environment": "automatic"})
+    first, second = chat(tmp_path), chat(other_folder)
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "fixture"}))
+    _connection(service.run_store)
+    route = {"provider": "ollama", "model": "captured-model"}
+    trigger = trigger_create(service, {"id": "retarget", "name": "Inbox", "connection_id": "source",
+        "target_session_id": first["session_id"], "agent_profile_id": owner, "profile_route": route,
+        "instruction": "Summarize", "mode": "work", "filters": {}})
+    old_metadata = SessionMeta.get(first["session_id"])
+    old_transcript = SessionStore.path_for(first["session_id"]).read_bytes()
+    old_delivery = service.run_store.ingest_event("source", _event("before-move"))[0]
+    old_run = delivery_dispatch(old_delivery["id"], service)["run"]
+    updated = trigger_update(trigger["id"], service, {"target_session_id": second["session_id"],
+        "agent_profile_id": owner, "profile_route": route})
+    assert updated["target_session_id"] == second["session_id"]
+    assert SessionMeta.get(first["session_id"]) == old_metadata
+    assert SessionStore.path_for(first["session_id"]).read_bytes() == old_transcript
+    assert service.run_store.run(old_run["id"])["session_id"] == first["session_id"]
+    bound = SessionMeta.get(second["session_id"])
+    assert bound["execution_path"] == second["execution_path"]
+    assert bound["output_directory"] == second["output_directory"]
+    assert bound["agent_trigger_id"] == trigger["id"]
+    assert bound["model"] == "captured-model"
+    next_delivery = service.run_store.ingest_event("source", _event("after-move"))[0]
+    next_run = delivery_dispatch(next_delivery["id"], service)["run"]
+    assert next_run["session_id"] == second["session_id"]
+    assert next_run["execution_path"] == second["execution_path"]
+
+
+def test_owned_event_cannot_retarget_foreign_or_other_automation_chat(tmp_path):
+    import uuid
+
+    from ollama_code.api.event_triggers import trigger_create, trigger_update
+
+    owner = str(uuid.uuid4())
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "fixture"}))
+    _connection(service.run_store)
+    first = SessionStore(str(tmp_path), model="fixture")
+    SessionMeta.update(first.session_id, agent_profile_id=owner)
+    trigger = trigger_create(service, {"id": "guarded", "name": "Inbox", "connection_id": "source",
+        "target_session_id": first.session_id, "agent_profile_id": owner,
+        "instruction": "Summarize", "mode": "work", "filters": {}})
+    for foreign in (True, False):
+        target = SessionStore(str(tmp_path), model="fixture")
+        fields = {"agent_profile_id": str(uuid.uuid4()) if foreign else owner}
+        if not foreign:
+            fields.update(agent_trigger_id="other-rule", agent_kind="schedule")
+        SessionMeta.update(target.session_id, **fields)
+        before = SessionMeta.get(target.session_id)
+        with pytest.raises(HTTPException) as refused:
+            # Ownership also applies when an API caller omits the profile field.
+            trigger_update(trigger["id"], service, {"target_session_id": target.session_id})
+        assert refused.value.status_code == 409
+        assert service.run_store.event_trigger(trigger["id"])["target_session_id"] == first.session_id
+        assert SessionMeta.get(target.session_id) == before
+
+
+def test_home_event_side_chat_gets_its_own_resumable_task_folder(tmp_path, monkeypatch):
+    import uuid
+    from pathlib import Path
+
+    from ollama_code.agent_workspaces import home_session_workspace
+    from ollama_code.api.event_triggers import trigger_create
+    from ollama_code.api.sessions import session_detached
+
+    owner = str(uuid.uuid4())
+    homes = tmp_path / "AgentHomes"
+    monkeypatch.setenv("LOCUS_AGENT_HOMES_ROOT", str(homes))
+    home = homes / owner / "Workspace"
+    home.mkdir(parents=True)
+    target = session_detached({"cwd": str(home), "title": "Inbox", "agent_profile_id": owner,
+        "execution_environment": "automatic", "agent_home": True})
+    service = ChatService(AgentCore(cwd=str(tmp_path), config={"model": "fixture"}))
+    _connection(service.run_store)
+    trigger_create(service, {"id": "home-event", "name": "Inbox", "connection_id": "source",
+        "target_session_id": target["session_id"], "agent_profile_id": owner,
+        "profile_route": {"provider": "ollama", "model": "fixture"},
+        "instruction": "Summarize", "mode": "work", "filters": {}})
+    side = trigger_task_create("home-event", service, {})["session"]
+    metadata = SessionMeta.get(side["id"])
+    assert metadata["execution_path"] != target["execution_path"]
+    assert metadata["output_directory"] != target["output_directory"]
+    assert home_session_workspace(metadata, side["id"]) == (home, home / "Tasks" / side["id"])
+    assert Path(metadata["output_directory"]).is_dir()

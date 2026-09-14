@@ -2101,9 +2101,9 @@ def test_event_trigger_routes_queue_into_the_existing_chat_and_retain_history(cl
     )
     assert failed.status_code == 200
     assert failed.json()["state"] == "failed"
-    paused = client.get("/api/event-triggers").json()["triggers"][0]
-    assert paused["enabled"] is False
-    assert "model account" in paused["last_error"]
+    listening = client.get("/api/event-triggers").json()["triggers"][0]
+    assert listening["enabled"] is True
+    assert "model account" in listening["last_error"]
 
     assert client.delete("/api/event-triggers/important-mail").status_code == 200
     assert client.get("/api/event-triggers").json()["triggers"] == []

@@ -10,6 +10,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from ..agent_workspaces import AgentChatWorkspace, home_session_workspace, validate_agent_home
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..runstore import RunStoreError
@@ -108,11 +109,12 @@ def _local_metadata(workspace_root: str) -> dict[str, Any]:
         "execution_path": workspace_root,
         "environment": {"type": "local", "isolation": "local"},
         "task": None,
+        "output_directory": None,
     }
 
 
-def _checkout_metadata(record: TaskCheckout) -> dict[str, Any]:
-    return {
+def _checkout_metadata(record: TaskCheckout, *, output_directory: str | None = None) -> dict[str, Any]:
+    value = {
         "workspace_root": record.workspace_root,
         "execution_path": record.execution_path,
         "task": record.as_dict(),
@@ -122,7 +124,28 @@ def _checkout_metadata(record: TaskCheckout) -> dict[str, Any]:
             "worktree_id": record.id,
             "starting_ref": record.starting_ref,
         },
+        "output_directory": output_directory,
     }
+    if output_directory is not None:
+        value["environment"]["output_directory"] = output_directory
+    return value
+
+
+def _restore_schedule_outputs(record: TaskCheckout, session_id: str) -> str:
+    """Restore only a new schedule's recorded output location after checkout refresh."""
+    checkout = Path(record.execution_path)
+    parent = checkout / "Outputs"
+    output = parent / session_id
+    if record.session_id != session_id:
+        raise HTTPException(409, "The schedule checkout belongs to another chat.")
+    try:
+        if not checkout.is_dir() or parent.resolve() != parent or output.resolve() != output:
+            raise ValueError("The schedule output folder must stay inside its own checkout.")
+        parent.mkdir(exist_ok=True)
+        output.mkdir(exist_ok=True)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return str(output)
 
 
 def _schedule_checkout(schedule: dict[str, Any], *, session_id: str | None) -> TaskCheckout:
@@ -173,7 +196,35 @@ def _schedule_location(
     """
     workspace_root = _schedule_workspace(schedule["workspace_root"])
     if str(schedule["execution_environment"]) != "worktree":
+        environment = metadata.get("environment") or {}
+        same_root = str(metadata.get("workspace_root") or "") == workspace_root
+        if same_root and environment.get("isolation") == "agent_task_folder":
+            # Routine edits and dispatch keep the schedule's allocated home task.
+            try:
+                home_session_workspace(metadata, session_id)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            return {}
         _release_checkout(metadata, keep="")
+        if not same_root and _is_agent_home(workspace_root, metadata.get("agent_profile_id")):
+            try:
+                saved = metadata.get("schedule_home_task")
+                if isinstance(saved, dict) and saved.get("workspace_root") == workspace_root:
+                    restored = {**saved, "agent_profile_id": metadata.get("agent_profile_id")}
+                    location = home_session_workspace(restored, session_id)
+                    if location is None:
+                        raise ValueError("The saved home task location is invalid")
+                    output = location[1] / "Outputs"
+                    if str(output) != saved.get("output_directory") or output.resolve() != output or not output.is_dir():
+                        raise ValueError("The saved home output folder is unavailable")
+                    return {**saved, "task": None}
+                allocation = AgentChatWorkspace.create(
+                    Path(workspace_root), session_id, policy="local", agent_home=True,
+                )
+                location = allocation.metadata()
+                return {**location, "task": None, "schedule_home_task": location}
+            except (ValueError, OSError) as exc:
+                raise HTTPException(409, str(exc)) from exc
         if (
             str(metadata.get("workspace_root") or "") == workspace_root
             and str(metadata.get("execution_path") or "") == workspace_root
@@ -183,7 +234,8 @@ def _schedule_location(
         return _local_metadata(workspace_root)
     record = _schedule_checkout(schedule, session_id=session_id)
     _release_checkout(metadata, keep=record.id)
-    return _checkout_metadata(record)
+    output = _restore_schedule_outputs(record, session_id) if metadata.get("schedule_outputs") is True else None
+    return _checkout_metadata(record, output_directory=output)
 
 
 def _refresh_schedule_checkout(session_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -200,6 +252,12 @@ def _refresh_schedule_checkout(session_id: str, metadata: dict[str, Any]) -> dic
     record = TaskCheckoutStore.load(task_id)
     if record is None or not Path(record.execution_path).is_dir():
         return metadata
+    if metadata.get("schedule_outputs") is True:
+        output = Path(_restore_schedule_outputs(record, session_id))
+        # Git can omit ignored deliverables from its patch. They are still
+        # saved work, so do not remove the checkout while they remain here.
+        if any(output.iterdir()):
+            return metadata
     try:
         patch, _ = record.patch()
     except WorktreeError:
@@ -212,10 +270,21 @@ def _refresh_schedule_checkout(session_id: str, metadata: dict[str, Any]) -> dic
     refreshed.permanent = True
     refreshed.session_id = session_id
     refreshed.save()
-    return SessionMeta.update(session_id, **_checkout_metadata(refreshed))
+    output = _restore_schedule_outputs(refreshed, session_id) if metadata.get("schedule_outputs") is True else None
+    return SessionMeta.update(session_id, **_checkout_metadata(refreshed, output_directory=output))
 
 
-def _ensure_schedule_session(schedule: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _is_agent_home(workspace_root: str, profile_id: str | None) -> bool:
+    try:
+        validate_agent_home(Path(workspace_root), profile_id)
+        return True
+    except ValueError:
+        return False
+
+
+def _ensure_schedule_session(
+    schedule: dict[str, Any], *, profile_id: str | None = None, allocate_outputs: bool = False,
+) -> tuple[str, dict[str, Any]]:
     """Return the schedule's dedicated chat, creating it on first use.
 
     A scheduled agent, like an event agent, owns one lasting conversation that
@@ -263,14 +332,38 @@ def _ensure_schedule_session(schedule: dict[str, Any]) -> tuple[str, dict[str, A
     if record is not None:
         record.session_id = session_id
         record.save()
-    SessionMeta.update(
-        session_id,
-        **identity,
-        **(_checkout_metadata(record) if record is not None else _local_metadata(workspace_root)),
-        schedule_id=schedule_id,
-        agent_trigger_id=schedule_id,
-        agent_primary=True,
-    )
+    allocation = None
+    try:
+        location = _checkout_metadata(record) if record is not None else _local_metadata(workspace_root)
+        if record is not None and allocate_outputs:
+            allocation = AgentChatWorkspace.create(
+                Path(record.execution_path), session_id, policy="local", agent_home=False,
+            )
+            location = _checkout_metadata(record, output_directory=str(allocation.output_directory))
+            location["schedule_outputs"] = True
+        elif record is None and profile_id is not None:
+            home = _is_agent_home(workspace_root, profile_id)
+            allocation = AgentChatWorkspace.create(
+                Path(workspace_root), session_id, policy="local", agent_home=home,
+            )
+            location = allocation.metadata()
+            if home:
+                location = {**location, "schedule_home_task": dict(location)}
+        session.append_strict({"type": "schedule_session_created"})
+        saved_metadata = SessionMeta.update(
+            session_id, **identity, **location, schedule_id=schedule_id,
+            agent_trigger_id=schedule_id, agent_primary=True,
+            **({"agent_profile_id": profile_id, "agent_world_profile_id": profile_id}
+               if profile_id is not None else {}),
+        )
+        if SessionMeta.get(session_id) != saved_metadata:
+            raise OSError("The scheduled chat metadata could not be saved")
+    except (OSError, ValueError, WorktreeError):
+        if allocation is not None:
+            allocation.cleanup()
+        session.path.unlink(missing_ok=True)
+        SessionMeta.forget([session_id])
+        raise
     _detach_agent_session(session_id, workspace_root)
     return session_id, SessionMeta.get(session_id)
 
@@ -742,10 +835,8 @@ def schedule_create(
     except RunStoreError as exc:
         raise HTTPException(422, str(exc)) from exc
     try:
-        session_id, _ = _ensure_schedule_session(schedule)
-        if profile_id is not None:
-            SessionMeta.update(session_id, agent_profile_id=profile_id, agent_world_profile_id=profile_id)
-    except (HTTPException, WorktreeError, OSError) as exc:
+        _ensure_schedule_session(schedule, profile_id=profile_id, allocate_outputs=True)
+    except (HTTPException, WorktreeError, OSError, ValueError) as exc:
         # A schedule without its chat is not an agent; do not leave half of one.
         try:
             store.delete_schedule(str(schedule["id"]))
@@ -817,22 +908,29 @@ def schedule_task_create(
     title = " ".join(str(body.get("name") or "New chat").split())[:120] or "New chat"
     session = SessionStore(workspace_root, model, provider, account_id=account_id)
     session_id = session.session_id
-    SessionMeta.update(
-        session_id,
-        title=title,
-        workspace_root=workspace_root,
-        execution_path=workspace_root,
-        environment={"type": "local", "isolation": "local"},
-        provider=provider,
-        model=model,
-        provider_account_id=account_id or None,
-        schedule_id=schedule_id,
-        agent_trigger_id=schedule_id,
-        agent_kind="schedule",
-        agent_profile_id=primary_metadata.get("agent_profile_id"),
-        agent_world_profile_id=primary_metadata.get("agent_world_profile_id"),
-        agent_name=str(schedule["name"]),
-    )
+    allocation = None
+    try:
+        allocation = AgentChatWorkspace.create(
+            Path(workspace_root), session_id, policy="automatic",
+            agent_home=_is_agent_home(workspace_root, primary_metadata.get("agent_profile_id")),
+        )
+        session.append_strict({"type": "schedule_side_chat_created"})
+        saved_metadata = SessionMeta.update(
+            session_id, title=title, **allocation.metadata(), provider=provider, model=model,
+            provider_account_id=account_id or None, schedule_id=schedule_id,
+            agent_trigger_id=schedule_id, agent_kind="schedule",
+            agent_profile_id=primary_metadata.get("agent_profile_id"),
+            agent_world_profile_id=primary_metadata.get("agent_world_profile_id"),
+            agent_name=str(schedule["name"]),
+        )
+        if SessionMeta.get(session_id) != saved_metadata:
+            raise OSError("The side chat metadata could not be saved")
+    except (OSError, ValueError, WorktreeError) as exc:
+        if allocation is not None:
+            allocation.cleanup()
+        session.path.unlink(missing_ok=True)
+        SessionMeta.forget([session_id])
+        raise HTTPException(409, f"The side chat could not be created: {exc}") from exc
     _detach_agent_session(session_id, workspace_root)
     return {"ok": True, "session": _session_summary(session_id), "created": True}
 

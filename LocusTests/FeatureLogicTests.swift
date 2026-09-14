@@ -3929,6 +3929,22 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(sections[0].emptyMessage, "No Ollama models found")
     }
 
+    func testManagedPlanPickerKeepsFallbackChoicesWithoutAuthoritativeCatalog() {
+        let account = ProviderAccount(kind: .claudePlan, preferredModel: "opus[1m]")
+        // An incomplete discovery response leaves the routing catalog absent.
+        let catalogs: [UUID: [String]] = [:]
+        let fallback = ModelPickerSection.build(localModels: [], accounts: [account],
+            accountModels: catalogs, accountStatus: [account.id: .signedIn(email: nil, plan: nil)])
+        XCTAssertEqual(fallback[1].models, ["opus[1m]", "default"])
+        XCTAssertNil(fallback[1].emptyMessage)
+        XCTAssertNil(catalogs[account.id], "Picker choices must not become routing restrictions")
+
+        let discovered = ModelPickerSection.build(localModels: [], accounts: [account],
+            accountModels: [account.id: ["sonnet"]],
+            accountStatus: [account.id: .signedIn(email: nil, plan: nil)])
+        XCTAssertEqual(discovered[1].models, ["sonnet"], "A complete catalog controls the available choices")
+    }
+
     func testProviderCatalogsRejectTransientTeamModelsFromOtherAccounts() {
         let kimi = ProviderAccount(
             kind: .kimiCode,

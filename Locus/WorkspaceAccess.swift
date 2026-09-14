@@ -102,7 +102,7 @@ final class WorkspaceAccess {
     /// App-created sample workspaces need no external-folder bookmark.
     private static func isAppOwnedWorkspace(_ path: String) -> Bool {
         guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return false }
-        return ["Quickstart", "Workspace"].contains { folder in
+        return ["Quickstart", "Workspace", "AgentHomes"].contains { folder in
             let root = canonicalPath(AppEdition.current.supportDirectory(in: support).appendingPathComponent(folder).path)
             return path == root || path.hasPrefix(root + "/")
         }

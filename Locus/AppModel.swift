@@ -491,7 +491,11 @@ final class AppModel: ObservableObject {
     var savedAgentRuntimeSyncPending = false
     var pendingSavedAgentEditor: AgentProfile?
     @Published var selectedSavedAgentID: UUID?
+    /// Viewing an agent does not resume a conversation, replace its draft, or
+    /// interrupt a running task. Only an explicit chat action changes sessions.
+    @Published var savedAgentOverviewID: UUID?
     @Published var configureAgentProfileID: UUID?
+    var configureAgentWorkspace: String?
     @Published var creatingSavedAgentChatIDs: Set<UUID> = []
     @Published var removingSavedAgentIDs: Set<UUID> = []
     var savedAgentConversationCreationCounts: [UUID: Int] = [:]
@@ -787,6 +791,9 @@ final class AppModel: ObservableObject {
     /// credential file: a test must not read — or delete — the secrets of
     /// whoever is running the suite.
     let persistenceEnabled: Bool
+    /// Test hosts keep explicitly created agent homes out of the user's files.
+    var agentHomesRootOverride: URL?
+    let transientAgentHomesID = UUID()
     let isUITesting: Bool  // internal(for: AppModel extension files)
     var isShuttingDown = false  // internal(for: AppModel extension files)
     private var settingsUpdatePreparation: (

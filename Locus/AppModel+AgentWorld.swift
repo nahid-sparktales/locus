@@ -135,21 +135,22 @@ extension AppModel {
             guard let self else { return }
             do {
                 let detail = try await backend.get("/api/sessions/\(sessionID)", as: SessionDetailResponse.self)
-                guard SessionSummary.canonicalWorkspacePath(detail.workspaceRoot ?? detail.cwd ?? "")
-                        == SessionSummary.canonicalWorkspacePath(workspace), detail.archived != true else {
+                guard detail.belongsToWorkspace(workspace), detail.archived != true else {
                     throw AgentWorldError.unavailable("This conversation belongs to another project or is archived. Restore it in Locus before continuing.")
                 }
-                let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: [
+                var queueBody = detail.executionQueueContext
+                queueBody.merge([
                     "run_id": runID, "session_id": sessionID, "message_id": UUID().uuidString,
-                    "workspace_root": workspace, "execution_path": workspace,
-                    "request": text, "run_kind": "solo", "execution_environment": "local", "solo_swarm": false,
-                ], as: OrchestrationRun.self)
+                    "request": text, "run_kind": "solo",
+                    "solo_swarm": false,
+                ]) { _, new in new }
+                let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
                 let previous = taskConversationStates[sessionID]
                 taskConversationStates[sessionID] = TaskConversationState(
                     sessionID: sessionID, taskID: previous?.taskID, teamID: nil,
                     workerID: previous?.workerID, runID: runID, state: .queued, updatedAt: Date())
                 try Task.checkCancellation()
-                guard let worker = await ensureChatWorker(for: sessionID, workspaceRoot: workspace,
+                guard let worker = await ensureChatWorker(for: sessionID, workspaceRoot: detail.workspaceRoot?.nilIfEmpty ?? detail.cwd ?? workspace,
                     provider: route.provider, providerAccountID: route.accountID, model: profile.model) else {
                     throw AgentWorldError.unavailable("This agent's worker could not connect. Reconnect its account and try again.")
                 }

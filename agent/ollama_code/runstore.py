@@ -775,9 +775,34 @@ class RunStore(AgentInspectorStore):
                 initialize_history_schema(connection)
             if not os.environ.get("LOCUS_RUNTIME_COORDINATOR") and not os.environ.get("LOCUS_RUNTIME_CHILD"):
                 # A model turn that died with the previous app process is never
-                # silently replayed. Keep the session lease and make the exact
-                # step explicitly retryable in Attention.
+                # silently replayed. Make the exact step explicitly retryable
+                # in Attention; a stopped workflow must not strand later mail.
                 connection.execute("BEGIN IMMEDIATE")
+                stopped_handoffs = connection.execute(
+                    """
+                    SELECT attempts.execution_id, attempts.run_id
+                    FROM automation_step_attempts AS attempts
+                    JOIN automation_executions AS executions
+                      ON executions.id=attempts.execution_id
+                     AND executions.current_run_id=attempts.run_id
+                    JOIN runs ON runs.id=attempts.run_id
+                    WHERE executions.state='running' AND attempts.state='queued'
+                      AND runs.last_seq=0
+                      AND runs.state IN ('failed','interrupted','cancelled','discarded')
+                    """
+                ).fetchall()
+                for handoff in stopped_handoffs:
+                    reason = "This workflow run stopped before work began. Retry the step when ready."
+                    connection.execute(
+                        "UPDATE automation_step_attempts SET state='failed', error=?,"
+                        " completed_at=? WHERE execution_id=? AND run_id=? AND state='queued'",
+                        (reason, time.time(), handoff["execution_id"], handoff["run_id"]),
+                    )
+                    connection.execute(
+                        "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
+                        " WHERE id=? AND current_run_id=? AND state='running'",
+                        (reason, time.time(), handoff["execution_id"], handoff["run_id"]),
+                    )
                 connection.execute(
                     "UPDATE automation_executions SET state='failed', error=?, updated_at=?"
                     " WHERE state IN ('advancing','awaiting_run')",
@@ -843,6 +868,7 @@ class RunStore(AgentInspectorStore):
                                 time.time(), time.time(), queued["id"],
                             ),
                         )
+                self._release_failed_workflow_leases(connection)
                 connection.commit()
 
             # Dispatch claims and run creation intentionally use separate
@@ -2192,7 +2218,8 @@ class RunStore(AgentInspectorStore):
         return trigger, delivery, run_id
 
     def finish_event_dispatch(
-        self, delivery_id: str, *, state: str, run_id: str = "", error: str = ""
+        self, delivery_id: str, *, state: str, run_id: str = "", error: str = "",
+        expected_run_id: str | None = None,
     ) -> dict[str, Any]:
         if self.read_only:
             raise RunStoreError("the run database is read-only")
@@ -2200,11 +2227,14 @@ class RunStore(AgentInspectorStore):
             raise RunStoreError("event dispatch state is invalid")
         current = time.time()
         with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT trigger_id, attempt FROM event_deliveries WHERE id=?", (delivery_id,)
+                "SELECT trigger_id, attempt, run_id FROM event_deliveries WHERE id=?", (delivery_id,)
             ).fetchone()
             if row is None:
                 raise RunStoreError("event delivery not found")
+            if expected_run_id is not None and str(row["run_id"] or "") != expected_run_id:
+                raise RunStoreError("event delivery has a newer run")
             if run_id:
                 connection.execute(
                     "INSERT OR IGNORE INTO agent_execution_links VALUES('event', ?, ?, ?, ?)",
@@ -2934,11 +2964,15 @@ class RunStore(AgentInspectorStore):
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT current_step_id, current_run_id FROM automation_executions WHERE id=?",
+                "SELECT state, current_step_id, current_run_id FROM automation_executions WHERE id=?",
                 (execution_id,),
             ).fetchone()
             if row is None:
                 raise RunStoreError("automation execution not found")
+            if row["state"] in {"completed", "cancelled"} or (
+                run_id and row["current_run_id"] != run_id
+            ):
+                raise RunStoreError("that workflow step is no longer running")
             effective_run = run_id or str(row["current_run_id"] or "")
             if effective_run:
                 connection.execute(
@@ -2952,17 +2986,45 @@ class RunStore(AgentInspectorStore):
                 " WHERE id=? AND state NOT IN ('completed','cancelled')",
                 (message, now, execution_id),
             )
+            self._release_failed_workflow_leases(connection)
             connection.commit()
         return {"action": "failed", "execution": self.automation_execution(execution_id)}
 
     def retry_automation_step(self, execution_id: str) -> dict[str, Any]:
-        execution = self.automation_execution(execution_id, include_details=False)
-        if execution is None:
-            raise RunStoreError("automation execution not found")
-        if execution["state"] != "failed":
-            raise RunStoreError("only a failed workflow step can be retried")
-        step = step_by_id(execution["workflow"], str(execution["current_step_id"] or ""))
+        if self.read_only:
+            raise RunStoreError("the run database is read-only")
         with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM automation_executions WHERE id=?", (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise RunStoreError("automation execution not found")
+            execution = self._automation_execution_row(row)
+            if execution["state"] != "failed":
+                raise RunStoreError("only a failed workflow step can be retried")
+            try:
+                step = step_by_id(execution["workflow"], str(execution["current_step_id"] or ""))
+                prompt = agent_prompt(step, execution["context"]) if step["type"] == "agent" else ""
+            except WorkflowValidationError as exc:
+                raise RunStoreError(str(exc)) from exc
+            session_id = execution["session_id"]
+            active = connection.execute(
+                "SELECT 1 FROM runs WHERE session_id=? AND state NOT IN"
+                " ('completed','failed','interrupted','cancelled','discarded') LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            lease = connection.execute(
+                "SELECT execution_id FROM automation_session_leases WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if active is not None or (lease is not None and lease["execution_id"] != execution_id):
+                raise RunStoreError("the automation chat is busy; retry this step when its current work finishes")
+            connection.execute(
+                "INSERT INTO automation_session_leases(session_id, execution_id, acquired_at)"
+                " VALUES(?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
+                (session_id, execution_id, time.time()),
+            )
             connection.execute(
                 "UPDATE automation_executions SET state=?, current_run_id=NULL,"
                 " error=NULL, updated_at=? WHERE id=? AND state='failed'",
@@ -2974,12 +3036,32 @@ class RunStore(AgentInspectorStore):
         return {
             "action": "run_agent", "execution": self.automation_execution(execution_id),
             "step": step,
-            "prompt": agent_prompt(step, execution["context"]),
+            "prompt": prompt,
             "warning": (
                 "Retrying does not undo local files or commands from the failed attempt. "
                 "Recorded connector actions will not be repeated."
             ),
         }
+
+    @staticmethod
+    def _release_failed_workflow_leases(connection: sqlite3.Connection) -> None:
+        """A failed step remains retryable without monopolizing an idle chat.
+
+        A late failure callback may arrive before its worker's terminal state;
+        retain that lease until every active run in the chat has stopped.
+        Approval/advancing/running workflows always retain their reservation.
+        """
+        connection.execute(
+            """
+            DELETE FROM automation_session_leases WHERE execution_id IN (
+                SELECT executions.id FROM automation_executions AS executions
+                WHERE executions.state='failed' AND NOT EXISTS (
+                    SELECT 1 FROM runs WHERE runs.session_id=executions.session_id
+                      AND runs.state NOT IN ('completed','failed','interrupted','cancelled','discarded')
+                )
+            )
+            """
+        )
 
     def decide_automation_approval(
         self, execution_id: str, *, approve: bool
@@ -3659,6 +3741,7 @@ class RunStore(AgentInspectorStore):
                     "UPDATE runs SET state='cancelled', completed_at=?, queue_position=NULL,"
                     " updated_at=? WHERE id=?", (time.time(), time.time(), run_id),
                 )
+                self._release_failed_workflow_leases(connection)
                 identifiers.remove(run_id)
             elif action not in {"move_top", "move_up", "move_down", "cancel"}:
                 raise RunStoreError("unknown queue action")
@@ -3698,7 +3781,9 @@ class RunStore(AgentInspectorStore):
             if cursor.rowcount != 1:
                 raise RunStoreError("queued run not found")
 
-    def fail_unstarted_dispatch(self, run_id: str, reason: str) -> dict[str, Any]:
+    def fail_unstarted_dispatch(
+        self, run_id: str, reason: str, *, include_queued: bool = False,
+    ) -> dict[str, Any]:
         """Stop only a dispatch that no worker has begun processing.
 
         Native admission and the worker WebSocket live on separate transports.
@@ -3715,11 +3800,12 @@ class RunStore(AgentInspectorStore):
             cursor = connection.execute(
                 "UPDATE runs SET state='interrupted', completed_at=?, updated_at=?,"
                 " recoverable=0, recovery_reason=?"
-                " WHERE id=? AND state='dispatching' AND last_seq=0",
-                (now, now, reason[:4_000], run_id),
+                " WHERE id=? AND (state='dispatching' OR (? AND state='queued')) AND last_seq=0",
+                (now, now, reason[:4_000], run_id, int(include_queued)),
             )
             if cursor.rowcount != 1:
                 raise RunStoreError("the run has already started or stopped")
+            self._release_failed_workflow_leases(connection)
         return self.run(run_id) or {}
 
     def mark_abandoned(
@@ -3772,10 +3858,12 @@ class RunStore(AgentInspectorStore):
             fields.append("completed_at=?")
             values.append(time.time())
         values.append(run_id)
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             cursor = connection.execute(f"UPDATE runs SET {', '.join(fields)} WHERE id=?", values)
             if cursor.rowcount != 1:
                 raise RunStoreError(f"run not found: {run_id}")
+            if state in TERMINAL_STATES:
+                self._release_failed_workflow_leases(connection)
 
     def set_pinned(self, run_id: str, pinned: bool) -> dict[str, Any]:
         if self.read_only:

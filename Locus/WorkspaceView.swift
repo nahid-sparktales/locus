@@ -16,12 +16,19 @@ struct WorkspaceView: View {
     @State private var teamProgressPresented = false
     let sidebarVisible: Bool
     let showSidebar: () -> Void
+    var presentsAgentOverview = true
+    var openAgentOverview: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             if model.agentCrewChatPresented, model.sidebarDestination == .agents {
                 AgentCrewChatView(model: model.agentCrewChat, sidebarVisible: sidebarVisible, showSidebar: showSidebar)
                     .id(model.agentCrewChat.workspace)
+            } else if presentsAgentOverview, let profile = model.savedAgentOverviewProfile {
+                agentOverviewHeader
+                SavedAgentInspectorView(profile: profile)
+                    .id(profile.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let destination = model.emptySidebarDestination {
                 if !sidebarVisible {
                     HStack {
@@ -32,11 +39,11 @@ struct WorkspaceView: View {
                     .padding(16)
                 }
                 ContentUnavailableView {
-                    Label(destination == .agents ? "Choose an agent chat" : "Start a work chat",
+                    Label(destination == .agents ? "Choose an agent" : "Start a work chat",
                           systemImage: destination == .agents ? "person.2" : "bubble.left")
                 } description: {
                     Text(destination == .agents
-                         ? "Create a saved agent or select one in the sidebar to open its chats."
+                         ? "Select an agent to see its connections, automations, and latest work."
                          : "Create a chat to start working in this workspace.")
                 } actions: {
                     Button(destination == .agents ? "New agent" : "New chat") {
@@ -53,41 +60,59 @@ struct WorkspaceView: View {
             }
         }
         .locusWorkspaceBackground()
+        .overlay(alignment: .topTrailing) { activityPanel }
+    }
+
+    private var agentOverviewHeader: some View {
+        HStack(spacing: 12) {
+            if !sidebarVisible {
+                HeaderIconButton(symbol: "sidebar.left", label: "Show sidebar",
+                                 identifier: "workspace.showSidebar", action: showSidebar)
+            }
+            Label("Agent overview", systemImage: "person.crop.rectangle")
+                .font(.locus(size: 12, weight: .semibold))
+                .foregroundStyle(LocusTheme.inkSoft)
+            Spacer()
+        }
+        .padding(.leading, sidebarVisible ? 20 : 76)
+        .padding(.trailing, 18)
+        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
+        .locusSurface(.toolbar)
+        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+    }
+
+    @ViewBuilder
+    private var activityPanel: some View {
+        if activityCenter.activityCenterPresented {
+            ActivityCenterView()
+                .environmentObject(model)
+                .frame(
+                    width: max(280, min(440, workspaceGeometry.workspaceWidth - 24))
+                )
+                .frame(maxHeight: .infinity)
+                .locusSurface(.floating, radius: 12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                }
+                .shadow(
+                    color: isLiveResizing ? .clear : .black.opacity(0.18),
+                    radius: isLiveResizing ? 0 : 18,
+                    x: 0,
+                    y: 8
+                )
+                .padding(12)
+                .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
+                .zIndex(2)
+        }
     }
 
     private var contentArea: some View {
-        ZStack(alignment: .topTrailing) {
-            chatContent
-                // The parent VStack already proposes exactly the space left
-                // below the toolbar. Pinning a pre-subtracted height here
-                // reserved that toolbar space twice and lifted the composer.
-                .frame(width: workspaceGeometry.workspaceWidth)
-                .frame(maxHeight: .infinity)
-
-            if activityCenter.activityCenterPresented {
-                ActivityCenterView()
-                    .environmentObject(model)
-                    .frame(
-                        width: max(280, min(440, workspaceGeometry.workspaceWidth - 24))
-                    )
-                    .frame(maxHeight: .infinity)
-                    .locusSurface(.floating, radius: 12)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(LocusTheme.lineStrong, lineWidth: 1)
-                    }
-                    .shadow(
-                        color: isLiveResizing ? .clear : .black.opacity(0.18),
-                        radius: isLiveResizing ? 0 : 18,
-                        x: 0,
-                        y: 8
-                    )
-                    .padding(12)
-                    .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-                    .zIndex(2)
-            }
-        }
+        chatContent
+            // The parent VStack already proposes the space below the toolbar.
+            .frame(width: workspaceGeometry.workspaceWidth)
+            .frame(maxHeight: .infinity)
         .clipped()
         .onExitCommand { model.dismissOverview() }
         .onChange(of: model.currentSessionID) {
@@ -169,6 +194,21 @@ struct WorkspaceView: View {
             }
 
             Spacer()
+
+            if model.sidebarDestination == .agents,
+               let profileID = model.savedAgentProfileID(for: model.currentSessionID),
+               let profile = model.agentProfiles.first(where: { $0.id == profileID }) {
+                Button {
+                    if let openAgentOverview { openAgentOverview() }
+                    else { model.selectSavedAgent(profile) }
+                } label: {
+                    Label("Overview", systemImage: "person.crop.rectangle")
+                }
+                .buttonStyle(.locus())
+                .controlSize(.small)
+                .help("Show \(profile.name)’s connections, automations, and latest result")
+                .accessibilityIdentifier("workspace.agentOverview")
+            }
 
             if model.showTeamProgressInHeader, agentTeams.selectedAgentTeam != nil {
                 Button {
@@ -527,7 +567,7 @@ struct SplitChatWorkspaceView: View {
 
     var body: some View {
         Group {
-            switch ChatWorkspacePresentation.resolve(isSplit: model.splitViewActive) {
+            switch ChatWorkspacePresentation.resolve(isSplit: model.splitViewActive && model.savedAgentOverviewProfile == nil) {
             case .single:
                 liveWorkspace
             case .sideBySide:
@@ -1852,6 +1892,8 @@ struct ScheduleEditorView: View {
                     Divider()
                     scheduleSection
                     Divider()
+                    workingFolderSection
+                    Divider()
                     environmentSection
                     if model.automationWorkflowsEnabled {
                         Divider()
@@ -1980,35 +2022,59 @@ struct ScheduleEditorView: View {
         }
     }
 
+    private var selectedProfile: AgentProfile? {
+        guard let id = draft.agentProfileID.flatMap(UUID.init(uuidString:)) else { return nil }
+        return agentTeams.agentProfiles.first { $0.id == id }
+    }
+
+    private var workingFolderSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeading("Working in", symbol: "folder")
+            if let profile = selectedProfile {
+                Menu {
+                    ForEach(model.savedAgentWorkspaceChoices(profile), id: \.path) { choice in
+                        Button(choice.title) { selectWorkspace(choice.path) }
+                    }
+                    Divider()
+                    Button("Choose project folder…") { chooseWorkspace() }
+                } label: {
+                    Label(draft.workspaceRoot == model.savedAgentHomePath(profile) ? "Agent home" : "Shared project",
+                          systemImage: "folder")
+                }.accessibilityIdentifier("scheduleEditor.workspaceChoice")
+            }
+            HStack {
+                TextField("Choose a folder", text: $draft.workspaceRoot)
+                    .textFieldStyle(.roundedBorder).accessibilityLabel("Working in folder")
+                    .accessibilityIdentifier("scheduleEditor.workspace")
+                Button("Choose…") { chooseWorkspace() }
+                    .accessibilityIdentifier("scheduleEditor.chooseWorkspace")
+            }
+            Text(draft.workspaceRoot).font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                .accessibilityIdentifier("scheduleEditor.workspacePath")
+            Picker("Work location", selection: $draft.executionEnvironment) {
+                Text("In this folder").tag(ChatExecutionEnvironment.local)
+                Text("Separate Git working copy").tag(ChatExecutionEnvironment.worktree)
+            }.accessibilityIdentifier("scheduleEditor.environment")
+            Text(draft.executionEnvironment == .worktree
+                ? "Runs use an isolated Git working copy of this project."
+                : selectedProfile.map { draft.workspaceRoot == model.savedAgentHomePath($0) } == true
+                    ? "This schedule gets its own task folder inside the agent home."
+                    : "Runs use this folder directly. File changes are visible to other chats using it.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("This folder is saved with the schedule. Changing the active chat or the agent’s default does not move its work.")
+                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var environmentSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            disclosure("Environment & model", detail: environmentSummary,
+            disclosure("Model & execution", detail: environmentSummary,
                        symbol: "desktopcomputer", expanded: $environmentExpanded,
                        identifier: "scheduleEditor.environmentDisclosure")
             if environmentExpanded {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Workspace").font(.locus(size: 11, weight: .medium))
-                    HStack {
-                        TextField("Choose a workspace folder", text: $draft.workspaceRoot)
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("Workspace")
-                            .accessibilityIdentifier("scheduleEditor.workspace")
-                        Button("Choose…") { chooseWorkspace() }
-                            .accessibilityIdentifier("scheduleEditor.chooseWorkspace")
-                    }
-                }
-                Picker("Environment", selection: $draft.executionEnvironment) {
-                    ForEach(ChatExecutionEnvironment.allCases) { environment in
-                        Text(environment.title).tag(environment)
-                    }
-                }
-                .accessibilityIdentifier("scheduleEditor.environment")
-                Text(draft.executionEnvironment == .worktree
-                    ? "Runs in an isolated Git worktree. Choose a Git workspace for this environment."
-                    : "Runs directly in this workspace. File changes are visible in your working folder.")
-                    .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 Picker("Mode", selection: modeBinding) {
                     ForEach(WorkMode.automationCases) { mode in Text(mode.title).tag(mode) }
                 }
@@ -2257,13 +2323,14 @@ struct ScheduleEditorView: View {
     }
 
     private var environmentIssue: String? {
-        if draft.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Choose a workspace in Environment & model." }
-        if providerUnavailable { return "Choose an available model account in Environment & model." }
+        if draft.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Choose a folder in Working in." }
+        if draft.agentProfileID != nil, selectedProfile == nil { return "This saved agent is no longer available." }
+        if providerUnavailable { return "Choose an available account in Model & execution." }
         if draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.model == "No model" {
-            return "Choose a model in Environment & model."
+            return "Choose a model in Model & execution."
         }
         if draft.runner == .team, !agentTeams.agentTeams.contains(where: { $0.id.uuidString == draft.teamID }) {
-            return "Choose an available team in Environment & model."
+            return "Choose an available team in Model & execution."
         }
         return nil
     }
@@ -2350,25 +2417,31 @@ struct ScheduleEditorView: View {
         submitted.timezone = submitted.timezone.trimmingCharacters(in: .whitespacesAndNewlines)
         let previousToast = model.toastMessage
         Task {
-            let saved = await schedule.saveSchedule(submitted)
-            isSubmitting = false
-            if !saved {
-                saveError = model.toastMessage != previousToast
-                    ? model.toastMessage ?? "Could not save this schedule. Review the configuration and try again."
-                    : "Could not save this schedule. Review the configuration and try again."
-            }
+            defer { isSubmitting = false }
+            do {
+                if let profile = selectedProfile {
+                    try model.prepareSavedAgentWorkspace(profile, workspace: submitted.workspaceRoot)
+                }
+                let saved = await schedule.saveSchedule(submitted)
+                if !saved {
+                    saveError = model.toastMessage != previousToast
+                        ? model.toastMessage ?? "Could not save this schedule. Review the configuration and try again."
+                        : "Could not save this schedule. Review the configuration and try again."
+                }
+            } catch { saveError = error.localizedDescription }
+        }
+    }
+
+    private func selectWorkspace(_ path: String) {
+        draft.workspaceRoot = path
+        if let profile = selectedProfile {
+            draft.executionEnvironment = model.savedAgentScheduleEnvironment(profile, workspace: path)
         }
     }
 
     private func chooseWorkspace() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose Workspace"
-        guard panel.runModal() == .OK, let url = panel.url,
-              let path = model.rememberScheduleWorkspace(url) else { return }
-        draft.workspaceRoot = path
+        guard let path = model.chooseSavedAgentProjectFolder() else { return }
+        selectWorkspace(path)
     }
 }
 

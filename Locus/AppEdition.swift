@@ -56,7 +56,8 @@ enum AppEdition: String, CaseIterable {
 
     func backendHomes(in applicationSupport: URL, sandboxed: Bool) -> [String: String] {
         let support = supportDirectory(in: applicationSupport)
-        var values = ["LOCUS_CODEX_HOME": support.appendingPathComponent("Codex").path]
+        var values = ["LOCUS_CODEX_HOME": support.appendingPathComponent("Codex").path,
+                      "LOCUS_AGENT_HOMES_ROOT": support.appendingPathComponent("AgentHomes").path]
         if sandboxed || self == .locusX {
             values["OLLAMA_CODE_HOME"] = support.appendingPathComponent("Agent").path
         }

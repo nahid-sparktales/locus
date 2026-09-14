@@ -694,7 +694,7 @@ extension AppModel {
         if let eventDeliveryID {
             let _: EventDelivery? = try? await backend.post(
                 "/api/event-deliveries/\(eventDeliveryID)/fail",
-                body: ["error": message, "pause_trigger": false],
+                body: ["error": message, "pause_trigger": false, "run_id": runID],
                 as: EventDelivery.self
             )
             eventAutomations.wakeDispatcher()
