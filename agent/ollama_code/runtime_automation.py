@@ -106,19 +106,40 @@ class RuntimeAutomation:
         workspace = run["workspace_root"]
         await runtime.ensure_worker(session_id, workspace, keep_running=keep_running)
         saved = runtime.private.read()
+        from .agent_chat_routes import validate_agent_chat_route
         from .sessions import SessionMeta
 
         metadata = SessionMeta.get(session_id)
-        profile_id = metadata.get("agent_world_profile_id")
+        selected_route = manifest.get("agent_chat_route")
+        # Goals already carry an immutable execution snapshot. Reuse its route
+        # when continuing a saved-agent chat after the desktop has closed.
+        if selected_route is None and manifest.get("goal_id") and manifest.get("conversation_profile_id"):
+            selected_route = {"profile_id": manifest["conversation_profile_id"],
+                              "provider": manifest.get("provider"), "model": manifest.get("model"),
+                              "provider_account_id": manifest.get("provider_account_id")}
+        if selected_route is not None:
+            try:
+                if run.get("schedule_id") or manifest.get("schedule_id") or manifest.get("event_trigger_id"):
+                    raise ValueError("Automation tasks keep their configured model.")
+                selected_route = validate_agent_chat_route(selected_route, metadata)
+            except ValueError as exc:
+                runtime.store.state(session_id, "waiting_for_locus", str(exc))
+                return
+        profile_id = metadata.get("agent_world_profile_id") or metadata.get("agent_profile_id")
         profile_configuration = None
         if profile_id:
             import uuid
 
             try:
-                profile_configuration = saved.get("agent-profiles", {}).get(str(uuid.UUID(str(profile_id))))
+                profiles = saved.get("agent-profiles")
+                if isinstance(profiles, dict):
+                    profile_configuration = profiles.get(str(uuid.UUID(str(profile_id))))
             except ValueError:
                 pass
-            if not profile_configuration or profile_configuration.get("unavailable"):
+            profile = profile_configuration.get("profile") if isinstance(profile_configuration, dict) else None
+            if not isinstance(profile, dict) or str(profile.get("id", "")).lower() != str(profile_id).lower() \
+                    or not isinstance(profile.get("model"), str) or not profile["model"].strip() \
+                    or (profile_configuration.get("unavailable") and selected_route is None):
                 runtime.store.state(session_id, "waiting_for_locus", "Open Locus and review this conversation’s saved agent and account.")
                 return
             # Every Solo schedule now carries solo_swarm as an eligibility
@@ -130,6 +151,20 @@ class RuntimeAutomation:
         if automation_configuration.get("agent_id") and not profile_configuration:
             SessionMeta.update(session_id, agent_profile_id=str(automation_configuration["agent_id"]))
         account = (profile_configuration or {}).get("provider") or automation_configuration.get("provider") or saved.get(f"account:{manifest.get('provider_account_id', '')}") or saved.get(f"worker:{session_id}", {}).get("/api/provider")
+        if selected_route is not None:
+            if selected_route["provider"] == "ollama":
+                local = saved.get("account:local")
+                account = dict(local) if isinstance(local, dict) and local.get("provider") == "ollama" \
+                    else {"provider": "ollama"}
+            else:
+                key = f"account:{selected_route['provider_account_id']}".lower()
+                account = next((value for saved_key, value in saved.items() if saved_key.lower() == key), None)
+                if not isinstance(account, dict) or account.get("provider") != selected_route["provider"]:
+                    runtime.store.state(session_id, "waiting_for_account", "Open Locus to reconnect this chat’s selected model account.")
+                    return
+            account = {**account, "model": selected_route["model"]}
+            profile_configuration = {**profile_configuration,
+                                     "profile": {**profile_configuration["profile"], "model": selected_route["model"]}}
         if not account and manifest.get("provider") in {"remote", "chatgpt", "claude_plan"}:
             runtime.store.state(session_id, "waiting_for_account", "Provision the selected model account on this runtime to continue.")
             return

@@ -534,6 +534,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
         raise HTTPException(404, f"session not found: {session_id}")
     header = SessionStore.provenance(path)
     meta = SessionMeta.get(session_id)
+    placement = ChatOrganizationStore.placement(session_id)
     try:
         messages = SessionStore.load(path)
     except SessionTooLargeError as exc:
@@ -555,7 +556,14 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "execution_path": meta.get("execution_path"),
         "output_directory": meta.get("output_directory"),
         "environment": meta.get("environment"),
+        "agent_trigger_id": meta.get("agent_trigger_id"),
         "agent_profile_id": meta.get("agent_profile_id"),
+        "agent_kind": session_agent_kind(meta),
+        "agent_name": meta.get("agent_name"),
+        "agent_primary": bool(meta.get("agent_primary") or False),
+        "provider": meta.get("provider"),
+        "folder_id": placement.get("folder_id") if placement else None,
+        "sort_order": int(placement.get("order") or 0) if placement else None,
         "agent_activities": activity["activities"],
         "orchestration_state": activity.get("orchestration_state"),
         "orchestration_run_id": activity.get("run_id"),

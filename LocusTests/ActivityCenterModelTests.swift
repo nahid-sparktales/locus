@@ -25,7 +25,8 @@ final class ActivityCenterModelTests: XCTestCase {
     private func run(
         id: String,
         state: String = "completed",
-        updatedAt: Double = 10
+        updatedAt: Double = 10,
+        runKind: String = "solo"
     ) -> OrchestrationRun {
         decode(OrchestrationRun.self, from: [
             "id": id,
@@ -36,6 +37,7 @@ final class ActivityCenterModelTests: XCTestCase {
             "workspace_root": "/tmp",
             "execution_path": "/tmp",
             "state": state,
+            "run_kind": runKind,
             "request": "req",
             "created_at": 1.0,
             "updated_at": updatedAt,
@@ -210,6 +212,130 @@ final class ActivityCenterModelTests: XCTestCase {
         // Attention item or lowers the badge.
         XCTAssertEqual(model.activityNeedsAttentionCount, 1)
         XCTAssertEqual(defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs"), ["run-done"])
+    }
+
+    func testClearingReadKeepsUnreadAndActiveWorkAndPreservesTaskHistory() {
+        let request = AttentionItem(id: "recovery", kind: "recoverable_run", group: .recoveries,
+            runID: "failed", title: "Needs recovery", detail: "Failed", actions: ["retry"])
+        let model = makeModel(liveAttention: { [request] })
+        let read = run(id: "read")
+        let failed = run(id: "failed", state: "failed")
+        let unread = run(id: "unread")
+        let active = run(id: "active", state: "running")
+        model.activityRuns = [read, failed, unread, active]
+        model.markActivitySeen(read)
+        model.markActivitySeen(failed)
+
+        model.clearReadActivityRuns()
+
+        XCTAssertEqual(model.visibleActivityRuns.map(\.id), ["unread", "active"])
+        XCTAssertEqual(model.inboxRuns.map(\.id), ["unread"])
+        XCTAssertEqual(model.inProgressRuns.map(\.id), ["active"])
+        XCTAssertTrue(model.readRuns.isEmpty)
+        XCTAssertEqual(model.activityRuns, [read, failed, unread, active], "Clearing only removes presentation rows")
+        XCTAssertEqual(model.attentionItems, [request], "Clearing cannot resolve an outstanding request")
+        XCTAssertEqual(toasts, ["Cleared 2 read updates"])
+        XCTAssertNoBackendTraffic()
+
+        let restored = makeModel()
+        restored.activityRuns = model.activityRuns
+        XCTAssertEqual(restored.visibleActivityRuns.map(\.id), ["unread", "active"])
+    }
+
+    func testClearingMatchingReadUpdatesLeavesOtherReadAndNewerResultsVisible() {
+        let model = makeModel()
+        let matched = run(id: "matched")
+        let other = run(id: "other")
+        let changed = run(id: "changed")
+        model.activityRuns = [matched, other, changed]
+        model.markAllActivitySeen()
+        model.activityRuns[2] = run(id: "changed", updatedAt: 20)
+
+        model.clearReadActivityRuns(matching: ["matched", "changed"])
+
+        XCTAssertEqual(model.readRuns.map(\.id), ["other"])
+        XCTAssertEqual(model.inboxRuns.map(\.id), ["changed"])
+        XCTAssertEqual(model.dismissedActivityRunIDs, ["matched"])
+    }
+
+    func testClearingFocusedReadRunKeepsItClearedAfterRefresh() async throws {
+        let selected = run(id: "selected")
+        let other = run(id: "other")
+        let detail = try JSONEncoder().encode(selected)
+        BackendStub.respond(toPath: "/api/runs") { _ in ["runs": [], "read_only": false] }
+        BackendStub.respond(toPath: "/api/runs/selected") { _ in detail }
+        BackendStub.respond(toPath: "/api/attention") { _ in ["items": [], "unresolved_count": 0, "read_only": false] }
+        let model = makeModel()
+        model.markActivitySeen(selected)
+        model.markActivitySeen(other)
+        await openAndFinishRefresh(model, focus: .run("selected"))
+        model.activityRuns = [other]
+
+        model.clearReadActivityRuns()
+
+        XCTAssertTrue(model.displayedActivityRuns.isEmpty)
+        XCTAssertEqual(model.dismissedActivityRunIDs, ["selected"], "A focused clear leaves unrelated read updates intact")
+        await model.refreshActivityRuns()
+        XCTAssertTrue(model.displayedActivityRuns.isEmpty, "Fetching a focused run must not resurrect a cleared update")
+    }
+
+    func testAgentAttributionUsesSavedProfileBeforeScheduleNameAndSupportsLegacyAndTeams() {
+        let profile = AgentProfile(name: "Jinbei")
+        let scheduledChat = SessionSummary(id: "session-1", name: "chat", preview: "", mtime: 1, size: 0,
+            agentProfileID: profile.id.uuidString, agentKind: "schedule", agentName: "Test Schedule")
+        XCTAssertEqual(ActivityCenterModel.agentName(for: run(id: "saved"), session: scheduledChat, profiles: [profile]), "Jinbei")
+
+        let legacyChat = SessionSummary(id: "session-1", name: "chat", preview: "", mtime: 1, size: 0,
+            agentKind: "event", agentName: "Inbox Triage")
+        XCTAssertEqual(ActivityCenterModel.agentName(for: run(id: "legacy"), session: legacyChat, profiles: []), "Inbox Triage")
+        XCTAssertEqual(ActivityCenterModel.agentName(for: run(id: "team", runKind: "team"), session: scheduledChat, profiles: [profile]), "Team")
+        XCTAssertNil(ActivityCenterModel.agentName(for: run(id: "ordinary"), session: nil, profiles: [profile]), "Do not attribute ordinary chats to whichever agent is selected")
+    }
+
+    func testCompletionAlreadyViewedInChatStaysOutOfActivityAfterRefreshAndRelaunch() async throws {
+        let model = makeModel()
+        model.activityRuns = [run(id: "viewed", state: "running")]
+        let finished = run(id: "viewed", updatedAt: 20)
+        let response = try JSONEncoder().encode(OrchestrationRunsResponse(runs: [finished], readOnly: false))
+        BackendStub.respond(toPath: "/api/runs") { _ in response }
+        BackendStub.respond(toPath: "/api/attention") { _ in ["items": [], "unresolved_count": 0, "read_only": false] }
+
+        model.recordCompletion(runID: "viewed", succeeded: true, wasRunning: true, isViewed: true)
+        await model.refreshActivityRuns()
+
+        XCTAssertTrue(model.visibleActivityRuns.isEmpty)
+        XCTAssertEqual(model.activityRuns, [finished], "The result itself remains saved")
+        XCTAssertEqual(model.unreadResultCount, 0)
+        let restored = makeModel()
+        restored.activityRuns = [finished]
+        XCTAssertTrue(restored.visibleActivityRuns.isEmpty)
+    }
+
+    func testBackgroundCompletionRemainsAvailableWhenOpenedLaterOrReplayed() {
+        let model = makeModel()
+        let finished = run(id: "background")
+        model.recordCompletion(runID: finished.id, succeeded: true, wasRunning: true, isViewed: false)
+        model.activityRuns = [finished]
+        XCTAssertEqual(model.inboxRuns.map(\.id), [finished.id])
+
+        model.markActivitySeen(finished)
+        model.recordCompletion(runID: finished.id, succeeded: true, wasRunning: true, isViewed: true)
+
+        XCTAssertEqual(model.readRuns.map(\.id), [finished.id], "A replay after opening cannot hide an earlier background completion")
+        XCTAssertTrue(model.dismissedActivityRunIDs.isEmpty)
+    }
+
+    func testInactiveHistoricalFailedAndActivityCenterCompletionsAreNotSuppressed() {
+        let model = makeModel()
+        model.recordCompletion(runID: "historical", succeeded: true, wasRunning: false, isViewed: true)
+        model.recordCompletion(runID: "failed", succeeded: false, wasRunning: true, isViewed: true)
+        model.activityCenterPresented = true
+        model.recordCompletion(runID: "activity-open", succeeded: true, wasRunning: true, isViewed: true)
+        model.activityRuns = [run(id: "historical"), run(id: "failed", state: "failed"), run(id: "activity-open")]
+
+        XCTAssertEqual(model.visibleActivityRuns.count, 3)
+        XCTAssertEqual(model.unreadResultCount, 3)
+        XCTAssertTrue(model.dismissedActivityRunIDs.isEmpty)
     }
 
     func testAttentionBadgeDeduplicatesRelatedRowsByRunAndPrefersDetail() {

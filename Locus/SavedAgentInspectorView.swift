@@ -1,5 +1,46 @@
 import SwiftUI
 
+/// Native disclosure arrows have a small hit target on macOS. Keep the header
+/// as a keyboard-accessible button whose entire row opens the section.
+private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var inset: CGFloat = 0
+    let identifier: String
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.locus(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    configuration.label
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .padding(inset)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.locus())
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows or hides this section")
+            .accessibilityIdentifier(identifier)
+
+            if configuration.isExpanded {
+                configuration.content
+                    .padding(.horizontal, inset)
+                    .padding(.bottom, inset)
+            }
+        }
+    }
+}
+
 /// Shared editing controls for the overview and the unsaved profile draft.
 /// Linking a project stores its location; it does not move or copy that project.
 struct AgentWorkspacePreferencesEditor: View {
@@ -55,7 +96,9 @@ struct AgentWorkspacePreferencesEditor: View {
             if compact {
                 DisclosureGroup("Folder details & linked projects", isExpanded: $showingDetails) {
                     folderDetails.padding(.top, 8)
-                }.font(.locus(size: 12))
+                }
+                .disclosureGroupStyle(SavedAgentDisclosureStyle(identifier: "savedAgent.folderDetails.toggle"))
+                .font(.locus(size: 12))
             } else {
                 folderDetails
             }
@@ -85,7 +128,9 @@ struct AgentWorkspacePreferencesEditor: View {
                                 .accessibilityLabel("Unlink \(URL(fileURLWithPath: path).lastPathComponent)")
                         }.padding(.top, 8)
                     }
-                }.font(.locus(size: 12))
+                }
+                .disclosureGroupStyle(SavedAgentDisclosureStyle(identifier: "savedAgent.linkedProjects.toggle"))
+                .font(.locus(size: 12))
             }
         }
     }
@@ -352,6 +397,7 @@ private struct SavedAgentOverviewContent: View {
                     Text("\(chat.id == model.currentSessionID ? "This chat" : "Latest chat"): \(model.savedAgentWorkspaceTitle(profile, path: root))")
                         .font(.locus(size: 12)).lineLimit(1).truncationMode(.middle)
                 }
+                .disclosureGroupStyle(SavedAgentDisclosureStyle(identifier: "savedAgent.taskFolders.toggle"))
             }
         }.accessibilityIdentifier("savedAgent.workspaces")
     }
@@ -581,7 +627,10 @@ private struct SavedAgentOverviewContent: View {
                             }
                             Spacer(minLength: 6)
                             Image(systemName: "chevron.right").font(.locus(size: 11, weight: .medium)).foregroundStyle(muted)
-                        }.padding(.vertical, 5).contentShape(Rectangle())
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.locus()).disabled(model.chatNavigationDisabled && openChat == nil)
                     .accessibilityIdentifier("savedAgent.chat.\(session.id)")
@@ -595,12 +644,14 @@ private struct SavedAgentOverviewContent: View {
     }
 
     private var instructions: some View {
-        card {
+        card(padding: 0) {
             DisclosureGroup(isExpanded: $showInstructions) {
                 Text(profile.instructions.isEmpty ? "No additional instructions." : profile.instructions)
                     .font(.locus(size: 13)).foregroundStyle(secondary).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("savedAgent.instructions.content")
             } label: { sectionTitle("Instructions", symbol: "text.alignleft") }
+            .disclosureGroupStyle(SavedAgentDisclosureStyle(inset: 18, identifier: "savedAgent.instructions.toggle"))
             .accessibilityIdentifier("savedAgent.instructions")
         }
     }
@@ -608,11 +659,12 @@ private struct SavedAgentOverviewContent: View {
     private func sectionTitle(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol).font(.locus(size: 14, weight: .semibold)).foregroundStyle(ink)
     }
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func card<Content: View>(padding: CGFloat = 18, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14, content: content)
-            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(padding).frame(maxWidth: .infinity, alignment: .leading)
             .locusSurface(.floating, radius: 14)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(LocusTheme.line.opacity(0.7), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
+                .allowsHitTesting(false).accessibilityHidden(true))
     }
     private func stateBadge(_ title: String, warning: Bool, busy: Bool) -> some View {
         Text(title).font(.locus(size: 11, weight: .medium))

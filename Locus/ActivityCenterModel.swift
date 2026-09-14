@@ -59,6 +59,7 @@ final class ActivityCenterModel: ObservableObject {
     private var defaults: UserDefaults = .standard
     private var toastHandler: (String) -> Void = { _ in }
     private var liveAttentionProvider: () -> [AttentionItem] = { [] }
+    private var observedCompletionRunIDs: Set<String> = []
 
     var activityNeedsAttentionCount: Int {
         attentionItems.count
@@ -116,7 +117,8 @@ final class ActivityCenterModel: ObservableObject {
         guard let focus else { return visibleActivityRuns }
         var seen: Set<String> = []
         return (visibleActivityRuns + (focusedRun.map { [$0] } ?? [])).filter {
-            focus.includes($0) && seen.insert($0.id).inserted
+            focus.includes($0) && !dismissedActivityRunIDs.contains($0.id)
+                && seen.insert($0.id).inserted
         }
     }
 
@@ -140,6 +142,25 @@ final class ActivityCenterModel: ObservableObject {
 
     func isFinished(_ run: OrchestrationRun) -> Bool {
         TeamRunState(rawValue: run.state)?.isTerminal == true
+    }
+
+    /// A saved agent's name takes precedence over the schedule/event name
+    /// stored on its chat. Ordinary team work uses the recorded team name.
+    static func agentName(
+        for run: OrchestrationRun,
+        session: SessionSummary?,
+        profiles: [AgentProfile]
+    ) -> String? {
+        if run.runKind == "team", let name = run.teamName?.nilIfEmpty {
+            return name
+        }
+        let profileID = session?.savedAgentProfileID
+            ?? run.manifest?["agent_profile_id"]?.string.flatMap(UUID.init(uuidString:))
+        if let profileID, let profile = profiles.first(where: { $0.id == profileID }) {
+            return profile.name.nilIfEmpty
+        }
+        return run.manifest?["agent_name"]?.string?.nilIfEmpty
+            ?? session?.agentName?.nilIfEmpty
     }
 
     func restore(persistenceEnabled: Bool, defaults: UserDefaults = .standard) {
@@ -305,6 +326,28 @@ final class ActivityCenterModel: ObservableObject {
         guard TeamRunState(rawValue: run.state)?.isTerminal == true else { return }
         dismissedActivityRunIDs.insert(run.id)
         persistActivityPresentationState()
+    }
+
+    /// Called at the live completion boundary, before its runtime becomes
+    /// idle. History reads never call this: opening an old result is not
+    /// evidence that the person saw it finish. The first observation also
+    /// prevents a replay from reclassifying a background result as viewed.
+    func recordCompletion(runID: String, succeeded: Bool, wasRunning: Bool, isViewed: Bool) {
+        guard !runID.isEmpty, succeeded, observedCompletionRunIDs.insert(runID).inserted else { return }
+        guard wasRunning, isViewed, !activityCenterPresented else { return }
+        dismissedActivityRunIDs.insert(runID)
+        persistActivityPresentationState()
+    }
+
+    /// Only clears results that are still read at the time of the action.
+    /// A search can supply its matching IDs; focus is already applied by readRuns.
+    /// Chats, run records, and unresolved attention requests are kept intact.
+    func clearReadActivityRuns(matching runIDs: Set<String>? = nil) {
+        let cleared = readRuns.filter { runIDs?.contains($0.id) ?? true }.map(\.id)
+        guard !cleared.isEmpty else { return }
+        dismissedActivityRunIDs.formUnion(cleared)
+        persistActivityPresentationState()
+        toastHandler("Cleared \(cleared.count) read \(cleared.count == 1 ? "update" : "updates")")
     }
 
     func clearFinishedActivityRuns() {

@@ -11,6 +11,8 @@ import UserNotifications
 extension AppModel {
     func handle(_ event: [String: Any], source: BackendService? = nil) {
         guard let type = event["type"] as? String else { return }
+        let activitySessionID = event["session_id"] as? String ?? currentSessionID
+        recordActivityCompletion(event, sessionID: activitySessionID, runtime: taskWorkers[activitySessionID])
         recordAgentWorldRequestOwner(event, source: source)
         if source == nil || source === backend {
             goals.handleEvent(event, sessionID: event["session_id"] as? String ?? currentSessionID)

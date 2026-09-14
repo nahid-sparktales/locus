@@ -275,6 +275,11 @@ struct WorkspaceView: View {
                     Text(model.modelPickerLabel)
                         .font(.locus(size: 9, weight: .semibold))
                         .lineLimit(1)
+                    if model.modelSelectionLockReason != nil {
+                        Image(systemName: "lock.fill")
+                            .font(.locus(size: 8))
+                            .foregroundStyle(LocusTheme.muted)
+                    }
                     Image(systemName: "chevron.down")
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
@@ -290,10 +295,12 @@ struct WorkspaceView: View {
                 .frame(maxWidth: 176)
             }
             .buttonStyle(.locus())
-            .help(agentTeams.teamModeEnabled
+            .help(model.modelSelectionLockReason ?? (agentTeams.teamModeEnabled
                 ? "Active team: \(model.selectedTeamModelNames.joined(separator: ", "))"
-                : "Select model")
-            .accessibilityLabel(agentTeams.teamModeEnabled
+                : "Select model"))
+            .accessibilityLabel(model.modelSelectionLockReason != nil
+                ? "Model locked, \(model.modelPickerLabel)"
+                : agentTeams.teamModeEnabled
                 ? "Active team, \(model.modelPickerLabel), \(runtimeHealthTitle)"
                 : "Select model, \(model.modelPickerLabel), \(runtimeHealthTitle)")
             .accessibilityIdentifier("workspace.modelPicker")
@@ -1335,6 +1342,19 @@ struct ActivityCenterView: View {
                     }
                     .font(.locus(size: 10, weight: .medium))
                     .buttonStyle(ActivityActionButtonStyle())
+                } else if activityCenter.selectedTab == .read, !filteredRuns.isEmpty {
+                    HStack {
+                        Button {
+                            activityCenter.clearReadActivityRuns(matching: Set(filteredRuns.map(\.id)))
+                        } label: {
+                            Label("Clear read (\(filteredRuns.count))", systemImage: "tray.and.arrow.up")
+                        }
+                        .help("Clear the read updates shown here. Your chats and tasks stay saved.")
+                        .accessibilityIdentifier("activity.clearRead")
+                        Spacer(minLength: 0)
+                    }
+                    .font(.locus(size: 10, weight: .medium))
+                    .buttonStyle(ActivityActionButtonStyle())
                 }
             }
             .padding(16)
@@ -1451,7 +1471,7 @@ struct ActivityCenterView: View {
         switch activityCenter.selectedTab {
         case .inbox: "Requests that need you and new results. Open a finished task to move it to Read."
         case .inProgress: "Live work and queued tasks. They keep running when you leave this panel."
-        case .read: "Finished tasks you’ve opened or marked as read. Mark one unread to return it to the Inbox."
+        case .read: "Finished tasks you’ve opened or marked as read. Clear updates here to tidy this list; your chats and tasks stay saved."
         }
     }
 
@@ -1472,7 +1492,9 @@ struct ActivityCenterView: View {
         case .inProgress: values = activityCenter.inProgressRuns
         case .read: values = activityCenter.readRuns
         }
-        return values.filter { matchesSearch([chatTitle(for: $0), workspaceTitle(for: $0), $0.request, statusTitle(for: $0)]) }
+        return values.filter {
+            matchesSearch([chatTitle(for: $0), workspaceTitle(for: $0), agentName(for: $0) ?? "", $0.request, statusTitle(for: $0)])
+        }
     }
 
     private func matchesSearch(_ values: [String]) -> Bool {
@@ -1698,6 +1720,14 @@ struct ActivityCenterView: View {
                         .font(.locus(size: 10))
                         .foregroundStyle(LocusTheme.muted)
                         .lineLimit(1)
+                        if let name = agentName(for: run) {
+                            Label("By \(name)", systemImage: run.runKind == "team" ? "person.3" : "person.crop.square")
+                                .font(.locus(size: 10, weight: .medium))
+                                .foregroundStyle(LocusTheme.inkSoft)
+                                .lineLimit(1)
+                                .help(name)
+                                .accessibilityIdentifier("activity.agent.\(run.id)")
+                        }
                         Text(workspaceTitle(for: run))
                             .font(.locus(size: 10))
                             .foregroundStyle(LocusTheme.muted)
@@ -1765,6 +1795,14 @@ struct ActivityCenterView: View {
                         Button(model.retryingRunIDs.contains(run.id) ? "Retrying…" : "Retry") { model.retryRun(run) }
                             .disabled(model.retryingRunIDs.contains(run.id))
                     }
+                    if activityCenter.isFinished(run) {
+                        Divider()
+                        Button("Clear from Activity Center") {
+                            activityCenter.dismissActivityRun(run)
+                        }
+                        .help("Remove this update. The chat and task stay saved.")
+                        .accessibilityIdentifier("activity.clear.\(run.id)")
+                    }
                     Divider()
                     Text("Duration: \(elapsed(run, now: now))")
                     Text(run.executionEnvironment == "worktree" ? "Runs in a worktree" : "Runs locally")
@@ -1809,6 +1847,14 @@ struct ActivityCenterView: View {
     private func workspaceTitle(for run: OrchestrationRun) -> String {
         guard let path = run.workspaceRoot, !path.isEmpty else { return "Unknown workspace" }
         return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private func agentName(for run: OrchestrationRun) -> String? {
+        ActivityCenterModel.agentName(
+            for: run,
+            session: run.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0] },
+            profiles: model.agentProfiles
+        )
     }
 
     private func elapsed(_ run: OrchestrationRun, now: Date) -> String {
@@ -2582,6 +2628,33 @@ private struct ModelPickerPopover: View {
 
             Divider()
 
+            if let explanation = model.modelSelectionLockReason {
+                Label(explanation, systemImage: "lock.fill")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .accessibilityIdentifier("workspace.modelPicker.lockExplanation")
+                Divider()
+            } else if let profile = model.currentAgentChatProfile {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Changes apply to your next message in this chat with \(profile.name).")
+                        .font(.locus(size: 10))
+                        .foregroundStyle(LocusTheme.muted)
+                    if model.settings.agentChatModelSelections[model.currentSessionID] != nil {
+                        Button("Use agent default") {
+                            model.resetAgentChatModel()
+                            dismiss()
+                        }
+                        .buttonStyle(.locus())
+                        .font(.locus(size: 10, weight: .semibold))
+                        .accessibilityIdentifier("workspace.modelPicker.agentDefault")
+                    }
+                }
+                .padding(14)
+                Divider()
+            }
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let team = agentTeams.selectedAgentTeam {
@@ -2668,6 +2741,7 @@ private struct ModelPickerPopover: View {
                 Button("Switch to Solo") {
                     agentTeams.selectAgentTeam(nil)
                 }
+                .disabled(model.modelSelectionLockReason != nil)
                 .accessibilityIdentifier("workspace.modelPicker.switchToSolo")
             }
             .buttonStyle(.locus())
@@ -2707,6 +2781,7 @@ private struct ModelPickerPopover: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.locus())
+                .disabled(model.modelSelectionLockReason != nil)
                 .accessibilityLabel("Use \(name) from \(section.title)")
             }
         }

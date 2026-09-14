@@ -57,14 +57,35 @@ extension AppModel {
         )
     }
 
-    func agentWorldProfileDispatch(profileID: UUID, mode: WorkMode) throws -> TaskCapsuleDispatch {
+    func agentWorldProfileDispatch(profileID: UUID, mode: WorkMode, sessionID: String? = nil,
+                                   queuedRoute: [String: JSONValue]? = nil) throws -> TaskCapsuleDispatch {
         guard !removingSavedAgentIDs.contains(profileID) else {
             throw AgentWorldError.unavailable("This saved agent is being removed.")
         }
-        guard let profile = agentProfiles.first(where: { $0.id == profileID }) else {
+        guard let savedProfile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw AgentWorldError.unavailable("This conversation's agent profile was removed. Choose another agent or start a regular chat.")
         }
+        var profile = sessionID.map { agentChatProfile(savedProfile, sessionID: $0) } ?? savedProfile
+        if let queuedRoute {
+            guard queuedRoute["profile_id"]?.string.flatMap(UUID.init(uuidString:)) == profileID,
+                  let name = queuedRoute["model"]?.string?.nilIfEmpty,
+                  let provider = queuedRoute["provider"]?.string,
+                  sessionID.flatMap({ sessionCatalog.snapshot.sessionsByID[$0] })?.isAgentEventChat != true else {
+                throw AgentWorldError.unavailable("This queued chat’s saved model route is invalid.")
+            }
+            if provider == "ollama" {
+                profile.route = .localOllama
+            } else if let id = queuedRoute["provider_account_id"]?.string.flatMap(UUID.init(uuidString:)) {
+                profile.route = .providerAccount(id)
+            } else {
+                throw AgentWorldError.unavailable("This queued chat’s saved model account is unavailable.")
+            }
+            profile.model = name
+        }
         let route = try agentProfileProvider(profile)
+        if let queuedRoute, queuedRoute["provider"]?.string != route.provider {
+            throw AgentWorldError.unavailable("This queued chat’s model account changed. Choose an account and send again.")
+        }
         var dispatch = TaskCapsuleDispatch(profile: profile, provider: route.provider, accountID: route.accountID,
                                           providerBody: route.body, context: [:], mode: mode)
         dispatch.profileOnly = true
@@ -108,8 +129,8 @@ extension AppModel {
     }
 
     /// Uses the existing worker lifecycle and global admission queue, pinned to
-    /// the resident's workspace and exact profile for every submitted turn.
-    /// No foreground chat selection or model picker state participates.
+    /// the resident's workspace and profile for every submitted turn, including
+    /// an explicit model choice saved for this conversation.
     func sendAgentWorldTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode) async throws {
         guard [.ask, .work].contains(mode), !isShuttingDown,
               let profile = agentProfiles.first(where: { $0.id == profileID }) else {
@@ -124,10 +145,7 @@ extension AppModel {
         guard goals.goal(for: sessionID)?.status != .active else {
             throw AgentWorldError.unavailable("Pause the current goal before continuing this agent conversation.")
         }
-        let route = try agentProfileProvider(profile)
-        var dispatch = TaskCapsuleDispatch(profile: profile, provider: route.provider, accountID: route.accountID,
-                                           providerBody: route.body, context: [:], mode: mode)
-        dispatch.profileOnly = true
+        let dispatch = try agentWorldProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID)
         let runID = UUID().uuidString
         let token = UUID()
         var failure: Error?
@@ -144,6 +162,10 @@ extension AppModel {
                     "request": text, "run_kind": "solo",
                     "solo_swarm": false,
                 ]) { _, new in new }
+                if let route = try await prepareAgentChatQueueRoute(dispatch, sessionID: sessionID) {
+                    queueBody["agent_chat_route"] = route
+                    queueBody["mode"] = mode.rawValue
+                }
                 let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
                 let previous = taskConversationStates[sessionID]
                 taskConversationStates[sessionID] = TaskConversationState(
@@ -151,7 +173,7 @@ extension AppModel {
                     workerID: previous?.workerID, runID: runID, state: .queued, updatedAt: Date())
                 try Task.checkCancellation()
                 guard let worker = await ensureChatWorker(for: sessionID, workspaceRoot: detail.workspaceRoot?.nilIfEmpty ?? detail.cwd ?? workspace,
-                    provider: route.provider, providerAccountID: route.accountID, model: profile.model) else {
+                    provider: dispatch.provider, providerAccountID: dispatch.accountID, model: dispatch.profile.model) else {
                     throw AgentWorldError.unavailable("This agent's worker could not connect. Reconnect its account and try again.")
                 }
                 guard worker.sessionID == sessionID else { throw AgentWorldError.unavailable("The conversation changed while connecting. Reopen it before sending.") }
@@ -170,8 +192,8 @@ extension AppModel {
                 let request: [String: Any] = [
                     "type": "user_message", "text": text, "mode": mode.rawValue,
                     "request_id": runID, "run_id": runID,
-                    "agent_profile": Self.agentWorldProfileBody(profile),
-                    "agent_config": encodedJSONObject(profile.resolvedBehavior) ?? [:],
+                    "agent_profile": Self.agentWorldProfileBody(dispatch.profile),
+                    "agent_config": encodedJSONObject(dispatch.profile.resolvedBehavior) ?? [:],
                 ]
                 if currentSessionID == sessionID {
                     blocks.append(ChatBlock(kind: .user, text: text))

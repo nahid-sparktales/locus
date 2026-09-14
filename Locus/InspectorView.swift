@@ -1543,10 +1543,16 @@ struct InspectorRunsTab: View {
                 return
             }
             detailRunID = request.runID
-            await runs.loadOrchestrationRun(request.runID)
+            viewMode = "overview"
+            filter = ""
+            showingRunDetail = true
             if let run = model.runRecord(for: request.runID) {
                 scope = run.isSoloSwarm ? .soloSwarm : (run.runKind == "team" ? .teams : .all)
-                showingRunDetail = true
+            }
+            await runs.loadOrchestrationRun(request.runID)
+            guard !Task.isCancelled, model.runsNavigationRequest?.id == request.id else { return }
+            if let run = model.runRecord(for: request.runID) {
+                scope = run.isSoloSwarm ? .soloSwarm : (run.runKind == "team" ? .teams : .all)
             }
         }
         .onAppear { draftPlan = model.pendingDispatchPlan }

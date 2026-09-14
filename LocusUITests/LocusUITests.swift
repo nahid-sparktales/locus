@@ -4321,6 +4321,10 @@ final class LocusUITests: XCTestCase {
         // Opening the result is the acknowledgement, not opening the panel.
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
+        XCTAssertTrue(anyElement("runs.openTask").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil {
+            self.app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count == 1
+        }, "The destination chat should be visibly highlighted")
         anyElement("sidebar.activity").click()
         XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
         anyElement("activity.tab.read").click()
@@ -4343,6 +4347,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
         anyElement("activity.tab.read").click()
         XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
+    }
+
+    func testActivityClearReadKeepsTheCompletedTask() {
+        relaunchWithRunFixture("completed")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        anyElement("activity.markAllSeen").click()
+        anyElement("activity.tab.read").click()
+        let clear = anyElement("activity.clearRead")
+        XCTAssertTrue(clear.waitForExistence(timeout: 3))
+        clear.click()
+        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.close").click()
+        XCTAssertTrue(anyElement("runs.openTask").exists, "Clearing activity keeps the completed task")
     }
 
     func testActivitySeparatesLiveWorkFromReadResults() {

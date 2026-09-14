@@ -99,6 +99,41 @@ final class AgentInspectorUITests: XCTestCase {
         XCTAssertTrue(element("agentOverview.chat.seed-agent-chat-older").waitForExistence(timeout: 5))
     }
 
+    func testSavedAgentDisclosuresRespondAcrossTheWholeHeader() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = "saved-profile"
+        app.launch()
+        let overview = element("savedAgent.overview")
+        XCTAssertTrue(overview.waitForExistence(timeout: 10))
+
+        // macOS exposes a styled DisclosureGroup as a disclosure triangle;
+        // its native accessibility node also inherits the card identifier.
+        // Match its unique visible label and compare the native open state.
+        for title in ["Folder details & linked projects", "Instructions"] {
+            let header = app.disclosureTriangles.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            for _ in 0..<12 {
+                if header.exists && header.isHittable && overview.frame.contains(header.frame) { break }
+                overview.scroll(byDeltaX: 0, deltaY: -200)
+            }
+            XCTAssertTrue(header.exists && header.isHittable)
+            XCTAssertGreaterThan(header.frame.width, 180)
+            let collapsedValue = String(describing: header.value)
+            // Click empty space well beyond the label and disclosure arrow.
+            // On the Instructions card this also covers its top padding.
+            header.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.15)).click()
+            let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                String(describing: header.value) != collapsedValue
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 3), .completed)
+            header.coordinate(withNormalizedOffset: CGVector(dx: 0.70, dy: 0.5)).click()
+            let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                String(describing: header.value) == collapsedValue
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
+        }
+        attachScreenshot("Saved agent full-row disclosure headers")
+    }
+
     private func attachScreenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

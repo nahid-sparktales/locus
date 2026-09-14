@@ -5,6 +5,42 @@ import XCTest
 
 @MainActor
 final class SessionCatalogModelTests: XCTestCase {
+    func testActivityRevealOpensArchivedChatAndAllParentFolders() {
+        let model = SessionCatalogModel(fileExists: { _ in true })
+        let chat = session("old", mtime: 1, archived: true, workspace: "/tmp/project", folderID: "child")
+        model.replaceSessions([chat])
+        model.replaceChatFolders([
+            folder("parent", workspace: "/tmp/project", name: "Parent", order: 0),
+            folder("child", workspace: "/tmp/project", parentID: "parent", name: "Child", order: 0),
+        ])
+        model.setSearchQuery("unrelated")
+
+        model.revealSession(chat)
+
+        XCTAssertTrue(model.snapshot.showArchivedSessions)
+        XCTAssertEqual(model.snapshot.searchQuery, "")
+        XCTAssertTrue(model.snapshot.expandedWorkspaceIDs.contains("/tmp/project"))
+        XCTAssertEqual(model.snapshot.expandedChatFolderIDs, ["parent", "child"])
+        XCTAssertEqual(model.sessionReveal?.sessionID, chat.id)
+        XCTAssertTrue(model.snapshot.sessionsByID[chat.id]?.isArchived == true,
+            "Revealing archived history must not unarchive or change it")
+    }
+
+    func testEarlierHighlightCannotClearANewerActivityDestination() throws {
+        let model = SessionCatalogModel(fileExists: { _ in true })
+        let first = session("first", mtime: 1)
+        let second = session("second", mtime: 2)
+        model.replaceSessions([first, second])
+        model.revealSession(first)
+        let firstID = try XCTUnwrap(model.sessionReveal?.id)
+        model.revealSession(second)
+        let secondID = try XCTUnwrap(model.sessionReveal?.id)
+        model.finishSessionReveal(firstID)
+        XCTAssertEqual(model.sessionReveal?.sessionID, second.id)
+        model.finishSessionReveal(secondID)
+        XCTAssertNil(model.sessionReveal)
+    }
+
     private func profile(
         _ path: String,
         lastOpened: TimeInterval

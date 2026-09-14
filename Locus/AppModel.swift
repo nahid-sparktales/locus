@@ -103,6 +103,7 @@ final class AppModel: ObservableObject {
     let optionalQuestions = OptionalQuestionModel()
     let soloCollaboration = SoloCollaborationModel()
     @Published var runsNavigationRequest: RunsNavigationRequest?  // internal(for: AppModel+UITestFixtures)
+    var activityNavigationGeneration = UUID()
     let evaluations = EvaluationsModel()
     let runtimes = RuntimeModel()
     let knowledge = WorkspaceKnowledgeModel()
@@ -1547,7 +1548,14 @@ final class AppModel: ObservableObject {
     /// Whether the session is running this model through this source. Both
     /// halves matter: two accounts can offer a model of the same name.
     func isCurrentRoute(account: ProviderAccount?, model: String) -> Bool {
-        account?.id.uuidString == settings.activeAccountID && model == selectedModel
+        if let route = modelPickerTaskRoute {
+            return model == route.model && (route.accountID.map { $0 == account?.id }
+                ?? (account == nil && route.provider == "ollama"))
+        }
+        if let profile = currentAgentChatProfile {
+            return account?.id == profile.route.accountID && model == profile.model
+        }
+        return account?.id.uuidString == settings.activeAccountID && model == selectedModel
     }
 
     /// The model an agent created or repointed right now would run on: what
@@ -1561,9 +1569,20 @@ final class AppModel: ObservableObject {
     /// The closed picker's label. With an account it leads with the account's
     /// short name, because the model name alone no longer says where it runs.
     var modelPickerLabel: String {
+        if let route = modelPickerTaskRoute {
+            return taskModelPickerLabel(model: route.model, accountID: route.accountID, provider: route.provider)
+        }
+        if selectedMode == .duo { return "Duo models" }
         if let team = selectedAgentTeam {
             let count = selectedTeamModelNames.count
             return "\(team.name) · \(count) \(count == 1 ? "model" : "models")"
+        }
+        if let profile = currentAgentChatProfile {
+            if let accountID = profile.route.accountID {
+                let source = providerAccounts.first { $0.id == accountID }?.shortName ?? "Unavailable account"
+                return "\(source) · \(profile.model)"
+            }
+            return profile.model
         }
         guard let account = activeAccount else {
             return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel

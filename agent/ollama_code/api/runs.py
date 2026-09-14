@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
+from ..agent_chat_routes import validate_agent_chat_route
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError
@@ -158,6 +159,18 @@ def run_queue(
     session_id = str(body.get("session_id") or "")
     if not session_id:
         raise HTTPException(422, "session_id is required")
+    manifest = {"solo_swarm": body.get("solo_swarm") is True}
+    if "agent_chat_route" in body:
+        try:
+            manifest["agent_chat_route"] = validate_agent_chat_route(
+                body["agent_chat_route"], SessionMeta.get(session_id),
+            )
+            mode = body.get("mode", "work")
+            if mode not in ("ask", "work", "plan", "grill"):
+                raise ValueError("The agent chat mode is invalid.")
+            manifest["mode"] = mode
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     run_id = str(body.get("run_id") or uuid.uuid4().hex)
     goal_id = str(body.get("goal_id") or "")
     if goal_id:
@@ -184,7 +197,7 @@ def run_queue(
         run_kind=str(body.get("run_kind") or "solo"),
         execution_environment=str(body.get("execution_environment") or "local"),
         retry_parent_id=str(body.get("retry_parent_id") or ""),
-        manifest={"solo_swarm": body.get("solo_swarm") is True},
+        manifest=manifest,
     )
 
 
