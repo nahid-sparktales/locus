@@ -4251,17 +4251,19 @@ final class LocusUITests: XCTestCase {
         // viewing it must not resolve the item or mark Activity history seen.
         XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Clear"].exists)
-        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
 
         // Read status never hides an unresolved request from the inbox.
         anyElement("activity.tab.read").click()
         XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
         anyElement("activity.tab.inbox").click()
         XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
-        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
         anyElement("activity.close").click()
         XCTAssertFalse(anyElement("activity.center").exists)
         XCTAssertTrue(app.textViews["composer.input"].exists)
+        // Opening Activity Center dismisses the temporary sidebar in compact
+        // windows. Reopen it before checking the unresolved-request badge.
+        revealSidebarForNavigation()
+        XCTAssertTrue("\(destination.value ?? "")".contains("1 needs attention"))
     }
 
     func testActivityInboxSearchMatchesVisibleChatTitle() {
@@ -4299,7 +4301,8 @@ final class LocusUITests: XCTestCase {
             "A paused team must keep its checkpoint resume action")
 
         let more = anyElement("activity.more.seed-run")
-        more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(waitUntilHittable(more))
+        more.click()
         XCTAssertTrue(app.menuItems["View timeline"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.menuItems["Resume"].exists)
         XCTAssertFalse(app.menuItems["Retry"].exists,
@@ -4308,23 +4311,28 @@ final class LocusUITests: XCTestCase {
     }
 
     func testActivityCompletedResultMovesToReadAndCanBeMarkedUnread() {
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
         relaunchWithRunFixture("completed")
         revealSidebarForNavigation()
         anyElement("sidebar.activity").click()
         let row = anyElement("activity.open.seed-run")
         XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntilHittable(row), "The compact sidebar must not cover the task result")
         let inboxScreenshot = XCTAttachment(screenshot: app.screenshot())
         inboxScreenshot.name = "Activity Inbox"
         inboxScreenshot.lifetime = .keepAlways
         add(inboxScreenshot)
 
         // Opening the result is the acknowledgement, not opening the panel.
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-        XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
-        XCTAssertTrue(anyElement("runs.openTask").waitForExistence(timeout: 3))
+        row.click()
+        // Check the temporary feedback before querying the stable destination
+        // controls so a slower accessibility snapshot cannot miss the highlight.
         XCTAssertTrue(waitUntil {
             self.app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count == 1
         }, "The destination chat should be visibly highlighted")
+        XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
+        XCTAssertTrue(anyElement("runs.openTask").waitForExistence(timeout: 3))
         anyElement("sidebar.activity").click()
         XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
         anyElement("activity.tab.read").click()
@@ -4333,7 +4341,7 @@ final class LocusUITests: XCTestCase {
         readScreenshot.name = "Activity Read"
         readScreenshot.lifetime = .keepAlways
         add(readScreenshot)
-        anyElement("activity.markUnread.seed-run").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        anyElement("activity.markUnread.seed-run").click()
         XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
         anyElement("activity.tab.inbox").click()
         XCTAssertTrue(row.waitForExistence(timeout: 3))
@@ -4343,20 +4351,30 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(row.exists)
         app.buttons["Clear search"].click()
         XCTAssertTrue(row.waitForExistence(timeout: 3))
-        anyElement("activity.markAllSeen").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        anyElement("activity.markAllSeen").click()
         XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
         anyElement("activity.tab.read").click()
         XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
     }
 
     func testActivityClearReadKeepsTheCompletedTask() {
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
         relaunchWithRunFixture("completed")
         revealSidebarForNavigation()
         anyElement("sidebar.activity").click()
-        anyElement("activity.markAllSeen").click()
-        anyElement("activity.tab.read").click()
+        for tab in ["inbox", "inProgress", "read"] {
+            XCTAssertTrue(waitUntilHittable(anyElement("activity.tab.\(tab)")),
+                "Every Activity Center tab must be reachable in a compact window")
+        }
+        let markRead = anyElement("activity.markAllSeen")
+        XCTAssertTrue(waitUntilHittable(markRead), "The compact sidebar must not cover activity actions")
+        markRead.click()
+        let readTab = anyElement("activity.tab.read")
+        XCTAssertTrue(waitUntilHittable(readTab))
+        readTab.click()
         let clear = anyElement("activity.clearRead")
-        XCTAssertTrue(clear.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(clear))
         clear.click()
         XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
         anyElement("activity.close").click()

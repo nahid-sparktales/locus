@@ -815,6 +815,7 @@ struct RootView: View {
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var agentInspector: AgentInspectorModel
+    @EnvironmentObject private var activityCenter: ActivityCenterModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var compactSidebarPresented = false
 
@@ -988,6 +989,9 @@ struct RootView: View {
             }
             .onChange(of: model.sidebarCollapsed) { _, collapsed in
                 if collapsed { compactSidebarPresented = false }
+            }
+            .onChange(of: activityCenter.activityCenterPresented) { _, presented in
+                if presented { compactSidebarPresented = false }
             }
             .onChange(of: sessionCatalog.sessionReveal?.id) {
                 guard sessionCatalog.sessionReveal != nil else { return }

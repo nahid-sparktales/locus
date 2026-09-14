@@ -1239,6 +1239,7 @@ struct ActivityCenterView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var workflowRetryConfirmation: AttentionItem?
     @State private var clearUnavailableConfirmationPresented = false
     @State private var searchText = ""
@@ -1853,7 +1854,7 @@ struct ActivityCenterView: View {
         ActivityCenterModel.agentName(
             for: run,
             session: run.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0] },
-            profiles: model.agentProfiles
+            profiles: agentTeams.agentProfiles
         )
     }
 
