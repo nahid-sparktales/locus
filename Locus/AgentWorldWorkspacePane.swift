@@ -68,7 +68,7 @@ struct AgentWorldWorkspacePane: View {
                 Circle().stroke(palette.warning.opacity(0.2), lineWidth: 1)
                 Circle().stroke(palette.warning.opacity(0.3), lineWidth: 1).padding(5)
                 Image(systemName: ocean ? "safari" : "square.stack.3d.up")
-                    .font(.system(size: 24, weight: .ultraLight))
+                    .font(.locus(size: 24, weight: .ultraLight))
             }
             .foregroundStyle(ocean ? palette.warning : palette.signal)
             .frame(width: 47, height: 47).padding(.top, 5)
@@ -76,7 +76,7 @@ struct AgentWorldWorkspacePane: View {
                 Text(title.uppercased()).font(.locus(size: 8, weight: .semibold)).tracking(2.1)
                     .foregroundStyle(palette.warning)
                 Text(world.sharedChatPresented ? "The crew’s table" : world.selectedProfile?.name ?? "Welcome aboard")
-                    .font(ocean ? .system(size: 26, weight: .medium, design: .serif) : .locus(size: 22, weight: .semibold))
+                    .font(ocean ? .locus(size: 26, weight: .medium, design: .serif) : .locus(size: 22, weight: .semibold))
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if !world.sharedChatPresented, let resident {
@@ -109,7 +109,7 @@ struct AgentWorldWorkspacePane: View {
                 .accessibilityIdentifier("agentWorld.workspace.actions")
             }
             Button(action: world.dismissConversation) { Image(systemName: "xmark").font(.locus(size: 11)).frame(width: 29, height: 28) }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus(.icon))
                 .background(palette.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
                 .help("Return to the world").accessibilityLabel(ocean ? "Close Captain’s Quarters" : "Close agent workspace")
                 .accessibilityIdentifier("agentWorld.closeConversation")
@@ -129,7 +129,7 @@ struct AgentWorldWorkspacePane: View {
                     .background(selectedPane.wrappedValue == pane ? palette.white : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(selectedPane.wrappedValue == pane ? palette.warning.opacity(0.26) : .clear, lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus(.quiet))
                 .accessibilityLabel(tabTitle(pane))
                 .accessibilityAddTraits(selectedPane.wrappedValue == pane ? [.isSelected] : [])
                 .help(pane == .details && ocean ? "Vivre card · this resident’s profile and chats" : pane.rawValue)
