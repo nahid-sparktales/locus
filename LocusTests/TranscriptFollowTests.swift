@@ -1531,6 +1531,17 @@ final class TranscriptFollowTests: XCTestCase {
             XCTAssertFalse(coordinator.followState.isNearBottom)
 
             func assertAligned(content: NSRect, end: NSRect) {
+                // Native alignment runs on a display-link tick. A fixed count
+                // of run-loop turns can drain queued events before that tick
+                // arrives, so wait for the actual measured result instead.
+                let deadline = Date().addingTimeInterval(3)
+                while Date() < deadline {
+                    let visible = scroll.documentVisibleRect
+                    let distance = flipped ? end.maxY - visible.maxY : visible.minY - end.minY
+                    if abs(distance) <= 2, content.intersects(visible), end.intersects(visible),
+                       coordinator.followState.isNearBottom { break }
+                    pump(2)
+                }
                 let visible = scroll.documentVisibleRect
                 let distance = flipped ? end.maxY - visible.maxY : visible.minY - end.minY
                 XCTAssertEqual(distance, 0, accuracy: 2, "Measured end alignment must respect document orientation")

@@ -205,7 +205,7 @@ private struct AgentWorldSurface: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Residents").font(ocean ? .system(size: 20, weight: .semibold, design: .serif) : .locus(size: 17, weight: .semibold))
+                    Text("Residents").font(ocean ? .locus(size: 20, weight: .semibold, design: .serif) : .locus(size: 17, weight: .semibold))
                     Spacer()
                     Text("\(model.residents.count)").font(.locus(size: 10, weight: .semibold)).foregroundStyle(palette.warning)
                 }
@@ -217,7 +217,7 @@ private struct AgentWorldSurface: View {
                         .textFieldStyle(.plain).accessibilityIdentifier("agentWorld.residentSearch")
                     if !search.isEmpty {
                         Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(palette.muted) }
-                            .buttonStyle(.plain).accessibilityLabel("Clear resident search")
+                            .buttonStyle(.locus(.icon)).accessibilityLabel("Clear resident search")
                     }
                 }
                 .font(.locus(size: 10)).padding(8).background(palette.paper, in: RoundedRectangle(cornerRadius: 8))
@@ -229,7 +229,7 @@ private struct AgentWorldSurface: View {
                     if model.residents.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: ocean ? "sailboat" : "person.crop.square.badge.plus")
-                                .font(.system(size: 30)).foregroundStyle(palette.warning)
+                                .font(.locus(size: 30)).foregroundStyle(palette.warning)
                             Text(ocean ? "Your adventure starts here" : "No saved agents")
                                 .font(.locus(size: 13, weight: .semibold))
                             Text("Create an agent to give it a home in this world.")
@@ -287,7 +287,7 @@ private struct AgentWorldSurface: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line, lineWidth: 1))
                     } else {
-                        Image(systemName: "person.crop.circle").font(.system(size: 26, weight: .light))
+                        Image(systemName: "person.crop.circle").font(.locus(size: 26, weight: .light))
                             .foregroundStyle(palette.signal).frame(width: 36, height: 42)
                     }
                     VStack(alignment: .leading, spacing: 5) {
@@ -307,7 +307,7 @@ private struct AgentWorldSurface: View {
                 }
                 .padding(9).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus(.card))
             .help(resident.detail ?? "Open \(resident.name)’s conversation")
             .accessibilityLabel("\(resident.name), \(placement.map { "\($0.ship), \($0.home), " } ?? "")\(resident.role), \(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))")
             .accessibilityIdentifier("agentWorld.resident.\(resident.id)")
@@ -315,7 +315,7 @@ private struct AgentWorldSurface: View {
                 Button { model.newConversation(for: resident.id) } label: {
                     Label("New chat", systemImage: "plus.bubble")
                 }
-                .buttonStyle(.plain).disabled(!model.canStartConversation(for: resident.id))
+                .buttonStyle(.locus(.quiet)).disabled(!model.canStartConversation(for: resident.id))
                 .accessibilityLabel("New chat with \(resident.name)")
                 .accessibilityIdentifier("agentWorld.residentNewChat.\(resident.id)")
                 Spacer(minLength: 0)
@@ -355,7 +355,7 @@ private struct AgentWorldSurface: View {
                 } else { Image(systemName: "chevron.right").font(.locus(size: 8)).foregroundStyle(palette.muted) }
             }.padding(.horizontal, 9).frame(maxWidth: .infinity).frame(height: 32)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus(.card))
         .background(palette.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(palette.line, lineWidth: 1))
     }
@@ -377,7 +377,7 @@ private struct AgentWorldShipPortrait: View {
         Group {
             if let portrait { Image(nsImage: portrait).resizable().scaledToFit().padding(1) }
             else {
-                Text(String(resident.name.prefix(1))).font(.system(size: 23, weight: .medium, design: .serif))
+                Text(String(resident.name.prefix(1))).font(.locus(size: 23, weight: .medium, design: .serif))
                     .foregroundStyle(AgentWorldPalette(ocean: true).warning)
             }
         }
