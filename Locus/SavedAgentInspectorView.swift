@@ -4,6 +4,7 @@ import SwiftUI
 /// Linking a project stores its location; it does not move or copy that project.
 struct AgentWorkspacePreferencesEditor: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.locusOceanTheme) private var ocean
     @Binding var profile: AgentProfile
     var compact = false
     @State private var showingDetails = false
@@ -11,6 +12,10 @@ struct AgentWorkspacePreferencesEditor: View {
 
     private var selectedPath: String {
         profile.workspacePreferences?.defaultProjectPath ?? model.savedAgentHomePath(profile)
+    }
+
+    private var detailColor: Color {
+        ocean ? Color(nsColor: LocusTheme.oceanPalette.inkSoft) : LocusTheme.textSecondary
     }
 
     var body: some View {
@@ -38,7 +43,7 @@ struct AgentWorkspacePreferencesEditor: View {
                 Text(selectedPath == model.savedAgentHomePath(profile)
                      ? "A personal home, with a separate folder for each new chat."
                      : "New chats use this project. Existing chats keep their folders.")
-                    .font(.locus(size: 12)).foregroundStyle(.secondary)
+                    .font(.locus(size: 12)).foregroundStyle(detailColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
@@ -59,19 +64,19 @@ struct AgentWorkspacePreferencesEditor: View {
 
     private var folderDetails: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(selectedPath).font(.locus(size: 11)).foregroundStyle(.secondary)
+            Text(selectedPath).font(.locus(size: 11)).foregroundStyle(detailColor)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             Text("Home chats get their own task folders. Git projects use separate working copies; other project folders are shared.")
-                .font(.locus(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.locus(size: 12)).foregroundStyle(detailColor).fixedSize(horizontal: false, vertical: true)
             Text("Changes apply to new chats. Existing chats and automations keep their folders.")
-                .font(.locus(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.locus(size: 11)).foregroundStyle(detailColor).fixedSize(horizontal: false, vertical: true)
             if let paths = profile.workspacePreferences?.projectPaths, !paths.isEmpty {
                 DisclosureGroup("Linked projects · \(paths.count)", isExpanded: $showingProjects) {
                     ForEach(paths, id: \.self) { path in
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(URL(fileURLWithPath: path).lastPathComponent).font(.locus(size: 12, weight: .medium))
-                                Text(path).font(.locus(size: 11)).foregroundStyle(.secondary)
+                                Text(path).font(.locus(size: 11)).foregroundStyle(detailColor)
                                     .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                             }
                             Spacer()
