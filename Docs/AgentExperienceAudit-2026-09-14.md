@@ -259,7 +259,7 @@ folder remains associated with the map while tools and the queue use the real
 repository root and isolated execution path. An unrelated folder or profile
 cannot use that source association.
 
-Validation passed: **227 native tests**, **644 consolidated backend tests**, and
+Validation passed: **238 native tests**, **644 consolidated backend tests**, and
 **75 event/schedule tests** after the final output-preservation changes. The
 backend selections overlap and are not an aggregate unique-test count. Wide,
 narrow, and ocean-themed layouts were rendered from the actual SwiftUI view

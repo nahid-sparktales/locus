@@ -197,7 +197,7 @@ struct WorkspaceView: View {
 
             if model.sidebarDestination == .agents,
                let profileID = model.savedAgentProfileID(for: model.currentSessionID),
-               let profile = model.agentProfiles.first(where: { $0.id == profileID }) {
+               let profile = agentTeams.agentProfiles.first(where: { $0.id == profileID }) {
                 Button {
                     if let openAgentOverview { openAgentOverview() }
                     else { model.selectSavedAgent(profile) }

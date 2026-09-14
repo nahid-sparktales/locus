@@ -119,7 +119,7 @@ struct SavedAgentInspectorView: View {
     var inspectActivity: ((AgentInspectorContext) -> Void)? = nil
 
     var body: some View {
-        SavedAgentOverviewContent(profile: profile, workspace: workspace, newChat: newChat,
+        SavedAgentOverviewContent(initialProfile: profile, workspace: workspace, newChat: newChat,
             openChat: openChat, newChatDisabled: newChatDisabled, inspectActivity: inspectActivity,
             automation: model.eventAutomations)
     }
@@ -127,12 +127,13 @@ struct SavedAgentInspectorView: View {
 
 private struct SavedAgentOverviewContent: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var accounts: ProviderAccountsModel
     @EnvironmentObject private var activity: ActivityCenterModel
     @Environment(\.locusOceanTheme) private var ocean
-    let profile: AgentProfile
+    let initialProfile: AgentProfile
     let workspace: String?
     let newChat: (() -> Void)?
     let openChat: ((SessionSummary) -> Void)?
@@ -149,6 +150,10 @@ private struct SavedAgentOverviewContent: View {
     @State private var resultLoading = false
     @State private var resultError: String?
     @State private var activeResultRequest: ResultRequest?
+
+    private var profile: AgentProfile {
+        agentTeams.agentProfiles.first { $0.id == initialProfile.id } ?? initialProfile
+    }
 
     private struct ResultRequest: Hashable {
         let profileID: UUID
@@ -319,8 +324,8 @@ private struct SavedAgentOverviewContent: View {
                     .font(.locus(size: 12)).foregroundStyle(secondary)
             } else {
                 AgentWorkspacePreferencesEditor(profile: Binding(
-                    get: { model.agentProfiles.first { $0.id == profile.id } ?? profile },
-                    set: { model.agentTeamsModel.saveAgentProfile($0) }), compact: true)
+                    get: { agentTeams.agentProfiles.first { $0.id == profile.id } ?? profile },
+                    set: { agentTeams.saveAgentProfile($0) }), compact: true)
             }
             if let chat = currentWorkspaceChat,
                let root = chat.workspacePath {
