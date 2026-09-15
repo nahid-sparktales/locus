@@ -1073,12 +1073,12 @@ enum QuickTeamFactory {
             label: "Lead"
         )
 
+        // A helper may share a model with the dispatcher or lead. It still
+        // resolves to its own read-only generalist profile, so each role keeps
+        // its own rules even when the model does not change.
         var seenHelpers: Set<QuickTeamModelChoice> = []
         let helperProfiles = draft.helpers.compactMap { choice -> AgentProfile? in
-            guard choice != dispatcherChoice,
-                  choice != leadChoice,
-                  seenHelpers.insert(choice).inserted
-            else { return nil }
+            guard seenHelpers.insert(choice).inserted else { return nil }
             return resolveProfile(
                 choice: choice,
                 role: .generalist,

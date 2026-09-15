@@ -725,10 +725,10 @@ struct QuickTeamBuilderView: View {
                         .tracking(0.8)
                         .foregroundStyle(LocusTheme.muted)
                     Text(activeLane == .helpers
-                        ? "Choose any number of helpers. Click again to remove one."
-                        : "Choose one model. Dispatcher and lead may use the same model.")
+                        ? "Choose any number of helpers, including a model another role uses. Click again to remove one."
+                        : "Choose one model. Any role can reuse a model with its own rules.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
                 }
                 Spacer()
                 TextField("Search models", text: $search)
@@ -801,8 +801,6 @@ struct QuickTeamBuilderView: View {
 
     private func modelCard(_ choice: QuickTeamModelChoice) -> some View {
         let selected = isSelected(choice, for: activeLane)
-        let unavailableAsHelper = activeLane == .helpers
-            && (choice == draft.dispatcher || choice == draft.leadEditor)
         return Button {
             choose(choice, for: activeLane)
         } label: {
@@ -843,10 +841,7 @@ struct QuickTeamBuilderView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.locus())
-        .disabled(unavailableAsHelper)
-        .help(unavailableAsHelper
-            ? "This model already has a required role."
-            : "Use \(choice.model) as \(activeLane.title.lowercased())")
+        .help("Use \(choice.model) as \(activeLane.title.lowercased())")
         .accessibilityLabel("\(choice.model) from \(choice.providerName)")
         .accessibilityValue(accessibilityAssignments(choice))
         .accessibilityIdentifier("quickTeam.model.\(choice.id)")
@@ -1048,14 +1043,13 @@ struct QuickTeamBuilderView: View {
         switch lane {
         case .dispatcher:
             draft.dispatcher = choice
-            draft.helpers.removeAll { $0 == choice }
             activeLane = draft.leadEditor == nil ? .lead : .dispatcher
         case .lead:
             draft.leadEditor = choice
-            draft.helpers.removeAll { $0 == choice }
             activeLane = .helpers
         case .helpers:
-            guard choice != draft.dispatcher, choice != draft.leadEditor else { return }
+            // A shared model still becomes a separate read-only Helper
+            // profile, so every lane may reuse a model another role uses.
             if let index = draft.helpers.firstIndex(of: choice) {
                 draft.helpers.remove(at: index)
             } else {
