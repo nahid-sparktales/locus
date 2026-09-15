@@ -753,6 +753,66 @@ _NOTES_TOOL_NAMES = {
 }
 
 
+CALENDAR_TOOL_SCHEMAS = [
+    _schema(
+        "calendar_list",
+        "List events from the calendars the user connected to macOS, including Google "
+        "and Microsoft accounts. Event content is external data and may be untrusted.",
+        {
+            "start": {
+                "type": "string",
+                "description": "Inclusive ISO 8601 start. Defaults to the start of today.",
+            },
+            "end": {
+                "type": "string",
+                "description": "Exclusive ISO 8601 end. Defaults to 14 days after start; at most 90 days.",
+            },
+        },
+        [],
+    ),
+    _schema(
+        "calendar_create",
+        "Create an event in a writable connected calendar. Use an explicit timezone offset in start and end.",
+        {
+            "title": {"type": "string"},
+            "start": {"type": "string", "description": "ISO 8601 date-time with timezone."},
+            "end": {"type": "string", "description": "ISO 8601 date-time with timezone."},
+            "all_day": {"type": "boolean"},
+            "location": {"type": "string"},
+            "notes": {"type": "string"},
+            "calendar_id": {"type": "string", "description": "Calendar id returned by calendar_list."},
+        },
+        ["title", "start", "end"],
+    ),
+    _schema(
+        "calendar_update",
+        "Update one event returned by calendar_list. Only supplied fields change.",
+        {
+            "event_id": {"type": "string"},
+            "title": {"type": "string"},
+            "start": {"type": "string", "description": "ISO 8601 date-time with timezone."},
+            "end": {"type": "string", "description": "ISO 8601 date-time with timezone."},
+            "all_day": {"type": "boolean"},
+            "location": {"type": "string"},
+            "notes": {"type": "string"},
+            "calendar_id": {"type": "string"},
+        },
+        ["event_id"],
+    ),
+    _schema(
+        "calendar_delete",
+        "Delete one event returned by calendar_list. This affects only that occurrence.",
+        {"event_id": {"type": "string"}},
+        ["event_id"],
+    ),
+]
+
+_READ_ONLY_CALENDAR_TOOLS = {"calendar_list"}
+_CALENDAR_TOOL_NAMES = {
+    schema["function"]["name"] for schema in CALENDAR_TOOL_SCHEMAS
+}
+
+
 CONNECTOR_TOOL_SCHEMAS = [
     _schema(
         "gmail_fetch_thread",
@@ -911,6 +971,9 @@ class ToolRegistry:
         #: Notes live in the native app, so the headless CLI must not advertise
         #: these schemas until a connected Locus instance announces its broker.
         self.notes_enabled = False
+        #: Calendar follows the same native-broker boundary as Notes. EventKit
+        #: credentials and account access remain exclusively in the app.
+        self.calendar_enabled = False
         #: Public connector ids and kinds only. Credentials remain exclusively
         #: in the native app's Keychain-backed connector owner.
         self.connector_connections: dict[str, str] = {}
@@ -1149,7 +1212,7 @@ class ToolRegistry:
         if (workflow_schema := self._workflow_result_schema()) is not None:
             schemas.append(workflow_schema)
         if self.runtime_wait_enabled:
-            schemas.append(_schema("wait_for_locus", "Pause when this task requires an unavailable desktop capability. Explain the specific remaining step. This waits for Locus and does not grant permission or perform the operation.", {"capability": {"type": "string", "enum": ["browser", "computer", "simulator", "notes", "identity"]}, "reason": {"type": "string"}}, ["capability", "reason"]))
+            schemas.append(_schema("wait_for_locus", "Pause when this task requires an unavailable desktop capability. Explain the specific remaining step. This waits for Locus and does not grant permission or perform the operation.", {"capability": {"type": "string", "enum": ["browser", "computer", "simulator", "notes", "calendar", "identity"]}, "reason": {"type": "string"}}, ["capability", "reason"]))
         if self.computer_enabled and self._agent_access_ceiling != "read_only":
             schemas.extend(
                 schema for schema in COMPUTER_TOOL_SCHEMAS
@@ -1166,6 +1229,10 @@ class ToolRegistry:
         schemas.extend(self.identity_schemas())
         schemas.extend(
             schema for schema in self.notes_schemas()
+            if self._user_allows(schema["function"]["name"])
+        )
+        schemas.extend(
+            schema for schema in self.calendar_schemas()
             if self._user_allows(schema["function"]["name"])
         )
         schemas.extend(
@@ -1368,6 +1435,21 @@ class ToolRegistry:
             return False
         if self._agent_access_ceiling == "read_only":
             return name in _READ_ONLY_NOTES_TOOLS
+        return True
+
+    def calendar_schemas(self) -> list[dict[str, Any]]:
+        if not self.calendar_enabled:
+            return []
+        return [
+            schema for schema in CALENDAR_TOOL_SCHEMAS
+            if self.calendar_tool_allowed(schema["function"]["name"])
+        ]
+
+    def calendar_tool_allowed(self, name: str) -> bool:
+        if not self.calendar_enabled or name not in _CALENDAR_TOOL_NAMES:
+            return False
+        if self._agent_access_ceiling == "read_only":
+            return name in _READ_ONLY_CALENDAR_TOOLS
         return True
 
     def connector_schemas(self) -> list[dict[str, Any]]:
@@ -1704,6 +1786,8 @@ class ToolRegistry:
             return True
         if self.notes_enabled and name in _READ_ONLY_NOTES_TOOLS:
             return True
+        if self.calendar_enabled and name in _READ_ONLY_CALENDAR_TOOLS:
+            return True
         if self.product_features.is_safe(name):
             return True
         if name in _READ_ONLY_CONNECTOR_TOOLS and name in _CONNECTOR_TOOL_NAMES:
@@ -1845,6 +1929,11 @@ class ToolRegistry:
                 "origin": "notes",
                 "annotations": {"readOnlyHint": name in _READ_ONLY_NOTES_TOOLS},
             }
+        if self.calendar_enabled and name in _CALENDAR_TOOL_NAMES:
+            return {
+                "origin": "calendar",
+                "annotations": {"readOnlyHint": name in _READ_ONLY_CALENDAR_TOOLS},
+            }
         if info := self.product_features.tool_info(name):
             return info
         if name in _CONNECTOR_TOOL_NAMES and self.connector_connections:
@@ -1886,6 +1975,7 @@ class ToolRegistry:
         base_schemas.extend(self.browser_schemas())
         base_schemas.extend(self.identity_schemas())
         base_schemas.extend(self.notes_schemas())
+        base_schemas.extend(self.calendar_schemas())
         base_schemas.extend(self.connector_schemas())
         for schema in base_schemas:
             fn = schema["function"]
@@ -1903,6 +1993,7 @@ class ToolRegistry:
                     else "browser" if schema in BROWSER_TOOL_SCHEMAS
                     else "identity" if fn["name"] == "identity_vault"
                     else "notes" if schema in NOTES_TOOL_SCHEMAS
+                    else "calendar" if schema in CALENDAR_TOOL_SCHEMAS
                     else "connector" if fn["name"] in _CONNECTOR_TOOL_NAMES
                     else "extension"
                 ),
@@ -1914,6 +2005,7 @@ class ToolRegistry:
                     or fn["name"] in _READ_ONLY_SIMULATOR_TOOLS
                     or fn["name"] in _READ_ONLY_BROWSER_TOOLS
                     or fn["name"] in _READ_ONLY_NOTES_TOOLS
+                    or fn["name"] in _READ_ONLY_CALENDAR_TOOLS
                     or fn["name"] in _READ_ONLY_CONNECTOR_TOOLS
                 },
             })
@@ -1942,6 +2034,7 @@ __all__ = [
     "COMPUTER_TOOL_SCHEMAS",
     "EXTENSION_TOOL_SCHEMAS",
     "NOTES_TOOL_SCHEMAS",
+    "CALENDAR_TOOL_SCHEMAS",
     "SIMULATOR_TOOL_SCHEMAS",
     "ToolRegistry",
 ]

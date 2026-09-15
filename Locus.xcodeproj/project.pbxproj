@@ -243,6 +243,7 @@
 		2C218EF6329B9AA7A620960C /* WorkspaceBrowserModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BEE4856A000C140166EB39B /* WorkspaceBrowserModelTests.swift */; };
 		2C381D5BA56E7E814DF66C2B /* ActivityCenterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA846238A2408DF496777142 /* ActivityCenterModel.swift */; };
 		2C48811226A5E53CECD51253 /* FeatureLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16740EAD75B3BC87EA7D49A7 /* FeatureLogicTests.swift */; };
+		2C70BF92A7B1900259038333 /* InspectorCalendarTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */; };
 		2C7352B42C23DF94C6796ED6 /* ResponseImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A10D4837E07C97D6925461E /* ResponseImageView.swift */; };
 		2C758317BE4C5008CCC5A952 /* TaskCapsuleTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8ADBF6F317252F03078BBE9 /* TaskCapsuleTypes.swift */; };
 		2CAB6D6137A82C27C5AD9EF7 /* RenderingOutputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CA2D97F3A89DB248F9337A0 /* RenderingOutputTests.swift */; };
@@ -311,6 +312,7 @@
 		35FE21665C0657EFA7FAF742 /* AgentInspectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4114CAF5A4D7B7A938B4F1D3 /* AgentInspectorTests.swift */; };
 		36384BA5284C663BD6A63663 /* InspectorAgentsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */; };
 		364C9E06FDFB847FA556FFCA /* ContextPackLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53E5A0F19569788DA77F88B9 /* ContextPackLoader.swift */; };
+		36DC016B3E8E85D4B061776F /* InspectorCalendarTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */; };
 		36FB90131DA798FF79E9A5FD /* WorkspaceKnowledgeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ABFAA15924627CFCA8729D3 /* WorkspaceKnowledgeModel.swift */; };
 		37A90174A0194B6AF11CEF77 /* LocusSymbols.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3552806AFD1ADE60D80570 /* LocusSymbols.swift */; };
 		37AF0297934A5F32E215CC73 /* AgentWorldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7BB1294064FA95F382A3203 /* AgentWorldView.swift */; };
@@ -391,6 +393,7 @@
 		4306E6106E7461AA380CA9F1 /* GitHubConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D31BF62A06142F7A228ABB2 /* GitHubConnectionTests.swift */; };
 		434EC61340C47BC3152C5FE4 /* ExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 819B94A8EAA15CE9EDBDDC53 /* ExtensionModels.swift */; };
 		4355D3F09B0A75592A6F4C83 /* InspectorNotesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABF8ADCB24225911BBCB143F /* InspectorNotesTab.swift */; };
+		438571B385C23646BC22BF9C /* InspectorCalendarTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */; };
 		43B72E9F870D5278C74C0C86 /* AppModel+TeamRunLiveFacade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C84873DD1B30B35462F4F21 /* AppModel+TeamRunLiveFacade.swift */; };
 		43D9BA9EBAF54B1CF65AFE29 /* GitWorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFF112DFD138A58ACB32658 /* GitWorkspaceModel.swift */; };
 		43F24DA32CE5546306517014 /* ChatTranscriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 863D25BB6163522EFF5A58B4 /* ChatTranscriptBuilder.swift */; };
@@ -567,6 +570,7 @@
 		68746E58338947E03143D26E /* EventWebhookServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED889C7219DB222230353F3 /* EventWebhookServer.swift */; };
 		68A42EA18A97BF38FD74184B /* AppModel+AgentWorld.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADD63864B135D7683025162F /* AppModel+AgentWorld.swift */; };
 		68C023E412EE87D1F4EF2B1C /* WalletConnectDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615928980C39345E4A0DE168 /* WalletConnectDriver.swift */; };
+		68CDEF30D7CA508B8F733C57 /* InspectorCalendarTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */; };
 		6960913583DCBD469E50182B /* AppModel+AgentChats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505040C51AB05DF04CC24194 /* AppModel+AgentChats.swift */; };
 		6963341F42D810AC7E23FC54 /* AgentWorldModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4948BC8C3E53E21E76A9513A /* AgentWorldModel.swift */; };
 		69930BEA7D31BBDA2909AD2A /* EventAutomationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9BE84BC22A78AC4C3BF0C74 /* EventAutomationModels.swift */; };
@@ -1875,6 +1879,7 @@
 		FB54BC06D9F668EA915750CC /* InteractiveAnswerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractiveAnswerView.swift; sourceTree = "<group>"; };
 		FBA4A0FF9DC4195CDBE16AFE /* ImageGenerationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationModel.swift; sourceTree = "<group>"; };
 		FC23CF37CC5F34F35DB69529 /* WalletConnectionsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletConnectionsClient.swift; sourceTree = "<group>"; };
+		FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorCalendarTab.swift; sourceTree = "<group>"; };
 		FDCCB01E3D4A8164C073B907 /* LocusMASUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocusMASUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -2311,6 +2316,7 @@
 				2E2B58EEFFFA7A86BC2AF7F6 /* InspectorAgentsTab.swift */,
 				DC810CE30AC24EDB05F14614 /* InspectorAgentTab.swift */,
 				8B3ACD7AD15138A194268B22 /* InspectorBrowserTab.swift */,
+				FD65BF742E6B21EA8D946338 /* InspectorCalendarTab.swift */,
 				CCCD81AAF0691EDC3F6B0D64 /* InspectorChangesTab.swift */,
 				10D6D002C03E3AA6EB9FEFD0 /* InspectorFilesTab.swift */,
 				ABF8ADCB24225911BBCB143F /* InspectorNotesTab.swift */,
@@ -3384,6 +3390,7 @@
 				03156C7E49A2DD4A553D93EA /* InspectorAgentTab.swift in Sources */,
 				36384BA5284C663BD6A63663 /* InspectorAgentsTab.swift in Sources */,
 				97F2562933C86827EB91C779 /* InspectorBrowserTab.swift in Sources */,
+				36DC016B3E8E85D4B061776F /* InspectorCalendarTab.swift in Sources */,
 				7914322736C0481F15550E5B /* InspectorChangesTab.swift in Sources */,
 				C2CD2183CF803CE74B398E28 /* InspectorFilesTab.swift in Sources */,
 				EBB2B5674B0176B201D82900 /* InspectorModels.swift in Sources */,
@@ -3782,6 +3789,7 @@
 				F130548428D07DAD6385A41A /* InspectorAgentTab.swift in Sources */,
 				3E8FCEE6168C5A89B6B45BC1 /* InspectorAgentsTab.swift in Sources */,
 				2EAD3C52012BDCE207BFED7B /* InspectorBrowserTab.swift in Sources */,
+				68CDEF30D7CA508B8F733C57 /* InspectorCalendarTab.swift in Sources */,
 				D586AEB96691BDCC5A9F0418 /* InspectorChangesTab.swift in Sources */,
 				56B2392CBBC3354BD5A6E359 /* InspectorFilesTab.swift in Sources */,
 				B29BFD5C919E84B537BFA4B9 /* InspectorModels.swift in Sources */,
@@ -4044,6 +4052,7 @@
 				A09D92EBB5A0F9AB18E5A8E4 /* InspectorAgentTab.swift in Sources */,
 				E93509193D03839A222A7B5F /* InspectorAgentsTab.swift in Sources */,
 				8869F371B1A9A520350F754A /* InspectorBrowserTab.swift in Sources */,
+				2C70BF92A7B1900259038333 /* InspectorCalendarTab.swift in Sources */,
 				5D914095E6D957ED600CADDA /* InspectorChangesTab.swift in Sources */,
 				B402C210FA2E1DD2FB8282E0 /* InspectorFilesTab.swift in Sources */,
 				9A4FA5BE6FDCA68FEEF8039F /* InspectorModels.swift in Sources */,
@@ -4451,6 +4460,7 @@
 				3B66F8B864D8F868715E8F3F /* InspectorAgentTab.swift in Sources */,
 				3505B7E8B43F37E67EC4226C /* InspectorAgentsTab.swift in Sources */,
 				B4B7EA02063B248A2F466628 /* InspectorBrowserTab.swift in Sources */,
+				438571B385C23646BC22BF9C /* InspectorCalendarTab.swift in Sources */,
 				0A6D5C46F97A4641C3B3ADE9 /* InspectorChangesTab.swift in Sources */,
 				3C909D72D738A3A706F3044C /* InspectorFilesTab.swift in Sources */,
 				3BC6EF776EBFC489738B418D /* InspectorModels.swift in Sources */,

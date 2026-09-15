@@ -211,6 +211,7 @@ class AgentWorkerRuntime:
             "browser_history_enabled",
             "browser_autofill_categories",
             "notes_enabled",
+            "calendar_enabled",
             "connector_connections",
             "_user_capability_policy",
             "_mcp_agent_policy",
@@ -232,6 +233,7 @@ class AgentWorkerRuntime:
             "simulator_executor",
             "browser_executor",
             "notes_executor",
+            "calendar_executor",
             "connector_executor",
         ):
             executor = getattr(parent, name)
@@ -401,6 +403,7 @@ class AgentWorkerRuntime:
             "simulator_action_request",
             "browser_action_request",
             "notes_action_request",
+            "calendar_action_request",
             "connector_action_request",
         }:
             return True

@@ -497,6 +497,7 @@ class AgentCore:
         self.simulator_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        self.calendar_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.connector_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.identity_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.identity_context_executor: Callable[[list[str]], list[dict[str, str]]] | None = None
@@ -4451,6 +4452,14 @@ class AgentCore:
                     else:
                         tc.execution_receipt["executed"] = True
                         result = self.notes_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "calendar":
+                    if not self.tool_registry.calendar_tool_allowed(tc.name):
+                        result = "Error: this agent is read-only and cannot change Calendar."
+                    elif self.calendar_executor is None:
+                        result = "Error: Calendar is unavailable."
+                    else:
+                        tc.execution_receipt["executed"] = True
+                        result = self.calendar_executor(tc.name, tc.arguments, call_id)
                 elif self.tool_registry.product_features.owns(tc.name):
                     tc.execution_receipt["executed"] = True
                     result = self.tool_registry.product_features.execute(

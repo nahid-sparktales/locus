@@ -2954,6 +2954,7 @@ final class LocusUITests: XCTestCase {
 
     func testWorkspaceActionsSitBesideModelPickerAndRailMoreMenuRestoresTabs() {
         XCTAssertTrue(anyElement("inspector.rail.notes").waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("inspector.rail.calendar").exists)
         let more = anyElement("inspector.rail.more")
         let toggle = anyElement("inspector.rail.toggle")
         XCTAssertTrue(more.exists)
@@ -2991,6 +2992,7 @@ final class LocusUITests: XCTestCase {
             app.menuItems["inspector.rail.menu.checkpoints"].exists,
             "manual checkpoints should not occupy a persistent inspector tab"
         )
+        XCTAssertFalse(app.menuItems["inspector.rail.menu.calendar"].exists)
         app.menuItems["inspector.rail.menu.agents"].click()
         XCTAssertTrue(anyElement("agents.content").waitForExistence(timeout: 3))
 
@@ -3006,6 +3008,13 @@ final class LocusUITests: XCTestCase {
             "sidebar.checkpoints",
             title: "Session Checkpoints…"
         ).exists)
+    }
+
+    func testCalendarRailOpensCalendar() {
+        let calendar = anyElement("inspector.rail.calendar")
+        XCTAssertTrue(calendar.waitForExistence(timeout: 3))
+        calendar.click()
+        XCTAssertTrue(anyElement("calendar.content").waitForExistence(timeout: 3))
     }
 
     func testRouterAndProxiesLiveOnlyInMorePanelsMenu() {
@@ -3093,7 +3102,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(zoom.exists)
         XCTAssertGreaterThan(
             zoom.frame.minY,
-            anyElement("inspector.rail.notes").frame.minY,
+            anyElement("inspector.rail.calendar").frame.minY,
             "expand belongs at the rail bottom"
         )
 

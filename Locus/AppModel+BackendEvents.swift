@@ -617,6 +617,14 @@ extension AppModel {
                 showToast("Notes are unavailable from the native broker")
             }
 
+        case "calendar_action_request":
+            runCalendarAction(event, on: conversationBackend)
+
+        case "calendar_control_status":
+            if (event["enabled"] as? Bool) != true {
+                showToast("Calendar is unavailable from the native broker")
+            }
+
         #if LOCUS_WALLET
         case "wallet_action_request":
             runWalletAction(event, on: conversationBackend)

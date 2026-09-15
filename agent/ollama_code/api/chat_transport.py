@@ -302,6 +302,7 @@ async def ws_chat(ws: WebSocket) -> None:
             svc.cancel_all_browser_actions()
             svc.cancel_all_identity()
             svc.cancel_all_notes_actions()
+            svc.cancel_all_calendar_actions()
             svc.core.tool_registry.product_features.cancel_pending()
             svc.cancel_dispatch_decisions()
             svc.cancel_all_mcp_inputs()

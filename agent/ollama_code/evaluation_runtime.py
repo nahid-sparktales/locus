@@ -113,6 +113,7 @@ def run_evaluation_suite(
                 # suite that can wander the web is not a fixture any more.
                 evaluation_core.tool_registry.browser_enabled = False
                 evaluation_core.tool_registry.notes_enabled = False
+                evaluation_core.tool_registry.calendar_enabled = False
                 read_only = str(case.get("mode") or "write") == "read_only"
                 evaluation_core.evaluation_read_only = read_only
                 evaluation_core.tool_registry.set_mcp_agent_policy(

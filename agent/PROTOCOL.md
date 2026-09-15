@@ -884,6 +884,8 @@ Endpoint: `/ws/chat`.
 | `browser_action_result` | `request_id: string`, `result: object` | Completes one pending browser request. `result` may contain `text`, `error`, and optional `screenshot` metadata/data. Late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_notes_control` | `enabled: boolean` | Advertises the native Notes broker. `notes_read` and `notes_update` enter model schemas only while true; read-only routes receive only `notes_read`. The native app, not the model, resolves the workspace/chat owner and current scope. Rejected while a turn is busy. |
 | `notes_action_result` | `request_id: string`, `result: object` | Completes one pending Notes request. `result` contains `text` or `error`; late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
+| `set_calendar_control` | `enabled: boolean` | Advertises the native EventKit Calendar broker. `calendar_list` is available to read-only routes; create, update, and delete follow the normal write permission decision. |
+| `calendar_action_result` | `request_id: string`, `result: object` | Completes one pending Calendar request. Provider credentials remain in macOS; results contain event data, opaque identifiers, text, or error. |
 | `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
 | `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
 | `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
@@ -1184,6 +1186,23 @@ read-only schemas. Requests never contain a workspace path or scope. The native
 app derives both from the requesting socket/session and its saved Workspace or
 Each chat setting, then answers background workers without changing the
 foreground chat.
+
+### `calendar_control_status` / `calendar_action_request`
+
+`calendar_control_status {enabled}` acknowledges the native EventKit capability.
+When enabled, a Calendar tool call emits:
+
+```json
+{ "type": "calendar_action_request", "request_id": "...",
+  "tool": "calendar_list", "arguments": {"start": "2026-09-15T00:00:00-04:00"},
+  "timeout_ms": 15000, "session_id": "..." }
+```
+
+The app answers exactly one matching `calendar_action_result`. Calendar access
+is still controlled by macOS privacy permission. Google and Microsoft accounts
+are linked through Internet Accounts and their OAuth credentials never enter the
+runtime. `calendar_list` is read-only; create, update, and delete are omitted
+from read-only agent schemas and rechecked immediately before dispatch.
 
 ### Team orchestration and scheduler events
 

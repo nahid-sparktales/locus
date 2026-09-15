@@ -259,6 +259,38 @@ extension AppModel {
         }
     }
 
+    /// Read or mutate the user's EventKit calendars for the requesting agent.
+    /// The native app owns authorization and provider credentials; the runtime
+    /// sees only opaque event/calendar identifiers and the requested fields.
+    @discardableResult
+    func runCalendarAction(
+        _ event: [String: Any],
+        reply: @escaping @MainActor ([String: Any]) -> Void
+    ) -> Task<Void, Never>? {
+        guard let requestID = event["request_id"] as? String,
+              let tool = event["tool"] as? String,
+              let arguments = event["arguments"] as? [String: Any]
+        else { return nil }
+        let sessionID = (event["session_id"] as? String) ?? currentSessionID
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            if sessionID == self.currentSessionID {
+                self.selectInspectorTab(.calendar)
+            }
+            reply([
+                "type": "calendar_action_result",
+                "request_id": requestID,
+                "result": LocusCalendarStore.shared.perform(tool: tool, arguments: arguments),
+            ])
+        }
+    }
+
+    func runCalendarAction(_ event: [String: Any], on transport: BackendService) {
+        runCalendarAction(event) { payload in
+            _ = transport.send(payload)
+        }
+    }
+
     #if LOCUS_WALLET
     /// Wallet requests never receive secret material. The native gateway
     /// returns only public account data, prepared-intent summaries, or a
@@ -436,6 +468,15 @@ extension AppModel {
     func sendNotesCapability(to transport: BackendService) {
         _ = transport.send([
             "type": "set_notes_control",
+            "enabled": true,
+        ])
+    }
+
+    /// Calendar is present whenever the native app is present. EventKit still
+    /// enforces the user's system permission before any request can succeed.
+    func sendCalendarCapability(to transport: BackendService) {
+        _ = transport.send([
+            "type": "set_calendar_control",
             "enabled": true,
         ])
     }

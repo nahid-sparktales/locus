@@ -224,6 +224,7 @@ async def lifespan(app: FastAPI):
             svc.cancel_all_simulator_actions()
             svc.cancel_all_browser_actions()
             svc.cancel_all_notes_actions()
+            svc.cancel_all_calendar_actions()
             svc.cancel_all_connector_actions()
             svc.cancel_all_mcp_inputs()
             svc.dev_servers.stop_all()
@@ -491,6 +492,7 @@ def _expire_profile_turn(svc: ChatService) -> None:
     svc.cancel_all_browser_actions()
     svc.cancel_all_identity()
     svc.cancel_all_notes_actions()
+    svc.cancel_all_calendar_actions()
     svc.cancel_all_connector_actions()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
@@ -2783,6 +2785,19 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         raw = msg.get("result")
         result = raw if isinstance(raw, dict) else {"error": "invalid Notes result"}
         svc.answer_notes(request_id, result)
+    elif mtype == "set_calendar_control":
+        if svc.busy and not runtime_broker:
+            _command_error(svc, "set_calendar_control", "Wait for the active turn to finish.")
+            return
+        enabled = bool(msg.get("enabled"))
+        core.tool_registry.calendar_enabled = enabled
+        core.calendar_executor = svc.execute_calendar if enabled else None
+        svc.queue_event({"type": "calendar_control_status", "enabled": enabled})
+    elif mtype == "calendar_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid Calendar result"}
+        svc.answer_calendar(request_id, result)
     elif mtype == "set_connector_control":
         if svc.busy:
             _command_error(svc, "set_connector_control", "Wait for the active turn to finish.")
@@ -2833,6 +2848,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_all_browser_actions()
         svc.cancel_all_identity()
         svc.cancel_all_notes_actions()
+        svc.cancel_all_calendar_actions()
         svc.core.tool_registry.product_features.cancel_pending()
         svc.cancel_all_connector_actions()
         svc.cancel_dispatch_decisions()

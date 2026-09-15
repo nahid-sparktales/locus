@@ -531,6 +531,18 @@ def build_preview(
         action = str(args.get("action") or "replace")
         content = str(args.get("text") or "")
         return f"{action} Notes", content
+    if name == "calendar_create":
+        title = str(args.get("title") or "Untitled event")
+        detail = f"{args.get('start', '')} – {args.get('end', '')}"
+        if args.get("location"):
+            detail += f"\n{args['location']}"
+        return f"create Calendar event: {_shorten(title, 70)}", detail
+    if name == "calendar_update":
+        identifier = str(args.get("event_id") or "event")
+        changed = ", ".join(key for key in args if key != "event_id") or "no fields"
+        return f"update Calendar event", f"{identifier}\nChanges: {changed}"
+    if name == "calendar_delete":
+        return "delete Calendar event", str(args.get("event_id") or "")
     if name == "browser_input":
         action = str(args.get("action") or "click")
         target = str(args.get("ref") or args.get("from_ref") or args.get("key") or "")

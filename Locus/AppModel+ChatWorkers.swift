@@ -181,6 +181,7 @@ extension AppModel {
             )
             self.sendBrowserCapability(to: runtime.service)
             self.sendNotesCapability(to: runtime.service)
+            self.sendCalendarCapability(to: runtime.service)
             #if LOCUS_WALLET
             self.sendWalletCapability(to: runtime.service)
             #endif
@@ -288,6 +289,7 @@ extension AppModel {
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendBrowserCapability(to: runtime.service)
         sendNotesCapability(to: runtime.service)
+        sendCalendarCapability(to: runtime.service)
         #if LOCUS_WALLET
         sendWalletCapability(to: runtime.service)
         #endif
@@ -624,6 +626,9 @@ extension AppModel {
                 workspacePath: runtime.workspacePath,
                 on: runtime.service
             )
+        }
+        if type == "calendar_action_request" {
+            runCalendarAction(event, on: runtime.service)
         }
         #if LOCUS_WALLET
         if type == "wallet_action_request" {

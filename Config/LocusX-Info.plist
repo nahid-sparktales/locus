@@ -51,6 +51,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Locus uses the camera only when you allow a website to access it.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Locus shows your connected calendars and lets agents create, update, or remove events when you ask.</string>
 	<key>LocusComponentFeedURL</key>
 	<string>https://github.com/nahid-sparktales/locus/releases/latest/download/components.json</string>
 	<key>LocusSourceRevision</key>

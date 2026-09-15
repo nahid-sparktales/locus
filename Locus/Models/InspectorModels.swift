@@ -26,6 +26,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case preview
     case simulator
     case notes
+    case calendar
     case checkpoints
     case runs
     case agents
@@ -39,7 +40,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .simulator, .notes, .runs, .agents,
+        .changes, .files, .terminal, .simulator, .notes, .calendar, .runs, .agents,
         .router, .proxies, .context,
     ]
 
@@ -58,6 +59,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .preview: "Browser"
         case .simulator: "Simulator"
         case .notes: "Notes"
+        case .calendar: "Calendar"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
         case .agents: "Instructions"
@@ -75,6 +77,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .plan: detail = "Open this chat’s plan, outputs, and sources in a popup"
         case .agent: detail = "Selected agent: trigger, access, chats, and activity"
         case .notes: detail = "Editable notes shared at the scope you choose"
+        case .calendar: detail = "Events from Calendar, Google, and Microsoft accounts"
         case .agents: detail = "Workspace instructions in AGENTS.md"
         case .runs: detail = "This chat’s saved executions, progress, and failures"
         case .changes: detail = "Review workspace file changes"
@@ -100,6 +103,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .preview: "globe"
         case .simulator: "ipad.and.iphone"
         case .notes: "note.text"
+        case .calendar: "calendar"
         case .checkpoints: "clock.arrow.circlepath"
         // Runs stopped being Teams-only; the three-node orchestration graph
         // now belongs to the team dispatcher alone.
@@ -125,7 +129,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .agent, .simulator, .router, .proxies, .context: nil
+        case .agent, .simulator, .calendar, .router, .proxies, .context: nil
         }
     }
 }

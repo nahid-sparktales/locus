@@ -59,6 +59,8 @@
 	<string>Locus needs access to your Documents folder to open coding workspaces and start the local Ollama agent.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Allow websites you approve in the Locus browser to use the camera.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Locus shows your connected calendars and lets agents create, update, or remove events when you ask.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Locus needs access to save browser downloads and open files or projects you choose from Downloads.</string>
 	<key>NSHumanReadableCopyright</key>

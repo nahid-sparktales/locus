@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Calendar joins the right inspector with a month view, daily agenda, and event
+  creation. It uses calendars connected through macOS Internet Accounts,
+  including Google and Microsoft, and agents can list, create, update, or delete
+  events through a permission-aware native bridge.
+
 ## 3.1.0 — 2026-09-14
 
 ### Added

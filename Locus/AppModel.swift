@@ -1115,6 +1115,7 @@ final class AppModel: ObservableObject {
                     self.applyBrowserSettings(self.settings)
                     self.announceBrowserCapability()
                     self.sendNotesCapability(to: self.backend)
+                    self.sendCalendarCapability(to: self.backend)
                     #if LOCUS_WALLET
                     self.sendWalletCapability(to: self.backend)
                     #endif

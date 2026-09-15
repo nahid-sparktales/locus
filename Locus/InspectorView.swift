@@ -51,6 +51,8 @@ struct InspectorView: View {
                         sessionID: model.currentSessionID,
                         scope: model.settings.resolvedNotesScope
                     ))
+                case .calendar:
+                    InspectorCalendarTab()
                 case .checkpoints:
                     // Retained only as a persistence-compatible enum value.
                     // Every selection path redirects to CheckpointSheet.

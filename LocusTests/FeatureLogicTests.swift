@@ -1658,7 +1658,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 14)
+        XCTAssertEqual(InspectorTab.allCases.count, 15)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -1677,11 +1677,14 @@ final class FeatureLogicTests: XCTestCase {
             "the agent overview is session-scoped like Overview, not a workspace panel"
         )
         XCTAssertEqual(InspectorTab(rawValue: "notes"), .notes)
+        XCTAssertEqual(InspectorTab(rawValue: "calendar"), .calendar)
         XCTAssertEqual(InspectorTab(rawValue: "simulator"), .simulator)
         XCTAssertEqual(InspectorTab.plan.title, "Overview")
         XCTAssertEqual(InspectorTab.plan.symbol, "rectangle.grid.2x2")
         XCTAssertEqual(InspectorTab.notes.title, "Notes")
         XCTAssertEqual(InspectorTab.notes.symbol, "note.text")
+        XCTAssertEqual(InspectorTab.calendar.symbol, "calendar")
+        XCTAssertTrue(InspectorTab.workspaceTabs.contains(.calendar))
         XCTAssertEqual(InspectorTab.router.title, "Router")
         XCTAssertEqual(InspectorTab.proxies.title, "Proxies")
         XCTAssertTrue(InspectorTab.workspaceTabs.contains(.router))
@@ -1695,7 +1698,7 @@ final class FeatureLogicTests: XCTestCase {
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", nil, "2", "3", "4", "5", nil, "9", "6", "7", "8", nil, nil, nil]
+            ["1", nil, "2", "3", "4", "5", nil, "9", nil, "6", "7", "8", nil, nil, nil]
         )
     }
 

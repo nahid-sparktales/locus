@@ -4670,6 +4670,27 @@ def test_notes_tools_require_the_native_broker_and_respect_read_only_agents(tmp_
     assert not core.tool_registry.notes_tool_allowed("notes_update")
 
 
+def test_calendar_tools_require_native_broker_and_respect_read_only_agents(tmp_path):
+    core = _core(tmp_path, [ChatResponse(content_parts=["ok"], done=True)])
+
+    def names():
+        return {schema["function"]["name"] for schema in core.tool_registry.schemas()}
+
+    assert core.tool_registry.calendar_enabled is False
+    assert "calendar_list" not in names()
+
+    core.tool_registry.calendar_enabled = True
+    assert {
+        "calendar_list", "calendar_create", "calendar_update", "calendar_delete"
+    } <= names()
+
+    core.tool_registry.set_mcp_agent_policy({}, access_ceiling="read_only", role="reviewer")
+    assert "calendar_list" in names()
+    assert "calendar_create" not in names()
+    assert core.tool_registry.calendar_tool_allowed("calendar_list")
+    assert not core.tool_registry.calendar_tool_allowed("calendar_delete")
+
+
 def _install_locusx_feature(core):
     from ollama_code._locusx.wallet import WalletFeature
 
@@ -4749,6 +4770,24 @@ def test_notes_tool_reaches_the_native_bridge(tmp_path):
     assert calls == [("notes_read", {"max_chars": 1200})]
 
 
+def test_calendar_tool_reaches_the_native_bridge(tmp_path):
+    from ollama_code.ollama import ToolCall
+
+    arguments = {"start": "2026-09-15T00:00:00-04:00"}
+    responses = [
+        ChatResponse(tool_calls=[ToolCall("calendar_list", arguments)], done=True),
+        ChatResponse(content_parts=["done"], done=True),
+    ]
+    core = _core(tmp_path, responses)
+    core.tool_registry.calendar_enabled = True
+    calls = []
+    core.calendar_executor = lambda name, args, request_id: calls.append((name, args)) or "No events"
+
+    core.run_turn("read my calendar")
+
+    assert calls == [("calendar_list", arguments)]
+
+
 def test_notes_updates_follow_the_write_permission_policy(tmp_path):
     from ollama_code.ollama import ToolCall
 
@@ -4808,6 +4847,16 @@ def test_notes_permission_preview_shows_the_proposed_text():
     )
     assert summary == "append Notes"
     assert detail == "Remember the release checklist."
+
+
+def test_calendar_permission_preview_shows_event_and_time():
+    summary, detail = build_preview("calendar_create", {
+        "title": "Design review",
+        "start": "2026-09-16T14:00:00-04:00",
+        "end": "2026-09-16T14:30:00-04:00",
+    })
+    assert summary == "create Calendar event: Design review"
+    assert "2026-09-16T14:00:00-04:00" in detail
 
 
 def test_browsing_ordinary_urls_is_neither_blocked_nor_confirmation_gated():
@@ -5224,6 +5273,44 @@ def test_notes_bridge_round_trips_one_result_per_request(client):
             "result": {"text": "duplicate"},
         })
         assert drain(ws) == []
+
+
+def test_calendar_bridge_round_trips_one_result_per_request(client):
+    with client.websocket_connect("/ws/chat") as ws:
+        assert ws.receive_json()["type"] == "session_info"
+        ws.send_json({"type": "set_calendar_control", "enabled": True})
+        events = drain(ws)
+        assert {"type": "calendar_control_status", "enabled": True} in [
+            {"type": event.get("type"), "enabled": event.get("enabled")}
+            for event in events
+        ]
+
+        service = client.app.state.service
+        completed: list[str] = []
+        thread = threading.Thread(
+            target=lambda: completed.append(
+                service.execute_calendar(
+                    "calendar_list",
+                    {"start": "2026-09-15T00:00:00-04:00"},
+                    "calendar-req-1",
+                )
+            )
+        )
+        thread.start()
+        request = ws.receive_json()
+        assert request["type"] == "calendar_action_request"
+        assert request["session_id"] == service.core.session.session_id
+        ws.send_json({
+            "type": "calendar_action_result",
+            "request_id": "calendar-req-1",
+            "result": {"text": "One event"},
+        })
+        thread.join(timeout=3)
+
+        assert len(completed) == 1
+        assert "untrusted external data" in completed[0]
+        assert completed[0].endswith("One event")
+        assert service.pending_calendar_actions == {}
 
 
 def test_wallet_bridge_round_trips_only_after_the_native_capability_is_enabled(client):
