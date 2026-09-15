@@ -18,9 +18,9 @@ enum ChatTranscriptBuilder {
         var results: [UUID: TranscriptTaskResult] = [:]
         for run in runs where run.state == "completed" && run.sessionID == session?.id {
             let hasEventAnchor = index.turnsByRun[run.id]?.contains { $0.user.eventTrigger != nil } == true
-            guard run.scheduleID != nil || run.manifest?["event_trigger_id"]?.string != nil
-                    || run.taskID != nil || run.runKind == "team" || session?.isAgentEventChat == true
-                    || hasEventAnchor,
+            // A known run's own provenance decides, even in an agent's event
+            // chat: a question someone types there is an ordinary reply.
+            guard isAutomatedRun(run) || hasEventAnchor,
                   let blockID = index.resultBlockID(runID: run.id, request: run.request) else { continue }
             let request = displayUserText(run.request).trimmingCharacters(in: .whitespacesAndNewlines)
             let title = session?.isAgentEventChat == true
@@ -45,6 +45,19 @@ enum ChatTranscriptBuilder {
                 agentName: owner, completedAt: nil)
         }
         return results
+    }
+
+    /// Result cards are reserved for automated work, using the same provenance
+    /// the backend treats as automation (runtime_automation.py). `task_id` and
+    /// `run_kind == "team"` are not markers: ordinary chat turns store task_id
+    /// as "" or their worktree checkout ID, and chats start team runs directly.
+    /// Empty IDs are unset; the run store writes "" for turns without them.
+    private static func isAutomatedRun(_ run: OrchestrationRun) -> Bool {
+        let manifest = run.manifest
+        return run.scheduleID?.nilIfEmpty != nil
+            || manifest?["schedule_id"]?.string?.nilIfEmpty != nil
+            || manifest?["event_trigger_id"]?.string?.nilIfEmpty != nil
+            || manifest?["workflow_execution_id"]?.string?.nilIfEmpty != nil
     }
 
     /// Resolve a saved run's answer without substituting the latest reply in

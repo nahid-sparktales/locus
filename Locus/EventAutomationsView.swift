@@ -99,6 +99,7 @@ struct ConfigureAgentView: View {
         .onChange(of: app.configureAgentFocusConfigurationID) { applyRequestedFocus() }
         .onChange(of: app.configureAgentPendingTriggerEdit) { app.mountPendingConfigureAgentEditor() }
         .onChange(of: app.configureAgentPendingCreation) { app.mountPendingConfigureAgentEditor() }
+        .onChange(of: app.configureAgentPendingSavedAgentAutomation) { app.mountPendingConfigureAgentEditor() }
         .onChange(of: references.map(\.id)) { _, ids in
             defer { knownConfigurationIDs = Set(ids) }
             if let knownConfigurationIDs,

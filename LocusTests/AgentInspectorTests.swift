@@ -377,21 +377,64 @@ final class AgentInspectorTests: XCTestCase {
         let owner = AgentProfile(name: "Jinbei")
         let session = SessionSummary(id: "chat", name: "Task chat", preview: "", mtime: 1, size: 0,
             agentProfileID: owner.id.uuidString)
-        var first = try activityNavigationRun(id: "first", sessionID: session.id)
-        first.scheduleID = "schedule"
-        var second = try activityNavigationRun(id: "second", sessionID: session.id)
-        second.manifest = ["event_trigger_id": .string("event")]
+        // Backend shapes: api/schedules.py stores schedule_id, api/event_triggers.py
+        // stores manifest.event_trigger_id (price alerts included), and workflow
+        // steps carry manifest.workflow_execution_id.
+        let scheduled = try activityNavigationRun(id: "scheduled", sessionID: session.id,
+            fields: ["schedule_id": "schedule", "occurrence_id": "occurrence", "task_id": ""])
+        let triggered = try activityNavigationRun(id: "triggered", sessionID: session.id,
+            fields: ["manifest": ["event_triggered": true, "event_trigger_id": "event", "event_trigger_kind": "price"]])
+        let workflow = try activityNavigationRun(id: "workflow", sessionID: session.id,
+            fields: ["manifest": ["workflow_execution_id": "execution", "automation_kind": "event"]])
+        let scheduledTeam = try activityNavigationRun(id: "scheduled-team", sessionID: session.id,
+            fields: ["run_kind": "team", "team_name": "Night crew", "schedule_id": "team-schedule"])
         let ordinary = try activityNavigationRun(id: "ordinary", sessionID: session.id)
-        let firstAnswer = ChatBlock(kind: .assistant, text: "First task result", runID: first.id)
-        let secondAnswer = ChatBlock(kind: .assistant, text: "Second task result", runID: second.id)
-        let reply = ChatBlock(kind: .assistant, text: "Ordinary chat reply", runID: ordinary.id)
-        let cards = ChatTranscriptBuilder.taskResults(in: [firstAnswer, secondAnswer, reply],
-            runs: [first, second, ordinary], session: session, profiles: [owner])
-        XCTAssertEqual(Set(cards.keys), [firstAnswer.id, secondAnswer.id])
-        XCTAssertEqual(cards[firstAnswer.id]?.runID, first.id)
-        XCTAssertEqual(cards[secondAnswer.id]?.runID, second.id)
-        XCTAssertEqual(cards[firstAnswer.id]?.agentName, owner.name)
-        XCTAssertNil(cards[reply.id])
+        let runs = [scheduled, triggered, workflow, scheduledTeam, ordinary]
+        let answers = Dictionary(uniqueKeysWithValues: runs.map { run in
+            (run.id, ChatBlock(kind: .assistant, text: "Result for \(run.id)", runID: run.id))
+        })
+        let cards = ChatTranscriptBuilder.taskResults(in: runs.compactMap { answers[$0.id] },
+            runs: runs, session: session, profiles: [owner])
+        XCTAssertEqual(Set(cards.keys), Set(["scheduled", "triggered", "workflow", "scheduled-team"].compactMap { answers[$0]?.id }))
+        XCTAssertEqual(cards[try XCTUnwrap(answers["scheduled"]).id]?.runID, scheduled.id)
+        XCTAssertEqual(cards[try XCTUnwrap(answers["triggered"]).id]?.runID, triggered.id)
+        XCTAssertEqual(cards[try XCTUnwrap(answers["scheduled"]).id]?.agentName, owner.name)
+        XCTAssertEqual(cards[try XCTUnwrap(answers["scheduled-team"]).id]?.agentName, "Night crew")
+        XCTAssertNil(cards[try XCTUnwrap(answers["ordinary"]).id])
+    }
+
+    @MainActor
+    func testOrdinaryChatRunsStayUnboxedWithTaskIDsTeamsAndGoals() throws {
+        let owner = AgentProfile(name: "Jinbei")
+        // A person typing in a saved agent's ordinary chat, not its event chat.
+        let session = SessionSummary(id: "chat", name: "Agent chat", preview: "", mtime: 1, size: 0,
+            agentProfileID: owner.id.uuidString)
+        // server.py starts every chat turn with task_id "" (or the worktree
+        // checkout ID) and schedule_id ""; chats queue team runs directly.
+        let unmarked = try activityNavigationRun(id: "unmarked", sessionID: session.id,
+            fields: ["task_id": "", "schedule_id": "", "occurrence_id": "", "manifest": ["event_trigger_id": ""]])
+        let worktree = try activityNavigationRun(id: "worktree", sessionID: session.id,
+            fields: ["task_id": "checkout-1", "execution_environment": "worktree"])
+        let team = try activityNavigationRun(id: "team", sessionID: session.id,
+            fields: ["run_kind": "team", "team_id": "crew", "team_name": "Crew", "task_id": "checkout-2"])
+        let goal = try activityNavigationRun(id: "goal", sessionID: session.id,
+            fields: ["manifest": ["goal_id": "goal", "goal_automatic": true, "capsule_context": ["id": "capsule"]]])
+        let runs = [unmarked, worktree, team, goal]
+        XCTAssertEqual(worktree.taskID, "checkout-1")
+        XCTAssertEqual(team.runKind, "team")
+        let blocks = runs.flatMap { run in [
+            ChatBlock(kind: .user, text: "Request \(run.id)", runID: run.id),
+            ChatBlock(kind: .assistant, text: "Reply \(run.id)", assistantPhase: .finalAnswer, runID: run.id),
+        ] }
+        XCTAssertEqual(ChatTranscriptBuilder.taskResults(in: blocks, runs: runs, session: session, profiles: [owner]), [:])
+        XCTAssertEqual(ChatTranscriptBuilder.activityResultBlockID(for: worktree, in: blocks),
+            blocks.first { $0.text == "Reply worktree" }?.id,
+            "Activity Center still resolves ordinary answers for its highlight")
+
+        let eventChat = SessionSummary(id: "chat", name: "Daily check", preview: "", mtime: 1, size: 0,
+            agentTriggerID: "schedule", agentKind: "schedule", agentName: "Daily check", agentPrimary: true)
+        XCTAssertEqual(ChatTranscriptBuilder.taskResults(in: blocks, runs: runs, session: eventChat, profiles: []), [:],
+            "Replies to questions typed into an agent's event chat stay unboxed once their runs are known")
     }
 
     @MainActor
@@ -616,12 +659,15 @@ final class AgentInspectorTests: XCTestCase {
         model.toastCenter.cancelPendingDismissal()
     }
 
-    private func activityNavigationRun(id: String, sessionID: String, updatedAt: Double = 10) throws -> OrchestrationRun {
-        try JSONDecoder().decode(OrchestrationRun.self, from: JSONSerialization.data(withJSONObject: [
+    private func activityNavigationRun(id: String, sessionID: String, updatedAt: Double = 10,
+                                       fields: [String: Any] = [:]) throws -> OrchestrationRun {
+        let base: [String: Any] = [
             "id": id, "session_id": sessionID, "state": "completed", "request": "Saved result",
             "created_at": 1, "updated_at": updatedAt, "last_seq": 0, "pinned": false,
             "legacy": false, "recoverable": false, "run_kind": "solo",
-        ]))
+        ]
+        return try JSONDecoder().decode(OrchestrationRun.self, from: JSONSerialization.data(
+            withJSONObject: base.merging(fields) { _, field in field }))
     }
 
     private func stubActivityNavigation(_ run: OrchestrationRun, list: [OrchestrationRun]? = nil,

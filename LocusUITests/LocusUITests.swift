@@ -2614,12 +2614,15 @@ final class LocusUITests: XCTestCase {
         let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(newChat.exists)
         XCTAssertEqual(newChat.label, "New agent")
+        // The footer switcher chooses saved agents only, so a selected task
+        // never takes it over. This fixture seeds tasks but no saved agents.
         let agentMenu = anyElement("sidebar.agentMenu")
         XCTAssertTrue(agentMenu.exists)
-        XCTAssertTrue(
-            ((agentMenu.value as? String) ?? "").contains("Inbox Triage"),
-            "the footer identifies the selected agent"
-        )
+        XCTAssertEqual(agentMenu.label, "Agents menu")
+        let footerValue = (agentMenu.value as? String) ?? ""
+        XCTAssertTrue(footerValue.contains("Choose an agent"), "no saved agent is selected: \(footerValue)")
+        XCTAssertTrue(footerValue.contains("0 agents"), footerValue)
+        XCTAssertFalse(footerValue.contains("Inbox Triage"), "a task does not occupy the agent switcher")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
@@ -2677,21 +2680,39 @@ final class LocusUITests: XCTestCase {
                 .contains("Morning Review")
         })
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.chat.seed-schedule-chat").exists)
-        XCTAssertTrue(
+        XCTAssertTrue(agentMenu.exists)
+        XCTAssertFalse(
             ((agentMenu.value as? String) ?? "").contains("Morning Review"),
-            "the footer follows the selected agent"
+            "selecting a task leaves the agent switcher on saved agents"
         )
 
+        // The switcher lists saved agents only. Searching for a task's name
+        // finds no task row; with no saved agents it offers to create one.
         agentMenu.click()
         let agentSearch = anyElement("sidebar.agentPicker.search")
         XCTAssertTrue(agentSearch.waitForExistence(timeout: 3))
         agentSearch.click()
         agentSearch.typeText("Inbox")
-        let inboxAgent = anyElement("agent.menu.seed-agent")
-        XCTAssertTrue(inboxAgent.waitForExistence(timeout: 3))
+        let emptyPicker = anyElement("sidebar.agentPicker.empty")
+        XCTAssertTrue(emptyPicker.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            (emptyPicker.label + " " + (emptyPicker.value as? String ?? "")).contains("No agents yet"),
+            "with no saved agents the picker explains how to create one"
+        )
+        XCTAssertFalse(anyElement("agent.menu.seed-agent").exists, "tasks are not listed in the agent switcher")
+        XCTAssertFalse(anyElement("sidebar.agentPicker.currentChat").exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(agentSearch))
+
+        // Tasks are chosen from their own sidebar rows.
+        let inboxAgent = anyElement("agent.seed-agent")
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
         inboxAgent.click()
         XCTAssertTrue(waitUntil {
-            ((agentMenu.value as? String) ?? "").contains("Inbox Triage")
+            let selectedName = self.anyElement("agentOverview.name")
+            guard selectedName.exists else { return false }
+            return (selectedName.label + " " + (selectedName.value as? String ?? ""))
+                .contains("Inbox Triage")
         })
 
         // Leaving Agent takes the tab and its rail button away again;
@@ -2712,6 +2733,56 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.identity").exists)
         XCTAssertTrue(anyElement("inspector.tab.agent").exists)
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
+    }
+
+    func testAgentSwitcherChoosesASavedAgentFromSearch() {
+        relaunchWithAgentFixture("saved-profile")
+        revealSidebarForNavigation()
+        let agentMenu = anyElement("sidebar.agentMenu")
+        XCTAssertTrue(agentMenu.waitForExistence(timeout: Self.launchContentTimeout))
+        func footerValue() -> String { (agentMenu.value as? String) ?? "" }
+
+        // Choosing a task row leaves no saved agent selected, so the footer
+        // has something to follow when Atlas is picked below.
+        let inboxAgent = anyElement("agent.seed-agent")
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
+        inboxAgent.click()
+        XCTAssertTrue(waitUntil { footerValue().contains("Choose an agent") }, footerValue())
+        XCTAssertTrue(footerValue().contains("1 agent"), footerValue())
+
+        agentMenu.click()
+        let search = anyElement("sidebar.agentPicker.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        let atlas = anyElement("sidebar.agentPicker.profile.FAAAA111-1111-4111-8111-111111111111")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3), "saved agents are listed")
+        search.click()
+        search.typeText("no such agent")
+        let empty = anyElement("sidebar.agentPicker.empty")
+        XCTAssertTrue(empty.waitForExistence(timeout: 3))
+        XCTAssertTrue((empty.label + " " + (empty.value as? String ?? "")).contains("No matching agents"))
+        XCTAssertFalse(atlas.exists)
+        search.typeKey("a", modifierFlags: .command)
+        search.typeText("fixture-model")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3), "search also matches an agent's model")
+        atlas.click()
+        XCTAssertTrue(waitForDisappearance(search))
+        XCTAssertTrue(waitUntil { footerValue().contains("Atlas") }, footerValue())
+        XCTAssertTrue(footerValue().contains("fixture-model"), footerValue())
+        XCTAssertTrue(footerValue().contains("1 agent"), footerValue())
+
+        // The keyboard path: arrows move focus and Return picks the match.
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
+        inboxAgent.click()
+        XCTAssertTrue(waitUntil { footerValue().contains("Choose an agent") }, footerValue())
+        agentMenu.click()
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("Atlas")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3))
+        search.typeKey(.downArrow, modifierFlags: [])
+        search.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(search))
+        XCTAssertTrue(waitUntil { footerValue().contains("Atlas") }, footerValue())
     }
 
     func testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet() {
@@ -4391,7 +4462,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(resultHighlight.waitForExistence(timeout: 3), "The output itself should be highlighted")
         XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.intersects(resultHighlight.frame) },
                       "The selected output must be scrolled into the transcript viewport")
-        XCTAssertTrue(anyElement("taskResult.header.seed-run").exists)
+        // seed-run is a team run started from an ordinary chat: highlighted,
+        // but not boxed as an automated task result.
+        XCTAssertFalse(anyElement("taskResult.header.seed-run").exists,
+                       "Only scheduled, triggered, or agent event results get a task result box")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count, 0)
         XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
         // Markdown prose is a native NSTextView, not SwiftUI StaticText.

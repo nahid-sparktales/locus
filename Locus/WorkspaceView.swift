@@ -3008,6 +3008,10 @@ private struct AgentActivityRow: View {
 private struct WorkStatusStrip: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
+    // The provider pill names the chat's own route, which lives in these
+    // feature models; observing them refreshes it when an account or agent changes.
+    @EnvironmentObject private var providerAccounts: ProviderAccountsModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @ObservedObject var streamingReply: StreamingReplyState
 
     var body: some View {
@@ -3016,7 +3020,7 @@ private struct WorkStatusStrip: View {
                 HStack(spacing: 8) {
                     statusPill(
                         label: model.providerLabel,
-                        color: runtimeColor(model.modelRuntimePhase),
+                        color: model.providerRuntimePhase.map { runtimeColor($0) } ?? LocusTheme.muted,
                         identifier: "workspace.modelStatus"
                     )
                     if model.isBusy, let started = model.activeWorkStartedAt {

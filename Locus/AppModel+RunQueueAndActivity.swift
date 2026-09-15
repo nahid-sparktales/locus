@@ -173,6 +173,7 @@ extension AppModel {
         configureAgentPresented = false
         configureAgentCreationPresented = false
         configureAgentPendingCreation = false
+        configureAgentPendingSavedAgentAutomation = nil
         configureAgentDraftSuggestion = ""
         configureAgentPendingScheduleDraft = nil
         configureAgentPendingTriggerEdit = nil
@@ -186,6 +187,13 @@ extension AppModel {
     }
 
     func mountPendingConfigureAgentEditor() {
+        if let kind = configureAgentPendingSavedAgentAutomation {
+            configureAgentPendingSavedAgentAutomation = nil
+            if let profile = configuredSavedAgent {
+                presentSavedAgentAutomation(kind, profile: profile)
+                return
+            }
+        }
         if configureAgentPendingCreation {
             configureAgentPendingCreation = false
             configureAgentCreationPresented = true

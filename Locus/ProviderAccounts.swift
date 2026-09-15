@@ -717,6 +717,17 @@ enum ProviderAccountStatus: Equatable {
              .keyRejected, .failed, .noKey: false
         }
     }
+
+    /// The runtime phase a status pill shows for a route on this account.
+    /// A subscription limit resets on its own, so it reads as recovering.
+    var runtimePhase: RuntimePhase {
+        switch self {
+        case .connected, .keySaved, .signedIn: .online
+        case .signingIn: .starting(summary)
+        case .rateLimited: .recovering(summary)
+        case .signedOut, .runtimeUnavailable, .keyRejected, .failed, .noKey: .unavailable(summary)
+        }
+    }
 }
 
 /// One group in the model picker: local Ollama, or one account.

@@ -283,6 +283,122 @@ final class SavedAgentTests: XCTestCase {
     }
 
     @MainActor
+    func testNewAutomationFromAClosedHubMountsTheOwnersScheduleDraft() {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let account = ProviderAccount(kind: .chatGPT, name: "Plan", preferredModel: "plan-model")
+        model.providerAccounts = [account]
+        let profile = AgentProfile(name: "Jinbei", route: .providerAccount(account.id), model: "plan-model")
+        model.agentProfiles = [profile]
+        XCTAssertFalse(model.configureAgentPresented)
+
+        model.newSavedAgentAutomation(.schedule, profile: profile)
+
+        XCTAssertTrue(model.configureAgentPresented)
+        XCTAssertEqual(model.configureAgentProfileID, profile.id)
+        XCTAssertEqual(model.configureAgentPendingSavedAgentAutomation, .schedule)
+        XCTAssertNil(model.schedule.scheduleEditorDraft, "The editor waits for the hub that hosts its sheet")
+        model.mountPendingConfigureAgentEditor() // The hub's onAppear.
+
+        XCTAssertNil(model.configureAgentPendingSavedAgentAutomation)
+        let draft = model.schedule.scheduleEditorDraft
+        XCTAssertEqual(draft?.agentProfileID, profile.id.uuidString)
+        XCTAssertEqual(draft?.provider, "chatgpt")
+        XCTAssertEqual(draft?.providerAccountID, account.id.uuidString)
+        XCTAssertEqual(draft?.model, "plan-model")
+        XCTAssertEqual(draft?.runner, .solo)
+        XCTAssertEqual(draft?.workspaceRoot, model.configureAgentWorkspace)
+        model.dismissConfigureAgent()
+    }
+
+    @MainActor
+    func testNewAutomationFromAClosedHubMountsTheOwnersEventDraft() {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let account = ProviderAccount(kind: .chatGPT, name: "Plan", preferredModel: "plan-model")
+        model.providerAccounts = [account]
+        let profile = AgentProfile(name: "Jinbei", route: .providerAccount(account.id), model: "plan-model")
+        model.agentProfiles = [profile]
+
+        model.newSavedAgentAutomation(.event, profile: profile, workspace: "/tmp/world-project")
+        XCTAssertNil(model.eventAutomations.editorDraft)
+        model.mountPendingConfigureAgentEditor()
+
+        let draft = model.eventAutomations.editorDraft
+        XCTAssertEqual(draft?.agentProfileID, profile.id.uuidString)
+        XCTAssertEqual(draft?.targetSessionID, EventTriggerEditorDraft.newOwnedAgentChat)
+        XCTAssertEqual(draft?.triggerKind, .event)
+        XCTAssertEqual(draft?.workspaceRoot, SessionSummary.canonicalWorkspacePath("/tmp/world-project"))
+        XCTAssertEqual(draft?.profileRoute?["provider"], "chatgpt")
+        XCTAssertEqual(draft?.profileRoute?["provider_account_id"], account.id.uuidString)
+        XCTAssertEqual(draft?.profileRoute?["model"], "plan-model")
+        XCTAssertTrue(SavedAgentURLProtocol.detachedRequests().isEmpty, "Opening a draft must not allocate a chat")
+        model.dismissConfigureAgent()
+    }
+
+    @MainActor
+    func testNewAutomationInAnOpenHubForTheSameAgentPresentsImmediately() {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "weather-model")
+        model.agentProfiles = [profile]
+        model.manageSavedAgent(profile)
+
+        model.newSavedAgentAutomation(.price, profile: profile)
+
+        XCTAssertNil(model.configureAgentPendingSavedAgentAutomation)
+        XCTAssertEqual(model.eventAutomations.editorDraft?.triggerKind, .price)
+        XCTAssertEqual(model.eventAutomations.editorDraft?.agentProfileID, profile.id.uuidString)
+        model.dismissConfigureAgent()
+    }
+
+    @MainActor
+    func testNewAutomationForAnUnusableAgentExplainsWithoutOpeningTheHub() {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let disconnected = AgentProfile(name: "Orphaned", route: .providerAccount(UUID()), model: "fixture")
+        let unconfigured = AgentProfile(name: "Draft", model: "")
+        model.agentProfiles = [disconnected, unconfigured]
+        for (profile, message) in [
+            (disconnected, "The selected account is unavailable. Reconnect it or explicitly choose another profile."),
+            (unconfigured, "Configure an exact model for Draft."),
+        ] {
+            model.newSavedAgentAutomation(.schedule, profile: profile)
+            XCTAssertEqual(model.toast?.message, message)
+            XCTAssertFalse(model.configureAgentPresented)
+            XCTAssertNil(model.configureAgentProfileID)
+            XCTAssertNil(model.configureAgentPendingSavedAgentAutomation)
+            XCTAssertNil(model.schedule.scheduleEditorDraft)
+        }
+    }
+
+    @MainActor
+    func testDismissingTheHubDropsAPendingNewAutomation() {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Weather", model: "weather-model")
+        model.agentProfiles = [profile]
+        model.newSavedAgentAutomation(.price, profile: profile)
+        XCTAssertEqual(model.configureAgentPendingSavedAgentAutomation, .price)
+
+        model.dismissConfigureAgent()
+        XCTAssertNil(model.configureAgentPendingSavedAgentAutomation, "Dismissing must drop the pending editor")
+
+        // Reopening the hub for another reason must not mount an editor nobody asked for.
+        model.manageSavedAgent(profile)
+        model.mountPendingConfigureAgentEditor() // The hub's onAppear.
+
+        XCTAssertNil(model.configureAgentPendingSavedAgentAutomation)
+        XCTAssertNil(model.eventAutomations.editorDraft)
+        XCTAssertNil(model.schedule.scheduleEditorDraft)
+        model.dismissConfigureAgent()
+    }
+
+    @MainActor
     func testSavedAgentSendsChatWorkPlanAndGrill() {
         for mode in [WorkMode.ask, .work, .plan, .grill] {
             let model = savedAgentModel()
