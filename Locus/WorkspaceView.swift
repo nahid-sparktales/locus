@@ -110,8 +110,13 @@ struct WorkspaceView: View {
 
     private var contentArea: some View {
         chatContent
+            // A docked request overview owns the trailing side, so the card
+            // never covers transcript text or the composer.
+            .modifier(ConversationColumnDocking(
+                workspaceWidth: workspaceGeometry.workspaceWidth,
+                overview: workspaceGeometry.requestOverview
+            ))
             // The parent VStack already proposes the space below the toolbar.
-            .frame(width: workspaceGeometry.workspaceWidth)
             .frame(maxHeight: .infinity)
         .clipped()
         .onExitCommand { model.dismissOverview() }
@@ -410,6 +415,43 @@ struct WorkspaceView: View {
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
         }
+    }
+}
+
+/// Moves the chat column aside while a docked request overview owns the
+/// trailing side of the workspace, and back once the card minimizes or closes.
+///
+/// The column follows the resolved layout in its own transaction. A send
+/// presents the overview in the same update that appends the user's row and
+/// clears the draft, and a chat switch dismisses it while the transcript is
+/// replaced; animating on the overview flags would spring those changes too.
+/// Here only the column's exact width and alignment move. Reduce Motion, live
+/// resizing and large transcripts take the resolved layout at once, matching
+/// the root panel motion.
+private struct ConversationColumnDocking: ViewModifier {
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    let workspaceWidth: CGFloat
+    let overview: RequestOverviewLayout
+    @State private var settled: RequestOverviewLayout?
+
+    private var immediate: Bool {
+        reduceMotion || isLiveResizing || transcriptPresentation.snapshot.prefersImmediatePanelLayout
+    }
+
+    func body(content: Content) -> some View {
+        let layout = immediate ? overview : (settled ?? overview)
+        content
+            .environment(\.locusConversationColumnAlignment, layout.docked ? .leading : .center)
+            // Exact widths, never flexible ones: see RootView's note on
+            // re-negotiating widths with a long native-text transcript.
+            .frame(width: layout.conversationWidth(in: workspaceWidth))
+            .frame(width: workspaceWidth, alignment: .leading)
+            .onAppear { settled = overview }
+            .onChange(of: overview) { _, next in
+                withAnimation(immediate ? nil : LocusMotion.spatial) { settled = next }
+            }
     }
 }
 
@@ -3012,6 +3054,7 @@ private struct WorkStatusStrip: View {
     // feature models; observing them refreshes it when an account or agent changes.
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @Environment(\.locusConversationColumnAlignment) private var columnAlignment
     @ObservedObject var streamingReply: StreamingReplyState
 
     var body: some View {
@@ -3055,7 +3098,7 @@ private struct WorkStatusStrip: View {
             // side panels must not pull the two readiness dots toward the
             // window edges while the composer remains centered.
             .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: columnAlignment)
             .frame(height: 25)
             .locusWorkspaceBackground()
         }
@@ -3218,6 +3261,7 @@ private struct ConversationView: View {
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusConversationColumnAlignment) private var columnAlignment
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -3312,7 +3356,7 @@ private struct ConversationView: View {
                 .frame(width: max(1, min(780, viewportWidth - 48)))
                 .padding(.horizontal, 24)
                 .padding(.top, transcript.isEmpty ? 0 : 24)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: columnAlignment)
             }
             // The native scroll area is the transcript's accessibility
             // container. An additional lazy-stack wrapper must not substitute

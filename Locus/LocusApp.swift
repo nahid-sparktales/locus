@@ -880,7 +880,13 @@ struct RootView: View {
                 inspectorWidth: docksInspector ? dockedInspectorWidth : 0,
                 composerWidth: min(max(workspaceWidth - 48, 0), 740),
                 docksSidebar: docksSidebar,
-                docksInspector: docksInspector
+                docksInspector: docksInspector,
+                requestOverview: RequestOverviewLayout.resolve(
+                    workspaceWidth: workspaceWidth,
+                    visible: model.requestOverviewVisible,
+                    expanded: model.overviewPresented,
+                    splitView: model.splitViewActive
+                )
             )
 
             ZStack(alignment: .leading) {
@@ -931,15 +937,24 @@ struct RootView: View {
                     }
                 }
 
-                if model.requestOverviewVisible {
-                    RequestOverviewActivity(session: model.sessionOverview)
-                        .frame(width: min(340, widthAfterChrome - 16), alignment: .trailing)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(.trailing, railWidth + 8)
-                        .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
-                        .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-                        .zIndex(1)
+                ZStack(alignment: .topTrailing) {
+                    if model.requestOverviewVisible {
+                        // The anchor stays beside the rail. When the layout
+                        // docks, the chat column gives up this card's width.
+                        RequestOverviewActivity(session: model.sessionOverview)
+                            .frame(width: geometrySnapshot.requestOverview.panelWidth, alignment: .trailing)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(.trailing, railWidth + 8)
+                            .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
+                            .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
+                    }
                 }
+                // Scoped to the card: a send presents it in the same update
+                // that appends the user's row and clears the composer, and
+                // those must not spring. The column follows in WorkspaceView.
+                .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.requestOverviewVisible)
+                .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.overviewPresented)
+                .zIndex(1)
 
                 if inspectorOpen && !docksInspector {
                     InspectorView(resizeWidth: min(workspaceLayout.inspectorWidth, proxy.size.width - railWidth))

@@ -115,6 +115,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(popup.frame.maxX, anyElement("inspector.rail.toggle").frame.minX - 13, accuracy: 3)
         XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
         XCTAssertEqual(popup.frame.minY - app.windows.firstMatch.frame.minY, 60, accuracy: 3)
+        // Beside the fixture's 240-point sidebar the 636-point workspace still
+        // docks a narrower card next to a minimum-width conversation.
+        XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.maxX <= popup.frame.minX + 1 })
+        XCTAssertLessThanOrEqual(anyElement("composer.input").frame.maxX, popup.frame.minX)
         anyElement("inspector.rail.context").click()
         XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil { !popup.exists }, "Right-side panels replace Overview")
@@ -3263,6 +3267,14 @@ final class LocusUITests: XCTestCase {
     }
 
     func testIdleOverviewFitsItsContentAtTheTopRight() {
+        // CI's compact profile leaves a 436-point workspace, where the card
+        // floats instead of docking. Pin a window whose 966-point workspace
+        // docks it, as the compact dark overview test pins its own size.
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
+        app.launch()
+        XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
         app.typeKey("1", modifierFlags: .command)
         let popup = anyElement("workspace.overview.popover")
         XCTAssertTrue(popup.waitForExistence(timeout: 5))
@@ -3274,6 +3286,23 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThan(popup.frame.height, 320)
         XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
         XCTAssertFalse(anyElement("files.search").exists)
+
+        // The conversation moves aside rather than running beneath the
+        // docked card, and returns to the centre once the card closes.
+        let scroll = anyElement("conversation.scroll")
+        let composer = anyElement("composer.input")
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { scroll.frame.maxX <= popup.frame.minX + 1 })
+        XCTAssertLessThanOrEqual(composer.frame.maxX, popup.frame.minX)
+        let dockedComposerMidX = composer.frame.midX
+        anyElement("workspace.overview.close").click()
+        XCTAssertTrue(waitUntil { !popup.exists })
+        // The docked composer already fills its 646-point column, so being
+        // centred alone cannot show the return; wait for the move as well.
+        XCTAssertTrue(waitUntil {
+            composer.frame.midX > dockedComposerMidX + 40
+                && abs(composer.frame.midX - scroll.frame.midX) < 3
+        })
     }
 
     func testOverviewSourcesMenuOpensSkillsAndMCP() {

@@ -3905,6 +3905,11 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.overviewPresented)
         model.setJustChatEnabled(false)
         XCTAssertFalse(model.overviewPresented)
+        model.presentRequestOverview()
+        XCTAssertTrue(model.requestOverviewVisible)
+        model.openAgentCrewChat()
+        XCTAssertFalse(model.overviewPresented, "Crew Chat has no column beside which the overview can dock")
+        XCTAssertFalse(model.requestOverviewVisible)
     }
 
     @MainActor

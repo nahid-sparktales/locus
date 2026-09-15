@@ -354,6 +354,7 @@ struct ComposerView: View {
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.locusConversationColumnAlignment) private var columnAlignment
     @State private var contextPresented = false
     @State private var permissionModesPresented = false
     @State private var workflowPresented = false
@@ -479,7 +480,7 @@ struct ComposerView: View {
         // gap that became visible once the workspace stopped clipping its
         // bottom chrome.
         .padding(.bottom, 10)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: columnAlignment)
         .background(
             LinearGradient(
                 colors: [composerPanel.opacity(0), composerPanel],

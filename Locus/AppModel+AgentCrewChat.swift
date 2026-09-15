@@ -75,6 +75,9 @@ extension AppModel {
         sidebarDestination = .agents
         activity.activityCenterPresented = false
         agentCrewChatPresented = true
+        // The overview docks beside the ordinary chat column only; over the
+        // crew conversation it would cover the messages it summarises.
+        dismissOverview()
     }
 
     /// Shares the ordinary native chat lifecycle without moving keyboard focus
