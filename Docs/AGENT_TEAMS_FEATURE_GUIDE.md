@@ -215,10 +215,10 @@ Team**. The visual builder has three lanes:
 
 Choose a lane, then select a model card. Any role may reuse a model another role
 uses, including all three; Locus still gives each role its own safely scoped
-profile and instructions. Models are
-grouped by provider, so identical model names from different accounts remain
-distinct. Hosted providers require an explicit automatic-routing approval
-before **Create & Use Team** becomes available.
+profile and instructions. Models are grouped by provider, so identical model
+names from different accounts remain distinct. Hosted providers require an
+explicit automatic-routing approval before **Create & Use Team** becomes
+available.
 
 Quick Team saves and selects the result immediately. It uses scorecard routing,
 one-time plan review, a managed worktree, automatic call budgeting, and adaptive
