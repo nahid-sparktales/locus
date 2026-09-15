@@ -518,6 +518,9 @@ final class AppModel: ObservableObject {
     var savedAgentConversationCreationCounts: [UUID: Int] = [:]
     @Published var configureAgentCreationPresented = false
     @Published var configureAgentPendingCreation = false
+    /// An automation editor requested from a saved agent's page while the hub
+    /// that hosts the editor sheets was closed. The hub opens it once mounted.
+    @Published var configureAgentPendingSavedAgentAutomation: AgentConfigurationKind?
     @Published var configureAgentTab: ConfigureAgentTab = .agents
     /// A configuration the sheet should select once its lists have loaded,
     /// keyed the way the sheet keys them ("event:<id>", "price:<id>",

@@ -438,6 +438,19 @@ extension AppModel {
         configureAgentWorkspace = SessionSummary.canonicalWorkspacePath(workspace ?? savedAgentWorkspacePath(profile))
     }
 
+    /// The agent page's quick action. Its editors are sheets of the Configure
+    /// Agent hub, so a closed hub opens first and mounts the editor itself;
+    /// presenting directly would lose the owner's identity and route.
+    func newSavedAgentAutomation(_ kind: AgentConfigurationKind, profile: AgentProfile, workspace: String? = nil) {
+        do { _ = try agentProfileProvider(profile) } catch { showToast(error.localizedDescription); return }
+        if configureAgentPresented, configureAgentProfileID == profile.id {
+            presentSavedAgentAutomation(kind, profile: profile)
+            return
+        }
+        manageSavedAgent(profile, workspace: workspace)
+        configureAgentPendingSavedAgentAutomation = kind
+    }
+
     /// Automation editors capture their owner's identity and route when opened.
     /// Changing the foreground chat or model picker cannot retarget the draft.
     func presentSavedAgentAutomation(_ kind: AgentConfigurationKind, profile: AgentProfile) {
