@@ -4773,7 +4773,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(orphan.waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(anyElement("session.orphaned-agent-chat-1").exists)
         XCTAssertTrue(anyElement("session.orphaned-agent-chat-2").exists)
-        anyElement("agent.\(orphanID).actions").click()
+        // The compact window's sidebar list is short; scroll the row's
+        // actions into view so the click lands on the menu button.
+        let actions = anyElement("agent.\(orphanID).actions")
+        revealSettingsControl(actions, in: anyElement("sidebar.scroll"))
+        actions.click()
 
         let remove = anyElement("agent.\(orphanID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
@@ -4803,7 +4807,9 @@ final class LocusUITests: XCTestCase {
         let profileID = "FAAAA111-1111-4111-8111-111111111111"
         let profile = anyElement("agent.\(profileID)")
         XCTAssertTrue(profile.waitForExistence(timeout: Self.launchContentTimeout))
-        anyElement("agent.\(profileID).actions").click()
+        let actions = anyElement("agent.\(profileID).actions")
+        revealSettingsControl(actions, in: anyElement("sidebar.scroll"))
+        actions.click()
         let remove = anyElement("agent.\(profileID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
         XCTAssertTrue(remove.isEnabled)
