@@ -29,8 +29,71 @@ struct WorkspaceGeometrySnapshot: Equatable {
     var composerWidth: CGFloat = 0
     var docksSidebar = false
     var docksInspector = false
+    /// Resolved by the root window. Hosts that build their own snapshot keep
+    /// the default, which reserves nothing beside the conversation.
+    var requestOverview = RequestOverviewLayout.hidden
 
     static let empty = WorkspaceGeometrySnapshot()
+
+    /// The chat column's exact width once a docked request overview has
+    /// taken the trailing side of the workspace.
+    var conversationWidth: CGFloat {
+        max(workspaceWidth - requestOverview.reservedTrailingWidth, 0)
+    }
+}
+
+/// Places the request overview card beside the conversation.
+///
+/// An expanded card docks when the workspace still leaves a usable
+/// conversation beside it: the chat column gives up the card's width plus
+/// its inset and gap, so the card never covers transcript text or the
+/// composer. A hidden or minimized card reserves nothing and the
+/// conversation stays centered. When the workspace is too narrow, or split
+/// panes already divide it, the card floats over the trailing edge as
+/// before; reserving space there would squeeze a pane below a readable width.
+struct RequestOverviewLayout: Equatable {
+    static let preferredPanelWidth: CGFloat = 300
+    static let minimumPanelWidth: CGFloat = 248
+    /// The card's trailing edge sits this far inside the workspace, beside
+    /// the inspector rail.
+    static let trailingInset: CGFloat = 8
+    static let columnGap: CGFloat = 12
+    static let minimumConversationWidth: CGFloat = 360
+
+    var panelWidth: CGFloat
+    var reservedTrailingWidth: CGFloat
+    var docked: Bool
+
+    static let hidden = RequestOverviewLayout(
+        panelWidth: preferredPanelWidth,
+        reservedTrailingWidth: 0,
+        docked: false
+    )
+
+    static func resolve(
+        workspaceWidth: CGFloat,
+        visible: Bool,
+        expanded: Bool,
+        splitView: Bool
+    ) -> RequestOverviewLayout {
+        let width = max(workspaceWidth, 0)
+        let overlay = RequestOverviewLayout(
+            panelWidth: min(preferredPanelWidth, max(width - 2 * trailingInset, 0)),
+            reservedTrailingWidth: 0,
+            docked: false
+        )
+        guard visible, expanded, !splitView else { return overlay }
+        let dockedWidth = min(
+            preferredPanelWidth,
+            width - minimumConversationWidth - trailingInset - columnGap
+        )
+        guard dockedWidth >= minimumPanelWidth else { return overlay }
+        return RequestOverviewLayout(
+            panelWidth: dockedWidth,
+            reservedTrailingWidth: dockedWidth + trailingInset + columnGap,
+            docked: true
+        )
+    }
 }
 
 /// Window-owned interaction state that stays independent from the broad
@@ -323,10 +386,22 @@ private struct LocusCommandRouterEnvironmentKey: EnvironmentKey {
     static let defaultValue: (any AppCommandRouting)? = nil
 }
 
+private struct LocusConversationColumnAlignmentEnvironmentKey: EnvironmentKey {
+    static let defaultValue: Alignment = .center
+}
+
 extension EnvironmentValues {
     var locusIsLiveResizing: Bool {
         get { self[LocusLiveResizeEnvironmentKey.self] }
         set { self[LocusLiveResizeEnvironmentKey.self] = newValue }
+    }
+
+    /// Where the bounded transcript, status strip and composer sit inside the
+    /// chat column. A narrow value keeps the transcript from observing the
+    /// whole geometry snapshot, which changes on every resize.
+    var locusConversationColumnAlignment: Alignment {
+        get { self[LocusConversationColumnAlignmentEnvironmentKey.self] }
+        set { self[LocusConversationColumnAlignmentEnvironmentKey.self] = newValue }
     }
 
     var locusWorkspaceGeometry: WorkspaceGeometrySnapshot {

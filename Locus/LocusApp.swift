@@ -791,6 +791,10 @@ private struct WorkspacePanelMotion: ViewModifier {
     let inspectorCollapsed: Bool
     let inspectorZoomed: Bool
     let inspectorTab: InspectorTab
+    /// A docked request overview reserves the conversation's trailing side,
+    /// so showing, minimizing or closing it moves the chat column too.
+    let requestOverviewVisible: Bool
+    let overviewPresented: Bool
 
     func body(content: Content) -> some View {
         let immediate = reduceMotion || transcriptPresentation.snapshot.prefersImmediatePanelLayout
@@ -799,6 +803,8 @@ private struct WorkspacePanelMotion: ViewModifier {
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorCollapsed)
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorZoomed)
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorTab)
+            .animation(immediate ? nil : LocusMotion.spatial, value: requestOverviewVisible)
+            .animation(immediate ? nil : LocusMotion.spatial, value: overviewPresented)
     }
 }
 
@@ -880,7 +886,13 @@ struct RootView: View {
                 inspectorWidth: docksInspector ? dockedInspectorWidth : 0,
                 composerWidth: min(max(workspaceWidth - 48, 0), 740),
                 docksSidebar: docksSidebar,
-                docksInspector: docksInspector
+                docksInspector: docksInspector,
+                requestOverview: RequestOverviewLayout.resolve(
+                    workspaceWidth: workspaceWidth,
+                    visible: model.requestOverviewVisible,
+                    expanded: model.overviewPresented,
+                    splitView: model.splitViewActive
+                )
             )
 
             ZStack(alignment: .leading) {
@@ -932,8 +944,10 @@ struct RootView: View {
                 }
 
                 if model.requestOverviewVisible {
+                    // The anchor stays beside the rail. When the layout docks,
+                    // the chat column has already given up this card's width.
                     RequestOverviewActivity(session: model.sessionOverview)
-                        .frame(width: min(340, widthAfterChrome - 16), alignment: .trailing)
+                        .frame(width: geometrySnapshot.requestOverview.panelWidth, alignment: .trailing)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                         .padding(.trailing, railWidth + 8)
                         .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
@@ -1020,7 +1034,9 @@ struct RootView: View {
             sidebarCollapsed: model.sidebarCollapsed,
             inspectorCollapsed: model.inspectorCollapsed,
             inspectorZoomed: model.inspectorZoomed,
-            inspectorTab: model.inspectorTab
+            inspectorTab: model.inspectorTab,
+            requestOverviewVisible: model.requestOverviewVisible,
+            overviewPresented: model.overviewPresented
         ))
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {

@@ -110,8 +110,16 @@ struct WorkspaceView: View {
 
     private var contentArea: some View {
         chatContent
+            // A docked request overview owns the trailing side. The column
+            // keeps an exact resolved width and moves to the leading edge,
+            // so the card never covers transcript text or the composer.
+            .environment(
+                \.locusConversationColumnAlignment,
+                workspaceGeometry.requestOverview.docked ? .leading : .center
+            )
+            .frame(width: workspaceGeometry.conversationWidth)
             // The parent VStack already proposes the space below the toolbar.
-            .frame(width: workspaceGeometry.workspaceWidth)
+            .frame(width: workspaceGeometry.workspaceWidth, alignment: .leading)
             .frame(maxHeight: .infinity)
         .clipped()
         .onExitCommand { model.dismissOverview() }
@@ -3012,6 +3020,7 @@ private struct WorkStatusStrip: View {
     // feature models; observing them refreshes it when an account or agent changes.
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @Environment(\.locusConversationColumnAlignment) private var columnAlignment
     @ObservedObject var streamingReply: StreamingReplyState
 
     var body: some View {
@@ -3055,7 +3064,7 @@ private struct WorkStatusStrip: View {
             // side panels must not pull the two readiness dots toward the
             // window edges while the composer remains centered.
             .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: columnAlignment)
             .frame(height: 25)
             .locusWorkspaceBackground()
         }
@@ -3218,6 +3227,7 @@ private struct ConversationView: View {
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusConversationColumnAlignment) private var columnAlignment
     let streamingReply: StreamingReplyState
     @StateObject private var scrollCoordinator = TranscriptScrollCoordinator()
     /// Owned here, outside the lazy list, so recycling a row cannot take the
@@ -3312,7 +3322,7 @@ private struct ConversationView: View {
                 .frame(width: max(1, min(780, viewportWidth - 48)))
                 .padding(.horizontal, 24)
                 .padding(.top, transcript.isEmpty ? 0 : 24)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: columnAlignment)
             }
             // The native scroll area is the transcript's accessibility
             // container. An additional lazy-stack wrapper must not substitute

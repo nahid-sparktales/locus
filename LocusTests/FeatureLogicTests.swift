@@ -151,6 +151,82 @@ final class FeatureLogicTests: XCTestCase {
         )
     }
 
+    // MARK: - Request overview layout
+
+    private func overviewLayout(
+        _ width: CGFloat,
+        visible: Bool = true,
+        expanded: Bool = true,
+        splitView: Bool = false
+    ) -> RequestOverviewLayout {
+        RequestOverviewLayout.resolve(
+            workspaceWidth: width,
+            visible: visible,
+            expanded: expanded,
+            splitView: splitView
+        )
+    }
+
+    func testRequestOverviewReservesNothingWhenHiddenOrMinimized() {
+        for layout in [overviewLayout(946, visible: false), overviewLayout(946, expanded: false)] {
+            XCTAssertFalse(layout.docked)
+            XCTAssertEqual(layout.reservedTrailingWidth, 0)
+            XCTAssertEqual(
+                WorkspaceGeometrySnapshot(workspaceWidth: 946, requestOverview: layout).conversationWidth,
+                946
+            )
+        }
+        XCTAssertEqual(
+            WorkspaceGeometrySnapshot(workspaceWidth: 612).conversationWidth, 612,
+            "Hosts that build their own snapshot never reserve overview space"
+        )
+    }
+
+    func testExpandedRequestOverviewDocksBesideTheConversation() {
+        let wide = overviewLayout(946)
+        XCTAssertTrue(wide.docked)
+        XCTAssertEqual(wide.panelWidth, 300)
+        XCTAssertEqual(wide.reservedTrailingWidth, 320)
+        XCTAssertEqual(
+            WorkspaceGeometrySnapshot(workspaceWidth: 946, requestOverview: wide).conversationWidth,
+            626
+        )
+
+        let compact = overviewLayout(816)
+        XCTAssertTrue(compact.docked)
+        XCTAssertEqual(compact.panelWidth, 300)
+        XCTAssertEqual(compact.reservedTrailingWidth, 320)
+
+        // Short of the preferred width, the card narrows before the
+        // conversation drops below its minimum.
+        let tight = overviewLayout(650)
+        XCTAssertTrue(tight.docked)
+        XCTAssertEqual(tight.panelWidth, 270)
+        XCTAssertEqual(650 - tight.reservedTrailingWidth, RequestOverviewLayout.minimumConversationWidth)
+    }
+
+    func testRequestOverviewFloatsWhenTooNarrowOrSplit() {
+        let threshold = RequestOverviewLayout.minimumConversationWidth
+            + RequestOverviewLayout.minimumPanelWidth
+            + RequestOverviewLayout.trailingInset
+            + RequestOverviewLayout.columnGap
+        XCTAssertEqual(threshold, 628)
+        XCTAssertTrue(overviewLayout(threshold).docked)
+        XCTAssertEqual(overviewLayout(threshold).panelWidth, RequestOverviewLayout.minimumPanelWidth)
+
+        let narrow = overviewLayout(threshold - 1)
+        XCTAssertFalse(narrow.docked)
+        XCTAssertEqual(narrow.reservedTrailingWidth, 0)
+        XCTAssertEqual(narrow.panelWidth, 300, "The floating card keeps the preferred width")
+
+        let split = overviewLayout(946, splitView: true)
+        XCTAssertFalse(split.docked)
+        XCTAssertEqual(split.reservedTrailingWidth, 0)
+        XCTAssertEqual(split.panelWidth, 300)
+
+        XCTAssertEqual(overviewLayout(200).panelWidth, 184, "A floating card still fits inside its inset")
+    }
+
     func testRuntimePhasesDistinguishRecoveryFromFailure() {
         XCTAssertFalse(RuntimePhase.starting("starting").isOnline)
         XCTAssertTrue(RuntimePhase.online.isOnline)

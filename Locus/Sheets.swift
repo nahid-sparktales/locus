@@ -2637,7 +2637,7 @@ struct SettingsView: View {
                     .foregroundStyle(LocusTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("Request overview appears on the right when work starts. Opening a right-side panel replaces it; closing the panel reveals it again. Minimize or dismiss the overview, or reopen it with ⌘1 or the More panels menu.")
+                Text("Request overview appears on the right when work starts, and the conversation moves aside while it is open. Opening a right-side panel replaces it; closing the panel reveals it again. Minimize or dismiss the overview, or reopen it with ⌘1 or the More panels menu.")
                     .accessibilityIdentifier("settings.requestOverview")
                     .font(.locus(size: 11))
                     .foregroundStyle(LocusTheme.muted)

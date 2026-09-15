@@ -115,6 +115,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(popup.frame.maxX, anyElement("inspector.rail.toggle").frame.minX - 13, accuracy: 3)
         XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
         XCTAssertEqual(popup.frame.minY - app.windows.firstMatch.frame.minY, 60, accuracy: 3)
+        // Beside the fixture's 240-point sidebar the 636-point workspace still
+        // docks a narrower card next to a minimum-width conversation.
+        XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.maxX <= popup.frame.minX + 1 })
+        XCTAssertLessThanOrEqual(anyElement("composer.input").frame.maxX, popup.frame.minX)
         anyElement("inspector.rail.context").click()
         XCTAssertTrue(anyElement("inspector.context").waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil { !popup.exists }, "Right-side panels replace Overview")
@@ -3274,6 +3278,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThan(popup.frame.height, 320)
         XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
         XCTAssertFalse(anyElement("files.search").exists)
+
+        // The default window leaves room to dock the card: the conversation
+        // moves aside rather than running beneath it, and returns to the
+        // centre of its column once the card closes.
+        let scroll = anyElement("conversation.scroll")
+        let composer = anyElement("composer.input")
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil { scroll.frame.maxX <= popup.frame.minX + 1 })
+        XCTAssertLessThanOrEqual(composer.frame.maxX, popup.frame.minX)
+        let dockedComposerMidX = composer.frame.midX
+        anyElement("workspace.overview.close").click()
+        XCTAssertTrue(waitUntil { !popup.exists })
+        XCTAssertTrue(waitUntil { abs(composer.frame.midX - scroll.frame.midX) < 3 })
+        XCTAssertGreaterThan(composer.frame.midX, dockedComposerMidX + 40)
     }
 
     func testOverviewSourcesMenuOpensSkillsAndMCP() {
