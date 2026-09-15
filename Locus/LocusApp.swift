@@ -791,10 +791,6 @@ private struct WorkspacePanelMotion: ViewModifier {
     let inspectorCollapsed: Bool
     let inspectorZoomed: Bool
     let inspectorTab: InspectorTab
-    /// A docked request overview reserves the conversation's trailing side,
-    /// so showing, minimizing or closing it moves the chat column too.
-    let requestOverviewVisible: Bool
-    let overviewPresented: Bool
 
     func body(content: Content) -> some View {
         let immediate = reduceMotion || transcriptPresentation.snapshot.prefersImmediatePanelLayout
@@ -803,8 +799,6 @@ private struct WorkspacePanelMotion: ViewModifier {
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorCollapsed)
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorZoomed)
             .animation(immediate ? nil : LocusMotion.spatial, value: inspectorTab)
-            .animation(immediate ? nil : LocusMotion.spatial, value: requestOverviewVisible)
-            .animation(immediate ? nil : LocusMotion.spatial, value: overviewPresented)
     }
 }
 
@@ -943,17 +937,24 @@ struct RootView: View {
                     }
                 }
 
-                if model.requestOverviewVisible {
-                    // The anchor stays beside the rail. When the layout docks,
-                    // the chat column has already given up this card's width.
-                    RequestOverviewActivity(session: model.sessionOverview)
-                        .frame(width: geometrySnapshot.requestOverview.panelWidth, alignment: .trailing)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(.trailing, railWidth + 8)
-                        .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
-                        .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-                        .zIndex(1)
+                ZStack(alignment: .topTrailing) {
+                    if model.requestOverviewVisible {
+                        // The anchor stays beside the rail. When the layout
+                        // docks, the chat column gives up this card's width.
+                        RequestOverviewActivity(session: model.sessionOverview)
+                            .frame(width: geometrySnapshot.requestOverview.panelWidth, alignment: .trailing)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(.trailing, railWidth + 8)
+                            .padding(.top, max(0, WorkspaceLayoutMetrics.toolbarHeight - proxy.safeAreaInsets.top) + 8)
+                            .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
+                    }
                 }
+                // Scoped to the card: a send presents it in the same update
+                // that appends the user's row and clears the composer, and
+                // those must not spring. The column follows in WorkspaceView.
+                .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.requestOverviewVisible)
+                .animation(reduceMotion ? nil : LocusMotion.spatial, value: model.overviewPresented)
+                .zIndex(1)
 
                 if inspectorOpen && !docksInspector {
                     InspectorView(resizeWidth: min(workspaceLayout.inspectorWidth, proxy.size.width - railWidth))
@@ -1034,9 +1035,7 @@ struct RootView: View {
             sidebarCollapsed: model.sidebarCollapsed,
             inspectorCollapsed: model.inspectorCollapsed,
             inspectorZoomed: model.inspectorZoomed,
-            inspectorTab: model.inspectorTab,
-            requestOverviewVisible: model.requestOverviewVisible,
-            overviewPresented: model.overviewPresented
+            inspectorTab: model.inspectorTab
         ))
         .background(LocusTheme.paper)
         .overlay(alignment: .bottomTrailing) {

@@ -3267,6 +3267,14 @@ final class LocusUITests: XCTestCase {
     }
 
     func testIdleOverviewFitsItsContentAtTheTopRight() {
+        // CI's compact profile leaves a 436-point workspace, where the card
+        // floats instead of docking. Pin a window whose 966-point workspace
+        // docks it, as the compact dark overview test pins its own size.
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1250"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "760"
+        app.launch()
+        XCTAssertTrue(anyElement("conversation.scroll").waitForExistence(timeout: 10))
         app.typeKey("1", modifierFlags: .command)
         let popup = anyElement("workspace.overview.popover")
         XCTAssertTrue(popup.waitForExistence(timeout: 5))
@@ -3279,9 +3287,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertGreaterThan(popup.frame.midX, app.windows.firstMatch.frame.midX)
         XCTAssertFalse(anyElement("files.search").exists)
 
-        // The default window leaves room to dock the card: the conversation
-        // moves aside rather than running beneath it, and returns to the
-        // centre of its column once the card closes.
+        // The conversation moves aside rather than running beneath the
+        // docked card, and returns to the centre once the card closes.
         let scroll = anyElement("conversation.scroll")
         let composer = anyElement("composer.input")
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
@@ -3290,8 +3297,12 @@ final class LocusUITests: XCTestCase {
         let dockedComposerMidX = composer.frame.midX
         anyElement("workspace.overview.close").click()
         XCTAssertTrue(waitUntil { !popup.exists })
-        XCTAssertTrue(waitUntil { abs(composer.frame.midX - scroll.frame.midX) < 3 })
-        XCTAssertGreaterThan(composer.frame.midX, dockedComposerMidX + 40)
+        // The docked composer already fills its 646-point column, so being
+        // centred alone cannot show the return; wait for the move as well.
+        XCTAssertTrue(waitUntil {
+            composer.frame.midX > dockedComposerMidX + 40
+                && abs(composer.frame.midX - scroll.frame.midX) < 3
+        })
     }
 
     func testOverviewSourcesMenuOpensSkillsAndMCP() {

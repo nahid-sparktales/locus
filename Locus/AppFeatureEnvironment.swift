@@ -38,7 +38,7 @@ struct WorkspaceGeometrySnapshot: Equatable {
     /// The chat column's exact width once a docked request overview has
     /// taken the trailing side of the workspace.
     var conversationWidth: CGFloat {
-        max(workspaceWidth - requestOverview.reservedTrailingWidth, 0)
+        requestOverview.conversationWidth(in: workspaceWidth)
     }
 }
 
@@ -63,6 +63,11 @@ struct RequestOverviewLayout: Equatable {
     var panelWidth: CGFloat
     var reservedTrailingWidth: CGFloat
     var docked: Bool
+
+    /// The chat column's exact width beside this layout.
+    func conversationWidth(in workspaceWidth: CGFloat) -> CGFloat {
+        max(workspaceWidth - reservedTrailingWidth, 0)
+    }
 
     static let hidden = RequestOverviewLayout(
         panelWidth: preferredPanelWidth,

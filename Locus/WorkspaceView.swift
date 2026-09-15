@@ -110,16 +110,13 @@ struct WorkspaceView: View {
 
     private var contentArea: some View {
         chatContent
-            // A docked request overview owns the trailing side. The column
-            // keeps an exact resolved width and moves to the leading edge,
-            // so the card never covers transcript text or the composer.
-            .environment(
-                \.locusConversationColumnAlignment,
-                workspaceGeometry.requestOverview.docked ? .leading : .center
-            )
-            .frame(width: workspaceGeometry.conversationWidth)
+            // A docked request overview owns the trailing side, so the card
+            // never covers transcript text or the composer.
+            .modifier(ConversationColumnDocking(
+                workspaceWidth: workspaceGeometry.workspaceWidth,
+                overview: workspaceGeometry.requestOverview
+            ))
             // The parent VStack already proposes the space below the toolbar.
-            .frame(width: workspaceGeometry.workspaceWidth, alignment: .leading)
             .frame(maxHeight: .infinity)
         .clipped()
         .onExitCommand { model.dismissOverview() }
@@ -418,6 +415,43 @@ struct WorkspaceView: View {
                 .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
                 .frame(height: 1)
         }
+    }
+}
+
+/// Moves the chat column aside while a docked request overview owns the
+/// trailing side of the workspace, and back once the card minimizes or closes.
+///
+/// The column follows the resolved layout in its own transaction. A send
+/// presents the overview in the same update that appends the user's row and
+/// clears the draft, and a chat switch dismisses it while the transcript is
+/// replaced; animating on the overview flags would spring those changes too.
+/// Here only the column's exact width and alignment move. Reduce Motion, live
+/// resizing and large transcripts take the resolved layout at once, matching
+/// the root panel motion.
+private struct ConversationColumnDocking: ViewModifier {
+    @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locusIsLiveResizing) private var isLiveResizing
+    let workspaceWidth: CGFloat
+    let overview: RequestOverviewLayout
+    @State private var settled: RequestOverviewLayout?
+
+    private var immediate: Bool {
+        reduceMotion || isLiveResizing || transcriptPresentation.snapshot.prefersImmediatePanelLayout
+    }
+
+    func body(content: Content) -> some View {
+        let layout = immediate ? overview : (settled ?? overview)
+        content
+            .environment(\.locusConversationColumnAlignment, layout.docked ? .leading : .center)
+            // Exact widths, never flexible ones: see RootView's note on
+            // re-negotiating widths with a long native-text transcript.
+            .frame(width: layout.conversationWidth(in: workspaceWidth))
+            .frame(width: workspaceWidth, alignment: .leading)
+            .onAppear { settled = overview }
+            .onChange(of: overview) { _, next in
+                withAnimation(immediate ? nil : LocusMotion.spatial) { settled = next }
+            }
     }
 }
 
