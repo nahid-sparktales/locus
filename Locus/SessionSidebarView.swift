@@ -1575,6 +1575,7 @@ struct SessionSidebarView: View {
                 HStack {
                     Text("Choose an agent")
                         .font(.locus(size: 13, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                     Text("\(profiles.count)")
                         .font(.locus(size: 10, design: .monospaced))
@@ -1700,7 +1701,7 @@ struct SessionSidebarView: View {
             }
             .buttonStyle(.locus())
             .accessibilityLabel(profile.name)
-            .accessibilityValue("\(Self.subtitle(profile)), \(selected ? "selected" : "not selected")")
+            .accessibilityValue(Self.subtitle(profile))
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("sidebar.agentPicker.profile.\(profile.id.uuidString)")
         }

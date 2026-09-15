@@ -4,7 +4,6 @@ import SwiftUI
 /// as a keyboard-accessible button whose entire row opens the section.
 private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    var inset: CGFloat = 0
     let identifier: String
 
     func makeBody(configuration: Configuration) -> some View {
@@ -24,7 +23,6 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .padding(inset)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -34,8 +32,6 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
 
             if configuration.isExpanded {
                 configuration.content
-                    .padding(.horizontal, inset)
-                    .padding(.bottom, inset)
             }
         }
     }
@@ -366,11 +362,14 @@ private struct SavedAgentOverviewContent: View {
         return HStack(spacing: 5) {
             Image(systemName: readinessSymbol(snapshot)).foregroundStyle(color).accessibilityHidden(true)
             Text(snapshot.statusTitle).foregroundStyle(snapshot.needsAttention ? LocusTheme.warning : secondary)
+                .lineLimit(1)
         }
         .font(.locus(size: 12, weight: .semibold))
         .padding(.horizontal, 9).frame(height: 24)
         .background(color.opacity(0.10), in: Capsule())
-        .fixedSize()
+        // Compress with truncation in the narrowest inspector instead of
+        // pushing the refresh button out of the header.
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Status: \(snapshot.statusTitle)")
         .accessibilityIdentifier("savedAgent.status")
@@ -597,26 +596,36 @@ private struct SavedAgentOverviewContent: View {
 
     private func readiness(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: readinessSymbol(snapshot))
-                    .font(.locus(size: 18, weight: .medium))
-                    .foregroundStyle(readinessColor(snapshot))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(snapshot.statusTitle).font(.locus(size: 16, weight: .semibold))
-                    Text(snapshot.detail).font(.locus(size: 13)).foregroundStyle(secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            // The header chip already names the status, and its detail repeats
+            // the first issue. With concrete issues, list only those.
+            if snapshot.issues.isEmpty {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: readinessSymbol(snapshot))
+                        .font(.locus(size: 18, weight: .medium))
+                        .foregroundStyle(readinessColor(snapshot))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(snapshot.statusTitle).font(.locus(size: 16, weight: .semibold))
+                        Text(snapshot.detail).font(.locus(size: 13)).foregroundStyle(secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            ForEach(snapshot.issues) { issue in
-                Divider()
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(issue.title).font(.locus(size: 13, weight: .semibold))
-                    Text(issue.detail).font(.locus(size: 12)).foregroundStyle(secondary)
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    if let action = issue.action {
-                        Button(actionTitle(action)) { perform(action) }.buttonStyle(.bordered)
-                            .accessibilityIdentifier("savedAgent.recovery.\(issue.id)")
+            ForEach(Array(snapshot.issues.enumerated()), id: \.element.id) { index, issue in
+                if index > 0 { Divider() }
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: readinessSymbol(snapshot))
+                        .font(.locus(size: 15, weight: .medium))
+                        .foregroundStyle(readinessColor(snapshot))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(issue.title).font(.locus(size: 14, weight: .semibold))
+                        Text(issue.detail).font(.locus(size: 12)).foregroundStyle(secondary)
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        if let action = issue.action {
+                            Button(actionTitle(action)) { perform(action) }.buttonStyle(.bordered)
+                                .accessibilityIdentifier("savedAgent.recovery.\(issue.id)")
+                        }
                     }
                 }
             }
@@ -784,12 +793,13 @@ private struct SavedAgentOverviewContent: View {
             Button("Pause") { model.setAgentEnabled(item.definition, enabled: false) }
                 .buttonStyle(.bordered).disabled(model.isChangingAgentEnabled(item.definition))
                 .help("Pause future automatic starts; work already running is not stopped")
-                .accessibilityLabel("Pause automatic starts")
+                .accessibilityLabel("Pause \(item.definition.name)")
                 .accessibilityIdentifier("savedAgent.automation.\(item.id).pause")
         } else {
             Button("Resume") { model.setAgentEnabled(item.definition, enabled: true) }
                 .buttonStyle(.bordered).disabled(model.isChangingAgentEnabled(item.definition))
                 .help("Resume future automatic starts; this does not retry past work")
+                .accessibilityLabel("Resume \(item.definition.name)")
                 .accessibilityIdentifier("savedAgent.automation.\(item.id).resume")
         }
         if let latest = item.latestActivity {
@@ -802,7 +812,7 @@ private struct SavedAgentOverviewContent: View {
         card {
             sectionTitle(workspace == nil ? "Chats" : "Chats in this project", symbol: "bubble.left.and.bubble.right")
             if snapshot.chats.isEmpty {
-                Text(workspace == nil ? "No conversations yet." : "No conversations in this project yet.")
+                Text(workspace == nil ? "No chats yet." : "No chats in this project yet.")
                     .font(.locus(size: 13)).foregroundStyle(secondary)
                 Button { startChat() } label: { Label("Start a chat", systemImage: "plus.bubble") }
                     .buttonStyle(.bordered).disabled(newChatIsDisabled)
@@ -841,9 +851,9 @@ private struct SavedAgentOverviewContent: View {
     private func sectionTitle(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol).font(.locus(size: 14, weight: .semibold)).foregroundStyle(ink)
     }
-    private func card<Content: View>(padding: CGFloat = 18, @ViewBuilder content: () -> Content) -> some View {
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 14, content: content)
-            .padding(padding).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .locusSurface(.floating, radius: 14)
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
                 .allowsHitTesting(false).accessibilityHidden(true))

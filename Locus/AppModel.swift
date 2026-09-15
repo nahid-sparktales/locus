@@ -1558,6 +1558,9 @@ final class AppModel: ObservableObject {
 
     /// Whether the session is running this model through this source. Both
     /// halves matter: two accounts can offer a model of the same name.
+    /// This deliberately does not use `modelRouteSource`: Duo and a selected
+    /// team span several routes, so the picker still checks the row a chat
+    /// would fall back to rather than checking nothing.
     func isCurrentRoute(account: ProviderAccount?, model: String) -> Bool {
         if let route = modelPickerTaskRoute {
             return model == route.model && (route.accountID.map { $0 == account?.id }
