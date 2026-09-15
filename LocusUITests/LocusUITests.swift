@@ -2740,7 +2740,9 @@ final class LocusUITests: XCTestCase {
         revealSidebarForNavigation()
         let agentMenu = anyElement("sidebar.agentMenu")
         XCTAssertTrue(agentMenu.waitForExistence(timeout: Self.launchContentTimeout))
-        func footerValue() -> String { (agentMenu.value as? String) ?? "" }
+        // Reading `value` of a missing element fails the test outright, so a
+        // footer that is briefly hidden reads as empty and the wait retries.
+        func footerValue() -> String { agentMenu.exists ? (agentMenu.value as? String) ?? "" : "" }
 
         // Choosing a task row leaves no saved agent selected, so the footer
         // has something to follow when Atlas is picked below.
@@ -2773,6 +2775,10 @@ final class LocusUITests: XCTestCase {
         // The keyboard path: arrows move focus and Return picks the match.
         revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
         inboxAgent.click()
+        // Leaving Atlas's overview reopens the Agent inspector, and a compact
+        // window makes room for it by hiding the sidebar with this footer.
+        revealSidebarForNavigation()
+        XCTAssertTrue(agentMenu.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntil { footerValue().contains("Choose an agent") }, footerValue())
         agentMenu.click()
         XCTAssertTrue(search.waitForExistence(timeout: 3))
