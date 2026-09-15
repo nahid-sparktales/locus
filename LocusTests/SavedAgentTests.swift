@@ -386,10 +386,16 @@ final class SavedAgentTests: XCTestCase {
         XCTAssertEqual(model.configureAgentPendingSavedAgentAutomation, .price)
 
         model.dismissConfigureAgent()
-        model.mountPendingConfigureAgentEditor()
+        XCTAssertNil(model.configureAgentPendingSavedAgentAutomation, "Dismissing must drop the pending editor")
+
+        // Reopening the hub for another reason must not mount an editor nobody asked for.
+        model.manageSavedAgent(profile)
+        model.mountPendingConfigureAgentEditor() // The hub's onAppear.
 
         XCTAssertNil(model.configureAgentPendingSavedAgentAutomation)
         XCTAssertNil(model.eventAutomations.editorDraft)
+        XCTAssertNil(model.schedule.scheduleEditorDraft)
+        model.dismissConfigureAgent()
     }
 
     @MainActor
