@@ -1574,28 +1574,94 @@ final class AppModel: ObservableObject {
         return routedModel(for: account)
     }
 
+    /// Where this conversation's next turn runs, in the closed picker's order.
+    /// The picker label and the composer's status strip both read it, so the
+    /// two can never name different providers for the same chat.
+    private enum ModelRouteSource {
+        case task(model: String, accountID: UUID?, provider: String)
+        case duo
+        case team(AgentTeam)
+        case agentChat(AgentProfile)
+        case appWide
+    }
+
+    private var modelRouteSource: ModelRouteSource {
+        if let route = modelPickerTaskRoute {
+            return .task(model: route.model, accountID: route.accountID, provider: route.provider)
+        }
+        if selectedMode == .duo { return .duo }
+        if let team = selectedAgentTeam { return .team(team) }
+        if let profile = currentAgentChatProfile { return .agentChat(profile) }
+        return .appWide
+    }
+
     /// The closed picker's label. With an account it leads with the account's
     /// short name, because the model name alone no longer says where it runs.
     var modelPickerLabel: String {
-        if let route = modelPickerTaskRoute {
-            return taskModelPickerLabel(model: route.model, accountID: route.accountID, provider: route.provider)
-        }
-        if selectedMode == .duo { return "Duo models" }
-        if let team = selectedAgentTeam {
+        switch modelRouteSource {
+        case let .task(model, accountID, provider):
+            return taskModelPickerLabel(model: model, accountID: accountID, provider: provider)
+        case .duo:
+            return "Duo models"
+        case let .team(team):
             let count = selectedTeamModelNames.count
             return "\(team.name) · \(count) \(count == 1 ? "model" : "models")"
-        }
-        if let profile = currentAgentChatProfile {
-            if let accountID = profile.route.accountID {
-                let source = providerAccounts.first { $0.id == accountID }?.shortName ?? "Unavailable account"
-                return "\(source) · \(profile.model)"
+        case let .agentChat(profile):
+            guard let accountID = profile.route.accountID else { return profile.model }
+            let source = providerAccounts.first { $0.id == accountID }?.shortName ?? "Unavailable account"
+            return "\(source) · \(profile.model)"
+        case .appWide:
+            guard let account = activeAccount else {
+                return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel
             }
-            return profile.model
+            return "\(account.shortName) · \(routedModel(for: account))"
         }
-        guard let account = activeAccount else {
-            return localModels.isEmpty && models.isEmpty ? "Auto" : selectedModel
+    }
+
+    /// The provider the picker's source names, and how it is doing.
+    /// `modelRuntimePhase` only describes the app-wide route, so a chat on a
+    /// different account reports that account's own sign-in state instead,
+    /// when one is known. Reads no credentials and never contacts a provider.
+    private var routeProviderStatus: (name: String, phase: RuntimePhase) {
+        let accountID: UUID?
+        switch modelRouteSource {
+        case .duo: return ("Duo", modelRuntimePhase)
+        case .team: return ("Team", modelRuntimePhase)
+        case let .task(_, id?, _): accountID = id
+        case let .task(_, .none, provider):
+            switch provider {
+            case "chatgpt": return (ProviderKind.chatGPT.marketingName, modelRuntimePhase)
+            case "claude_plan": return (ProviderKind.claudePlan.marketingName, modelRuntimePhase)
+            case "remote": return ("API", modelRuntimePhase)
+            case "ollama": return ("Ollama", modelRuntimePhase)
+            default: accountID = activeAccount?.id
+            }
+        case let .agentChat(profile): accountID = profile.route.accountID
+        case .appWide: accountID = activeAccount?.id
         }
-        return "\(account.shortName) · \(routedModel(for: account))"
+        guard let accountID else { return ("Ollama", modelRuntimePhase) }
+        guard let account = providerAccounts.first(where: { $0.id == accountID }) else {
+            return ("Unavailable account", .unavailable("This chat’s account was removed. Choose another model."))
+        }
+        let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
+        guard account.id.uuidString != settings.activeAccountID,
+              let status = accountStatus[account.id] else { return (name, modelRuntimePhase) }
+        return (name, status.runtimePhase)
+    }
+
+    /// Health of the provider `providerLabel` names; drives the strip's dot.
+    var providerRuntimePhase: RuntimePhase { routeProviderStatus.phase }
+
+    var providerLabel: String {
+        let provider = routeProviderStatus
+        let status: String
+        switch provider.phase {
+        case .starting: status = "starting"
+        case .online: status = "ready"
+        case .recovering: status = "recovering"
+        case .unavailable: status = "offline"
+        }
+        return "\(provider.name) \(status)"
     }
 
     /// What an account actually routes to. `selectedModel` is whatever the

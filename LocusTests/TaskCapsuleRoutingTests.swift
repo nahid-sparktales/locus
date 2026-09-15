@@ -160,6 +160,63 @@ final class TaskCapsuleRoutingTests: XCTestCase {
                                                          sessionID: "agent-chat").profile.model, profile.model)
     }
 
+    func testComposerStatusNamesTheAgentChatAccountInsteadOfTheGlobalProvider() {
+        let chatGPT = ProviderAccount(kind: .chatGPT, name: "Other chat", preferredModel: "gpt-5.6-sol")
+        let claude = ProviderAccount(kind: .claudePlan, name: "Claude Test", preferredModel: "opus[1m]")
+        let (model, _) = agentChat(profile: AgentProfile(name: "Jinbei", route: .providerAccount(claude.id), model: "opus[1m]"))
+        model.providerAccounts = [chatGPT, claude]
+        model.settings.activeAccountID = chatGPT.id.uuidString
+        model.modelRuntimePhase = .online
+
+        XCTAssertEqual(model.modelPickerLabel, "Claude Test · opus[1m]")
+        XCTAssertTrue(model.providerLabel.hasPrefix("Claude plan"), model.providerLabel)
+        XCTAssertEqual(model.providerLabel, "Claude plan ready", "Unknown account state falls back to the runtime phase")
+
+        model.accountStatus[claude.id] = .signedOut
+        XCTAssertEqual(model.providerLabel, "Claude plan offline")
+        XCTAssertTrue(model.providerRuntimePhase.isUnavailable)
+        model.accountStatus[claude.id] = .signingIn
+        XCTAssertEqual(model.providerLabel, "Claude plan starting")
+        model.accountStatus[claude.id] = .signedIn(email: nil, plan: "max")
+        XCTAssertEqual(model.providerLabel, "Claude plan ready")
+        XCTAssertEqual(model.providerRuntimePhase, .online)
+
+        model.settings.activeAccountID = claude.id.uuidString
+        model.accountStatus[claude.id] = .signedOut
+        XCTAssertEqual(model.providerLabel, "Claude plan ready", "The app-wide route reports its live runtime phase")
+
+        model.settings.activeAccountID = chatGPT.id.uuidString
+        model.installTranscriptSession("ordinary-chat", blocks: [])
+        XCTAssertEqual(model.providerLabel, "ChatGPT plan ready")
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testComposerStatusNamesOllamaForALocalAgentChat() {
+        let (model, profile) = agentChat()
+        let chatGPT = ProviderAccount(kind: .chatGPT, name: "Other chat", preferredModel: "gpt-5.6-sol")
+        model.providerAccounts = [chatGPT]
+        model.settings.activeAccountID = chatGPT.id.uuidString
+        model.modelRuntimePhase = .online
+
+        XCTAssertEqual(model.modelPickerLabel, profile.model)
+        XCTAssertEqual(model.providerLabel, "Ollama ready")
+        XCTAssertNoBackendTraffic()
+    }
+
+    func testComposerStatusReportsARemovedAgentChatAccountAsUnavailable() {
+        let chatGPT = ProviderAccount(kind: .chatGPT, name: "Other chat", preferredModel: "gpt-5.6-sol")
+        let (model, _) = agentChat(profile: AgentProfile(name: "Jinbei", route: .providerAccount(UUID()), model: "opus[1m]"))
+        model.providerAccounts = [chatGPT]
+        model.settings.activeAccountID = chatGPT.id.uuidString
+        model.modelRuntimePhase = .online
+
+        XCTAssertEqual(model.modelPickerLabel, "Unavailable account · opus[1m]")
+        XCTAssertTrue(model.providerLabel.hasPrefix("Unavailable account "), model.providerLabel)
+        XCTAssertEqual(model.providerLabel, "Unavailable account offline")
+        XCTAssertTrue(model.providerRuntimePhase.isUnavailable)
+        XCTAssertNoBackendTraffic()
+    }
+
     func testAgentChatSelectionChangesTheWorkerProviderAndKeepsAgentIdentity() async throws {
         registerProviderResponse()
         let (model, profile) = agentChat()
