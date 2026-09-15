@@ -2680,6 +2680,7 @@ final class LocusUITests: XCTestCase {
                 .contains("Morning Review")
         })
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.chat.seed-schedule-chat").exists)
+        XCTAssertTrue(agentMenu.exists)
         XCTAssertFalse(
             ((agentMenu.value as? String) ?? "").contains("Morning Review"),
             "selecting a task leaves the agent switcher on saved agents"

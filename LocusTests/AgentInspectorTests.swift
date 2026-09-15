@@ -433,8 +433,8 @@ final class AgentInspectorTests: XCTestCase {
 
         let eventChat = SessionSummary(id: "chat", name: "Daily check", preview: "", mtime: 1, size: 0,
             agentTriggerID: "schedule", agentKind: "schedule", agentName: "Daily check", agentPrimary: true)
-        XCTAssertEqual(ChatTranscriptBuilder.taskResults(in: blocks, runs: runs, session: eventChat, profiles: []).count,
-            runs.count, "An agent's event chat keeps every result separate")
+        XCTAssertEqual(ChatTranscriptBuilder.taskResults(in: blocks, runs: runs, session: eventChat, profiles: []), [:],
+            "Replies to questions typed into an agent's event chat stay unboxed once their runs are known")
     }
 
     @MainActor

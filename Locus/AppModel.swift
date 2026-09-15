@@ -1658,9 +1658,10 @@ final class AppModel: ObservableObject {
             return ("Unavailable account", .unavailable("This chat’s account was removed. Choose another model."))
         }
         let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
-        guard account.id.uuidString != settings.activeAccountID,
-              let status = accountStatus[account.id] else { return (name, modelRuntimePhase) }
-        return (name, status.runtimePhase)
+        guard account.id.uuidString != settings.activeAccountID else { return (name, modelRuntimePhase) }
+        // The runtime phase describes the app-wide account's backend, so
+        // another account is only as healthy as its own known status.
+        return (name, accountStatus[account.id]?.runtimePhase)
     }
 
     /// Health of the provider `providerLabel` names, or nil when nothing

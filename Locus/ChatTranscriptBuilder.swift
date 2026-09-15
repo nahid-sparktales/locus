@@ -18,7 +18,9 @@ enum ChatTranscriptBuilder {
         var results: [UUID: TranscriptTaskResult] = [:]
         for run in runs where run.state == "completed" && run.sessionID == session?.id {
             let hasEventAnchor = index.turnsByRun[run.id]?.contains { $0.user.eventTrigger != nil } == true
-            guard isAutomatedRun(run) || session?.isAgentEventChat == true || hasEventAnchor,
+            // A known run's own provenance decides, even in an agent's event
+            // chat: a question someone types there is an ordinary reply.
+            guard isAutomatedRun(run) || hasEventAnchor,
                   let blockID = index.resultBlockID(runID: run.id, request: run.request) else { continue }
             let request = displayUserText(run.request).trimmingCharacters(in: .whitespacesAndNewlines)
             let title = session?.isAgentEventChat == true

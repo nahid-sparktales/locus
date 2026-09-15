@@ -170,7 +170,9 @@ final class TaskCapsuleRoutingTests: XCTestCase {
 
         XCTAssertEqual(model.modelPickerLabel, "Claude Test · opus[1m]")
         XCTAssertTrue(model.providerLabel.hasPrefix("Claude plan"), model.providerLabel)
-        XCTAssertEqual(model.providerLabel, "Claude plan ready", "Unknown account state falls back to the runtime phase")
+        XCTAssertEqual(model.providerLabel, "Claude plan status unknown",
+                       "Another account's unknown state is not borrowed from the app-wide route")
+        XCTAssertNil(model.providerRuntimePhase)
 
         model.accountStatus[claude.id] = .signedOut
         XCTAssertEqual(model.providerLabel, "Claude plan offline")

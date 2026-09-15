@@ -83,10 +83,16 @@ struct AgentWorkspacePreferencesEditor: View {
                     .font(.locus(size: 12)).foregroundStyle(detailColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Button("Open home") {
-                model.revealSavedAgentWorkspace(profile, path: model.savedAgentHomePath(profile))
-            }
-            .buttonStyle(.bordered).accessibilityIdentifier("savedAgent.openHome")
+            HStack(spacing: 12) {
+                // The overview links projects from the menu above; the profile
+                // draft keeps a visible button.
+                if !compact {
+                    Button("Add project…") { chooseProject() }.accessibilityIdentifier("savedAgent.linkProject")
+                }
+                Button("Open home") {
+                    model.revealSavedAgentWorkspace(profile, path: model.savedAgentHomePath(profile))
+                }.accessibilityIdentifier("savedAgent.openHome")
+            }.buttonStyle(.bordered)
             if compact {
                 DisclosureGroup("Folder details & linked projects", isExpanded: $showingDetails) {
                     folderDetails.padding(.top, 8)
