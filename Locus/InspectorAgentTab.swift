@@ -1486,7 +1486,9 @@ private struct AgentChipFlow: View {
     }
 }
 
-private struct AgentFlowLayout: Layout {
+/// Wraps chips onto new rows instead of truncating them into one line. Shared
+/// with the saved-agent page's facts row.
+struct AgentFlowLayout: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

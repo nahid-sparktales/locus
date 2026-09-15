@@ -106,10 +106,17 @@ final class AgentInspectorUITests: XCTestCase {
         let overview = element("savedAgent.overview")
         XCTAssertTrue(overview.waitForExistence(timeout: 10))
 
+        // Instructions are shown with the agent's identity rather than behind
+        // a disclosure, beside the quick automation action.
+        let instructions = element("savedAgent.instructions.content")
+        XCTAssertTrue(instructions.waitForExistence(timeout: 5))
+        XCTAssertTrue((instructions.label + " \(instructions.value ?? "")").contains("Help with project research."))
+        XCTAssertTrue(element("savedAgent.newAutomation").exists)
+
         // macOS exposes a styled DisclosureGroup as a disclosure triangle;
         // its native accessibility node also inherits the card identifier.
         // Match its unique visible label and compare the native open state.
-        for title in ["Folder details & linked projects", "Instructions"] {
+        for title in ["Folder details & linked projects"] {
             let header = app.disclosureTriangles.matching(NSPredicate(format: "label == %@", title)).firstMatch
             for _ in 0..<12 {
                 if header.exists && header.isHittable && overview.frame.contains(header.frame) { break }
@@ -119,7 +126,6 @@ final class AgentInspectorUITests: XCTestCase {
             XCTAssertGreaterThan(header.frame.width, 180)
             let collapsedValue = String(describing: header.value)
             // Click empty space well beyond the label and disclosure arrow.
-            // On the Instructions card this also covers its top padding.
             header.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.15)).click()
             let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 String(describing: header.value) != collapsedValue
