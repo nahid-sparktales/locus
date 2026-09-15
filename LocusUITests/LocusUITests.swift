@@ -4391,7 +4391,10 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(resultHighlight.waitForExistence(timeout: 3), "The output itself should be highlighted")
         XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.intersects(resultHighlight.frame) },
                       "The selected output must be scrolled into the transcript viewport")
-        XCTAssertTrue(anyElement("taskResult.header.seed-run").exists)
+        // seed-run is a team run started from an ordinary chat: highlighted,
+        // but not boxed as an automated task result.
+        XCTAssertFalse(anyElement("taskResult.header.seed-run").exists,
+                       "Only scheduled, triggered, or agent event results get a task result box")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count, 0)
         XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
         // Markdown prose is a native NSTextView, not SwiftUI StaticText.
