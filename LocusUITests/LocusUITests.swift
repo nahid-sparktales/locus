@@ -2734,6 +2734,56 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("inspector.rail.agent").exists)
     }
 
+    func testAgentSwitcherChoosesASavedAgentFromSearch() {
+        relaunchWithAgentFixture("saved-profile")
+        revealSidebarForNavigation()
+        let agentMenu = anyElement("sidebar.agentMenu")
+        XCTAssertTrue(agentMenu.waitForExistence(timeout: Self.launchContentTimeout))
+        func footerValue() -> String { (agentMenu.value as? String) ?? "" }
+
+        // Choosing a task row leaves no saved agent selected, so the footer
+        // has something to follow when Atlas is picked below.
+        let inboxAgent = anyElement("agent.seed-agent")
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
+        inboxAgent.click()
+        XCTAssertTrue(waitUntil { footerValue().contains("Choose an agent") }, footerValue())
+        XCTAssertTrue(footerValue().contains("1 agent"), footerValue())
+
+        agentMenu.click()
+        let search = anyElement("sidebar.agentPicker.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        let atlas = anyElement("sidebar.agentPicker.profile.FAAAA111-1111-4111-8111-111111111111")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3), "saved agents are listed")
+        search.click()
+        search.typeText("no such agent")
+        let empty = anyElement("sidebar.agentPicker.empty")
+        XCTAssertTrue(empty.waitForExistence(timeout: 3))
+        XCTAssertTrue((empty.label + " " + (empty.value as? String ?? "")).contains("No matching agents"))
+        XCTAssertFalse(atlas.exists)
+        search.typeKey("a", modifierFlags: .command)
+        search.typeText("fixture-model")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3), "search also matches an agent's model")
+        atlas.click()
+        XCTAssertTrue(waitForDisappearance(search))
+        XCTAssertTrue(waitUntil { footerValue().contains("Atlas") }, footerValue())
+        XCTAssertTrue(footerValue().contains("fixture-model"), footerValue())
+        XCTAssertTrue(footerValue().contains("1 agent"), footerValue())
+
+        // The keyboard path: arrows move focus and Return picks the match.
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
+        inboxAgent.click()
+        XCTAssertTrue(waitUntil { footerValue().contains("Choose an agent") }, footerValue())
+        agentMenu.click()
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.click()
+        search.typeText("Atlas")
+        XCTAssertTrue(atlas.waitForExistence(timeout: 3))
+        search.typeKey(.downArrow, modifierFlags: [])
+        search.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(search))
+        XCTAssertTrue(waitUntil { footerValue().contains("Atlas") }, footerValue())
+    }
+
     func testAScheduledAgentIsAnAgentInTheSidebarAndTheFleet() {
         relaunchWithAgentFixture("fleet")
         revealSidebarForNavigation()

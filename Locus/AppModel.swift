@@ -1618,11 +1618,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The provider the picker's source names, and how it is doing.
-    /// `modelRuntimePhase` only describes the app-wide route, so a chat on a
-    /// different account reports that account's own sign-in state instead,
-    /// when one is known. Reads no credentials and never contacts a provider.
-    private var routeProviderStatus: (name: String, phase: RuntimePhase) {
+    /// The provider the picker's source names, and how it is doing — or a nil
+    /// phase when nothing Locus tracks measures it. `modelRuntimePhase` only
+    /// describes the app-wide route: with an account active it reports the
+    /// backend serving that account, not a local Ollama. So a chat on another
+    /// account reports that account's own sign-in state when one is known, and
+    /// a route on another provider with no account to ask stays unknown
+    /// rather than borrowing that health. Reads no credentials and never
+    /// contacts a provider.
+    private var routeProviderStatus: (name: String, phase: RuntimePhase?) {
+        let appWideProvider = activeAccount?.kind.backendProvider ?? "ollama"
+        func accountless(_ name: String, _ provider: String) -> (name: String, phase: RuntimePhase?) {
+            (name, provider == appWideProvider ? modelRuntimePhase : nil)
+        }
         let accountID: UUID?
         switch modelRouteSource {
         case .duo: return ("Duo", modelRuntimePhase)
@@ -1630,16 +1638,16 @@ final class AppModel: ObservableObject {
         case let .task(_, id?, _): accountID = id
         case let .task(_, .none, provider):
             switch provider {
-            case "chatgpt": return (ProviderKind.chatGPT.marketingName, modelRuntimePhase)
-            case "claude_plan": return (ProviderKind.claudePlan.marketingName, modelRuntimePhase)
-            case "remote": return ("API", modelRuntimePhase)
-            case "ollama": return ("Ollama", modelRuntimePhase)
+            case "chatgpt": return accountless(ProviderKind.chatGPT.marketingName, provider)
+            case "claude_plan": return accountless(ProviderKind.claudePlan.marketingName, provider)
+            case "remote": return accountless("API", provider)
+            case "ollama": return accountless("Ollama", provider)
             default: accountID = activeAccount?.id
             }
         case let .agentChat(profile): accountID = profile.route.accountID
         case .appWide: accountID = activeAccount?.id
         }
-        guard let accountID else { return ("Ollama", modelRuntimePhase) }
+        guard let accountID else { return accountless("Ollama", "ollama") }
         guard let account = providerAccounts.first(where: { $0.id == accountID }) else {
             return ("Unavailable account", .unavailable("This chat’s account was removed. Choose another model."))
         }
@@ -1649,17 +1657,19 @@ final class AppModel: ObservableObject {
         return (name, status.runtimePhase)
     }
 
-    /// Health of the provider `providerLabel` names; drives the strip's dot.
-    var providerRuntimePhase: RuntimePhase { routeProviderStatus.phase }
+    /// Health of the provider `providerLabel` names, or nil when nothing
+    /// measures it; drives the strip's dot.
+    var providerRuntimePhase: RuntimePhase? { routeProviderStatus.phase }
 
     var providerLabel: String {
         let provider = routeProviderStatus
         let status: String
         switch provider.phase {
-        case .starting: status = "starting"
-        case .online: status = "ready"
-        case .recovering: status = "recovering"
-        case .unavailable: status = "offline"
+        case .starting?: status = "starting"
+        case .online?: status = "ready"
+        case .recovering?: status = "recovering"
+        case .unavailable?: status = "offline"
+        case nil: status = "status unknown"
         }
         return "\(provider.name) \(status)"
     }

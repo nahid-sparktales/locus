@@ -1659,7 +1659,9 @@ struct SessionSidebarView: View {
                     .padding(.horizontal, 6).padding(.bottom, 6)
                 }
                 .frame(height: rows * (Self.rowHeight + Self.rowSpacing) + 4)
-                .onChange(of: focusedProfileID) {
+                // Initial too: the popover opens focused on the selected
+                // agent, which can sit below the visible rows.
+                .onChange(of: focusedProfileID, initial: true) {
                     if let focusedProfileID { proxy.scrollTo(focusedProfileID, anchor: .center) }
                 }
             }

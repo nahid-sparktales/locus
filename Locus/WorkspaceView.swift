@@ -3020,7 +3020,7 @@ private struct WorkStatusStrip: View {
                 HStack(spacing: 8) {
                     statusPill(
                         label: model.providerLabel,
-                        color: runtimeColor(model.providerRuntimePhase),
+                        color: model.providerRuntimePhase.map { runtimeColor($0) } ?? LocusTheme.muted,
                         identifier: "workspace.modelStatus"
                     )
                     if model.isBusy, let started = model.activeWorkStartedAt {
