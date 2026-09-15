@@ -585,7 +585,8 @@ extension AgentInspectorCopy {
 
     static func runTitle(_ run: OrchestrationRun) -> String {
         if run.manifest?["event_triggered"]?.boolean == true { return "Work from an incoming event" }
-        if run.scheduleID != nil { return "Scheduled work" }
+        // Ordinary chat runs are stored with an empty schedule ID.
+        if run.scheduleID?.nilIfEmpty != nil { return "Scheduled work" }
         let firstLine = run.request.split(separator: "\n").first.map(String.init) ?? ""
         return firstLine.isEmpty ? "Saved work" : String(firstLine.prefix(180))
     }
