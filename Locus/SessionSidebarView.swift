@@ -1335,7 +1335,7 @@ struct SessionSidebarView: View {
             if model.sidebarDestination == .ask {
                 workspaceMenu(snapshot: snapshot)
             } else {
-                AgentSelectionMenu(automation: model.eventAutomations)
+                AgentSelectionMenu()
             }
 
             HStack {
@@ -1482,108 +1482,58 @@ struct SessionSidebarView: View {
         .accessibilityIdentifier("sidebar.workspaceMenu")
     }
 
-    /// The selected agent owns the next chat. The open conversation retains
-    /// its own agent, which the picker states explicitly when they differ.
+    /// Chooses the saved agent that owns the next chat, the way the Work
+    /// footer's workspace menu chooses the folder. Tasks stay in the sidebar
+    /// list, where their activity and settings live.
     private struct AgentSelectionMenu: View {
         @EnvironmentObject private var model: AppModel
         @EnvironmentObject private var agentTeams: AgentTeamsModel
-        @EnvironmentObject private var schedule: ScheduleModel
-        @EnvironmentObject private var sessionCatalog: SessionCatalogModel
-        @ObservedObject var automation: EventAutomationModel
         @State private var isPresented = false
         @State private var query = ""
-        @State private var keyboardReference: AgentInspectorAgent?
+        @State private var focusedProfileID: AgentProfile.ID?
         @FocusState private var searchFocused: Bool
 
-        private var entries: [AgentFleetEntry] {
-            AgentFleet.entries(
-                triggers: automation.triggers,
-                connections: automation.connections,
-                schedules: schedule.scheduledTasks,
-                sessions: sessionCatalog.snapshot.sessions,
-                runningSessionIDs: model.runningChatSessionIDs
-            )
-        }
+        private static let rowHeight: CGFloat = 46
+        private static let rowSpacing: CGFloat = 2
+        private static let visibleRows = 6
 
-        private var filteredEntries: [AgentFleetEntry] {
-            let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            return entries.filter {
-                text.isEmpty || $0.name.localizedCaseInsensitiveContains(text)
-                    || $0.summary.localizedCaseInsensitiveContains(text)
-                    || ownerLabel($0).localizedCaseInsensitiveContains(text)
-            }
-        }
-
-        private var selectedReference: AgentInspectorAgent? { model.inspectedAgentReference }
         private var profiles: [AgentProfile] { agentTeams.agentProfiles }
         private var filteredProfiles: [AgentProfile] {
             let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            return profiles.filter { text.isEmpty || $0.name.localizedCaseInsensitiveContains(text) }
-        }
-        private var currentReference: AgentInspectorAgent? {
-            sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?
-                .agentReference(in: model.agentDefinitions)
-        }
-        private var selectedEntry: AgentFleetEntry? {
-            entries.first { $0.inspectorID == selectedReference }
-        }
-        private var currentEntry: AgentFleetEntry? {
-            entries.first { $0.inspectorID == currentReference }
-        }
-        private var selectedName: String {
-            if let profile = model.selectedSavedAgentProfile { return profile.name }
-            if let selectedEntry { return selectedEntry.name }
-            guard let selectedReference else { return "Choose an agent or task" }
-            return sessionCatalog.snapshot.sessions.first {
-                $0.agentReference(in: model.agentDefinitions) == selectedReference
-            }?.agentName?.nilIfBlank ?? "Choose an agent or task"
-        }
-        private var selectedContext: String {
-            if let profile = model.selectedSavedAgentProfile { return "\(profile.role.title) · \(profile.model)" }
-            guard let selectedEntry else { return "For your next conversation" }
-            return "Task · \(ownerLabel(selectedEntry))"
-        }
-
-        private var selectedSymbol: Image {
-            if model.selectedSavedAgentProfile == nil, let selectedEntry {
-                return Image(systemName: AgentTaskPickerPresentation.symbol(for: selectedEntry.definition))
+            guard !text.isEmpty else { return profiles }
+            return profiles.filter {
+                $0.name.localizedCaseInsensitiveContains(text)
+                    || $0.role.title.localizedCaseInsensitiveContains(text)
+                    || $0.model.localizedCaseInsensitiveContains(text)
             }
-            return Image(locusSymbol: LocusSymbol.robot)
+        }
+        private var selectedProfile: AgentProfile? { model.selectedSavedAgentProfile }
+        private var selectedName: String { selectedProfile?.name ?? "Choose an agent" }
+        private var selectedContext: String { selectedProfile.map(Self.subtitle) ?? "For your next conversation" }
+        private var countLabel: String { profiles.count == 1 ? "1 agent" : "\(profiles.count) agents" }
+
+        private static func subtitle(_ profile: AgentProfile) -> String {
+            let model = profile.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            return model.isEmpty ? profile.role.title : "\(profile.role.title) · \(model)"
         }
 
-        private func ownerLabel(_ entry: AgentFleetEntry) -> String {
-            AgentTaskPickerPresentation.ownerLabel(
-                for: entry.definition, definitions: entries.map(\.definition),
-                sessions: sessionCatalog.snapshot.sessions, profiles: profiles
-            )
-        }
-
-        private func sectionHeading(_ title: String, count: Int) -> some View {
-            HStack {
-                Text(title)
-                Spacer()
-                Text("\(count)").monospacedDigit()
-            }
-            .font(.locus(size: 9, weight: .semibold))
-            .foregroundStyle(LocusTheme.muted)
-            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 5)
+        private func agentTile(side: CGFloat, glyph: CGFloat) -> some View {
+            Image(locusSymbol: LocusSymbol.robot)
+                .font(.locus(size: glyph, weight: .semibold))
+                .foregroundStyle(LocusTheme.accentAction)
+                .frame(width: side, height: side)
+                .background(LocusTheme.accentAction.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityHidden(true)
         }
 
         var body: some View {
             Button {
                 query = ""
-                keyboardReference = selectedReference
+                focusedProfileID = selectedProfile?.id
                 isPresented.toggle()
             } label: {
                 HStack(spacing: 9) {
-                    selectedSymbol
-                        .font(.locus(size: 13, weight: .semibold))
-                        .foregroundStyle(selectedEntry.map(showsWarning) == true
-                            ? LocusTheme.warning : LocusTheme.accentAction)
-                        .frame(width: 27, height: 27)
-                        .background(LocusTheme.accentAction.opacity(0.1),
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .accessibilityHidden(true)
+                    agentTile(side: 27, glyph: 13)
                         .accessibilityIdentifier("sidebar.agentIcon")
                     VStack(alignment: .leading, spacing: 3) {
                         Text(selectedName)
@@ -1592,13 +1542,14 @@ struct SessionSidebarView: View {
                             .lineLimit(1)
                         Text(selectedContext)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(LocusTheme.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
+                        .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1612,9 +1563,9 @@ struct SessionSidebarView: View {
                 }
             }
             .buttonStyle(.locus())
-            .help("Choose an agent to open its chats, or a task to view its activity and settings")
-            .accessibilityLabel("Agents and tasks menu")
-            .accessibilityValue("\(selectedName), \(selectedContext), \(entries.count + profiles.count) configured")
+            .help("Choose an agent to open its chats")
+            .accessibilityLabel("Agents menu")
+            .accessibilityValue("\(selectedName), \(selectedContext), \(countLabel)")
             .accessibilityIdentifier("sidebar.agentMenu")
             .popover(isPresented: $isPresented, arrowEdge: .trailing) { picker }
         }
@@ -1622,122 +1573,21 @@ struct SessionSidebarView: View {
         private var picker: some View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("Choose an agent or task")
+                    Text("Choose an agent")
                         .font(.locus(size: 13, weight: .semibold))
                     Spacer()
-                    Text("\(entries.count + profiles.count)")
+                    Text("\(profiles.count)")
                         .font(.locus(size: 10, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(LocusTheme.textSecondary)
+                        .accessibilityLabel(countLabel)
                 }
                 .padding(.horizontal, 16).padding(.top, 15).padding(.bottom, 12)
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
-                    TextField("Search agents and tasks", text: $query)
-                        .textFieldStyle(.plain)
-                        .focused($searchFocused)
-                        .onSubmit {
-                            if let reference = keyboardReference ?? filteredEntries.first?.inspectorID { choose(reference) }
-                            else if let profile = filteredProfiles.first {
-                                isPresented = false
-                                model.selectSavedAgent(profile)
-                            }
-                        }
-                        .accessibilityIdentifier("sidebar.agentPicker.search")
-                    if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.locus(.icon))
-                            .foregroundStyle(LocusTheme.muted)
-                            .accessibilityLabel("Clear agent and task search")
-                    }
-                }
-                .font(.locus(size: 11))
-                .padding(10)
-                .background(LocusTheme.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 12).padding(.bottom, 10)
-
-                if selectedReference != currentReference, let currentEntry {
-                    Button { choose(currentEntry.inspectorID) } label: {
-                        HStack(alignment: .top, spacing: 7) {
-                            Image(systemName: "bubble.left").padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Open chat: \(currentEntry.name)").fontWeight(.medium)
-                                Text("View this chat’s task").foregroundStyle(LocusTheme.accentAction)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.turn.up.left")
-                        }
-                        .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.inkSoft)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LocusTheme.paperDeep.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.locus())
-                    .padding(.horizontal, 12).padding(.bottom, 8)
-                    .accessibilityIdentifier("sidebar.agentPicker.currentChat")
-                } else if selectedReference != nil && currentReference == nil
-                    && sessionCatalog.snapshot.sessionsByID[model.currentSessionID]?.savedAgentProfileID == nil {
-                    Label("Your open conversation is a Work chat.", systemImage: "bubble.left")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .padding(.horizontal, 14).padding(.bottom, 10)
-                        .accessibilityIdentifier("sidebar.agentPicker.workChat")
-                }
-
-                if !filteredProfiles.isEmpty {
-                    sectionHeading("Agents", count: filteredProfiles.count)
-                    ScrollView {
-                        VStack(spacing: 2) {
-                            ForEach(filteredProfiles) { profile in
-                                Button {
-                                    isPresented = false
-                                    model.selectSavedAgent(profile)
-                                } label: {
-                                    HStack {
-                                        Label(profile.name, systemImage: "person.crop.square")
-                                        Spacer()
-                                        if model.selectedSavedAgentProfile?.id == profile.id { Image(systemName: "checkmark") }
-                                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                }.buttonStyle(.locus())
-                                .accessibilityIdentifier("sidebar.agentPicker.profile.\(profile.id.uuidString)")
-                            }
-                        }
-                    }.frame(maxHeight: 180).padding(.horizontal, 6)
-                    Divider()
-                }
-                if filteredEntries.isEmpty && filteredProfiles.isEmpty {
-                    VStack(spacing: 7) {
-                        Text(entries.isEmpty && profiles.isEmpty ? "No agents or tasks yet" : "No matching agents or tasks")
-                            .font(.locus(size: 11, weight: .medium))
-                        Text(entries.isEmpty && profiles.isEmpty
-                            ? "Create an agent with its own instructions, access, and triggers."
-                            : "Try an agent name, task name, or trigger type.")
-                            .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.muted)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity).padding(22)
-                } else if !filteredEntries.isEmpty {
-                    sectionHeading("Tasks", count: filteredEntries.count)
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(spacing: 2) {
-                                ForEach(filteredEntries, id: \.inspectorID) { entry in
-                                    pickerRow(entry).id(entry.inspectorID)
-                                }
-                            }
-                            .padding(.horizontal, 6).padding(.bottom, 6)
-                        }
-                        .frame(height: min(CGFloat(filteredEntries.count) * 72 + 8, 320))
-                        .onChange(of: keyboardReference) {
-                            if let keyboardReference { proxy.scrollTo(keyboardReference, anchor: .center) }
-                        }
-                    }
-                }
+                searchField
+                if filteredProfiles.isEmpty { emptyState } else { profileList }
                 Rectangle().fill(LocusTheme.line).frame(height: 1)
-                Text("Choose an agent to open its chats, or a task to view its activity and settings.")
+                Text("Choose an agent to open its chats.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(LocusTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 8)
                 HStack(spacing: 8) {
@@ -1763,30 +1613,72 @@ struct SessionSidebarView: View {
             .frame(width: 320)
             .background(LocusTheme.surfaceCard)
             .onAppear { searchFocused = true }
-            .onChange(of: query) { keyboardReference = filteredEntries.first?.inspectorID }
-            .onMoveCommand { direction in moveSelection(direction) }
+            .onChange(of: query) { focusedProfileID = filteredProfiles.first?.id }
+            .onMoveCommand { direction in
+                if direction == .up || direction == .down { moveFocus(by: direction == .down ? 1 : -1) }
+            }
             .onExitCommand { isPresented = false }
         }
 
-        private func pickerRow(_ entry: AgentFleetEntry) -> some View {
-            let selected = selectedReference == entry.inspectorID
-            let focused = keyboardReference == entry.inspectorID
-            return Button { choose(entry.inspectorID) } label: {
+        private var searchField: some View {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(LocusTheme.muted)
+                    .accessibilityHidden(true)
+                // The field editor swallows arrow keys before a move command
+                // reaches the popover, so the field steers the list itself.
+                TextField("Search agents", text: $query)
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    .onKeyPress(.upArrow) { moveFocus(by: -1); return .handled }
+                    .onKeyPress(.downArrow) { moveFocus(by: 1); return .handled }
+                    .onSubmit { chooseFocused() }
+                    .accessibilityIdentifier("sidebar.agentPicker.search")
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.locus(.icon))
+                        .foregroundStyle(LocusTheme.muted)
+                        .accessibilityLabel("Clear agent search")
+                }
+            }
+            .font(.locus(size: 11))
+            .padding(10)
+            .background(LocusTheme.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12).padding(.bottom, 10)
+        }
+
+        private var profileList: some View {
+            let rows = CGFloat(min(filteredProfiles.count, Self.visibleRows))
+            return ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: Self.rowSpacing) {
+                        ForEach(filteredProfiles) { profile in
+                            profileRow(profile).id(profile.id)
+                        }
+                    }
+                    .padding(.horizontal, 6).padding(.bottom, 6)
+                }
+                .frame(height: rows * (Self.rowHeight + Self.rowSpacing) + 4)
+                .onChange(of: focusedProfileID) {
+                    if let focusedProfileID { proxy.scrollTo(focusedProfileID, anchor: .center) }
+                }
+            }
+        }
+
+        private func profileRow(_ profile: AgentProfile) -> some View {
+            let selected = selectedProfile?.id == profile.id
+            let focused = focusedProfileID == profile.id
+            return Button { choose(profile) } label: {
                 HStack(spacing: 9) {
-                    Image(systemName: AgentTaskPickerPresentation.symbol(for: entry.definition))
-                        .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.accentAction)
-                        .frame(width: 28, height: 28)
-                        .background(LocusTheme.accentAction.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.name).font(.locus(size: 11, weight: .medium)).lineLimit(1)
-                        Text(ownerLabel(entry))
-                            .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
+                    agentTile(side: 28, glyph: 12)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(profile.name)
+                            .font(.locus(size: 11, weight: .medium))
+                            .foregroundStyle(LocusTheme.ink)
                             .lineLimit(1)
-                        Text("\(statusTitle(entry)) · \(environmentTitle(entry)) · \(entry.definition.kindTitle)")
+                        Text(Self.subtitle(profile))
                             .font(.locus(size: 9))
-                            .foregroundStyle(showsWarning(entry) ? LocusTheme.warning : LocusTheme.muted)
+                            .foregroundStyle(LocusTheme.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 2)
@@ -1794,56 +1686,59 @@ struct SessionSidebarView: View {
                         Image(systemName: "checkmark")
                             .font(.locus(size: 10, weight: .semibold))
                             .foregroundStyle(LocusTheme.accentAction)
+                            .accessibilityHidden(true)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
                 .padding(.horizontal, 9)
+                .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
                 .background(focused ? LocusTheme.paperDeep.opacity(0.7)
                     : selected ? LocusTheme.accentAction.opacity(0.07) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .accessibilityLabel(entry.name)
-            .accessibilityValue("Task, \(ownerLabel(entry)), \(statusTitle(entry)), \(environmentTitle(entry)), \(entry.definition.kindTitle), \(selected ? "selected" : "not selected")")
-            .accessibilityIdentifier("agent.menu.\(entry.id)")
+            .accessibilityLabel(profile.name)
+            .accessibilityValue("\(Self.subtitle(profile)), \(selected ? "selected" : "not selected")")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("sidebar.agentPicker.profile.\(profile.id.uuidString)")
         }
 
-        private func statusTitle(_ entry: AgentFleetEntry) -> String {
-            AgentInspectorCopy.agentStatusTitle(entry.status, vocabulary: entry.definition.vocabulary,
-                isRunning: entry.runningChatCount > 0, sourceNeedsAttention: sourceNeedsAttention(entry))
+        private var emptyState: some View {
+            VStack(spacing: 7) {
+                Text(profiles.isEmpty ? "No agents yet" : "No matching agents")
+                    .font(.locus(size: 11, weight: .medium))
+                Text(profiles.isEmpty
+                    ? "Create an agent with its own instructions, access, and triggers."
+                    : "Try an agent name, role, or model.")
+                    .font(.locus(size: 10))
+                    .foregroundStyle(LocusTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity).padding(22)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("sidebar.agentPicker.empty")
         }
 
-        private func sourceNeedsAttention(_ entry: AgentFleetEntry) -> Bool {
-            AgentSidebarCatalog.sourceNeedsAttention(
-                definition: entry.definition, connection: entry.connection,
-                connectionsLoaded: automation.hasLoaded
-            )
-        }
-
-        private func showsWarning(_ entry: AgentFleetEntry) -> Bool {
-            entry.runningChatCount == 0 && (entry.status.isWarning || sourceNeedsAttention(entry))
-        }
-
-        private func environmentTitle(_ entry: AgentFleetEntry) -> String {
-            entry.definition.schedule?.executionEnvironment.title
-                ?? entry.latestChat?.executionEnvironment.title ?? "Workspace"
-        }
-
-        private func choose(_ reference: AgentInspectorAgent?) {
-            guard let reference, entries.contains(where: { $0.inspectorID == reference }) else { return }
+        private func choose(_ profile: AgentProfile) {
             isPresented = false
-            model.selectAgent(reference)
+            model.selectSavedAgent(profile)
         }
 
-        private func moveSelection(_ direction: MoveCommandDirection) {
-            guard direction == .up || direction == .down else { return }
-            let available = filteredEntries.map(\.inspectorID)
-            guard !available.isEmpty else { return }
-            let current = keyboardReference.flatMap { available.firstIndex(of: $0) }
-            let next = current.map { min(max($0 + (direction == .down ? 1 : -1), 0), available.count - 1) }
-                ?? (direction == .down ? 0 : available.count - 1)
-            keyboardReference = available[next]
+        private func chooseFocused() {
+            let available = filteredProfiles
+            guard let profile = available.first(where: { $0.id == focusedProfileID }) ?? available.first
+            else { return }
+            choose(profile)
+        }
+
+        private func moveFocus(by offset: Int) {
+            let ids = filteredProfiles.map(\.id)
+            guard !ids.isEmpty else { return }
+            let next = focusedProfileID.flatMap { ids.firstIndex(of: $0) }
+                .map { min(max($0 + offset, 0), ids.count - 1) }
+                ?? (offset > 0 ? 0 : ids.count - 1)
+            focusedProfileID = ids[next]
         }
     }
 

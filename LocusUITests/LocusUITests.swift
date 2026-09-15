@@ -2614,12 +2614,15 @@ final class LocusUITests: XCTestCase {
         let newChat = anyElement("sidebar.newSession")
         XCTAssertTrue(newChat.exists)
         XCTAssertEqual(newChat.label, "New agent")
+        // The footer switcher chooses saved agents only, so a selected task
+        // never takes it over. This fixture seeds tasks but no saved agents.
         let agentMenu = anyElement("sidebar.agentMenu")
         XCTAssertTrue(agentMenu.exists)
-        XCTAssertTrue(
-            ((agentMenu.value as? String) ?? "").contains("Inbox Triage"),
-            "the footer identifies the selected agent"
-        )
+        XCTAssertEqual(agentMenu.label, "Agents menu")
+        let footerValue = (agentMenu.value as? String) ?? ""
+        XCTAssertTrue(footerValue.contains("Choose an agent"), "no saved agent is selected: \(footerValue)")
+        XCTAssertTrue(footerValue.contains("0 agents"), footerValue)
+        XCTAssertFalse(footerValue.contains("Inbox Triage"), "a task does not occupy the agent switcher")
         XCTAssertTrue(anyElement("sidebar.newAgent").exists)
         XCTAssertFalse(anyElement("sidebar.newTask").exists)
         let manage = anyElement("sidebar.configureAgent")
@@ -2677,21 +2680,38 @@ final class LocusUITests: XCTestCase {
                 .contains("Morning Review")
         })
         XCTAssertTrue(revealAgentOverviewItem("agentOverview.chat.seed-schedule-chat").exists)
-        XCTAssertTrue(
+        XCTAssertFalse(
             ((agentMenu.value as? String) ?? "").contains("Morning Review"),
-            "the footer follows the selected agent"
+            "selecting a task leaves the agent switcher on saved agents"
         )
 
+        // The switcher lists saved agents only. Searching for a task's name
+        // finds no task row; with no saved agents it offers to create one.
         agentMenu.click()
         let agentSearch = anyElement("sidebar.agentPicker.search")
         XCTAssertTrue(agentSearch.waitForExistence(timeout: 3))
         agentSearch.click()
         agentSearch.typeText("Inbox")
-        let inboxAgent = anyElement("agent.menu.seed-agent")
-        XCTAssertTrue(inboxAgent.waitForExistence(timeout: 3))
+        let emptyPicker = anyElement("sidebar.agentPicker.empty")
+        XCTAssertTrue(emptyPicker.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            (emptyPicker.label + " " + (emptyPicker.value as? String ?? "")).contains("No agents yet"),
+            "with no saved agents the picker explains how to create one"
+        )
+        XCTAssertFalse(anyElement("agent.menu.seed-agent").exists, "tasks are not listed in the agent switcher")
+        XCTAssertFalse(anyElement("sidebar.agentPicker.currentChat").exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(agentSearch))
+
+        // Tasks are chosen from their own sidebar rows.
+        let inboxAgent = anyElement("agent.seed-agent")
+        revealSettingsControl(inboxAgent, in: anyElement("sidebar.scroll"))
         inboxAgent.click()
         XCTAssertTrue(waitUntil {
-            ((agentMenu.value as? String) ?? "").contains("Inbox Triage")
+            let selectedName = self.anyElement("agentOverview.name")
+            guard selectedName.exists else { return false }
+            return (selectedName.label + " " + (selectedName.value as? String ?? ""))
+                .contains("Inbox Triage")
         })
 
         // Leaving Agent takes the tab and its rail button away again;
