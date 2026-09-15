@@ -4750,6 +4750,123 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNotEqual(generatedLead.id, overlyBroadLead.id)
     }
 
+    func testQuickTeamHelperCanShareTheDispatcherModel() throws {
+        let sharedChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "fable-5.1"
+        )
+        let leadChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "gpt-5.6-sol"
+        )
+
+        let build = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "Shared Helper Team",
+                dispatcher: sharedChoice,
+                leadEditor: leadChoice,
+                helpers: [sharedChoice]
+            ),
+            existingProfiles: [],
+            existingTeams: []
+        )
+
+        XCTAssertEqual(build.team.memberIDs.count, 3)
+        XCTAssertEqual(build.createdProfileIDs.count, 3)
+        XCTAssertEqual(Set(build.createdProfileIDs).count, 3)
+        let members = build.team.memberIDs.compactMap { id in
+            build.profiles.first(where: { $0.id == id })
+        }
+        XCTAssertEqual(members.map(\.role), [.dispatcher, .implementer, .generalist])
+        XCTAssertEqual(members.map(\.accessCeiling), [.readOnly, .workspaceWrite, .readOnly])
+        let dispatcher = members[0]
+        let helper = members[2]
+        XCTAssertNotEqual(helper.id, dispatcher.id)
+        XCTAssertEqual(helper.route, dispatcher.route)
+        XCTAssertEqual(helper.model, dispatcher.model)
+        XCTAssertEqual(helper.instructions, AgentRole.generalist.defaultInstructions)
+        XCTAssertEqual(build.team.dispatcherID, dispatcher.id)
+        XCTAssertEqual(build.team.defaultWriterID, members[1].id)
+    }
+
+    func testQuickTeamAllRolesCanShareOneModel() throws {
+        let choice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen"
+        )
+
+        let build = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "One Model Team",
+                dispatcher: choice,
+                leadEditor: choice,
+                helpers: [choice]
+            ),
+            existingProfiles: [],
+            existingTeams: []
+        )
+
+        XCTAssertEqual(build.team.memberIDs.count, 3)
+        XCTAssertEqual(build.createdProfileIDs.count, 3)
+        let members = build.team.memberIDs.compactMap { id in
+            build.profiles.first(where: { $0.id == id })
+        }
+        XCTAssertEqual(members.map(\.role), [.dispatcher, .implementer, .generalist])
+        XCTAssertEqual(members.map(\.accessCeiling), [.readOnly, .workspaceWrite, .readOnly])
+        XCTAssertEqual(members.map(\.name), ["qwen Dispatcher", "qwen Lead", "qwen Helper"])
+        XCTAssertTrue(members.allSatisfy { choice.matches($0) })
+    }
+
+    func testQuickTeamRepeatedHelperChoiceAddsOneHelper() throws {
+        let dispatcherChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen"
+        )
+        let helperChoice = QuickTeamModelChoice(
+            route: .localOllama,
+            providerName: "Local (Ollama)",
+            providerShortName: "Local",
+            model: "qwen-review"
+        )
+        let existingHelper = AgentProfile(
+            name: "Existing Helper",
+            model: "qwen",
+            role: .generalist,
+            accessCeiling: .readOnly
+        )
+
+        let build = try QuickTeamFactory.build(
+            draft: QuickTeamDraft(
+                name: "Helper Team",
+                dispatcher: dispatcherChoice,
+                leadEditor: dispatcherChoice,
+                helpers: [helperChoice, dispatcherChoice, helperChoice, dispatcherChoice]
+            ),
+            existingProfiles: [existingHelper],
+            existingTeams: []
+        )
+
+        XCTAssertEqual(build.team.memberIDs.count, 4)
+        let members = build.team.memberIDs.compactMap { id in
+            build.profiles.first(where: { $0.id == id })
+        }
+        let helpers = members.filter { $0.role == .generalist }
+        XCTAssertEqual(helpers.count, 2)
+        XCTAssertEqual(helpers.filter { helperChoice.matches($0) }.count, 1)
+        // An exactly matching Helper profile is reused instead of duplicated.
+        XCTAssertEqual(helpers.filter { dispatcherChoice.matches($0) }.map(\.id), [existingHelper.id])
+        XCTAssertFalse(build.createdProfileIDs.contains(existingHelper.id))
+        XCTAssertEqual(build.createdProfileIDs.count, 3)
+    }
+
     func testQuickTeamNamingAndProviderScopedModelIdentity() throws {
         let accountA = UUID()
         let accountB = UUID()

@@ -213,8 +213,9 @@ Team**. The visual builder has three lanes:
 - **Lead editor** is the only quick-team member allowed to edit workspace files.
 - **Helpers** are optional read-only models for research, planning, and review.
 
-Choose a lane, then select a model card. Dispatcher and Lead editor may use the
-same model; Locus still gives them separate, safely scoped profiles. Models are
+Choose a lane, then select a model card. Any role may reuse a model another role
+uses, including all three; Locus still gives each role its own safely scoped
+profile and instructions. Models are
 grouped by provider, so identical model names from different accounts remain
 distinct. Hosted providers require an explicit automatic-routing approval
 before **Create & Use Team** becomes available.

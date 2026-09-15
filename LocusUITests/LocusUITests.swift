@@ -1823,6 +1823,13 @@ final class LocusUITests: XCTestCase {
         modelCard.click() // Dispatcher; the builder advances to Lead editor.
         XCTAssertEqual(anyElement("quickTeam.lane.lead").value as? String, "Active lane")
         modelCard.click() // The same route is valid for a separate Lead profile.
+        XCTAssertTrue(waitUntil {
+            self.anyElement("quickTeam.lane.helpers").value as? String == "Active lane"
+        })
+        modelCard.click() // Helpers may reuse it too, as a separate read-only profile.
+        XCTAssertTrue(waitUntil {
+            modelCard.value as? String == "Dispatcher, Lead editor, Helper"
+        })
 
         XCTAssertTrue(waitUntil { create.isEnabled })
         create.click()
@@ -1851,6 +1858,7 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Quick Team"].exists)
         XCTAssertTrue(app.staticTexts["qwen3:8b Dispatcher"].exists)
         XCTAssertTrue(app.staticTexts["qwen3:8b Lead"].exists)
+        XCTAssertTrue(app.staticTexts["qwen3:8b Helper"].exists)
     }
 
     func testNetworkSettingsRevealManualProxyFieldsAndGateSave() {
