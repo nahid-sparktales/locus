@@ -2506,14 +2506,17 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(configureAgent.exists)
         XCTAssertLessThan(brand.frame.maxY, destination.frame.minY)
 
-        // Manage Accounts sits between the destination switch and the primary
-        // creation action; Plugins & MCP lives in the Overview shortcut bar.
+        // Manage Accounts and Manage Plugins sit between the destination switch
+        // and the primary creation action.
         let accounts = anyElement("sidebar.accounts")
+        let plugins = anyElement("sidebar.extensions")
         XCTAssertTrue(accounts.exists)
+        XCTAssertTrue(plugins.exists)
+        XCTAssertEqual(plugins.label, "Manage Plugins")
         XCTAssertLessThan(destination.frame.maxY, accounts.frame.minY)
-        XCTAssertLessThan(accounts.frame.maxY, newChat.frame.minY)
+        XCTAssertLessThan(accounts.frame.maxY, plugins.frame.minY)
+        XCTAssertLessThan(plugins.frame.maxY, newChat.frame.minY)
         XCTAssertLessThan(newChat.frame.maxY, notebook.frame.minY)
-        XCTAssertFalse(anyElement("sidebar.extensions").exists)
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
