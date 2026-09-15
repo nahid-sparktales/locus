@@ -539,21 +539,6 @@ extension AppModel {
         )
     }
 
-    var providerLabel: String {
-        let status: String
-        switch modelRuntimePhase {
-        case .starting: status = "starting"
-        case .online: status = "ready"
-        case .recovering: status = "recovering"
-        case .unavailable: status = "offline"
-        }
-        guard let account = activeAccount else {
-            return "Ollama \(status)"
-        }
-        let name = account.kind == .custom ? "Endpoint" : account.kind.marketingName
-        return "\(name) \(status)"
-    }
-
     func runCommand(_ command: CommandAction) {
         commandPalettePresented = false
         switch command {
