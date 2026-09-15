@@ -199,10 +199,14 @@ final class FeatureLogicTests: XCTestCase {
 
         // Short of the preferred width, the card narrows before the
         // conversation drops below its minimum.
-        let tight = overviewLayout(650)
+        let tight = overviewLayout(620)
         XCTAssertTrue(tight.docked)
-        XCTAssertEqual(tight.panelWidth, 270)
-        XCTAssertEqual(650 - tight.reservedTrailingWidth, RequestOverviewLayout.minimumConversationWidth)
+        XCTAssertEqual(tight.panelWidth, 260)
+        XCTAssertEqual(620 - tight.reservedTrailingWidth, RequestOverviewLayout.minimumConversationWidth)
+
+        // A 920-point window with the default 260-point sidebar and 44-point
+        // rail leaves 616 points, which still docks.
+        XCTAssertTrue(overviewLayout(616).docked)
     }
 
     func testRequestOverviewFloatsWhenTooNarrowOrSplit() {
@@ -210,7 +214,7 @@ final class FeatureLogicTests: XCTestCase {
             + RequestOverviewLayout.minimumPanelWidth
             + RequestOverviewLayout.trailingInset
             + RequestOverviewLayout.columnGap
-        XCTAssertEqual(threshold, 628)
+        XCTAssertEqual(threshold, 600)
         XCTAssertTrue(overviewLayout(threshold).docked)
         XCTAssertEqual(overviewLayout(threshold).panelWidth, RequestOverviewLayout.minimumPanelWidth)
 

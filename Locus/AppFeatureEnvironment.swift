@@ -53,12 +53,14 @@ struct WorkspaceGeometrySnapshot: Equatable {
 /// before; reserving space there would squeeze a pane below a readable width.
 struct RequestOverviewLayout: Equatable {
     static let preferredPanelWidth: CGFloat = 300
-    static let minimumPanelWidth: CGFloat = 248
+    static let minimumPanelWidth: CGFloat = 240
     /// The card's trailing edge sits this far inside the workspace, beside
     /// the inspector rail.
     static let trailingInset: CGFloat = 8
     static let columnGap: CGFloat = 12
-    static let minimumConversationWidth: CGFloat = 360
+    /// Narrow enough that a 920-point window with the default sidebar still
+    /// docks, wide enough for the composer's wrapped controls.
+    static let minimumConversationWidth: CGFloat = 340
 
     var panelWidth: CGFloat
     var reservedTrailingWidth: CGFloat
