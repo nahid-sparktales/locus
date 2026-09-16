@@ -2518,14 +2518,17 @@ final class LocusUITests: XCTestCase {
         XCTAssertFalse(configureAgent.exists)
         XCTAssertLessThan(brand.frame.maxY, destination.frame.minY)
 
-        // Manage Accounts sits between the destination switch and the primary
-        // creation action; Plugins & MCP lives in the Overview shortcut bar.
+        // Manage Accounts and Manage Plugins sit between the destination switch
+        // and the primary creation action.
         let accounts = anyElement("sidebar.accounts")
+        let plugins = anyElement("sidebar.extensions")
         XCTAssertTrue(accounts.exists)
+        XCTAssertTrue(plugins.exists)
+        XCTAssertEqual(plugins.label, "Manage Plugins")
         XCTAssertLessThan(destination.frame.maxY, accounts.frame.minY)
-        XCTAssertLessThan(accounts.frame.maxY, newChat.frame.minY)
+        XCTAssertLessThan(accounts.frame.maxY, plugins.frame.minY)
+        XCTAssertLessThan(plugins.frame.maxY, newChat.frame.minY)
         XCTAssertLessThan(newChat.frame.maxY, notebook.frame.minY)
-        XCTAssertFalse(anyElement("sidebar.extensions").exists)
 
         agents.click()
         XCTAssertTrue(waitUntil { agents.isSelected })
@@ -4816,7 +4819,11 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(orphan.waitForExistence(timeout: Self.launchContentTimeout))
         XCTAssertTrue(anyElement("session.orphaned-agent-chat-1").exists)
         XCTAssertTrue(anyElement("session.orphaned-agent-chat-2").exists)
-        anyElement("agent.\(orphanID).actions").click()
+        // The compact window's sidebar list is short; scroll the row's
+        // actions into view so the click lands on the menu button.
+        let actions = anyElement("agent.\(orphanID).actions")
+        revealSettingsControl(actions, in: anyElement("sidebar.scroll"))
+        actions.click()
 
         let remove = anyElement("agent.\(orphanID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
@@ -4846,7 +4853,9 @@ final class LocusUITests: XCTestCase {
         let profileID = "FAAAA111-1111-4111-8111-111111111111"
         let profile = anyElement("agent.\(profileID)")
         XCTAssertTrue(profile.waitForExistence(timeout: Self.launchContentTimeout))
-        anyElement("agent.\(profileID).actions").click()
+        let actions = anyElement("agent.\(profileID).actions")
+        revealSettingsControl(actions, in: anyElement("sidebar.scroll"))
+        actions.click()
         let remove = anyElement("agent.\(profileID).delete")
         XCTAssertTrue(remove.waitForExistence(timeout: 3))
         XCTAssertTrue(remove.isEnabled)

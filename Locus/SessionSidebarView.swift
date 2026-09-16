@@ -889,6 +889,16 @@ struct SessionSidebarView: View {
                 model.presentSettings(.accounts)
             }
 
+            navigationRow(
+                symbol: "puzzlepiece.extension",
+                title: "Manage Plugins",
+                help: "Manage plugins, MCP servers, and skills",
+                accessibilityLabel: "Manage Plugins",
+                identifier: "sidebar.extensions"
+            ) {
+                model.presentSettings(.extensions)
+            }
+
             primaryCreationButton
 
             HStack(spacing: 7) {
