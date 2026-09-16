@@ -524,7 +524,7 @@ struct InspectorCalendarTab: View {
                     .fill(isSelected ? LocusTheme.signalDeep : isToday ? LocusTheme.signalDeep.opacity(0.10) : .clear)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus())
         .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
         .accessibilityValue(hasEvents ? "Has events" : "No events")
     }
