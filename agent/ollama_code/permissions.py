@@ -540,7 +540,7 @@ def build_preview(
     if name == "calendar_update":
         identifier = str(args.get("event_id") or "event")
         changed = ", ".join(key for key in args if key != "event_id") or "no fields"
-        return f"update Calendar event", f"{identifier}\nChanges: {changed}"
+        return "update Calendar event", f"{identifier}\nChanges: {changed}"
     if name == "calendar_delete":
         return "delete Calendar event", str(args.get("event_id") or "")
     if name == "browser_input":
