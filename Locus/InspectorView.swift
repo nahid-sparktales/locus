@@ -53,6 +53,9 @@ struct InspectorView: View {
                     ))
                 case .calendar:
                     InspectorCalendarTab()
+                case .board:
+                    InspectorBoardTab(store: BoardStore.shared(workspacePath: model.workspacePath))
+                        .id(BoardStore.storageIdentity(workspacePath: model.workspacePath))
                 case .checkpoints:
                     // Retained only as a persistence-compatible enum value.
                     // Every selection path redirects to CheckpointSheet.

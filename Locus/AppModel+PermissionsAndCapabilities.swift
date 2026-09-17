@@ -6,8 +6,8 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 /// Permission mode changes and resets, native tool-request routing
-/// (simulator, browser, notes, wallet, computer control), and capability
-/// announcements to every live transport.
+/// (simulator, browser, notes, calendar, board, wallet, computer control), and
+/// capability announcements to every live transport.
 extension AppModel {
     // MARK: - Permission mode
 
@@ -291,6 +291,88 @@ extension AppModel {
         }
     }
 
+    /// Read or change the workspace board for the requesting agent.
+    ///
+    /// As with Notes, the runtime that owns the socket supplies the workspace
+    /// and background requests never switch the foreground conversation. The
+    /// author comes from the event's top-level `author`, never `arguments`.
+    @discardableResult
+    func runBoardAction(
+        _ event: [String: Any],
+        workspacePath requestedWorkspacePath: String? = nil,
+        applicationSupport: URL = BoardStore.applicationSupportDirectory,
+        reply: @escaping @MainActor ([String: Any]) -> Void
+    ) -> Task<Void, Never>? {
+        guard let requestID = event["request_id"] as? String,
+              let tool = event["tool"] as? String,
+              let arguments = event["arguments"] as? [String: Any]
+        else { return nil }
+        let sessionID = (event["session_id"] as? String) ?? currentSessionID
+        let ownerWorkspace = requestedWorkspacePath ?? workspacePath
+        let author = boardAuthor(for: event, sessionID: sessionID)
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            if sessionID == self.currentSessionID {
+                self.selectInspectorTab(.board)
+            }
+            let store = BoardStore.shared(
+                workspacePath: ownerWorkspace,
+                applicationSupport: applicationSupport
+            )
+            // board_read searches and formats a copy off the main actor.
+            let result = await store.performDetached(tool: tool, arguments: arguments, author: author)
+            reply([
+                "type": "board_action_result",
+                "request_id": requestID,
+                "result": result,
+            ])
+        }
+    }
+
+    func runBoardAction(
+        _ event: [String: Any],
+        workspacePath: String,
+        on transport: BackendService
+    ) {
+        runBoardAction(event, workspacePath: workspacePath) { payload in
+            _ = transport.send(payload)
+        }
+    }
+
+    /// A background chat's board is the one its conversation shows when it
+    /// is in front: the session's current directory, which a worktree
+    /// hand-off moves, else the workspace the worker was started in.
+    func boardWorkspacePath(for runtime: ChatWorkerRuntime) -> String {
+        if let cwd = runtime.sessionInfo?.cwd, !cwd.isEmpty {
+            return cwd
+        }
+        return runtime.workspacePath
+    }
+
+    /// Name the agent behind a board request from the app's own records. A
+    /// helper's label wins because it is the most specific; profile and
+    /// session names follow; the runtime's display name is the last hint.
+    /// A candidate that would read as the user ("You") is skipped.
+    func boardAuthor(for event: [String: Any], sessionID: String) -> BoardAuthor {
+        let author = event["author"] as? [String: Any] ?? [:]
+        func clean(_ value: String?) -> String? {
+            BoardAuthor.agentName(value)
+        }
+        func profileName(_ id: UUID?) -> String? {
+            guard let id else { return nil }
+            return clean(agentProfiles.first { $0.id == id }?.name)
+        }
+        let agentID = (author["agent_id"] as? String).map(BoardText.singleLine)?.nilIfEmpty
+        let name = clean(author["agent_name"] as? String)
+            ?? profileName(agentID.flatMap(UUID.init(uuidString:)))
+            ?? profileName(savedAgentProfileID(for: sessionID))
+            ?? clean(sessionCatalog.snapshot.sessionsByID[sessionID]?.agentName)
+            ?? clean(author["display_name"] as? String)
+            ?? clean(primaryAgentBehavior.displayName)
+            ?? BoardAuthor.agentFallbackName
+        return BoardAuthor(kind: .agent, name: name, agentID: agentID, sessionID: sessionID)
+    }
+
     #if LOCUS_WALLET
     /// Wallet requests never receive secret material. The native gateway
     /// returns only public account data, prepared-intent summaries, or a
@@ -477,6 +559,15 @@ extension AppModel {
     func sendCalendarCapability(to transport: BackendService) {
         _ = transport.send([
             "type": "set_calendar_control",
+            "enabled": true,
+        ])
+    }
+
+    /// The board is app-owned workspace data, so every live Locus transport
+    /// advertises it; the workspace is still resolved here, not by the runtime.
+    func sendBoardCapability(to transport: BackendService) {
+        _ = transport.send([
+            "type": "set_board_control",
             "enabled": true,
         ])
     }

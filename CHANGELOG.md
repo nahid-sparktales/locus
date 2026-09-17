@@ -8,6 +8,11 @@
   creation. It uses calendars connected through macOS Internet Accounts,
   including Google and Microsoft, and agents can list, create, update, or delete
   events through a permission-aware native bridge.
+- Board joins the right inspector as a workspace kanban that you and your agents
+  share. Cards move between columns and carry comments and an activity timeline
+  that record who changed what. Agents can read the board, create, move, edit,
+  comment on, or delete cards to coordinate work and report progress, and each
+  change is attributed to the agent that made it.
 
 ## 3.1.0 — 2026-09-14
 

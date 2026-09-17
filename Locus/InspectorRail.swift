@@ -2,9 +2,10 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Context, Terminal, Browser, Notes, and Calendar stay within reach,
-/// while the vertical-ellipsis menu contains Side Chat and every additional
-/// workspace panel, including Simulator, Model Router, and Proxies.
+/// the window edge: Context, Terminal, Browser, Notes, Calendar, and Board
+/// stay within reach, while the vertical-ellipsis menu contains Side Chat and
+/// every additional workspace panel, including Simulator, Model Router, and
+/// Proxies.
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
@@ -27,7 +28,8 @@ struct InspectorRail: View {
     /// Direct rail destinations stay one click away. The remaining workspace
     /// panels live in the overflow menu instead of disappearing from the UI.
     static let menuTabs = InspectorTab.workspaceTabs.filter {
-        $0 != .terminal && $0 != .notes && $0 != .calendar && $0 != .context
+        $0 != .terminal && $0 != .notes && $0 != .calendar && $0 != .board
+            && $0 != .context
     }
 
     var body: some View {
@@ -48,6 +50,7 @@ struct InspectorRail: View {
             railTab(.context)
             railTab(.notes)
             railTab(.calendar)
+            railTab(.board)
             Spacer(minLength: 0)
             zoomButton
         }

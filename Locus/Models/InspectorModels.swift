@@ -27,6 +27,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case simulator
     case notes
     case calendar
+    case board
     case checkpoints
     case runs
     case agents
@@ -40,8 +41,8 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// and Browser have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
-        .changes, .files, .terminal, .simulator, .notes, .calendar, .runs, .agents,
-        .router, .proxies, .context,
+        .changes, .files, .terminal, .simulator, .notes, .calendar, .board, .runs,
+        .agents, .router, .proxies, .context,
     ]
 
     var isWorkspaceTab: Bool { Self.workspaceTabs.contains(self) }
@@ -60,6 +61,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .simulator: "Simulator"
         case .notes: "Notes"
         case .calendar: "Calendar"
+        case .board: "Board"
         case .checkpoints: "Checkpoints"
         case .runs: "Runs"
         case .agents: "Instructions"
@@ -78,6 +80,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .agent: detail = "Selected agent: trigger, access, chats, and activity"
         case .notes: detail = "Editable notes shared at the scope you choose"
         case .calendar: detail = "Events from Calendar, Google, and Microsoft accounts"
+        case .board: detail = "Kanban cards you and your agents plan, move, and discuss"
         case .agents: detail = "Workspace instructions in AGENTS.md"
         case .runs: detail = "This chat’s saved executions, progress, and failures"
         case .changes: detail = "Review workspace file changes"
@@ -104,6 +107,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .simulator: "ipad.and.iphone"
         case .notes: "note.text"
         case .calendar: "calendar"
+        case .board: "rectangle.split.3x1"
         case .checkpoints: "clock.arrow.circlepath"
         // Runs stopped being Teams-only; the three-node orchestration graph
         // now belongs to the team dispatcher alone.
@@ -129,7 +133,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .agent, .simulator, .calendar, .router, .proxies, .context: nil
+        case .agent, .simulator, .calendar, .board, .router, .proxies, .context: nil
         }
     }
 }

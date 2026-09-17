@@ -1658,7 +1658,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 15)
+        XCTAssertEqual(InspectorTab.allCases.count, 16)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -1678,6 +1678,7 @@ final class FeatureLogicTests: XCTestCase {
         )
         XCTAssertEqual(InspectorTab(rawValue: "notes"), .notes)
         XCTAssertEqual(InspectorTab(rawValue: "calendar"), .calendar)
+        XCTAssertEqual(InspectorTab(rawValue: "board"), .board)
         XCTAssertEqual(InspectorTab(rawValue: "simulator"), .simulator)
         XCTAssertEqual(InspectorTab.plan.title, "Overview")
         XCTAssertEqual(InspectorTab.plan.symbol, "rectangle.grid.2x2")
@@ -1685,6 +1686,9 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab.notes.symbol, "note.text")
         XCTAssertEqual(InspectorTab.calendar.symbol, "calendar")
         XCTAssertTrue(InspectorTab.workspaceTabs.contains(.calendar))
+        XCTAssertEqual(InspectorTab.board.title, "Board")
+        XCTAssertEqual(InspectorTab.board.symbol, "rectangle.split.3x1")
+        XCTAssertTrue(InspectorTab.workspaceTabs.contains(.board))
         XCTAssertEqual(InspectorTab.router.title, "Router")
         XCTAssertEqual(InspectorTab.proxies.title, "Proxies")
         XCTAssertTrue(InspectorTab.workspaceTabs.contains(.router))
@@ -1698,7 +1702,7 @@ final class FeatureLogicTests: XCTestCase {
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", nil, "2", "3", "4", "5", nil, "9", nil, "6", "7", "8", nil, nil, nil]
+            ["1", nil, "2", "3", "4", "5", nil, "9", nil, nil, "6", "7", "8", nil, nil, nil]
         )
     }
 

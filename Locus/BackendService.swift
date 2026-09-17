@@ -265,7 +265,7 @@ final class BackendService {
                         if let cursor = event["runtime_seq"] as? Int {
                             self.runtimeCursor = max(self.runtimeCursor, cursor)
                         }
-                        let nativeRequests: Set<String> = ["computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "calendar_action_request", "identity_context_request", "identity_action_request"]
+                        let nativeRequests: Set<String> = ["computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "calendar_action_request", "board_action_request", "identity_context_request", "identity_action_request"]
                         if nativeRequests.contains(event["type"] as? String ?? ""), let decision = event["runtime_decision"] as? [String: Any] {
                             do {
                                 let _: [String: Bool] = try await self.post("/api/runtime/native/claim", body: decision, as: [String: Bool].self)
