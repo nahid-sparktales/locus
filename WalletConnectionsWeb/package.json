@@ -13,9 +13,7 @@
     "@mysten/sui": "2.29.0",
     "@mysten/wallet-standard": "0.21.22",
     "@phantom/browser-sdk": "2.0.2",
-    "@solana/wallet-standard": "1.1.6",
-    "@solana/web3.js": "1.98.4",
-    "@wallet-standard/core": "1.1.2"
+    "@solana/web3.js": "1.98.4"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

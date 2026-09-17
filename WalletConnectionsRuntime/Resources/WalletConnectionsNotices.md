@@ -11,8 +11,6 @@ resources. The audited direct dependencies are:
 - `@metamask/connect-evm` 2.1.1
 - `@phantom/browser-sdk` 2.0.2
 - `@mysten/slush-wallet` 1.1.23
-- `@solana/wallet-standard` 1.1.6
-- `@wallet-standard/core` 1.1.2
 - `@mysten/sui` 2.29.0
 - `@mysten/wallet-standard` 0.21.22
 - `@solana/web3.js` 1.98.4
