@@ -498,6 +498,8 @@ class AgentCore:
         self.browser_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.notes_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.calendar_executor: Callable[[str, dict[str, Any], str], str] | None = None
+        #: Called with a keyword-only ``author`` built from local identity.
+        self.board_executor: Callable[..., str] | None = None
         self.connector_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.identity_executor: Callable[[str, dict[str, Any], str], str] | None = None
         self.identity_context_executor: Callable[[list[str]], list[dict[str, str]]] | None = None
@@ -4460,6 +4462,16 @@ class AgentCore:
                     else:
                         tc.execution_receipt["executed"] = True
                         result = self.calendar_executor(tc.name, tc.arguments, call_id)
+                elif info.get("origin") == "board":
+                    if not self.tool_registry.board_tool_allowed(tc.name):
+                        result = "Error: this agent is not allowed to use that Board tool."
+                    elif self.board_executor is None:
+                        result = "Error: the Board is unavailable."
+                    else:
+                        tc.execution_receipt["executed"] = True
+                        result = self.board_executor(
+                            tc.name, tc.arguments, call_id, author=self.board_author(event_context),
+                        )
                 elif self.tool_registry.product_features.owns(tc.name):
                     tc.execution_receipt["executed"] = True
                     result = self.tool_registry.product_features.execute(
@@ -4628,6 +4640,22 @@ class AgentCore:
         self.tool_registry.set_solo_swarm_enabled(False)
         self._clear_chatgpt_thread()
         self.reset_system_message()
+
+    def board_author(self, event_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Who a Board change is attributed to, from state the model cannot edit.
+
+        Helpers and Solo workers carry their id and label in the event context;
+        the root chat and team writers are named by their configured agent.
+        """
+        context = event_context or self.tool_event_context or {}
+        _, _, role = self.tool_registry.mcp_agent_policy_snapshot()
+        return {
+            "agent_id": str(context.get("agent_id") or self.agent_id)[:128],
+            "agent_name": str(context.get("agent_name") or "")[:64],
+            "display_name": str(self.agent_configuration.display_name or "")[:64],
+            "role": str(role or "")[:64],
+            "helper": bool(context.get("agent_id")),
+        }
 
     def _targets_workspace(self, tc: ToolCall) -> bool:
         """Whether a tool call stays inside the workspace.

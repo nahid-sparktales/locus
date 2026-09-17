@@ -625,6 +625,14 @@ extension AppModel {
                 showToast("Calendar is unavailable from the native broker")
             }
 
+        case "board_action_request":
+            runBoardAction(event, workspacePath: workspacePath, on: conversationBackend)
+
+        case "board_control_status":
+            if (event["enabled"] as? Bool) != true {
+                showToast("The board is unavailable from the native broker")
+            }
+
         #if LOCUS_WALLET
         case "wallet_action_request":
             runWalletAction(event, on: conversationBackend)

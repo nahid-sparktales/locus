@@ -21,7 +21,7 @@ from .runtime_store import PrivateStore, RuntimeStore, identifier
 
 TURN_COMMANDS = {"user_message", "retry_last", "evaluation_run"}
 DECISION_EVENTS = {"permission_request", "question_required", "dispatch_plan_ready", "mcp_input_request"}
-NATIVE_EVENTS = {"computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "calendar_action_request", "identity_context_request", "identity_action_request"}
+NATIVE_EVENTS = {"computer_action_request", "browser_action_request", "simulator_action_request", "notes_action_request", "calendar_action_request", "board_action_request", "identity_context_request", "identity_action_request"}
 CONFIG_PATHS = {"/api/provider", "/api/permissions", "/api/config", "/api/images/provider"}
 
 
@@ -212,7 +212,7 @@ class RuntimeSupervisor:
             if not row:
                 raise ValueError("Unknown runtime session")
             worker = await self.ensure_worker(session_id, row["workspace"])
-        if message.get("type") in {"set_computer_control", "set_browser_control", "set_simulator_control", "set_notes_control", "set_calendar_control", "set_identity_control"}:
+        if message.get("type") in {"set_computer_control", "set_browser_control", "set_simulator_control", "set_notes_control", "set_calendar_control", "set_board_control", "set_identity_control"}:
             message = {**message, "runtime_broker": True}
         if message.get("type") == "set_model":
             await self.request(worker, "POST", "/api/config", {"model": message.get("model")})

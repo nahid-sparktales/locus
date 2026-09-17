@@ -268,6 +268,12 @@ extension AppModel {
         prefillComposer(with: prompt, collapsingInspector: false)
     }
 
+    /// A board card's "Work on this in chat" keeps the board open beside the
+    /// composer so the user can watch the agent move the card.
+    func prefillComposerFromBoard(_ prompt: String) {
+        prefillComposer(with: prompt, collapsingInspector: false)
+    }
+
     /// Opens a URL in the in-app Browser tab, toasting when the preview
     /// refuses the scheme.
     func openURLInBrowserTab(_ url: URL) {

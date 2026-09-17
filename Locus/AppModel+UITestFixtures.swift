@@ -881,6 +881,17 @@ extension AppModel {
             inspectorTab = .simulator
             inspectorCollapsed = false
         }
+        // "empty" opens the board without cards to show its first-run state.
+        if let board = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BOARD"],
+           board == "seeded" || board == "empty" {
+            if board == "seeded" { seedBoardFixture() }
+            openInspectorTabs = [.board]
+            inspectorTab = .board
+            inspectorCollapsed = false
+            if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_BOARD_ZOOMED"] == "1" {
+                setInspectorZoomed(true)
+            }
+        }
 
         // Documentation captures use the same deterministic app state as UI
         // tests, but start at the calm empty workspace shown to new users.
@@ -925,6 +936,35 @@ extension AppModel {
         if let record {
             _ = goals.handleEvent(["type": "goal_snapshot", "goal": record], sessionID: sessionID)
         }
+    }
+
+    /// Cards in every default column, including a conversation between the
+    /// user and the "Atlas" agent. The store writes to this launch's temporary
+    /// root, so it starts empty; the guard keeps a repeated seed from doubling.
+    private func seedBoardFixture() {
+        let store = BoardStore.shared(workspacePath: workspacePath)
+        guard store.cards.isEmpty else { return }
+        let atlas = BoardAuthor(kind: .agent, name: "Atlas",
+                                agentID: "FAAAA111-1111-4111-8111-111111111111",
+                                sessionID: currentSessionID)
+        let login = try? store.createCard(
+            title: "Fix sign-in redirect loop",
+            details: "Opening an invite link while signed out returns to the sign-in page.",
+            columnID: "todo", priority: .urgent, labels: ["bug", "auth"], assignee: "Atlas"
+        )
+        if let login {
+            try? store.addComment(to: login.id, text: "Does this only happen for single sign-on accounts?")
+            try? store.addComment(to: login.id, text: "Only single sign-on: the callback drops the return path. "
+                + "I will move this card once the fix is ready.", author: atlas)
+        }
+        _ = try? store.createCard(title: "Interview notes for onboarding", details: "Summarize the five sessions.",
+                                  columnID: "backlog", priority: .low, labels: ["research"])
+        _ = try? store.createCard(title: "Draft release notes", columnID: "in-progress",
+                                  priority: .medium, labels: ["docs"], assignee: "You")
+        _ = try? store.createCard(title: "Review settings copy", details: "Check tone and truncation.",
+                                  columnID: "review", priority: .high, labels: ["ui", "copy"],
+                                  assignee: "Atlas", author: atlas)
+        _ = try? store.createCard(title: "Ship calendar integration", columnID: "done", labels: ["release"])
     }
 
     /// Opt-in regression fixture for saved chats whose profile has already

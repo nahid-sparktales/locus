@@ -212,6 +212,7 @@ class AgentWorkerRuntime:
             "browser_autofill_categories",
             "notes_enabled",
             "calendar_enabled",
+            "board_enabled",
             "connector_connections",
             "_user_capability_policy",
             "_mcp_agent_policy",
@@ -234,6 +235,7 @@ class AgentWorkerRuntime:
             "browser_executor",
             "notes_executor",
             "calendar_executor",
+            "board_executor",
             "connector_executor",
         ):
             executor = getattr(parent, name)
@@ -243,13 +245,15 @@ class AgentWorkerRuntime:
                 )
             if executor is not None:
 
-                def scoped_executor(tool, arguments, request_id, executor=executor):
+                # Keyword arguments such as the Board's trusted author pass
+                # through; a fourth positional one would replace `executor`.
+                def scoped_executor(tool, arguments, request_id, executor=executor, **kwargs):
                     if self._should_stop():
                         return (
                             "Error: this helper was interrupted before the native action started."
                         )
                     try:
-                        return executor(tool, arguments, request_id)
+                        return executor(tool, arguments, request_id, **kwargs)
                     finally:
                         self._native_action_finished(request_id)
 
@@ -404,6 +408,7 @@ class AgentWorkerRuntime:
             "browser_action_request",
             "notes_action_request",
             "calendar_action_request",
+            "board_action_request",
             "connector_action_request",
         }:
             return True
