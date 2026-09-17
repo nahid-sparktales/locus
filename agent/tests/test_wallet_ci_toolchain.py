@@ -11,13 +11,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SETUP_NODE = "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
 
 
-@pytest.mark.parametrize("invalid", [None, "Tools/z final script.sh", "agent/run.sh"])
+@pytest.mark.parametrize("invalid", [None, "Tools/z final script.sh"])
 def test_release_syntax_gate_checks_each_quoted_file_without_executing_it(tmp_path, invalid):
     source = (ROOT / ".github/workflows/ci.yml").read_text()
     step = source.split("      - name: Release script syntax\n", 1)[1].split("\n\n", 1)[0]
     assert step.startswith("        run: |\n")
     body = textwrap.dedent(step.split("\n", 1)[1])
-    for relative in ("Tools/a.sh", "Tools/z final script.sh", "agent/run.sh"):
+    for relative in ("Tools/a.sh", "Tools/z final script.sh"):
         path = tmp_path / relative
         path.parent.mkdir(exist_ok=True)
         path.write_text("if then\n" if relative == invalid else "printf 'MUST NOT EXECUTE'\n")

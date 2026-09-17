@@ -2373,16 +2373,6 @@ def _task_diff(svc: ChatService, workspace_root: str, execution_path: str) -> st
     return result.stdout[:2_000_000]
 
 
-def _revision_request(reviews: list[Any]) -> str:
-    revisions: list[str] = []
-    for review in reviews:
-        text = str(review.output or "").strip()
-        lowered = text.lower().replace(" ", "")
-        if '"verdict":"revise"' in lowered or text.lower().startswith("revise"):
-            revisions.append(text)
-    return "\n\n".join(revisions)[:80_000]
-
-
 def _validated_chat_attachments(value: Any) -> list[dict[str, str]]:
     if value in (None, []):
         return []

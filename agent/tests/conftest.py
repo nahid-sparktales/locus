@@ -44,7 +44,6 @@ os.environ["OLLAMA_CODE_HOME"] = str(_SESSION_HOME)
 
 import pytest  # noqa: E402
 
-from ollama_code import app as app_mod  # noqa: E402
 from ollama_code import config as config_mod  # noqa: E402
 from ollama_code import extensions as extensions_mod  # noqa: E402
 from ollama_code import paths as paths_mod  # noqa: E402
@@ -72,8 +71,6 @@ _APP_DIR_CONSTANTS: tuple[tuple[Any, str, str | None], ...] = (
     (sessions_mod, "APP_DIR", None),
     (sessions_mod, "SESSIONS_DIR", "sessions"),
     (extensions_mod, "APP_DIR", None),
-    (app_mod, "APP_DIR", None),
-    (app_mod, "HISTORY_FILE", "history"),
     (transcript_search_mod, "APP_DIR", None),
     (transcript_search_mod, "DEFAULT_PATH", "transcript-index.sqlite3"),
 )
