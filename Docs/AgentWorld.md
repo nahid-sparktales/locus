@@ -253,17 +253,6 @@ ship as a whole, so ship GLBs do not require humanoid rigs or walking clips.
 artwork uses simple geometry so agents remain reachable. Changing artwork or a
 map does not change profile IDs, conversations, provider routes, or permissions.
 
-The optional Houdini workflow is documented in
-[HoudiniGrandLineTerrain.md](../Tools/HoudiniGrandLineTerrain.md). Houdini
-22.0.429 Apprentice has now cooked and saved the editable terrain study, with
-its actual geometry bounds verified. A separate Mantra preview retains the
-Apprentice watermark. The native GLB exporter rejects the active Apprentice
-license, while supported native PLY export followed by Blender 5.1.2 import and
-GLB export succeeds. The separate conversion preserves the study geometry,
-colors, UVs and materials, and produces an editable Blender scene and rendered
-preview. These starting forms remain study deliverables; the existing Meshy
-models remain the more finished artwork used by the map.
-
 ## Asset provenance and regeneration
 
 The prepared assets were generated using Meshy for this project. Their prompts,

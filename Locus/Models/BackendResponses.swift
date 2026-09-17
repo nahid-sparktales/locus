@@ -56,13 +56,6 @@ struct TaskDetailResponse: Codable {
     }
 }
 
-struct TaskApplyResponse: Codable {
-    let task: TaskRecord
-    let applied: Bool
-    let tree: String
-    let paths: [String]
-}
-
 struct TaskLandingResponse: Codable {
     let task: TaskRecord
     let destination: String

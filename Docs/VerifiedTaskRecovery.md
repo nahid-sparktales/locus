@@ -194,10 +194,10 @@ Seeded recovery scenarios cover paused progress, Needs review, recovery controls
 and separate human acceptance. The Debug desktop build succeeded with ad hoc
 signing. Test stores and provider responses are isolated fixtures.
 
-Saved [validation results and logs](../output/verified-task-recovery-2026-09-09/validation.json)
+Saved [validation results and logs](evidence/verified-task-recovery-2026-09-09/validation.json)
 include the exact test selections and build configuration. Compact desktop
-renders show [paused recovery](../output/verified-task-recovery-2026-09-09/Recovery-paused.png)
-and [Needs review](../output/verified-task-recovery-2026-09-09/Recovery-needs_review.png).
+renders show [paused recovery](evidence/verified-task-recovery-2026-09-09/Recovery-paused.png)
+and [Needs review](evidence/verified-task-recovery-2026-09-09/Recovery-needs_review.png).
 
 Live paid-provider interruption/recovery, external actions against real services,
 and comparative task completion/time/cost benchmarks were not run. Native

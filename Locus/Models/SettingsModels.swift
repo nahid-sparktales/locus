@@ -642,10 +642,6 @@ struct AppSettings: Codable, Hashable {
         return selected.isWorkspaceTab ? selected : .files
     }
 
-    var resolvedAutomaticInspectorPresentation: AutomaticInspectorPresentation {
-        AutomaticInspectorPresentation(rawValue: automaticInspectorPresentationRaw) ?? .ask
-    }
-
     var resolvedSoloPlanPresentation: AutomaticInspectorPresentation {
         AutomaticInspectorPresentation(rawValue: soloPlanPresentationRaw) ?? .ask
     }

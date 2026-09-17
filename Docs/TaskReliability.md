@@ -64,7 +64,7 @@ The local benchmark executes the real verifier with 32 JSON checks at 100,
 1,024, and 4,096 workspace files, one warmup and 20 paired repetitions per size.
 Order alternates between serial and parallel. Each pair compares the full
 normalized check evidence, including file fingerprints, as well as pass/fail.
-The raw measurements are in [parallel-checks.json](../output/task-reliability-2026-09-09/parallel-checks.json).
+The raw measurements are in [parallel-checks.json](evidence/task-reliability-2026-09-09/parallel-checks.json).
 The measured median improvements were **0.55%, 0.37%, and −0.28%**. All paired
 evidence matched, but no workload reached the required 10% median improvement.
 **Automatic concurrency remains disabled.** This is one machine with warm
@@ -172,7 +172,7 @@ be added together; provider dispatch still happens once.
 
 ## Validation records and deferred campaigns
 
-[validation.json](../output/task-reliability-2026-09-09/validation.json) records
+[validation.json](evidence/task-reliability-2026-09-09/validation.json) records
 the tested source snapshot, selections, raw logs, UI captures, and known gaps.
 The full backend run passed **2,233 tests**. Subsequent focused runs passed,
 including **105 accounting/progress/recovery checks** and the real saved-plan
@@ -180,8 +180,8 @@ Work entry-point regressions. These selections overlap and must not be added
 to the full-suite count. Desktop validation passed **49 model/routing/render
 tests and 10 distinct UI tests** across the Goal and Capsule suites. The final
 combined desktop run also repeated the new task-detail UI test successfully.
-Captures show the [compact task view](../output/task-reliability-2026-09-09/TaskDetail-compact.png)
-and [macOS task window](../output/task-reliability-2026-09-09/TaskDetail-macOS.png).
+Captures show the [compact task view](evidence/task-reliability-2026-09-09/TaskDetail-compact.png)
+and [macOS task window](evidence/task-reliability-2026-09-09/TaskDetail-macOS.png).
 Deterministic tests cover restart/compaction, paraphrased inactivity, current
 reviews, saved plan approval, concurrent receipt attribution, cumulative/cache
 usage, duplicate settlements, failed evaluation attempts, restoration conflicts,
@@ -215,5 +215,5 @@ workspace, and reusable-check repairs share the persisted team repair allowance.
 The post-integration UI gate remains open because macOS timed out enabling
 XCTest automation before any UI test ran. The earlier 11 UI passes apply to the
 pre-integration snapshot. Raw logs and source fingerprints are retained in the
-[integration report](../output/task-reliability-2026-09-09/task-restoration-integration-validation.json).
+[integration report](evidence/task-reliability-2026-09-09/task-restoration-integration-validation.json).
 Live-provider and comparative campaign gates remain deferred, not passed.

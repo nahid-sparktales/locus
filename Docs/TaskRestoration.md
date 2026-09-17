@@ -90,12 +90,12 @@ executing tests because XCTest timed out enabling automation mode. The earlier
 pre-integration snapshot passed **11 UI tests**; those results are retained and
 are not counted as a pass for the integrated revision. No system permissions
 were changed. The earlier restoration capture is
-[available here](../output/task-reliability-2026-09-09/TaskRestoration-macOS.png).
+[available here](evidence/task-reliability-2026-09-09/TaskRestoration-macOS.png).
 
 Current raw results and limitations are in
-[task-restoration-integration-validation.json](../output/task-reliability-2026-09-09/task-restoration-integration-validation.json).
+[task-restoration-integration-validation.json](evidence/task-reliability-2026-09-09/task-restoration-integration-validation.json).
 The preceding snapshot is retained in
-[task-restoration-validation.json](../output/task-reliability-2026-09-09/task-restoration-validation.json).
+[task-restoration-validation.json](evidence/task-reliability-2026-09-09/task-restoration-validation.json).
 The broader implementation and earlier validation are described in
 [Task reliability](TaskReliability.md). Live-provider recovery and comparative
 campaign gates remain **deferred, not passed**. This task-view follow-up does
