@@ -19,6 +19,30 @@ MODE_LABELS = {
     "bypass": "every tool runs automatically",
 }
 
+#: Changes to the app-owned workspace Board run automatically in Accept Edits,
+#: like file edits. Deleting a card is not an edit and still asks.
+BOARD_EDIT_TOOLS = {"board_create_card", "board_update_card", "board_comment"}
+#: Authorship is attached by the runtime from local agent state. The model may
+#: not claim to be someone else, so these never reach the native Board.
+RESERVED_BOARD_ARGUMENTS = frozenset({
+    "author", "actor", "agent_id", "agent_name", "display_name", "role", "helper",
+})
+#: The only board_update_card fields the native Board changes, in schema order.
+_BOARD_UPDATE_FIELDS = (
+    "title", "description", "column", "position", "priority", "labels", "assignee",
+)
+#: The native Board treats a null field, and a blank column or priority, as not supplied.
+_BOARD_BLANK_MEANS_UNSET = frozenset({"column", "priority"})
+#: What Swift's `.whitespacesAndNewlines` trims when the Board decides a value
+#: is blank: tab, line breaks, NEL, and the Zs, Zl, and Zp separators.
+#: `str.strip()` would also strip U+001C-U+001F, which the Board keeps and
+#: acts on. Foundation also trims U+200B; it is left out so the prompt may
+#: show a value the Board ignores but never hides one it acts on.
+_SWIFT_WHITESPACE = (
+    "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005"
+    "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+
 
 class PermissionManager:
     """Tracks what the user has allowed, for this session and permanently."""
@@ -54,6 +78,8 @@ class PermissionManager:
                 return True
             if self.mode == "accept_edits" and tool_name in EDIT_TOOLS:
                 return inside_workspace
+            if self.mode == "accept_edits" and tool_name in BOARD_EDIT_TOOLS:
+                return True
             return False
 
     def blocked_reason(self, tool_name: str, args: dict[str, Any]) -> str | None:
@@ -371,6 +397,25 @@ def _dynamic_root_delete(command: str) -> bool:
     return has_root_target and has_recursive_force
 
 
+def _board_blank(value: Any) -> bool:
+    """Whether the native Board treats a column or priority value as not supplied."""
+    return value is None or (isinstance(value, str) and not value.strip(_SWIFT_WHITESPACE))
+
+
+def _board_value(value: Any) -> str:
+    """A column or priority as the prompt shows it, with invisible characters escaped."""
+    text = str(value)
+    return text if text.isprintable() else repr(text)
+
+
+def _board_update_supplies(args: dict[str, Any], key: str) -> bool:
+    """Whether the native Board applies `key` from a board_update_card call."""
+    value = args.get(key)
+    if value is None or key in RESERVED_BOARD_ARGUMENTS:
+        return False
+    return not (key in _BOARD_BLANK_MEANS_UNSET and _board_blank(value))
+
+
 def _shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"… (+{len(text) - limit} chars)"
 
@@ -543,6 +588,34 @@ def build_preview(
         return "update Calendar event", f"{identifier}\nChanges: {changed}"
     if name == "calendar_delete":
         return "delete Calendar event", str(args.get("event_id") or "")
+    if name == "board_read":
+        card = str(args.get("card_id") or "")
+        return (f"read Board card {card}" if card else "read Board"), ""
+    if name == "board_create_card":
+        title = str(args.get("title") or "Untitled card")
+        column = args.get("column")
+        where = (
+            "first column" if _board_blank(column)
+            else _board_value(str(column).strip(_SWIFT_WHITESPACE))
+        )
+        description = str(args.get("description") or "")
+        return f"create Board card: {_shorten(title, 70)}", f"{where}\n{description}".rstrip()
+    if name == "board_update_card":
+        card = str(args.get("card_id") or "card")
+        # Only fields the Board acts on: reserved authorship keys are dropped
+        # before sending and unknown keys are ignored, so neither is a change.
+        changes = [
+            f"{key} → {_shorten(_board_value(args[key]), 40)}"
+            if key in _BOARD_BLANK_MEANS_UNSET else key
+            for key in _BOARD_UPDATE_FIELDS
+            if _board_update_supplies(args, key)
+        ]
+        return f"update Board card {card}", "Changes: " + (", ".join(changes) or "none")
+    if name == "board_comment":
+        card = str(args.get("card_id") or "card")
+        return f"comment on Board card {card}", str(args.get("text") or "")
+    if name == "board_delete_card":
+        return "delete Board card", str(args.get("card_id") or "")
     if name == "browser_input":
         action = str(args.get("action") or "click")
         target = str(args.get("ref") or args.get("from_ref") or args.get("key") or "")

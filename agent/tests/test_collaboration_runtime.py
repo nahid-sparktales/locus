@@ -260,6 +260,51 @@ def test_native_brokers_and_background_services_use_helper_context(tmp_path):
         runtime.close()
 
 
+def test_helper_board_changes_are_attributed_to_the_helper(tmp_path):
+    svc = service(tmp_path)
+    svc.pending_board_actions = {}
+    svc.core.perms.set_mode("bypass")
+    svc.core.tool_registry.board_enabled = True
+    svc.core.board_executor = ChatService.execute_board.__get__(svc, type(svc))
+    runtime = worker(svc, tmp_path, mode="edit")
+    try:
+        assert runtime.core.tool_registry.board_enabled is True
+        assert "board_comment" in runtime.core.helper_allowed_tools
+        call = ToolCall(
+            "board_comment",
+            {"card_id": "LOC-5", "text": "Tests pass", "agent_name": "You", "author": "You"},
+            "helper-board-call",
+        )
+        results = []
+        thread = threading.Thread(
+            target=lambda: results.append(runtime.core._run_tool_call(call, svc.decide))
+        )
+        thread.start()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not any(
+            event.get("type") == "board_action_request" for event in svc.events
+        ):
+            time.sleep(0.01)
+        request = next(event for event in svc.events if event.get("type") == "board_action_request")
+        assert request["arguments"] == {"card_id": "LOC-5", "text": "Tests pass"}
+        assert request["author"] == {
+            "agent_id": "helper",
+            "agent_name": "Helper",
+            "display_name": "Locus",
+            "role": "writer",
+            "helper": True,
+        }
+        assert request["session_id"] == "session"
+        assert request["run_id"] == "run"
+        assert runtime.snapshot()["native_actions"]["helper-board-call"]["family"] == "board"
+        svc.pending_board_actions["helper-board-call"].set_result({"text": "Commented on LOC-5."})
+        thread.join(3)
+        assert results == ["Commented on LOC-5."]
+        assert svc.pending_board_actions == {}
+    finally:
+        runtime.close()
+
+
 def test_failed_followup_does_not_return_previous_attempt_answer(tmp_path):
     checkpoint = {
         "messages": [

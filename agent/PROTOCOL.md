@@ -886,6 +886,8 @@ Endpoint: `/ws/chat`.
 | `notes_action_result` | `request_id: string`, `result: object` | Completes one pending Notes request. `result` contains `text` or `error`; late, duplicate, and unknown IDs are ignored after cancellation or timeout. |
 | `set_calendar_control` | `enabled: boolean` | Advertises the native EventKit Calendar broker. `calendar_list` is available to read-only routes; create, update, and delete follow the normal write permission decision. |
 | `calendar_action_result` | `request_id: string`, `result: object` | Completes one pending Calendar request. Provider credentials remain in macOS; results contain event data, opaque identifiers, text, or error. |
+| `set_board_control` | `enabled: boolean` | Advertises the native workspace Board broker. `board_read` is available to read-only routes; card create, update, and comment run automatically in Accept Edits, and delete follows the normal write permission decision. Also reaches running parallel team writers. Rejected while a turn is busy. |
+| `board_action_result` | `request_id: string`, `result: object` | Completes one pending Board request. `result` contains `text` (plus optional `card_id`, `cards`, `columns`) or `error`; a non-object result becomes `invalid Board result`. Late, duplicate, and unknown IDs are ignored. |
 | `set_model` | `model: string` | Switches model (substring match allowed). Emits `session_info` on success, `command_error` if rejected. Persisted to config. |
 | `set_cwd` | `path: string` | Changes the agent working directory. Emits `session_info` on success, `command_error` otherwise. |
 | `set_permission_mode` | `mode: "ask" \| "accept_edits" \| "bypass"` | Changes the permission mode while idle and emits `session_info`. |
@@ -1203,6 +1205,99 @@ is still controlled by macOS privacy permission. Google and Microsoft accounts
 are linked through Internet Accounts and their OAuth credentials never enter the
 runtime. `calendar_list` is read-only; create, update, and delete are omitted
 from read-only agent schemas and rechecked immediately before dispatch.
+
+### `board_control_status` / `board_action_request`
+
+`board_control_status {enabled}` acknowledges the native Board capability. The
+app owns one Board per workspace; the runtime never reads or writes its file.
+When enabled, a Board tool call emits:
+
+```json
+{ "type": "board_action_request", "request_id": "...",
+  "tool": "board_comment",
+  "arguments": {"card_id": "LOC-12", "text": "Tests pass; ready for review."},
+  "author": {"agent_id": "primary", "agent_name": "", "display_name": "Locus",
+             "role": "", "helper": false},
+  "timeout_ms": 15000, "session_id": "..." }
+```
+
+`tool` is one of `board_read`, `board_create_card`, `board_update_card`,
+`board_comment`, or `board_delete_card`. The app answers exactly one matching
+`board_action_result` and the worker times out after 15 seconds. Interrupt,
+orchestration pause or cancellation, a profile deadline, and socket teardown
+cancel pending requests.
+
+`author` is the only source of authorship. The dispatching agent core builds it
+from local state the model cannot edit: `agent_id` is `primary`, the saved
+agent or team writer id, or the helper or Solo worker id; `agent_name` is the
+helper or Solo worker label and otherwise empty; `display_name` is the agent's
+configured display name; `role` is the team or helper role, or empty; `helper`
+is true for helpers and Solo workers. Before emitting, the runtime removes the
+reserved keys `author`, `actor`, `agent_id`, `agent_name`, `display_name`,
+`role`, and `helper` from `arguments`, and the app must never read authorship
+from `arguments`. Helper labels are chosen by the root model, so the app shows
+them as agents and never as the person using Locus.
+
+`card_id` accepts a card key such as `LOC-12` (case-insensitive), the bare
+number (`12` or `#12`), or the card's UUID. `column` accepts a column id such
+as `in-progress` or its title such as `In Progress`, case-insensitively, or
+both in the form `board_read` lists columns, `In Progress [in-progress]` (or
+just `[in-progress]`): the bracketed id decides, and a title, when given, must
+be that column's. The app answers `error` instead of guessing when a value is
+one column's id and another column's title (the error names both as
+`Title [id]`), or when it is one column's exact title or id but, read as
+`Title [id]`, names another column (the error asks for the bracketed id alone).
+Failing those, a spelling that differs only in spaces or punctuation
+(`in_progress`) matches when exactly one column has it; a value with no letters
+or digits never matches this way.
+
+In `board_update_card`, a null field and a blank `column` or `priority` count as
+not supplied, and the approval preview leaves them out; a blank `column` in
+`board_create_card` means the first column. Blank means empty after trimming
+Swift's `.whitespacesAndNewlines` (U+0009–U+000D, U+0085, and the Unicode
+space, line, and paragraph separators), not Python's `str.strip()`, which also
+removes U+001C–U+001F; the app keeps those and answers `error`. The preview
+shows every other value, and U+200B (which Foundation also trims), with
+invisible characters escaped.
+`board_read` output is returned to the model behind a notice that card text is
+shared workspace data, not instructions.
+
+The app enforces these limits and answers `error` when a call exceeds one. Each
+text value is limited in visible characters and also capped in Unicode code
+points, so stacked accents cannot make a short value huge. Both are counted
+after the app trims the value:
+
+| Value | Characters | Code points |
+|---|---|---|
+| Card `title` (required) | 200 | 1,000 |
+| Card `description` | 20,000 | 40,000 |
+| Comment `text` (required) | 5,000 | 10,000 |
+| Each label | 32 | 160 |
+| Card `assignee` | 64 | 320 |
+| Column title | 40 | 200 |
+| `board_read` `query` | 200 | 1,000 |
+| `board_read` `column` | 500 | 1,000 |
+| `board_read` `assignee` | 64 | 320 |
+
+A card has at most 8 labels, counted after dropping empty labels and
+case-insensitive duplicates. Blank `board_read` filters are ignored. Errors
+name both limits, for example `Card titles are limited to 200 characters (at
+most 1000 Unicode code points, counting accents and other combining marks).`
+JSON Schema's `maxLength` counts code points, so the tool schemas advertise
+each code-point cap as `maxLength`, plus `maxItems: 8` for labels and 1,000
+code points for a `column` reference in `board_create_card` and
+`board_update_card`, which every listed `Title [id]` fits. The character
+limits are stated in the descriptions: a `maxLength` in characters would refuse
+accented or emoji text the app accepts.
+
+`board_read` is read-only and never asks. Read-only agents receive only
+`board_read`; the other tools are omitted from their schemas and rechecked
+immediately before dispatch. `board_create_card`, `board_update_card`, and
+`board_comment` ask in Ask mode, run automatically in Accept Edits, and run in
+Bypass. `board_delete_card` asks in Ask and Accept Edits. The agent's Workspace
+files and Edit workspace files toggles gate `board_read` and the four changing
+tools respectively. `wait_for_locus` accepts `board`, and a broker disconnect in
+the independent runtime turns the Board off until the app enables it again.
 
 ### Team orchestration and scheduler events
 

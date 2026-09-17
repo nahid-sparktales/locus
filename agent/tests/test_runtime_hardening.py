@@ -233,6 +233,48 @@ def test_wait_for_locus_removes_native_tools_and_waits_for_capability(tmp_path, 
         service.close_codex()
 
 
+def test_desktop_disconnect_resets_every_native_broker_and_wait_accepts_them(tmp_path, monkeypatch):
+    from ollama_code.chat_service import ChatService
+    from ollama_code.core import AgentCore
+    from ollama_code.server import _handle_client_message
+    monkeypatch.setenv('LOCUS_RUNTIME_CHILD', '1')
+    core = AgentCore(cwd=str(tmp_path), model='fixture')
+    service = ChatService(core)
+    events = []
+    service.emit = events.append
+    capabilities = ('notes', 'calendar', 'board')
+    try:
+        for capability in capabilities:
+            setattr(core.tool_registry, capability + '_enabled', True)
+        asyncio.run(_handle_client_message(service, {'type': 'runtime_desktop_disconnected', 'runtime_broker': True}))
+        for capability in capabilities:
+            assert getattr(core.tool_registry, capability + '_enabled') is False
+        wait = next(s for s in core.tool_registry.schemas() if s['function']['name'] == 'wait_for_locus')
+        assert {'calendar', 'board'} <= set(wait['function']['parameters']['properties']['capability']['enum'])
+        parity_wait = next(s for s in core.tool_registry.parity_schemas() if s['function']['name'] == 'wait_for_locus')
+        assert {'calendar', 'board'} <= set(parity_wait['function']['parameters']['properties']['capability']['enum'])
+        for capability in ('calendar', 'board'):
+            setattr(core.tool_registry, capability + '_enabled', True)
+            assert service.wait_for_locus({'capability': capability, 'reason': 'Update the card'}).startswith('The desktop capability is available')
+        output = []
+        thread = threading.Thread(target=lambda: output.append(service.wait_for_locus({'capability': 'board', 'reason': 'Move the card to Review'})))
+        core.tool_registry.board_enabled = False
+        thread.start()
+        for _ in range(100):
+            if events:
+                break
+            threading.Event().wait(.01)
+        assert events[0] == {'type': 'runtime_waiting_for_locus', 'capability': 'board', 'reason': 'Move the card to Review'}
+        asyncio.run(_handle_client_message(service, {'type': 'set_board_control', 'enabled': True, 'runtime_broker': True}))
+        thread.join(2)
+        assert output and output[0].startswith('Locus reconnected')
+        assert core.board_executor == service.execute_board
+    finally:
+        core.interrupt()
+        core.mcp.close()
+        service.close_codex()
+
+
 def test_ollama_only_starts_on_loopback_addresses():
     from ollama_code.runtime_providers import RuntimeProviders
     assert RuntimeProviders.local_address('http://localhost:11434') == 'http://127.0.0.1:11434'

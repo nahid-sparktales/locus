@@ -225,6 +225,7 @@ async def lifespan(app: FastAPI):
             svc.cancel_all_browser_actions()
             svc.cancel_all_notes_actions()
             svc.cancel_all_calendar_actions()
+            svc.cancel_all_board_actions()
             svc.cancel_all_connector_actions()
             svc.cancel_all_mcp_inputs()
             svc.dev_servers.stop_all()
@@ -493,6 +494,7 @@ def _expire_profile_turn(svc: ChatService) -> None:
     svc.cancel_all_identity()
     svc.cancel_all_notes_actions()
     svc.cancel_all_calendar_actions()
+    svc.cancel_all_board_actions()
     svc.cancel_all_connector_actions()
     svc.cancel_dispatch_decisions()
     svc.cancel_all_mcp_inputs()
@@ -1698,6 +1700,11 @@ def _parallel_writer_core(
         **arguments,
         "cwd": str(arguments.get("cwd") or checkout.execution_path),
     })
+    # The Board is how parallel team members coordinate. Its requests go
+    # straight through ChatService.emit, and the dispatch in AgentCore stamps
+    # this writer's identity on each one once the writer route is installed.
+    core.tool_registry.board_enabled = svc.core.tool_registry.board_enabled
+    core.board_executor = svc.core.board_executor
 
     forwarded = {
         "tool_call_proposed", "permission_request", "tool_result", "note", "error",
@@ -1803,7 +1810,14 @@ def _run_parallel_writer_wave(
         4,
     )
     for job in jobs:
-        svc.register_parallel_writer_core(job.id, cores[job.id])
+        writer_core = cores[job.id]
+        # A Board toggle handled while the wave was forking reached only root.
+        # Board toggles hold this guard too, so none can land between
+        # registering the writer and copying root's current state onto it.
+        with svc._parallel_writer_guard:
+            svc.register_parallel_writer_core(job.id, writer_core)
+            writer_core.tool_registry.board_enabled = svc.core.tool_registry.board_enabled
+            writer_core.board_executor = svc.core.board_executor
     try:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="locus-writer") as pool:
             futures = {pool.submit(run, job): job for job in jobs}
@@ -2406,11 +2420,16 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
     loop = asyncio.get_running_loop()
     runtime_broker = bool(os.environ.get("LOCUS_RUNTIME_CHILD")) and msg.get("runtime_broker") is True
     if mtype == "runtime_desktop_disconnected" and runtime_broker:
-        for target in [core, *svc._parallel_cores()]:
-            for capability in ("computer", "browser", "simulator", "notes", "identity"):
-                setattr(target.tool_registry, capability + "_enabled", False)
-            target.tool_registry.browser_history_enabled = False
-            target.tool_registry.browser_autofill_categories = set()
+        # Held so a parallel writer registering meanwhile copies the Board
+        # state from root either before or after this, never halfway.
+        with svc._parallel_writer_guard:
+            for target in [core, *svc._parallel_cores()]:
+                for capability in (
+                    "computer", "browser", "simulator", "notes", "calendar", "board", "identity",
+                ):
+                    setattr(target.tool_registry, capability + "_enabled", False)
+                target.tool_registry.browser_history_enabled = False
+                target.tool_registry.browser_autofill_categories = set()
         # Pending native actions remain durable; never infer cancellation or
         # repeat their external effects when the broker disappears.
         return
@@ -2798,6 +2817,24 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         raw = msg.get("result")
         result = raw if isinstance(raw, dict) else {"error": "invalid Calendar result"}
         svc.answer_calendar(request_id, result)
+    elif mtype == "set_board_control":
+        if svc.busy and not runtime_broker:
+            _command_error(svc, "set_board_control", "Wait for the active turn to finish.")
+            return
+        enabled = bool(msg.get("enabled"))
+        # Running parallel team writers use the Board too, and a broker
+        # disconnect above turned it off for them as well. The guard keeps a
+        # writer that registers meanwhile from copying root's old state.
+        with svc._parallel_writer_guard:
+            for target in [core, *svc._parallel_cores()]:
+                target.tool_registry.board_enabled = enabled
+                target.board_executor = svc.execute_board if enabled else None
+        svc.queue_event({"type": "board_control_status", "enabled": enabled})
+    elif mtype == "board_action_result":
+        request_id = str(msg.get("request_id") or "")
+        raw = msg.get("result")
+        result = raw if isinstance(raw, dict) else {"error": "invalid Board result"}
+        svc.answer_board(request_id, result)
     elif mtype == "set_connector_control":
         if svc.busy:
             _command_error(svc, "set_connector_control", "Wait for the active turn to finish.")
@@ -2849,6 +2886,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         svc.cancel_all_identity()
         svc.cancel_all_notes_actions()
         svc.cancel_all_calendar_actions()
+        svc.cancel_all_board_actions()
         svc.core.tool_registry.product_features.cancel_pending()
         svc.cancel_all_connector_actions()
         svc.cancel_dispatch_decisions()
