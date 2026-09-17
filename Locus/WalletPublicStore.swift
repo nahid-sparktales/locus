@@ -3,17 +3,6 @@ import SQLite3
 
 private let walletSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-struct WalletContact: Codable, Equatable, Identifiable, Sendable {
-    let id: String
-    let networkID: String
-    let chain: WalletChain
-    let name: String
-    let rawAddress: String
-    let resolvedName: String?
-    let resolutionProof: String?
-    let createdAt: Date
-    let updatedAt: Date
-}
 enum WalletPublicStoreError: LocalizedError {
     case open(String)
     case statement(String)
@@ -169,22 +158,6 @@ final class WalletPublicStore: @unchecked Sendable {
             throw error
         }
     }
-
-    func loadContacts() throws -> [WalletContact] {
-        try loadPayloads(
-            sql: "SELECT payload FROM contacts ORDER BY name COLLATE NOCASE, updated_at DESC",
-            as: WalletContact.self
-        )
-    }
-
-    func upsertContact(_ contact: WalletContact) throws {
-        try upsertPayload(
-            table: "contacts", id: contact.id, networkID: contact.networkID,
-            sortText: contact.name, timestamp: contact.updatedAt, value: contact
-        )
-    }
-
-    func deleteContact(id: String) throws { try delete(table: "contacts", id: id) }
 
     func loadAssets() throws -> [WalletAsset] {
         try loadPayloads(

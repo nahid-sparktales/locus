@@ -624,8 +624,6 @@ struct WalletPreparedTransaction: Codable, Equatable, Identifiable, Sendable {
     var policyID: String?
 }
 
-typealias WalletPreparedIntent = WalletPreparedTransaction
-
 struct WalletSessionPolicy: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let accountID: String
@@ -1956,9 +1954,6 @@ struct WalletReleaseActivationStatus: Codable, Equatable, Sendable {
 enum WalletXPCCodeSigningRequirement {
     static let hostApplication = requirement(identifier: "io.sparktales.locusx")
     static let signerService = requirement(identifier: "io.sparktales.locus.WalletSigner")
-    static let connectionService = requirement(
-        identifier: "io.sparktales.locus.WalletConnections"
-    )
     static let recoveryApplication = requirement(identifier: "io.sparktales.locus.WalletRecovery")
     static let signerBootstrapClient: String = {
         #if DEBUG

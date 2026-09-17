@@ -33,14 +33,4 @@ enum WorkspaceArtifactOpener {
         }
         return kind == .source ? .filesTab(line: nil, column: nil) : .libraryPreview
     }
-
-    /// Opens `url` in the user's default application.
-    ///
-    /// Returns false when LaunchServices declines — no handler, or a file that
-    /// vanished between the classification and the click — so the caller can
-    /// fall back to revealing it rather than failing silently.
-    @discardableResult
-    static func openInDefaultApp(_ url: URL) -> Bool {
-        NSWorkspace.shared.open(url)
-    }
 }

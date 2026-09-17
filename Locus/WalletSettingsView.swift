@@ -686,18 +686,6 @@ struct WalletSettingsView: View {
         }
     }
 
-    private func gatedCapabilityCard(title: String, symbol: String, detail: String) -> some View {
-        WalletSectionCard(title: title, symbol: symbol) {
-            Label("Release gate locked", systemImage: "lock.shield.fill")
-                .font(.headline)
-                .foregroundStyle(LocusTheme.warning)
-            Text(detail).foregroundStyle(LocusTheme.textSecondary)
-            Text("A remote manifest may disable this capability but cannot widen the authority compiled into this build.")
-                .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
-        }
-    }
-
     private var collectiblesCard: some View {
         WalletSectionCard(title: "Collectibles", symbol: "photo.on.rectangle.angled") {
             let collectibles = gateway.assets.filter { $0.kind == .nft || $0.kind == .collectible }

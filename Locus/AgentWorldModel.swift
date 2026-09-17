@@ -526,15 +526,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    func stopSelected() {
-        guard let id = selectedSessionID, let selection else { return }
-        let key = Self.bindingKey(workspace: windowWorkspace, profileID: selection)
-        queues[key] = []; runners[key]?.cancel(); runners[key] = nil; runnerTokens[key] = nil
-        stopConversation(id); refresh()
-    }
-    func openSelectedInLocus() { if let id = selectedSessionID { openConversation(id) } }
-    func manageAgents() { manageProfiles() }
-
     /// The web world can request the editor, but profile data and saving stay
     /// in the native form. Creating a resident leaves this project's map open.
     func createAgent() {

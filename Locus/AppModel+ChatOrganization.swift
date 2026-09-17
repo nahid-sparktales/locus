@@ -113,21 +113,6 @@ extension AppModel {
         }
     }
 
-    func canMoveChatFolder(_ folder: ChatFolderRecord, into target: ChatFolderRecord) -> Bool {
-        guard folder.id != target.id,
-              SessionSummary.canonicalWorkspacePath(folder.workspace)
-                == SessionSummary.canonicalWorkspacePath(target.workspace)
-        else { return false }
-        var cursor: ChatFolderRecord? = target
-        while let current = cursor {
-            if current.id == folder.id { return false }
-            cursor = current.parentID.flatMap { parentID in
-                chatFolders.first(where: { $0.id == parentID })
-            }
-        }
-        return true
-    }
-
     func reorderChatFolder(_ folder: ChatFolderRecord, offset: Int) {
         let siblings = chatFolders.filter {
             SessionSummary.canonicalWorkspacePath($0.workspace)
@@ -185,10 +170,6 @@ extension AppModel {
     var expandedChatFolderIDs: Set<String> {
         get { sessionCatalog.snapshot.expandedChatFolderIDs }
         set { sessionCatalog.replaceExpandedChatFolderIDs(newValue) }
-    }
-
-    func isChatFolderExpanded(_ id: String) -> Bool {
-        expandedChatFolderIDs.contains(id)
     }
 
     func setChatFolderExpanded(_ id: String, expanded: Bool) {

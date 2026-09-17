@@ -145,15 +145,6 @@ extension AppModel {
         presentDraft(draft)
     }
 
-    func rememberScheduleWorkspace(_ url: URL) -> String? {
-        guard workspaceAccess.rememberAndActivate(url) else { return nil }
-        return url.standardizedFileURL.resolvingSymlinksInPath().path
-    }
-
-    func openSchedules() {
-        presentConfigureAgent(draftText: "")
-    }
-
     func presentConfigureAgent(draftText: String) {
         configureAgentWorkspace = workspacePath
         configureAgentProfileID = sidebarDestination == .agents ? selectedSavedAgentProfile?.id : nil
@@ -1527,13 +1518,6 @@ extension AppModel {
         } else {
             Task { await applyProvider(announce: false) }
         }
-    }
-
-    /// Records that the endpoint rejected this account's key, so Settings and
-    /// the picker can say so instead of leaving the user to guess.
-    func noteAccountKeyRejected() {
-        guard let account = activeAccount else { return }
-        accountStatus[account.id] = .keyRejected
     }
 
     func activateInstalledModel(_ reference: String) async {

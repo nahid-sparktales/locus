@@ -57,10 +57,6 @@ enum CodexComponent: PlanComponentDescriptor {
         currentRoot?.appending(path: "codex", directoryHint: .notDirectory)
     }
 
-    static var installedCodeModeHost: URL? {
-        currentRoot?.appending(path: "codex-code-mode-host", directoryHint: .notDirectory)
-    }
-
     /// Present in the App Store build and in local Debug builds, absent from a
     /// direct-download release.
     static var bundledHelper: URL? {

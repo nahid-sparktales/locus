@@ -279,22 +279,6 @@ final class ScheduleModel: ObservableObject {
         }
     }
 
-    func openLatestRun(for task: ScheduledTask) {
-        guard let backend, let runID = task.lastRunID else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let run: OrchestrationRun = try await backend.get(
-                    "/api/runs/\(runID)", as: OrchestrationRun.self
-                )
-                await refreshMetadata()
-                openRun(run)
-            } catch {
-                toastHandler("That scheduled result is no longer available")
-            }
-        }
-    }
-
     func startScheduleCoordinator() {
         guard !RuntimeInstallation.enabled else { return }
         guard persistenceEnabled, scheduleCoordinatorTask == nil else { return }

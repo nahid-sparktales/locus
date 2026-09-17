@@ -144,36 +144,6 @@ final class ExtensionsModel: ObservableObject {
         }
     }
 
-    func refreshMarketplace(_ id: String) async {
-        guard let backend else { return }
-        do {
-            _ = try await backend.post(
-                "/api/extensions/marketplaces/\(id)/refresh",
-                body: [:],
-                timeout: 190,
-                as: ExtensionMarketplace.self
-            )
-            await refreshExtensions()
-            await refreshExtensionCatalog()
-        } catch {
-            extensionErrorMessage = error.localizedDescription
-        }
-    }
-
-    func removeMarketplace(_ id: String) async {
-        guard let backend else { return }
-        do {
-            _ = try await backend.delete(
-                "/api/extensions/marketplaces/\(id)",
-                as: ExtensionOperationResponse.self
-            )
-            await refreshExtensions()
-            await refreshExtensionCatalog()
-        } catch {
-            extensionErrorMessage = error.localizedDescription
-        }
-    }
-
     func inspectPlugin(_ entry: ExtensionCatalogEntry) async -> PluginTrustResponse? {
         guard let backend else { return nil }
         do {

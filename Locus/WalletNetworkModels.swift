@@ -514,8 +514,6 @@ struct WalletProviderEndpoint: Codable, Equatable, Identifiable, Sendable {
     let priority: Int
     let expectedIdentity: WalletChainIdentity
 
-    var isProductionSafe: Bool { url.scheme?.lowercased() == "https" }
-
     var endpointSHA256: String {
         SHA256.hash(data: Data(url.absoluteString.utf8))
             .map { String(format: "%02x", $0) }
@@ -582,9 +580,6 @@ struct WalletCapabilityManifest: Codable, Equatable, Sendable {
     var canaryLimits: [WalletCanaryLimit]? = nil
 
     var enabledNetworkIDs: Set<String> { Set(networkGrants.map(\.networkID)) }
-    var enabledCapabilities: Set<WalletNetworkCapability> {
-        networkGrants.reduce(into: []) { $0.formUnion($1.capabilities) }
-    }
 
     func grant(for networkID: String) -> WalletNetworkCapabilityGrant? {
         networkGrants.first { $0.networkID == networkID }

@@ -200,11 +200,6 @@ struct ResponsePartsView: View {
         guard let reference = WorkspaceArtifactReference.classify(path, workspacePath: workspacePath) else { return }
         onOpenWorkspaceReference?(reference)
     }
-
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
 }
 
 private struct ResponseArtifactView<Original: View>: View {

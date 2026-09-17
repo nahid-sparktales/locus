@@ -119,7 +119,6 @@ final class BrowserService: NSObject, ObservableObject {
         /// drive their own so one cannot navigate another's out from under it.
         let ownerSessionID: String
         let log = BrowserCaptureLog()
-        let openedAt = Date()
         fileprivate var gate: NavigationGate?
         fileprivate weak var service: BrowserService?
         /// One-shot answer for the next `confirm`/`prompt`, armed by
@@ -2356,10 +2355,6 @@ final class BrowserService: NSObject, ObservableObject {
         Task { _ = try? await tab.webView.find("", configuration: WKFindConfiguration()) }
     }
 
-    func userPageZoom(sessionID: String) -> CGFloat {
-        existingTab(for: sessionID)?.webView.pageZoom ?? 1
-    }
-
     /// Zoom the page itself, not the window. Clamped to the range a browser
     /// offers, because past either end the page stops being usable and the
     /// agent's coordinates stop being legible.
@@ -2367,10 +2362,6 @@ final class BrowserService: NSObject, ObservableObject {
         guard let tab = existingTab(for: sessionID) else { return }
         tab.webView.pageZoom = max(0.25, min(zoom, 3.0))
         schedulePublish()
-    }
-
-    func userDeviceEmulation(sessionID: String) -> Bool {
-        existingTab(for: sessionID)?.emulatesDevice ?? false
     }
 
     /// Turn the phone profile on or off from the interface, and reload — a
@@ -2391,17 +2382,6 @@ final class BrowserService: NSObject, ObservableObject {
         case .automatic: tab.webView.appearance = nil
         case .light: tab.webView.appearance = NSAppearance(named: .aqua)
         case .dark: tab.webView.appearance = NSAppearance(named: .darkAqua)
-        }
-    }
-
-    /// Point one tab's emulated viewport at a size, from the interface.
-    func userSetViewport(_ size: CGSize, sessionID: String) {
-        guard let tab = existingTab(for: sessionID) else { return }
-        tab.host.setViewport(size)
-        // The width is what decides whether a phone profile makes sense, so the
-        // toolbar's preset and the agent's `browser_resize` agree on the rule.
-        if deviceEmulationEnabled {
-            userSetDeviceEmulation(size.width < 768, sessionID: sessionID)
         }
     }
 

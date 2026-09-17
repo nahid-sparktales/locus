@@ -271,13 +271,6 @@ final class IdentityVaultStore: ObservableObject {
         return draft
     }
 
-    func deleteDraft(_ id: UUID) throws {
-        try requireReady()
-        var next = payload
-        next.drafts.removeAll { $0.id == id }
-        try commit(next)
-    }
-
     @discardableResult
     func saveSnapshot(text: String) throws -> UUID {
         guard text.utf8.count <= Self.maximumTextBytes else { throw IdentityVaultError.tooLarge }

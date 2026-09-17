@@ -298,13 +298,6 @@ final class OptionalQuestionModel: ObservableObject {
         persist()
     }
 
-    func releaseAllEditing() {
-        for key in Array(editing) {
-            let parts = key.components(separatedBy: "\u{1f}")
-            if parts.count == 2 { endEditing(sessionID: parts[0], requestID: parts[1]) }
-        }
-    }
-
     private func persist() {
         guard let defaults else { return }
         // Save only cards with an unsent draft. Server state is restored by its

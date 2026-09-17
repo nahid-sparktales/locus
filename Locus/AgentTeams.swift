@@ -1398,33 +1398,6 @@ struct TaskRecord: Identifiable, Codable, Hashable {
         case landingOverride = "landing_override"
         case landedAt = "landed_at"
     }
-
-    var landingRecord: LandingRecord? {
-        guard let destination = landingDestination,
-              let sourceTree = landingSourceTree,
-              let landedAt else { return nil }
-        return LandingRecord(
-            destination: destination,
-            sourceTree: sourceTree,
-            landedTree: landingTree,
-            checkRunID: landingCheckRunID,
-            checksPassed: landingChecksPassed ?? false,
-            overrideFailedChecks: landingOverride ?? false,
-            commitSHA: landingCommit,
-            timestamp: landedAt
-        )
-    }
-}
-
-struct LandingRecord: Codable, Hashable {
-    let destination: String
-    let sourceTree: String
-    let landedTree: String?
-    let checkRunID: String?
-    let checksPassed: Bool
-    let overrideFailedChecks: Bool
-    let commitSHA: String?
-    let timestamp: Double
 }
 
 struct SessionTeamReference: Codable, Hashable {
@@ -1791,63 +1764,6 @@ struct OrchestrationRun: Identifiable, Codable, Hashable {
     var didDelegateWorkers: Bool {
         isSoloSwarm && ((jobCount ?? 0) > 0 || !(attempts ?? []).isEmpty)
     }
-
-    var runScope: RunScope {
-        if isSoloSwarm { return .soloSwarm }
-        if runKind == "team" { return .teams }
-        return .all
-    }
-
-    var queuedRun: QueuedRun? {
-        guard state == "queued", let queuePosition else { return nil }
-        return QueuedRun(
-            id: id,
-            sessionID: sessionID,
-            queuePosition: queuePosition,
-            queuedMessageID: queuedMessageID,
-            retryParentID: retryParentID,
-            createdAt: createdAt,
-            admittedAt: admittedAt
-        )
-    }
-
-    var activityItem: ActivityItem {
-        ActivityItem(
-            id: id,
-            sessionID: sessionID,
-            workspaceRoot: workspaceRoot,
-            runKind: runKind ?? "solo",
-            executionEnvironment: executionEnvironment ?? "local",
-            state: state,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            queuePosition: queuePosition,
-            latestMeaningfulEvent: recoveryReason
-        )
-    }
-}
-
-struct QueuedRun: Identifiable, Codable, Hashable {
-    let id: String
-    let sessionID: String?
-    let queuePosition: Int
-    let queuedMessageID: String?
-    let retryParentID: String?
-    let createdAt: Double
-    let admittedAt: Double?
-}
-
-struct ActivityItem: Identifiable, Codable, Hashable {
-    let id: String
-    let sessionID: String?
-    let workspaceRoot: String?
-    let runKind: String
-    let executionEnvironment: String
-    let state: String
-    let createdAt: Double
-    let updatedAt: Double
-    let queuePosition: Int?
-    let latestMeaningfulEvent: String?
 }
 
 struct DispatchJob: Identifiable, Codable, Hashable {

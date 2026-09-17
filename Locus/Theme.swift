@@ -459,8 +459,6 @@ enum LocusTheme {
     static let blue = adaptive(\.blue)
     static let success = adaptive(\.success)
     static let warning = adaptive(\.warning)
-    static let permissionInk = adaptive(\.permissionInk)
-    static let permissionMuted = adaptive(\.permissionMuted)
     static let codeKeyword = adaptive(\.codeKeyword)
     static let codeType = adaptive(\.codeType)
     static let successSoft = adaptive(\.successSoft)
@@ -502,7 +500,6 @@ enum LocusTheme {
     static var successForeground: Color { success }
     static let warningForeground = warning
     static let dangerForeground = danger
-    static var selectionFill: Color { signal }
     /// A soft, opaque accent tint keeps selection readable on every surface.
     /// Applied as a background only so selected text retains its syntax hues.
     static func selectionWash(forKeyWindow isKey: Bool) -> NSColor {
@@ -621,14 +618,11 @@ enum LocusCodeTheme {
 /// adapter lets the large existing surface migrate mechanically while still
 /// enforcing an 11-point floor for user-facing content.
 enum LocusType {
-    static let display = Font.system(size: 40, weight: .medium)
     static let title = Font.system(.title3, design: .default, weight: .bold)
     static let body = Font.system(.body, design: .default, weight: .regular)
     static let callout = Font.system(.callout, design: .default, weight: .regular)
     static let caption = Font.system(.subheadline, design: .default, weight: .regular)
     static let badge = Font.system(.subheadline, design: .default, weight: .semibold)
-    static let mono = Font.system(.callout, design: .monospaced, weight: .regular)
-    static let monoCaption = Font.system(.subheadline, design: .monospaced, weight: .regular)
 }
 
 extension Font {

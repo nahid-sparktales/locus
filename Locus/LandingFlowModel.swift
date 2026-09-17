@@ -76,33 +76,6 @@ final class LandingFlowModel: ObservableObject {
         }
     }
 
-    func applyActiveTaskToWorkspace() {
-        guard let backend else { return }
-        guard let task = activeTask() else { return }
-        guard !isBusy(), !hasPendingPermission() else {
-            toastHandler("Wait for the team run to finish before applying changes")
-            return
-        }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let response: TaskApplyResponse = try await backend.post(
-                    "/api/tasks/\(task.id)/apply",
-                    body: [:],
-                    timeout: 120,
-                    as: TaskApplyResponse.self
-                )
-                setActiveTask(response.task)
-                taskHasChanges = false
-                taskPatchBytes = 0
-                gitRefresh()
-                toastHandler(response.applied ? "Applied task changes to the workspace" : "No new task changes to apply")
-            } catch {
-                toastHandler("Workspace left untouched: \(error.localizedDescription)")
-            }
-        }
-    }
-
     func prepareReviewAndLand() {
         guard let backend else { return }
         guard let task = activeTask(), !isBusy() else { return }

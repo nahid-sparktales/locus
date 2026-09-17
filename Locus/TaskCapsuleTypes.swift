@@ -247,12 +247,6 @@ struct TaskCapsulePlanningRequest: Codable {
 struct TaskCapsulesResponse: Decodable { var capsules: [TaskCapsule] }
 struct TaskCapsuleResponse: Decodable { var capsule: TaskCapsule }
 
-struct TaskCapsuleValidation: Decodable {
-    var valid: Bool
-    var changes: [Change]
-    struct Change: Decodable { var path: String; var reason: String }
-}
-
 struct CapsuleAttempt: Codable, Hashable, Identifiable {
     var accounting: UsageAccounting? = nil
     var id: String

@@ -14,10 +14,6 @@ extension AppModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: workspacePath)])
     }
 
-    func openBackendFolder() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: settings.backendRoot))
-    }
-
     /// Routes every workspace entry point through one presentation action so
     /// the destination is selected before SwiftUI evaluates the sheet.
     func presentSettings(_ page: SettingsPage? = nil) {

@@ -1964,10 +1964,6 @@ final class AppModel: ObservableObject {
         })?.tool
     }
 
-    var awaitingUserDecision: Bool {
-        hasPendingPermission || pendingBlockingQuestion != nil
-    }
-
     /// The window the meter measures against. The backend's `context_limit`
     /// wins — it is the number compaction budgets against — then the model
     /// list's advertised window. nil means genuinely unknown (remote

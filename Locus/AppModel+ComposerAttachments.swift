@@ -112,14 +112,6 @@ extension AppModel {
         currentLiveApplicationTarget.map(applicationContext.isConnected) ?? false
     }
 
-    func attachCurrentApplicationSnapshot() {
-        guard let target = applicationContext.lastExternalApplication else {
-            showToast("Activate an application window, then return to Locus")
-            return
-        }
-        attachApplicationSnapshot(target)
-    }
-
     func attachApplicationSnapshot(_ target: ApplicationTarget) {
         guard chatAttachments.count < 10 else {
             chatAttachmentNotice = "A chat message can include up to 10 attachments."

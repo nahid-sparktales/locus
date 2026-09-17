@@ -9,7 +9,6 @@ enum BackendLaunchResult: Equatable {
 final class BackendProcess {
     private var process: Process?
     private var attachedEndpoint: URL?
-    var isExternallyManaged: Bool { attachedEndpoint != nil }
     func attach(to endpoint: URL) { attachedEndpoint = endpoint }
     private var outputPipe: Pipe?
     private var runningPort: Int?

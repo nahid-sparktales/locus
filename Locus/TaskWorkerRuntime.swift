@@ -160,7 +160,3 @@ final class ChatWorkerRuntime {
         acceptedTurnRequestIDs.remove(requestID)
     }
 }
-
-/// Source compatibility for tests and extensions compiled against the first
-/// team-only implementation.
-typealias TaskWorkerRuntime = ChatWorkerRuntime

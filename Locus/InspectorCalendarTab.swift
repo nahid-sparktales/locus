@@ -53,10 +53,6 @@ final class LocusCalendarStore: ObservableObject {
         calendars.filter(\.allowsContentModifications)
     }
 
-    var connectedSources: [String] {
-        Array(Set(calendars.map { $0.source.title })).sorted()
-    }
-
     func requestAccess() async {
         do {
             _ = try await eventStore.requestFullAccessToEvents()

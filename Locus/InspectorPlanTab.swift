@@ -148,15 +148,6 @@ extension AppModel {
         )
     }
 
-    var planPanelActiveToolSummary: String? {
-        guard let tool = blocks.reversed().compactMap(\.tool).first(where: {
-            $0.status == .running || $0.status == .awaitingPermission
-        }) else { return nil }
-        let summary = tool.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !summary.isEmpty { return summary }
-        return tool.detail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-    }
-
     private var latestTurnCompletion: TurnCompletion? {
         blocks.reversed().compactMap(\.completion).first
     }

@@ -379,27 +379,6 @@ extension AppModel {
         }
     }
 
-    /// Opens a side chat once it is known which kind of agent owns it. The two
-    /// kinds have different endpoints, so guessing before both stores have
-    /// answered would post a schedule's chat to the trigger route.
-    private func openAgentSideChat(for agent: SessionSummary, name: String) async {
-        var definition = agent.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)
-        if definition == nil, !agentDefinitionsLoaded {
-            await eventAutomations.refresh(announceFailure: false)
-            await schedule.refreshScheduledTasks(announceFailure: false)
-            definition = agent.agentReference(in: agentDefinitions).flatMap(inspectorAgentDefinition)
-        }
-        guard let definition else {
-            showToast("This agent was deleted. Configure a new agent to start chats.")
-            return
-        }
-        if let task = definition.schedule {
-            await createScheduleChat(task, name: name)
-            return
-        }
-        await eventAutomations.createTask(for: agent, name: name)
-    }
-
     /// A schedule's side chat comes from its own endpoint; it shares the
     /// agent's identity, workspace, and model but never receives a run.
     func createScheduleChat(_ task: ScheduledTask, name: String) async {

@@ -47,7 +47,6 @@ struct ReusableChecksView: View {
     @State private var limits = ""
     @State private var busy = false
     @State private var message = ""
-    private let kinds = ["human_review", "file_exists", "file_contains", "json_value", "command"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
