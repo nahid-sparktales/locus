@@ -17,6 +17,12 @@ from fastapi import HTTPException
 
 import ollama_code.sessions as sessions_module
 from ollama_code import server
+from ollama_code.api.sessions import (
+    session_detail,
+    session_metadata_update,
+    session_new,
+    sessions_clear,
+)
 from ollama_code.core import AgentCore
 from ollama_code.sessions import (
     ChatOrganizationStore,
@@ -232,9 +238,9 @@ def test_export_messages_are_full_length_and_privacy_filtered(tmp_path) -> None:
 def test_new_session_endpoint_returns_explicit_acknowledgement(tmp_path) -> None:
     core = AgentCore(cwd=str(tmp_path), config={})
     old_id = core.session.path.stem
-    server.app.state.service = server.ChatService(core)
+    service = server.ChatService(core)
 
-    result = server.session_new({"reason": "clear_chat"})
+    result = session_new(service, {"reason": "clear_chat"})
 
     assert result["ok"] is True
     assert result["reason"] == "clear_chat"
@@ -337,10 +343,9 @@ def test_clear_sessions_endpoint_refuses_busy_service(
     core = AgentCore(cwd=directory, config={})
     service = server.ChatService(core)
     service.turn_future = Future()
-    server.app.state.service = service
 
     try:
-        server.sessions_clear()
+        sessions_clear(service)
     except HTTPException as error:
         assert error.status_code == 409
     else:
@@ -440,9 +445,8 @@ def test_session_detail_includes_export_provenance(tmp_path) -> None:
     core = AgentCore(cwd=directory, model="qwen:test", config={})
     core._add_message({"role": "user", "content": "document this"})
     core.session.append({"type": "model", "model": "qwen:updated"})
-    server.app.state.service = server.ChatService(core)
 
-    detail = server.session_detail(core.session.path.stem)
+    detail = session_detail(core.session.path.stem)
 
     assert detail["cwd"] == directory
     assert detail["model"] == "qwen:updated"
@@ -469,7 +473,7 @@ def test_session_detail_preserves_agent_and_folder_identity(tmp_path, primary) -
     folder = ChatOrganizationStore.create_folder(directory, "Earlier tasks")
     placement = ChatOrganizationStore.move_session(session_id, folder["id"])
 
-    detail = server.session_detail(session_id)
+    detail = session_detail(session_id)
 
     assert detail["agent_profile_id"] == "saved-profile"
     assert detail["agent_trigger_id"] == "scheduled-agent"
@@ -484,33 +488,35 @@ def test_session_detail_preserves_agent_and_folder_identity(tmp_path, primary) -
 
 def test_metadata_endpoint_validates_and_updates_fields(tmp_path) -> None:
     core = AgentCore(cwd=str(tmp_path), config={})
-    server.app.state.service = server.ChatService(core)
+    service = server.ChatService(core)
     session_id = core.session.path.stem
 
-    result = server.session_metadata_update(
+    result = session_metadata_update(
         session_id,
+        service,
         {"title": " Release notes ", "pinned": True},
     )
 
     assert result["title"] == "Release notes"
     assert result["pinned"] is True
-    trimmed = server.session_metadata_update(
+    trimmed = session_metadata_update(
         session_id,
+        service,
         {"title": "  " + "x " * 100},
     )
     assert len(trimmed["title"]) == 120
     assert "  " not in trimmed["title"]
     try:
-        server.session_metadata_update(session_id, {"archived": "yes"})
+        session_metadata_update(session_id, service, {"archived": "yes"})
     except HTTPException as invalid:
         assert invalid.status_code == 422
     else:
         raise AssertionError("invalid archived value was accepted")
     with pytest.raises(HTTPException) as unknown:
-        server.session_metadata_update(session_id, {"colour": "blue"})
+        session_metadata_update(session_id, service, {"colour": "blue"})
     assert unknown.value.status_code == 422
     try:
-        server.session_metadata_update(session_id, {"archived": True})
+        session_metadata_update(session_id, service, {"archived": True})
     except HTTPException as active:
         assert active.status_code == 409
     else:

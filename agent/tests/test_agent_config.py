@@ -1,4 +1,3 @@
-from ollama_code import server as server_mod
 from ollama_code import tool_registry
 from ollama_code.agent_config import (
     ANSWER_CONTRACT,
@@ -6,6 +5,7 @@ from ollama_code.agent_config import (
     compose_system_prompt,
 )
 from ollama_code.core import AgentCore
+from ollama_code.memory_runtime import memory_vault
 from ollama_code.orchestration import AgentProfile
 
 
@@ -158,8 +158,7 @@ def test_memory_tools_do_not_depend_on_workspace_indexing(monkeypatch):
 
     assert "search_workspace_knowledge" not in names
     assert {"search_memory", "propose_memory"} <= names
-    monkeypatch.setattr(server_mod, "capability_enabled", lambda _name: False)
-    assert server_mod._memory_vault().status()["encrypted"] is True
+    assert memory_vault().status()["encrypted"] is True
 
 
 def test_local_runtime_output_limit_composes_with_context_window(tmp_path):

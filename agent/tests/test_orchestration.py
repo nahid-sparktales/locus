@@ -19,7 +19,6 @@ from ollama_code.orchestration import (
     AgentJob,
     AgentResult,
     CrossProcessModelCallScheduler,
-    ModelCallScheduler,
     OpenAIResponsesFallbackRequired,
     OrchestrationError,
     TeamOrchestrator,
@@ -789,7 +788,8 @@ def test_scorecard_uses_bounded_evaluations_and_deterministic_ties(tmp_path) -> 
     plan_value = _valid_plan()
     plan_value["jobs"][0]["agent_id"] = "planner2"
     plan = validate_dispatch_plan(plan_value, team, profiles)
-    routed = orchestrator.route_plan("run", plan, team, profiles)
+    # The production entry points (prepare/resume_preparation) route through this.
+    routed = orchestrator._resolve_scorecard("run", plan, team, profiles, None)
     assert routed.jobs[0].agent_id == "planner"
 
 def test_dispatch_plan_rejects_cycles_order_violations_and_ignored_forced_agent():
@@ -845,15 +845,22 @@ def test_dispatch_plan_rejects_an_insufficient_multi_writer_call_budget():
         validate_dispatch_plan(_valid_plan(), team, profiles)
 
 
-def test_model_scheduler_caps_concurrency_and_round_robins_waiting_runs():
-    scheduler = ModelCallScheduler(limit=1, lease_seconds=30)
+def _queued_waiters(scheduler) -> int:
+    with sqlite3.connect(scheduler.path) as connection:
+        return int(connection.execute("SELECT COUNT(*) FROM waiters").fetchone()[0])
+
+
+def test_model_scheduler_caps_concurrency_and_round_robins_waiting_runs(tmp_path):
+    scheduler = CrossProcessModelCallScheduler(
+        limit=1, lease_seconds=30, path=tmp_path / "leases.sqlite3"
+    )
     order = []
     gate = threading.Event()
 
     def first():
         with scheduler.lease("chat-a"):
             order.append("a1")
-            gate.wait(2)
+            gate.wait(5)
 
     def waiter(run, label):
         with scheduler.lease(run):
@@ -863,13 +870,17 @@ def test_model_scheduler_caps_concurrency_and_round_robins_waiting_runs():
     leader.start()
     while scheduler.active_count != 1:
         time.sleep(0.01)
-    threads = [
-        threading.Thread(target=waiter, args=("chat-a", "a2")),
-        threading.Thread(target=waiter, args=("chat-b", "b1")),
-    ]
-    for thread in threads:
+    # Started in order so the queue is ordered a2 then b1: fairness, not arrival,
+    # has to put the other chat first.
+    threads = []
+    for run, label in (("chat-a", "a2"), ("chat-b", "b1")):
+        thread = threading.Thread(target=waiter, args=(run, label))
         thread.start()
-    time.sleep(0.05)
+        threads.append(thread)
+        deadline = time.monotonic() + 5
+        while _queued_waiters(scheduler) < len(threads) and time.monotonic() < deadline:
+            time.sleep(0.01)
+    assert _queued_waiters(scheduler) == 2
     gate.set()
     leader.join()
     for thread in threads:

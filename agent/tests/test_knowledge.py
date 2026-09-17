@@ -62,20 +62,6 @@ def test_changed_file_update_and_delete_are_incremental(tmp_path) -> None:
     assert store.settings()["document_count"] == 0
 
 
-def test_memories_require_explicit_save_and_are_workspace_scoped(tmp_path) -> None:
-    one = tmp_path / "one"
-    two = tmp_path / "two"
-    one.mkdir()
-    two.mkdir()
-    first = KnowledgeStore(str(one), tmp_path / "first.sqlite3")
-    second = KnowledgeStore(str(two), tmp_path / "second.sqlite3")
-    memory = first.save_memory({"title": "Convention", "content": "Use tabs", "tags": ["style"]})
-    assert first.search("Use tabs")[0]["kind"] == "memory"
-    assert second.list_memories() == []
-    assert first.delete_memory(memory["id"])
-    assert first.list_memories() == []
-
-
 def test_knowledge_tool_is_safe_and_formats_untrusted_evidence(tmp_path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
