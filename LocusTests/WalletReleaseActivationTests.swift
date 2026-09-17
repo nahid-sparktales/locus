@@ -172,33 +172,3 @@ final class WalletCanaryBudgetTests: XCTestCase {
         XCTAssertThrowsError(try WalletCanaryBudget.next(.init(amount: "bad"), amount: "1", fee: "0", limit: limit))
     }
 }
-
-final class WalletActivationRevisionTests: XCTestCase {
-    func testOutOfOrderAppendOnlyRecordsKeepTheHighestRevision() throws {
-        let old = WalletSignerActivationRevisionStore.Accepted(
-            revision: 4, envelopeSHA256: String(repeating: "a", count: 64))
-        let newest = WalletSignerActivationRevisionStore.Accepted(
-            revision: 6, envelopeSHA256: String(repeating: "b", count: 64))
-        let delayed = WalletSignerActivationRevisionStore.Accepted(
-            revision: 5, envelopeSHA256: String(repeating: "c", count: 64))
-        XCTAssertEqual(try WalletSignerActivationRevisionStore.highestAccepted(
-            [newest, old, delayed, old]), newest)
-        XCTAssertEqual(try WalletSignerActivationRevisionStore.highestAccepted(
-            [old, delayed, newest]), newest)
-    }
-
-    func testConflictingOrMalformedRevisionStateFailsClosed() throws {
-        let original = WalletSignerActivationRevisionStore.Accepted(
-            revision: 4, envelopeSHA256: String(repeating: "a", count: 64))
-        let conflict = WalletSignerActivationRevisionStore.Accepted(
-            revision: 4, envelopeSHA256: String(repeating: "b", count: 64))
-        XCTAssertThrowsError(try WalletSignerActivationRevisionStore.highestAccepted(
-            [original, conflict]))
-        for invalid in [WalletSignerActivationRevisionStore.Accepted(
-            revision: 0, envelopeSHA256: String(repeating: "a", count: 64)),
-            .init(revision: 5, envelopeSHA256: String(repeating: "Z", count: 64))] {
-            XCTAssertThrowsError(try WalletSignerActivationRevisionStore.highestAccepted(
-                [original, invalid]))
-        }
-    }
-}

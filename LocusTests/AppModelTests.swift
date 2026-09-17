@@ -2414,30 +2414,6 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testAppearancePreviewIsImmediateButOnlySaveCommitsIt() {
-        let model = AppModel(startImmediately: false)
-        var lightSettings = model.settings
-        lightSettings.appearanceRaw = AppAppearance.light.rawValue
-        model.applySettings(lightSettings)
-
-        model.previewAppearance(AppAppearance.dark.rawValue)
-        XCTAssertEqual(model.effectiveAppearance, .dark)
-        XCTAssertEqual(model.settings.resolvedAppearance, .light)
-
-        model.clearAppearancePreview()
-        XCTAssertEqual(model.effectiveAppearance, .light)
-        XCTAssertNil(model.appearancePreview)
-
-        model.previewAppearance(AppAppearance.dark.rawValue)
-        var darkSettings = model.settings
-        darkSettings.appearanceRaw = AppAppearance.dark.rawValue
-        model.applySettings(darkSettings)
-        XCTAssertEqual(model.settings.resolvedAppearance, .dark)
-        XCTAssertEqual(model.effectiveAppearance, .dark)
-        XCTAssertNil(model.appearancePreview)
-    }
-
-    @MainActor
     func testApplyingAccentUpdatesTheLiveThemeRuntime() {
         let previous = LocusAccentRuntime.shared.currentSelection()
         defer { LocusAccentRuntime.shared.configure(previous) }

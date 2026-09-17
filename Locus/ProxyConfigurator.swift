@@ -109,16 +109,6 @@ enum ProxyConfigurator {
 
     // MARK: - Resolution
 
-    /// The manual endpoint, or nil when manual mode is not fully configured.
-    static func manualEndpoint(settings: AppSettings) -> (host: String, port: Int)? {
-        guard let profile = selectedProfile(settings: settings, scope: .app) else { return nil }
-        let host = normalizedHost(profile.host)
-        guard !host.isEmpty,
-              let port = AppSettings.clampProxyPort(profile.port)
-        else { return nil }
-        return (host, port)
-    }
-
     /// Scope is the strongest assignment, then provider, then workspace, then
     /// the default profile. Invalid or disabled assignments fall back to the
     /// default instead of turning one typo into a direct-connection leak.
@@ -407,40 +397,6 @@ enum ProxyConfigurator {
     /// is a PAC file. Surfaced live in the Network settings page.
     static func systemProxyUsesPAC() -> Bool {
         (systemProxyDictionary()["ProxyAutoConfigEnable"] as? NSNumber)?.boolValue == true
-    }
-
-    /// What a child process is launched with, per mode. Never the credential:
-    /// that travels out of band, and only to the agent.
-    static func agentEnvironmentOverlay(
-        settings: AppSettings,
-        ollamaHost: String?,
-        scope: ProxyTrafficScope = .modelAndAgent,
-        workspacePath: String? = nil,
-        providerAccountID: String? = nil,
-        preferredProfileID: UUID? = nil
-    ) -> [String: String] {
-        switch settings.resolvedProxyMode {
-        case .off:
-            // Off manages nothing, so whatever the shell provided is left
-            // exactly as it was.
-            [:]
-        case .manual:
-            childEnvironment(
-                settings: settings,
-                password: nil,
-                ollamaHost: ollamaHost,
-                scope: scope,
-                workspacePath: workspacePath,
-                providerAccountID: providerAccountID,
-                preferredProfileID: preferredProfileID
-            )
-        case .system:
-            environmentFromSystemProxies(
-                systemProxyDictionary(),
-                settings: settings,
-                ollamaHost: ollamaHost
-            )
-        }
     }
 
     // MARK: - URLSession / WebKit

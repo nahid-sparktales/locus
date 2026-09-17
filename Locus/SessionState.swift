@@ -295,45 +295,6 @@ struct SessionState: Codable, Equatable {
     /// Files the agent brought into existence this session — the file half of
     /// the Outputs list. `files` is already newest first.
     var createdFiles: [SessionFileTouch] { files.filter { $0.kind == .create } }
-
-    var summaryMarkdown: String {
-        var lines = [
-            "# Session summary",
-            "",
-            "- Status: \(status.rawValue.capitalized)",
-            "- Workspace: \(workspace.name) (`\(workspace.path)`)",
-            "- Model: \(model.id.isEmpty ? "Unknown" : model.id)",
-            "- Context: \(resources.tokensUsed) tokens",
-            "- Cost: $\(String(format: "%.2f", resources.costUsd))",
-            "- Messages: \(resources.messages)",
-        ]
-        if !plan.isEmpty {
-            lines += ["", "## Plan"]
-            lines += plan.map { step in
-                let mark = step.state == .done ? "x" : " "
-                return "- [\(mark)] \(step.label) — \(step.state.rawValue)"
-            }
-        }
-        if !files.isEmpty {
-            lines += ["", "## Files"]
-            lines += files.map { "- `\($0.path)` (+\($0.added) −\($0.removed))" }
-        }
-        if !createdFiles.isEmpty || !outputs.isEmpty {
-            lines += ["", "## Outputs"]
-            lines += createdFiles.map { "- `\($0.path)`" }
-            lines += outputs.map { "- \($0.target)" }
-        }
-        if !sources.isEmpty {
-            lines += ["", "## Sources"]
-            lines += sources.map { source in
-                source.target.map { "- \(source.label) (\($0))" } ?? "- \(source.label)"
-            }
-        }
-        if let lastRun {
-            lines += ["", "## Last run", lastRun.summary]
-        }
-        return lines.joined(separator: "\n")
-    }
 }
 
 enum SessionEvent: Codable, Equatable {
@@ -791,65 +752,5 @@ final class SessionStateEmitter: ObservableObject {
         guard persistenceEnabled else { return }
         guard let data = try? JSONEncoder().encode(states) else { return }
         defaults.set(data, forKey: persistenceKey)
-    }
-}
-
-enum SessionQuickActionFiles {
-    struct ProxyResolution: Equatable {
-        var url: URL
-        var created: Bool
-    }
-
-    static let proxyTemplate = """
-    {
-      "$schemaNote": "Locus proxy list v1. Keep disabled examples or replace them with your own entries.",
-      "proxies": [
-        {
-          "_comment": "Example only — set enabled to true after adding a real proxy URL.",
-          "enabled": false,
-          "url": "http://user:password@proxy.example:8080"
-        }
-      ]
-    }
-    """
-
-    static func resolveProxyConfig(
-        workspacePath: String,
-        appConfigDirectory: URL? = nil,
-        fileManager: FileManager = .default
-    ) throws -> ProxyResolution {
-        let workspace = URL(fileURLWithPath: workspacePath, isDirectory: true)
-        let candidates = [
-            workspace.appending(path: "config/proxies.json"),
-            workspace.appending(path: "proxies.txt"),
-        ]
-        if let existing = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) {
-            return ProxyResolution(url: existing, created: false)
-        }
-        let root = appConfigDirectory
-            ?? fileManager.homeDirectoryForCurrentUser
-                .appending(path: ".config/\(AppEdition.current.displayName)", directoryHint: .isDirectory)
-        let fallback = root.appending(path: "proxies.json")
-        if fileManager.fileExists(atPath: fallback.path) {
-            return ProxyResolution(url: fallback, created: false)
-        }
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        try Data((proxyTemplate + "\n").utf8).write(to: fallback, options: .atomic)
-        return ProxyResolution(url: fallback, created: true)
-    }
-
-    static func logURL(
-        sessionID: String,
-        logsDirectory: URL? = nil,
-        fileManager: FileManager = .default
-    ) -> URL {
-        let root = logsDirectory
-            ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first!
-                .appending(path: "Logs/\(AppEdition.current.displayName)", directoryHint: .isDirectory)
-        let safeID = sessionID.isEmpty
-            ? "current-session"
-            : sessionID.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" }
-                .reduce(into: "") { $0.append($1) }
-        return root.appending(path: "\(safeID).log")
     }
 }

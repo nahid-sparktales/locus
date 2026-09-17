@@ -576,9 +576,7 @@ extension AppModel {
             summary: summary,
             outcome: outcome
         )
-        // Recommendations are derived locally from the complete state snapshot
-        // so their ranking stays current as git, tests, plans, or runtime state
-        // changes. Keep the legacy payload slot nil for wire/persistence
+        // The legacy suggestions slot stays nil for wire/persistence
         // compatibility rather than storing a second stale source of truth.
         sessionOverview.emit(.runFinished(summary: run, suggestions: nil, at: now))
         endSessionFileCapture()

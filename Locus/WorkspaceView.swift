@@ -3109,10 +3109,6 @@ private struct ConversationView: View {
                 scrollCoordinator.detach()
                 scrollToCurrentMatch(proxy)
             }
-            .onChange(of: model.transcriptJumpTarget) {
-                scrollCoordinator.detach()
-                scrollToOverviewTarget(proxy)
-            }
             .task(id: model.activityResultReveal?.id) {
                 guard let request = model.activityResultReveal,
                       request.sessionID == transcript.sessionID else { return }
@@ -3640,31 +3636,6 @@ private struct ConversationView: View {
         proxy.scrollTo(TranscriptScrollTarget.item(
             transcript.renderToken.sessionGeneration, destination
         ), anchor: .top)
-    }
-
-    private func scrollToOverviewTarget(_ proxy: ScrollViewProxy) {
-        let transcript = transcriptPresentation.snapshot
-        guard let target = model.transcriptJumpTarget,
-              let block = transcript.blocksByID[target]
-        else { return }
-        let destination = transcript.items.first(where: { item in
-            switch item {
-            case .block(let candidate): return candidate.id == target
-            case .assistantSegment(let segment):
-                return segment.sourceBlock.id == target
-            case .toolGroup(_, let tools):
-                guard let toolID = block.tool?.toolID else { return false }
-                return tools.contains(where: { $0.toolID == toolID })
-            case .thinkingGroup(_, let entries):
-                return entries.contains(where: { $0.id.sourceBlockID == target })
-            }
-        })?.id
-        guard let destination else { return }
-        withAnimation(LocusMotion.scroll) {
-            proxy.scrollTo(TranscriptScrollTarget.item(
-                transcript.renderToken.sessionGeneration, destination
-            ), anchor: .center)
-        }
     }
 
     private func topSpacing(

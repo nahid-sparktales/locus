@@ -490,12 +490,7 @@ final class AppModel: ObservableObject {
             scheduleSettingsPersistence()
         }
     }
-    /// A settings-window-only appearance override. It drives every scene while
-    /// the picker is being edited without writing the draft to disk.
-    @Published var appearancePreview: AppAppearance?  // internal(for: AppModel extension files)
-    var effectiveAppearance: AppAppearance {
-        appearancePreview ?? settings.resolvedAppearance
-    }
+    var effectiveAppearance: AppAppearance { settings.resolvedAppearance }
     var effectiveAccent: LocusAccentSelection { settings.resolvedAccent }
     var accentActionColor: Color { effectiveAccent.actionColor }
     @Published var settingsPresented = false
@@ -588,10 +583,6 @@ final class AppModel: ObservableObject {
         didSet { transcriptSearchSelection = 0 }
     }
     @Published var transcriptSearchSelection = 0
-    /// A one-shot destination requested by the session overview activity feed.
-    /// ConversationView owns the actual scrolling so the overview never reaches
-    /// through to transcript UI state.
-    @Published var transcriptJumpTarget: UUID?
     @Published var streamRevision = 0
     let toastCenter = ToastCenter()
     var toastMessage: String? { toast?.message }

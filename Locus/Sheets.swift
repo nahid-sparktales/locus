@@ -1912,7 +1912,6 @@ struct SettingsView: View {
         .onDisappear {
             expandedAdvancedPages.removeAll()
             model.unregisterSettingsUpdatePreparation(id: lifecycleRegistrationID)
-            model.clearAppearancePreview()
             if presentationContext == .settingsWindow {
                 model.completeSettingsDismissal()
             }
@@ -2501,7 +2500,6 @@ struct SettingsView: View {
     }
 
     private func completeSettingsDismissal() {
-        model.clearAppearancePreview()
         switch presentationContext {
         case .sheet:
             dismiss()

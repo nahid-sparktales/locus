@@ -1379,19 +1379,6 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNil(cache.classify(candidate, workspacePath: workspace.path))
     }
 
-    func testFileReferencesGetFullCardAtTopLevelAndChipInLists() {
-        // A reply that lists a directory writes one bullet per file. Promoting
-        // each of those to a 58pt card with three buttons turned a seven-file
-        // answer into a wall of chrome, so nested references take the compact
-        // chip tier instead of losing the tile entirely.
-        XCTAssertEqual(MarkdownArtifactPromotion.presentation(nestingDepth: 0), .fullCard)
-        XCTAssertEqual(
-            MarkdownArtifactPromotion.presentation(nestingDepth: 1), .compactChip,
-            "inside a list the reference keeps a tile, just a single-line one"
-        )
-        XCTAssertEqual(MarkdownArtifactPromotion.presentation(nestingDepth: 2), .compactChip)
-    }
-
     func testLeadingArtifactPromotesAnnotatedBulletsButNotComparisons() throws {
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("locus-chip-\(UUID().uuidString)", isDirectory: true)
@@ -2267,15 +2254,6 @@ final class FeatureLogicTests: XCTestCase {
         assertColor(dark.permissionInk, hex: 0xD3BAA3)
     }
 
-    func testComposerScheduleSymbolExistsOnSupportedMacOS() {
-        XCTAssertNotNil(
-            NSImage(
-                systemSymbolName: ComposerSymbols.schedule,
-                accessibilityDescription: "Schedule"
-            )
-        )
-    }
-
     func testSemanticTextColorsMeetNormalTextContrastAcrossPaperSurfaces() throws {
         let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
         let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))
@@ -2359,96 +2337,6 @@ final class FeatureLogicTests: XCTestCase {
     func testReduceMotionDisablesSpatialMotion() {
         XCTAssertFalse(LocusMotion.allowsSpatialMotion(reduceMotion: true))
         XCTAssertTrue(LocusMotion.allowsSpatialMotion(reduceMotion: false))
-    }
-
-    func testRecommendationsRankRecoveryBeforeSafetyAndContinuity() {
-        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
-            runtimeUnavailable: true,
-            modelUnavailable: true,
-            lastRunFailed: true,
-            changedFileCount: 4,
-            hasPendingPlanSteps: true,
-            hasTestFiles: true,
-            projectKind: .swift,
-            memoryConflictCount: 2
-        ))
-
-        XCTAssertEqual(recommendations.map(\.kind), [.chooseModel, .recoverRun, .reviewMemory])
-        XCTAssertEqual(recommendations.count, 3)
-        XCTAssertEqual(recommendations.first?.intent, .openSettings(.accounts))
-        XCTAssertTrue(recommendations.allSatisfy { !$0.rationale.isEmpty })
-    }
-
-    func testConversationStartersAreStableEditablePrompts() {
-        let starters = RecommendationEngine.conversationStarters
-
-        XCTAssertEqual(starters.map(\.id), ["build-feature", "fix-bug", "explore-codebase"])
-        XCTAssertEqual(starters.map(\.title), ["Build a feature", "Fix a bug", "Explore the codebase"])
-        XCTAssertTrue(starters.allSatisfy { !$0.rationale.isEmpty })
-        XCTAssertTrue(starters.allSatisfy { recommendation in
-            if case .prefill(let prompt) = recommendation.intent {
-                return !prompt.isEmpty
-            }
-            return false
-        })
-    }
-
-    func testRecommendationsRankSafetyContinuityAndVerification() {
-        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
-            changedFileCount: 3,
-            hasPendingPlanSteps: true,
-            hasTestFiles: true,
-            projectKind: .swift
-        ))
-
-        XCTAssertEqual(recommendations.map(\.kind), [.reviewChanges, .continuePlan, .verifyTests])
-        XCTAssertEqual(recommendations[0].intent, .openInspector(.changes))
-        guard case .prefill = recommendations[1].intent else {
-            return XCTFail("Continuity work should remain editable before it is sent")
-        }
-    }
-
-    func testLegacyRecommendationsAreDeduplicatedAndRemainFallbacks() {
-        let recommendations = RecommendationEngine.recommendations(for: RecommendationContext(
-            projectKind: .python,
-            legacySuggestions: ["  Check retry paths  ", "Check another legacy item", ""]
-        ))
-
-        XCTAssertEqual(recommendations.map(\.kind), [.legacy, .exploreProject, .makePlan])
-        XCTAssertEqual(recommendations.first?.title, "Check retry paths")
-        XCTAssertEqual(recommendations.filter { $0.kind == .legacy }.count, 1)
-        XCTAssertEqual(Set(recommendations.map(\.id)).count, recommendations.count)
-    }
-
-    @MainActor
-    func testActivatingAgentRecommendationOnlyPrefillsTheComposer() {
-        let model = AppModel(startImmediately: false)
-        let messageCount = model.blocks.count
-        let recommendation = LocusRecommendation(
-            id: "prefill-test",
-            kind: .verifyTests,
-            title: "Run relevant tests",
-            rationale: "The workspace contains changes.",
-            priority: 1,
-            intent: .prefill("Run the tests relevant to these changes.")
-        )
-
-        model.activateRecommendation(recommendation)
-
-        XCTAssertEqual(model.draftText, "Run the tests relevant to these changes.")
-        XCTAssertEqual(model.blocks.count, messageCount, "Prefill must never send a message")
-        XCTAssertTrue(model.inspectorCollapsed)
-    }
-
-    func testEmptyWorkspaceRecommendationsAreStableProjectAwareAndCapped() {
-        let first = RecommendationEngine.recommendations(for: RecommendationContext(projectKind: .web))
-        let second = RecommendationEngine.recommendations(for: RecommendationContext(projectKind: .web))
-
-        XCTAssertEqual(first, second)
-        XCTAssertEqual(first.count, 3)
-        XCTAssertEqual(first.map(\.kind), [.exploreProject, .makePlan, .polishInterface])
-        XCTAssertEqual(first.first?.title, "Polish the primary interface")
-        XCTAssertTrue(first.allSatisfy { !$0.title.isEmpty && !$0.rationale.isEmpty })
     }
 
     func testInspectorTabTitlesUseTheThemeHierarchyInBothAppearances() {
@@ -3066,9 +2954,6 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertTrue(ProxyConfigurator.childEnvironment(
             settings: off, password: nil, ollamaHost: nil
         ).isEmpty, "off means off, whatever else is filled in")
-        XCTAssertTrue(ProxyConfigurator.agentEnvironmentOverlay(
-            settings: off, ollamaHost: nil
-        ).isEmpty, "off manages nothing, so the shell's own proxy passes through untouched")
     }
 
     func testProxyRuntimeRebuildsSessionsOnlyWhenTheProxyActuallyChanges() {
@@ -3140,22 +3025,6 @@ final class FeatureLogicTests: XCTestCase {
             ollamaHost: nil
         )
         XCTAssertEqual(environment["ALL_PROXY"], "socks5h://socks.sys:1080")
-    }
-
-    func testTheSystemOverlayIsEmptyOnlyWhenTheProxyIsOff() {
-        var settings = AppSettings()
-        XCTAssertTrue(ProxyConfigurator.agentEnvironmentOverlay(
-            settings: settings, ollamaHost: nil
-        ).isEmpty, "off manages nothing")
-
-        settings.proxyModeRaw = ProxyMode.system.rawValue
-        let overlay = ProxyConfigurator.agentEnvironmentOverlay(
-            settings: settings, ollamaHost: nil
-        )
-        XCTAssertFalse(
-            overlay.isEmpty,
-            "system mode always states the routing, even when the system has no proxy to state"
-        )
     }
 
     func testProxyFailuresAreDescribedInTermsOfTheProxy() {
@@ -5507,34 +5376,6 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(openAI.files, secondProvider.files)
         XCTAssertEqual(openAI.resources, secondProvider.resources)
         XCTAssertNotEqual(openAI.model.provider, secondProvider.model.provider)
-    }
-
-    func testProxyConfigResolutionPrefersWorkspaceFilesAndCreatesFallback() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        let workspace = root.appending(path: "workspace", directoryHint: .isDirectory)
-        let config = workspace.appending(path: "config", directoryHint: .isDirectory)
-        let fallback = root.appending(path: "app-config", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
-        let existing = config.appending(path: "proxies.json")
-        try Data("{}".utf8).write(to: existing)
-
-        let found = try SessionQuickActionFiles.resolveProxyConfig(
-            workspacePath: workspace.path,
-            appConfigDirectory: fallback
-        )
-        XCTAssertEqual(found.url, existing)
-        XCTAssertFalse(found.created)
-
-        try FileManager.default.removeItem(at: existing)
-        let created = try SessionQuickActionFiles.resolveProxyConfig(
-            workspacePath: workspace.path,
-            appConfigDirectory: fallback
-        )
-        XCTAssertTrue(created.created)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: created.url.path))
-        XCTAssertTrue(try String(contentsOf: created.url).contains("$schemaNote"))
-        try FileManager.default.removeItem(at: root)
     }
 
     func testTaskConversationStateRoundTripsWithoutConversationContent() throws {

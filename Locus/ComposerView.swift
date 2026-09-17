@@ -1,10 +1,6 @@
 import AppKit
 import SwiftUI
 
-enum ComposerSymbols {
-    static let schedule = "calendar.badge.plus"
-}
-
 enum ComposerMetrics {
     private static let cache: NSCache<NSString, NSNumber> = {
         let cache = NSCache<NSString, NSNumber>()

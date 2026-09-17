@@ -123,7 +123,6 @@ extension AppModel {
         if !newSettings.voiceControlsEnabled {
             voiceControl.exitVoiceMode()
         }
-        appearancePreview = nil
         persistSettings()
         if mobileAccessChanged {
             Task { await companionGateway.setEnabled(newSettings.mobileAccessEnabled) }
@@ -242,16 +241,6 @@ extension AppModel {
         } else if service.status != .notRegistered {
             try service.unregister()
         }
-    }
-
-    /// Preview never mutates `settings`, so Cancel can restore the committed
-    /// appearance without triggering persistence or backend side effects.
-    func previewAppearance(_ rawValue: String) {
-        appearancePreview = AppAppearance(rawValue: rawValue) ?? .system
-    }
-
-    func clearAppearancePreview() {
-        appearancePreview = nil
     }
 
     func migrateTerminalSettingsIfNeeded() async {

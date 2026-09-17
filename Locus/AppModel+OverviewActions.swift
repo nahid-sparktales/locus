@@ -6,8 +6,8 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 /// Overview-tab actions: git-status capture into the session overview,
-/// session quick actions, workspace artifact opening, recommendations,
-/// and pinned-summary activation.
+/// session quick actions, workspace artifact opening, and pinned-summary
+/// activation.
 extension AppModel {
     // MARK: - Inspector
 
@@ -151,44 +151,10 @@ extension AppModel {
         )
     }
 
-    var locusRecommendations: [LocusRecommendation] {
-        RecommendationEngine.recommendations(for: recommendationContext)
-    }
-
-    var recommendationContext: RecommendationContext {
-        let state = sessionOverview.state
-        return RecommendationContext(
-            runtimeUnavailable: agentRuntimePhase.isUnavailable,
-            modelUnavailable: modelRuntimePhase.isUnavailable,
-            lastRunFailed: state.lastRun?.outcome == .failed,
-            changedFileCount: gitWorkspace.changedFileCount,
-            hasPendingPlanSteps: state.plan.contains { $0.state != .done },
-            hasTestFiles: workspaceContainsTests,
-            projectKind: workspaceProjectKind,
-            memoryConflictCount: knowledge.memoryCandidates.filter(\.hasConflicts).count,
-            legacySuggestions: state.suggestions
-        )
-    }
-
-    func activateRecommendation(_ recommendation: LocusRecommendation) {
-        switch recommendation.intent {
-        case .prefill(let prompt):
-            prefillComposer(with: prompt)
-        case .openInspector(let tab):
-            selectInspectorTab(tab)
-        case .openSettings(let page):
-            settingsPage = page
-            settingsPresented = true
-        case .openModelLibrary:
-            modelLibraryPresented = true
-        }
-    }
-
     /// AppKit may commit the TextEditor's pre-layout buffer while the
     /// inspector is collapsing. Re-applying after one main-actor turn makes
     /// the editable prefill deterministic without ever submitting it.
-    private func prefillComposer(with prompt: String, collapsingInspector: Bool = true) {
-        if collapsingInspector { inspectorCollapsed = true }
+    private func prefillComposer(with prompt: String) {
         draftText = prompt
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -208,13 +174,13 @@ extension AppModel {
 
     func prefillComposerFromSummary(_ prompt: String) {
         dismissOverview()
-        prefillComposer(with: prompt, collapsingInspector: false)
+        prefillComposer(with: prompt)
     }
 
     /// A board card's "Work on this in chat" keeps the board open beside the
     /// composer so the user can watch the agent move the card.
     func prefillComposerFromBoard(_ prompt: String) {
-        prefillComposer(with: prompt, collapsingInspector: false)
+        prefillComposer(with: prompt)
     }
 
     /// Opens a URL in the in-app Browser tab, toasting when the preview
@@ -292,37 +258,6 @@ extension AppModel {
     /// session; a finished run selects itself there.
     func openSummarySubagent(_ row: PinnedSummary.SubagentRow) {
         selectInspectorTab(.runs, selecting: row.runID)
-    }
-
-    private var workspaceProjectKind: LocusProjectKind {
-        let names = workspaceFiles.files.map { $0.lastPathComponent.lowercased() }
-        let paths = workspaceFiles.files.map { $0.path.lowercased() }
-        if names.contains("package.swift") || paths.contains(where: { $0.hasSuffix(".swift") }) {
-            return .swift
-        }
-        if names.contains("package.json")
-            || paths.contains(where: { $0.hasSuffix(".tsx") || $0.hasSuffix(".jsx") }) {
-            return .web
-        }
-        if names.contains("pyproject.toml") || names.contains("requirements.txt")
-            || paths.contains(where: { $0.hasSuffix(".py") }) {
-            return .python
-        }
-        return .general
-    }
-
-    private var workspaceContainsTests: Bool {
-        workspaceFiles.files.contains { url in
-            let path = url.path.lowercased()
-            let name = url.lastPathComponent.lowercased()
-            return path.contains("/tests/")
-                || path.contains("/uitests/")
-                || name.hasPrefix("test_")
-                || name.contains("tests.")
-                || name.hasSuffix("test.swift")
-                || name.hasSuffix("spec.ts")
-                || name.hasSuffix("spec.tsx")
-        }
     }
 
     /// Adds a workspace-relative path to the context pack.

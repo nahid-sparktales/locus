@@ -139,40 +139,6 @@ enum AgentSidebarCatalog {
     }
 }
 
-
-/// Presentation of a configured task in the agent/task picker. The receiving
-/// chat owns the task; an unrelated side conversation must not rename its agent.
-enum AgentTaskPickerPresentation {
-    static func symbol(for definition: AgentDefinition) -> String {
-        if definition.isSchedule { return "calendar.badge.clock" }
-        return definition.trigger?.triggerKind == .price ? "chart.line.uptrend.xyaxis" : "bolt.badge.clock"
-    }
-
-    static func ownerLabel(
-        for definition: AgentDefinition, definitions: [AgentDefinition],
-        sessions: [SessionSummary], profiles: [AgentProfile]
-    ) -> String {
-        let receivingChats: [SessionSummary]
-        if let targetID = definition.trigger?.targetSessionID {
-            receivingChats = sessions.filter { $0.id == targetID }
-        } else {
-            let reference = AgentInspectorAgent(definition)
-            let associated = sessions.filter { $0.agentReference(in: definitions) == reference }
-            let primary = associated.filter(\.isAgentEventChat)
-            receivingChats = primary.isEmpty ? associated : primary
-        }
-        guard !receivingChats.isEmpty else { return "Agent link unavailable" }
-        let ownerIDs = Set(receivingChats.compactMap(\.savedAgentProfileID))
-        guard ownerIDs.count <= 1 else { return "Agent link unavailable" }
-        guard let ownerID = ownerIDs.first else { return "No agent linked" }
-        guard receivingChats.allSatisfy({ $0.savedAgentProfileID == ownerID }) else {
-            return "Agent link unavailable"
-        }
-        guard let profile = profiles.first(where: { $0.id == ownerID }) else { return "Unavailable agent" }
-        return "Agent: \(profile.name)"
-    }
-}
-
 #if DEBUG
 /// A metadata-only probe for the compact sidebar's native hit ownership.
 /// It never forces layout, exposes content, synthesizes input, or consumes an
