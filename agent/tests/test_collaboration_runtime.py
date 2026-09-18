@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 import threading
 import time
 from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,8 +17,13 @@ from ollama_code.collaboration import WorkerSpec
 from ollama_code.collaboration_bridge import AgentWorkerRuntime, CollaborationBridge
 from ollama_code.core import AgentCore
 from ollama_code.ollama import ChatResponse, ToolCall
-from ollama_code.orchestration import ModelCallScheduler
+from ollama_code.orchestration import CrossProcessModelCallScheduler
 from ollama_code.tools import ToolContext, execute_tool
+
+
+def _queued_waiters(scheduler) -> int:
+    with sqlite3.connect(scheduler.path) as connection:
+        return int(connection.execute("SELECT COUNT(*) FROM waiters").fetchone()[0])
 
 
 def service(path, provider="ollama"):
@@ -39,7 +46,9 @@ def service(path, provider="ollama"):
         emit=events.append,
         events=events,
         decide=lambda *_: "deny",
-        collaboration_scheduler=ModelCallScheduler(),
+        collaboration_scheduler=CrossProcessModelCallScheduler(
+            path=Path(path) / "leases.sqlite3"
+        ),
         _execute_background_service=lambda _: "unused",
         pending_context_deliveries=lambda: [],
         mark_question_delivery_applied=lambda _: None,
@@ -407,7 +416,9 @@ def test_root_close_cancels_only_helper_permission_and_waits_for_completion(tmp_
 
 def test_stopping_helper_waiting_for_provider_lease_does_not_call_provider(tmp_path):
     svc = service(tmp_path)
-    svc.collaboration_scheduler = ModelCallScheduler(limit=1)
+    svc.collaboration_scheduler = CrossProcessModelCallScheduler(
+        limit=1, path=tmp_path / "stop-leases.sqlite3"
+    )
     runtime = worker(svc, tmp_path)
     results = []
 
@@ -422,10 +433,10 @@ def test_stopping_helper_waiting_for_provider_lease_does_not_call_provider(tmp_p
         with svc.collaboration_scheduler.lease("existing-task"):
             thread = threading.Thread(target=waiting)
             thread.start()
-            deadline = time.monotonic() + 2
-            while not svc.collaboration_scheduler._waiting and time.monotonic() < deadline:
+            deadline = time.monotonic() + 3
+            while not _queued_waiters(svc.collaboration_scheduler) and time.monotonic() < deadline:
                 time.sleep(0.01)
-            assert svc.collaboration_scheduler._waiting
+            assert _queued_waiters(svc.collaboration_scheduler)
             runtime.interrupt()
             thread.join(2)
             assert not thread.is_alive()

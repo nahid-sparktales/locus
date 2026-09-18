@@ -97,32 +97,6 @@ extension AppModel {
         return .local
     }
 
-    func setSavedAgentDefaultWorkspace(_ profile: AgentProfile, path: String) {
-        guard var current = agentProfiles.first(where: { $0.id == profile.id }) else { return }
-        var preferences = current.workspacePreferences ?? AgentWorkspacePreferences()
-        if path == savedAgentHomePath(profile) {
-            preferences.defaultProjectPath = nil
-        } else {
-            do { try prepareSavedAgentWorkspace(profile, workspace: path) }
-            catch { showToast(error.localizedDescription); return }
-            preferences.defaultProjectPath = SessionSummary.canonicalWorkspacePath(path)
-            preferences.projectPaths.append(path)
-        }
-        preferences.normalize()
-        current.workspacePreferences = preferences
-        agentTeamsModel.saveAgentProfile(current)
-    }
-
-    func unlinkSavedAgentProject(_ profile: AgentProfile, path: String) {
-        guard var current = agentProfiles.first(where: { $0.id == profile.id }) else { return }
-        var preferences = current.workspacePreferences ?? AgentWorkspacePreferences()
-        let canonical = SessionSummary.canonicalWorkspacePath(path)
-        preferences.projectPaths.removeAll { SessionSummary.canonicalWorkspacePath($0) == canonical }
-        if preferences.defaultProjectPath == canonical { preferences.defaultProjectPath = nil }
-        current.workspacePreferences = preferences
-        agentTeamsModel.saveAgentProfile(current)
-    }
-
     /// Picking/linking a project does not activate its chat or change the
     /// foreground workspace. The folder can be linked by several agents.
     func chooseSavedAgentProjectFolder() -> String? {

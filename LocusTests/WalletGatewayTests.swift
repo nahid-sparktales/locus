@@ -736,16 +736,6 @@ final class WalletGatewayTests: XCTestCase {
         )
     }
 
-    private func policy() -> WalletSessionPolicy {
-        WalletSessionPolicy(
-            id: "policy-1", accountID: "account-1", networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: ["slip44:60"], allowedRecipients: ["0x1111111111111111111111111111111111111111"],
-            allowedContractIDs: [], allowedAdapterIDs: ["native-eth-transfer-v1"],
-            maximumTransactionBaseUnits: "25", maximumSessionBaseUnits: "50",
-            maximumFeeBaseUnits: "20", expiresAt: Date().addingTimeInterval(300)
-        )
-    }
-
     func testBaseUnitArithmeticDoesNotRoundLargeValues() {
         XCTAssertEqual(WalletBaseUnits.normalize("0000010"), "10")
         XCTAssertEqual(WalletBaseUnits.add("999999999999999999999999", "1"),
@@ -7809,34 +7799,6 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(result.ceremonyID, invocationID)
     }
 
-    func testUnknownEffectsAndUnlimitedApprovalCanNeverBeAutonomous() {
-        for flag in [WalletRiskFlag.unknownEffect, .undecodableCall, .unlimitedApproval] {
-            guard case .requiresApproval = WalletPolicyEngine.evaluate(
-                transaction: prepared(riskFlags: [flag]), policy: policy(), spentThisSession: "0"
-            ) else { return XCTFail("\(flag) must require exact approval") }
-        }
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: prepared(adapterID: nil), policy: policy(), spentThisSession: "0"
-        ) else { return XCTFail("missing adapter must require exact approval") }
-    }
-
-    func testBrowserSourceCanNeverUseAnAutonomousPolicy() {
-        let browser = WalletPreparedTransaction(
-            id: "browser-intent", digest: "digest", networkID: WalletGateway.sepoliaNetworkID,
-            accountID: "account-1", source: .browser(origin: "https://dapp.test"),
-            action: .nativeTransfer(recipient: "0x1111111111111111111111111111111111111111", amountBaseUnits: "10"),
-            summary: "Transfer", effects: [], riskFlags: [], contract: nil,
-            adapterID: "native-eth-transfer-v1", budgetAssetID: "slip44:60",
-            spendBaseUnits: "10", maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15",
-            simulation: "Success", simulationSucceeded: true, nonce: "1",
-            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
-            policyDecision: "", policyID: nil
-        )
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: browser, policy: policy(), spentThisSession: "0"
-        ) else { return XCTFail("Browser-originated transactions must require exact confirmation") }
-    }
-
     func testFailedExpiredMismatchedAndDeniedTransactionsCannotBeConfirmed() {
         let gateway = WalletGateway(
             signer: UnavailableWalletSignerClient(),
@@ -7855,15 +7817,6 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertFalse(gateway.isTransactionConfirmable(prepared(
             policyDecision: "denied_by_signer"
         )))
-    }
-
-    func testPolicyUsesUnsignedBaseUnitCaps() {
-        XCTAssertEqual(WalletPolicyEngine.evaluate(
-            transaction: prepared(), policy: policy(), spentThisSession: "5"
-        ), .automatic)
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: prepared(), policy: policy(), spentThisSession: "45"
-        ) else { return XCTFail("cumulative cap must be enforced") }
     }
 
     func testUniswapRoutePlannerEnumeratesOnlyAcyclicReviewedSingleVersionPaths() {
@@ -7935,7 +7888,7 @@ final class WalletGatewayTests: XCTestCase {
         ))
     }
 
-    func testSwapAllowanceIsExactFiniteSwapBoundAndNeverAutonomous() throws {
+    func testSwapAllowanceIsExactAndFiniteSwapBound() throws {
         let networkID = WalletGateway.sepoliaNetworkID
         let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         let token = "0x1111111111111111111111111111111111111111"
@@ -8009,23 +7962,6 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(call.function, "approve(address,uint256)")
         XCTAssertEqual(call.arguments.map(\.value), [permit2, "1000"])
 
-        let transaction = WalletPreparedTransaction(
-            id: "allowance", digest: "digest", networkID: networkID,
-            accountID: "account-1", source: .agent, action: action,
-            summary: "Allowance", effects: [], riskFlags: [], contract: nil,
-            adapterID: WalletReviewedAdapters.erc20,
-            budgetAssetID: inputAsset, spendBaseUnits: "1000",
-            maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "10",
-            simulation: "Success", simulationSucceeded: true, nonce: "1",
-            createdAt: now, expiresAt: now.addingTimeInterval(120),
-            policyDecision: "", policyID: nil
-        )
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy(), spentThisSession: "0"
-        ) else {
-            return XCTFail("Allowance setup must never consume signer policy.")
-        }
-
         let substituted = WalletSemanticAction.swapAllowanceSetup(
             contractID: "token", adapterID: WalletReviewedAdapters.erc20,
             setup: WalletSwapAllowanceSetup(
@@ -8038,145 +7974,6 @@ final class WalletGatewayTests: XCTestCase {
             action: substituted, registryEntry: entry,
             configuration: configuration
         ))
-    }
-
-    func testReviewedContractPoliciesRequireExactContractAssetAndCounterparty() {
-        let token = "0x1111111111111111111111111111111111111111"
-        let recipient = "0x2222222222222222222222222222222222222222"
-        let transaction = WalletPreparedTransaction(
-            id: "erc20-intent", digest: "digest", networkID: WalletGateway.sepoliaNetworkID,
-            accountID: "account-1", source: .agent,
-            action: .contractCall(
-                contractID: "token.test", function: "transfer(address,uint256)",
-                arguments: [
-                    WalletTypedArgument(type: "address", value: recipient),
-                    WalletTypedArgument(type: "uint256", value: "10"),
-                ]
-            ),
-            summary: "Token transfer",
-            effects: [WalletDecodedEffect(
-                id: "effect", kind: "token_transfer",
-                assetID: "eip155:11155111/erc20:\(token)", amountBaseUnits: "10",
-                from: "0x3333333333333333333333333333333333333333",
-                to: recipient, spender: nil
-            )],
-            riskFlags: [],
-            contract: WalletContractIdentity(
-                registryID: "token.test", address: token, label: "Token",
-                function: "transfer(address,uint256)", abiDigest: "sha256:test",
-                runtimeCodeHash: "0xcode"
-            ),
-            adapterID: WalletReviewedAdapters.erc20,
-            budgetAssetID: "eip155:11155111/erc20:\(token)", spendBaseUnits: "10",
-            maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15", simulation: "Success",
-            simulationSucceeded: true, nonce: "1", createdAt: Date(),
-            expiresAt: Date().addingTimeInterval(120), policyDecision: "", policyID: nil
-        )
-        let exactPolicy = WalletSessionPolicy(
-            id: "erc20-policy", accountID: "account-1",
-            networkID: WalletGateway.sepoliaNetworkID,
-            allowedAssetIDs: ["eip155:11155111/erc20:\(token)"],
-            allowedRecipients: [recipient], allowedContractIDs: ["token.test"],
-            allowedAdapterIDs: [WalletReviewedAdapters.erc20],
-            maximumTransactionBaseUnits: "10", maximumSessionBaseUnits: "20",
-            maximumFeeBaseUnits: "20", expiresAt: Date().addingTimeInterval(300)
-        )
-        XCTAssertEqual(WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: exactPolicy, spentThisSession: "0"
-        ), .automatic)
-
-        let wrongCounterparty = WalletSessionPolicy(
-            id: exactPolicy.id, accountID: exactPolicy.accountID,
-            networkID: exactPolicy.networkID, allowedAssetIDs: exactPolicy.allowedAssetIDs,
-            allowedRecipients: ["0x4444444444444444444444444444444444444444"],
-            allowedContractIDs: exactPolicy.allowedContractIDs,
-            allowedAdapterIDs: exactPolicy.allowedAdapterIDs,
-            maximumTransactionBaseUnits: exactPolicy.maximumTransactionBaseUnits,
-            maximumSessionBaseUnits: exactPolicy.maximumSessionBaseUnits,
-            maximumFeeBaseUnits: exactPolicy.maximumFeeBaseUnits,
-            expiresAt: exactPolicy.expiresAt
-        )
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: wrongCounterparty, spentThisSession: "0"
-        ) else { return XCTFail("A contract adapter must enforce its decoded counterparty.") }
-    }
-
-    func testSemanticSwapPolicyBindsSlippageMinimumRouterAndRecipient() {
-        let account = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        let input = "eip155:11155111/erc20:0x1111111111111111111111111111111111111111"
-        let output = "eip155:11155111/erc20:0x2222222222222222222222222222222222222222"
-        let route = WalletExactInputSwapRoute(
-            protocolVersion: .v3, pathAssetIDs: [input, output],
-            feeTiers: [3_000], minimumHopPriceX36: ["1"],
-            quotedOutputBaseUnits: "1000", slippageBPS: 250,
-            deadlineUnixSeconds: String(
-                UInt64(Date().timeIntervalSince1970) + 600
-            )
-        )
-        let action = WalletSemanticAction.exactInputSwap(
-            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
-            contractID: "uniswap.router", inputAssetID: input,
-            outputAssetID: output, amountInBaseUnits: "1000",
-            minimumOutputBaseUnits: "975", recipient: account, route: route
-        )
-        let transaction = WalletPreparedTransaction(
-            id: "swap-intent", digest: "digest",
-            networkID: WalletGateway.sepoliaNetworkID,
-            accountID: "account-1", source: .agent, action: action,
-            summary: "Swap", effects: [
-                WalletDecodedEffect(
-                    id: "spend", kind: "token_swap_exact_in",
-                    assetID: input, amountBaseUnits: "1000",
-                    from: account, to: "0x4444444444444444444444444444444444444444",
-                    spender: nil
-                ),
-                WalletDecodedEffect(
-                    id: "receive", kind: "minimum_receive",
-                    assetID: output, amountBaseUnits: "975",
-                    from: "0x4444444444444444444444444444444444444444",
-                    to: account, spender: nil
-                ),
-            ], riskFlags: [], contract: WalletContractIdentity(
-                registryID: "uniswap.router",
-                address: "0x4444444444444444444444444444444444444444",
-                label: "Router", function: "execute(bytes,bytes[],uint256)",
-                abiDigest: "sha256:test", runtimeCodeHash: "0xcode"
-            ),
-            adapterID: WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
-            budgetAssetID: input, spendBaseUnits: "1000",
-            maximumFeeBaseUnits: "20", feeQuoteBaseUnits: "15",
-            simulation: "Success", simulationSucceeded: true, nonce: "1",
-            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
-            policyDecision: "", policyID: nil
-        )
-        func policy(slippage: Int, minimum: String) -> WalletSessionPolicy {
-            WalletSessionPolicy(
-                id: "swap-policy", accountID: "account-1",
-                networkID: WalletGateway.sepoliaNetworkID,
-                allowedAssetIDs: [input], allowedRecipients: [account],
-                allowedContractIDs: ["uniswap.router"],
-                allowedAdapterIDs: [
-                    WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn,
-                ], maximumTransactionBaseUnits: "1000",
-                maximumSessionBaseUnits: "2000", maximumFeeBaseUnits: "20",
-                expiresAt: Date().addingTimeInterval(300),
-                allowedActionKinds: [.exactInputSwap],
-                maximumSlippageBPS: slippage,
-                minimumOutputBaseUnits: minimum
-            )
-        }
-        XCTAssertEqual(WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy(slippage: 250, minimum: "975"),
-            spentThisSession: "0"
-        ), .automatic)
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy(slippage: 200, minimum: "975"),
-            spentThisSession: "0"
-        ) else { return XCTFail("The swap slippage policy must be signer-bound.") }
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy(slippage: 250, minimum: "976"),
-            spentThisSession: "0"
-        ) else { return XCTFail("The swap minimum-output policy must be signer-bound.") }
     }
 
     func testExternalConnectorCatalogKeepsNativeSigningOnSepolia() {
@@ -8258,119 +8055,6 @@ final class WalletGatewayTests: XCTestCase {
             WalletReviewedAdapters.solanaNativeTransfer,
         ])
         XCTAssertEqual(policy.networkID, WalletNetworkCatalog.solanaDevnet.id)
-    }
-
-    func testSolanaNativePolicyRequiresExactChainAssetAdapterAndRecipient() {
-        let recipient = WalletSolanaBase58.encode(Data(repeating: 7, count: 32))
-        let action = WalletSemanticAction.nativeTransfer(
-            recipient: recipient, amountBaseUnits: "1000"
-        )
-        let transaction = WalletPreparedTransaction(
-            id: "sol-intent", digest: "digest",
-            networkID: WalletNetworkCatalog.solanaDevnet.id,
-            accountID: "locus-vault-solana-0", source: .agent,
-            action: action, summary: "Send SOL", effects: [], riskFlags: [],
-            contract: nil, adapterID: WalletReviewedAdapters.solanaNativeTransfer,
-            budgetAssetID: WalletNetworkCatalog.solanaDevnet.nativeAssetID,
-            spendBaseUnits: "1000", maximumFeeBaseUnits: "5000",
-            feeQuoteBaseUnits: "5000", simulation: "Success",
-            simulationSucceeded: true, nonce: "blockhash",
-            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
-            policyDecision: "", policyID: nil
-        )
-        let policy = WalletPolicyTemplate(
-            id: "sol-rule", name: "SOL rule",
-            accountID: "locus-vault-solana-0",
-            networkID: WalletNetworkCatalog.solanaDevnet.id,
-            recipient: recipient, maximumTransactionBaseUnits: "1000",
-            maximumSessionBaseUnits: "5000", maximumFeeBaseUnits: "5000",
-            durationMinutes: 30
-        ).policy()
-        XCTAssertEqual(WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy, spentThisSession: "0"
-        ), .automatic)
-
-        let wrongRecipient = WalletSemanticAction.nativeTransfer(
-            recipient: WalletSolanaBase58.encode(Data(repeating: 8, count: 32)),
-            amountBaseUnits: "1000"
-        )
-        let substituted = WalletPreparedTransaction(
-            id: transaction.id, digest: transaction.digest,
-            networkID: transaction.networkID, accountID: transaction.accountID,
-            source: transaction.source, action: wrongRecipient,
-            summary: transaction.summary, effects: transaction.effects,
-            riskFlags: transaction.riskFlags, contract: nil,
-            adapterID: transaction.adapterID, budgetAssetID: transaction.budgetAssetID,
-            spendBaseUnits: transaction.spendBaseUnits,
-            maximumFeeBaseUnits: transaction.maximumFeeBaseUnits,
-            feeQuoteBaseUnits: transaction.feeQuoteBaseUnits,
-            simulation: transaction.simulation,
-            simulationSucceeded: transaction.simulationSucceeded,
-            nonce: transaction.nonce, createdAt: transaction.createdAt,
-            expiresAt: transaction.expiresAt, policyDecision: "", policyID: nil
-        )
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: substituted, policy: policy, spentThisSession: "0"
-        ) else { return XCTFail("A substituted SOL recipient must require exact approval.") }
-    }
-
-    func testSolanaSPLPolicyBindsMintRecipientAmountFeeAndAdapter() {
-        let mint = WalletSolanaBase58.encode(Data(repeating: 3, count: 32))
-        let assetID = "solana:devnet/spl:\(mint)"
-        let recipient = WalletSolanaBase58.encode(Data(repeating: 5, count: 32))
-        let action = WalletSemanticAction.fungibleTokenTransfer(
-            assetID: assetID, recipient: recipient, amountBaseUnits: "1000000"
-        )
-        let transaction = WalletPreparedTransaction(
-            id: "spl-intent", digest: "digest",
-            networkID: WalletNetworkCatalog.solanaDevnet.id,
-            accountID: "locus-vault-solana-0", source: .agent,
-            action: action, summary: "Send token",
-            effects: [.init(
-                id: "effect", kind: "token_transfer", assetID: assetID,
-                amountBaseUnits: "1000000", from: "payer", to: recipient,
-                spender: nil
-            )],
-            riskFlags: [], contract: nil,
-            adapterID: WalletReviewedAdapters.solanaSPLTransferChecked,
-            budgetAssetID: assetID, spendBaseUnits: "1000000",
-            maximumFeeBaseUnits: "5000", feeQuoteBaseUnits: "5000",
-            simulation: "Success", simulationSucceeded: true, nonce: "blockhash",
-            createdAt: Date(), expiresAt: Date().addingTimeInterval(120),
-            policyDecision: "", policyID: nil
-        )
-        let policy = WalletSessionPolicy(
-            id: "spl-rule", accountID: transaction.accountID,
-            networkID: transaction.networkID,
-            allowedAssetIDs: [assetID], allowedRecipients: [recipient],
-            allowedContractIDs: [],
-            allowedAdapterIDs: [WalletReviewedAdapters.solanaSPLTransferChecked],
-            maximumTransactionBaseUnits: "1000000",
-            maximumSessionBaseUnits: "5000000", maximumFeeBaseUnits: "5000",
-            expiresAt: Date().addingTimeInterval(1800),
-            allowedActionKinds: [.fungibleTokenTransfer]
-        )
-        XCTAssertEqual(WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: policy, spentThisSession: "0"
-        ), .automatic)
-
-        let token2022 = WalletSessionPolicy(
-            id: policy.id, accountID: policy.accountID,
-            networkID: policy.networkID,
-            allowedAssetIDs: [assetID.replacingOccurrences(of: "/spl:", with: "/token2022:")],
-            allowedRecipients: policy.allowedRecipients,
-            allowedContractIDs: [], allowedAdapterIDs: policy.allowedAdapterIDs,
-            maximumTransactionBaseUnits: policy.maximumTransactionBaseUnits,
-            maximumSessionBaseUnits: policy.maximumSessionBaseUnits,
-            maximumFeeBaseUnits: policy.maximumFeeBaseUnits,
-            expiresAt: policy.expiresAt,
-            allowedActionKinds: policy.allowedActionKinds
-        )
-        guard case .requiresApproval = WalletPolicyEngine.evaluate(
-            transaction: transaction, policy: token2022, spentThisSession: "0"
-        ) else {
-            return XCTFail("A substituted Token-2022 asset must require exact approval.")
-        }
     }
 
     func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {

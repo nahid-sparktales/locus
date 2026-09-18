@@ -4,27 +4,6 @@ import XCTest
 
 final class WorkspaceFileModelTests: XCTestCase {
     @MainActor
-    func testFilteringUsesTheConfiguredWorkspaceAndCapsResults() {
-        let root = "/tmp/locus-workspace-files"
-        let model = WorkspaceFileModel()
-        model.configure(isUITesting: true, workspacePath: { root }, canIndex: { true })
-        model.seed(
-            (0..<240).map {
-                URL(fileURLWithPath: root).appending(path: "Sources/Feature\($0).swift")
-            },
-            workspacePath: root
-        )
-
-        model.query = "feature"
-
-        XCTAssertEqual(model.filteredFiles.count, 200)
-        XCTAssertEqual(
-            WorkspaceIndex.relativePath(model.filteredFiles[0], root: root),
-            "Sources/Feature0.swift"
-        )
-    }
-
-    @MainActor
     func testRefreshWaitsForSessionReadinessAndPublishesTheCurrentWorkspace() async {
         let root = "/tmp/locus-workspace-files"
         var isReady = false

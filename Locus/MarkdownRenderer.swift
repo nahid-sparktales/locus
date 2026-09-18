@@ -1462,25 +1462,7 @@ struct WorkspaceSourceLocation: Hashable, Sendable {
     let column: Int?
 }
 
-/// How a workspace file reference presents at a given nesting depth.
-enum MarkdownArtifactPresentation {
-    case fullCard
-    case compactChip
-}
-
-/// Which presentation a standalone workspace reference earns.
-///
-/// A file card is 58pt of chrome with three buttons. One sitting in a paragraph
-/// is a useful artifact; one per bullet turns a seven-file listing into a wall
-/// of cards, so inside a list the reference renders as a single-line chip —
-/// the card's icon, metadata, and actions without the chrome.
-/// Images are content rather than chrome and are promoted at any depth by the
-/// caller before this is consulted.
 enum MarkdownArtifactPromotion {
-    static func presentation(nestingDepth: Int) -> MarkdownArtifactPresentation {
-        nestingDepth == 0 ? .fullCard : .compactChip
-    }
-
     /// The file reference a nested paragraph leads with, if it is the only
     /// one. A bullet like `` `AppModel.swift` — the composition root ``
     /// promotes to a chip; a bullet comparing two files stays prose, so an

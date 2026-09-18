@@ -25,7 +25,6 @@ struct WorkspaceFileViewerRequest: Identifiable, Equatable, Sendable {
 final class WorkspaceFileModel: ObservableObject {
     typealias Scanner = @Sendable (String) -> [URL]
 
-    @Published var query = ""
     @Published private(set) var files: [URL] = []
     @Published private(set) var previewedPath: String?
     @Published private(set) var previewedContents: String?
@@ -55,15 +54,6 @@ final class WorkspaceFileModel: ObservableObject {
         self.isUITesting = isUITesting
         workspacePathProvider = workspacePath
         canIndexProvider = canIndex
-    }
-
-    var filteredFiles: [URL] {
-        WorkspaceIndex.matches(
-            query: query,
-            in: files,
-            root: workspacePath,
-            limit: 200
-        )
     }
 
     /// Workspace events mark this text-only candidate index stale. Rebuild on

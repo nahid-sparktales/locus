@@ -406,12 +406,6 @@ enum WalletAmountFormatter {
     }
 }
 
-enum WalletPolicyDecision: Equatable, Sendable {
-    case automatic
-    case requiresApproval(String)
-    case denied(String)
-}
-
 /// Decimal-free arithmetic for unsigned chain base units. Security decisions
 /// must not round through Decimal, Double, locale formatting, or token decimals.
 enum WalletBaseUnits {
@@ -529,120 +523,6 @@ enum WalletBaseUnits {
     static func lessThanOrEqual(_ lhs: String, _ rhs: String) -> Bool {
         guard let result = compare(lhs, rhs) else { return false }
         return result != .orderedDescending
-    }
-}
-
-enum WalletPolicyEngine {
-    static func evaluate(
-        transaction: WalletPreparedTransaction,
-        policy: WalletSessionPolicy?,
-        spentThisSession: String,
-        now: Date = Date()
-    ) -> WalletPolicyDecision {
-        guard transaction.expiresAt > now else { return .denied("The prepared transaction has expired.") }
-        guard transaction.simulationSucceeded else { return .denied("The transaction simulation failed.") }
-        guard transaction.action.type != .swapAllowanceSetup else {
-            return .requiresApproval("Allowance setup always requires exact confirmation.")
-        }
-        guard transaction.source.kind == .agent else {
-            return .requiresApproval("Browser transactions require an exact confirmation.")
-        }
-        if transaction.riskFlags.contains(.codeHashMismatch) {
-            return .denied("The observed contract code no longer matches the approved registry entry.")
-        }
-        if transaction.riskFlags.contains(.unlimitedApproval) {
-            return .requiresApproval("Unlimited token approvals require an exact confirmation.")
-        }
-        if transaction.riskFlags.contains(.undecodableCall)
-            || transaction.riskFlags.contains(.unknownEffect) {
-            return .requiresApproval("The call has effects that are not covered by an autonomous adapter.")
-        }
-        guard let adapterID = transaction.adapterID else {
-            return .requiresApproval("This registered call has no reviewed autonomous effect adapter.")
-        }
-        guard let policy else {
-            return .requiresApproval("No active session policy covers this transaction.")
-        }
-        guard policy.expiresAt > now else { return .requiresApproval("The wallet policy has expired.") }
-        guard policy.accountID == transaction.accountID, policy.networkID == transaction.networkID else {
-            return .requiresApproval("The account or network is outside the active policy.")
-        }
-        if let allowedActionKinds = policy.allowedActionKinds,
-           !allowedActionKinds.contains(transaction.action.type) {
-            return .requiresApproval("The semantic action is outside the active policy.")
-        }
-        guard policy.allowedAdapterIDs.contains(adapterID),
-              policy.allowedAssetIDs.contains(transaction.budgetAssetID) else {
-            return .requiresApproval("The asset or effect adapter is outside the active policy.")
-        }
-        let counterparties: [String]
-        switch adapterID {
-        case WalletReviewedAdapters.ethereumNativeTransfer,
-             WalletReviewedAdapters.solanaNativeTransfer,
-             WalletReviewedAdapters.solanaSPLTransferChecked,
-             WalletReviewedAdapters.solanaToken2022TransferChecked:
-            counterparties = transaction.action.recipient.map { [$0] } ?? []
-        case WalletReviewedAdapters.erc20:
-            counterparties = transaction.effects.compactMap { effect in
-                if effect.kind == "token_transfer" { return effect.to }
-                if effect.kind == "approval" || effect.kind == "approval_revoke" {
-                    return effect.spender
-                }
-                return nil
-            }
-        case WalletReviewedAdapters.uniswapUniversalRouterV2ExactIn,
-             WalletReviewedAdapters.uniswapUniversalRouterV2V3ExactIn:
-            counterparties = transaction.effects.filter {
-                $0.kind == "minimum_receive"
-            }.compactMap(\.to)
-            guard transaction.action.type == .exactInputSwap,
-                  let route = transaction.action.swapRoute,
-                  let deadline = UInt64(route.deadlineUnixSeconds),
-                  deadline >= UInt64(max(0, now.timeIntervalSince1970.rounded(.down))) else {
-                return .requiresApproval("The swap quote is stale.")
-            }
-            guard let maximumSlippage = policy.maximumSlippageBPS,
-                  (0...5_000).contains(maximumSlippage),
-                  route.slippageBPS <= maximumSlippage else {
-                return .requiresApproval("The swap slippage exceeds the policy limit.")
-            }
-            let outputs = transaction.effects.filter { $0.kind == "minimum_receive" }
-            guard let minimum = policy.minimumOutputBaseUnits,
-                  outputs.count == 1,
-                  WalletBaseUnits.lessThanOrEqual(
-                    minimum, outputs[0].amountBaseUnits
-                  ) else {
-                return .requiresApproval("The swap minimum output is below the policy floor.")
-            }
-        default:
-            counterparties = []
-        }
-        guard !counterparties.isEmpty,
-              counterparties.allSatisfy({ counterparty in
-                  policy.allowedRecipients.contains(where: {
-                      $0.caseInsensitiveCompare(counterparty) == .orderedSame
-                  })
-              }) else {
-            return .requiresApproval("A transaction counterparty is outside the active policy.")
-        }
-        if let contractID = transaction.action.contractID,
-           !policy.allowedContractIDs.contains(contractID) {
-            return .requiresApproval("The contract is outside the active policy.")
-        }
-        guard WalletBaseUnits.lessThanOrEqual(
-            transaction.spendBaseUnits, policy.maximumTransactionBaseUnits
-        ), let total = WalletBaseUnits.add(spentThisSession, transaction.spendBaseUnits),
-           WalletBaseUnits.lessThanOrEqual(total, policy.maximumSessionBaseUnits) else {
-            return .requiresApproval("The transaction exceeds its base-unit spending rule.")
-        }
-        guard WalletBaseUnits.lessThanOrEqual(
-            transaction.maximumFeeBaseUnits, policy.maximumFeeBaseUnits
-        ), WalletBaseUnits.lessThanOrEqual(
-            transaction.feeQuoteBaseUnits, transaction.maximumFeeBaseUnits
-        ) else {
-            return .requiresApproval("The transaction exceeds its fee ceiling.")
-        }
-        return .automatic
     }
 }
 

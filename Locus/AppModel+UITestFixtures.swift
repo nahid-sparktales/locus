@@ -671,11 +671,6 @@ extension AppModel {
                 unstaged: true
             ),
         ]
-        if ProcessInfo.processInfo.environment[
-            "LOCUS_UI_TESTING_PREFILL_RECOMMENDATION"
-        ] == "1" {
-            gitWorkspace.gitChanges = []
-        }
         let seededWorkspaceFiles = [
             "README.md",
             "Locus/AppModel.swift",

@@ -13,7 +13,6 @@ import sqlite3
 import subprocess
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -542,34 +541,6 @@ class KnowledgeStore:
                 "SELECT * FROM memories ORDER BY pinned DESC, updated_at DESC"
             ).fetchall()
         return [self._memory(row) for row in rows]
-
-    def save_memory(self, value: dict[str, Any], memory_id: str = "") -> dict[str, Any]:
-        title = str(value.get("title") or "Workspace memory").strip()[:160]
-        content = str(value.get("content") or "").strip()[:32_000]
-        if not content:
-            raise KnowledgeError("memory content cannot be empty")
-        identifier = memory_id or uuid.uuid4().hex
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier):
-            raise KnowledgeError("memory id is invalid")
-        tags = sorted({str(item).strip().lower()[:40] for item in value.get("tags") or []
-                       if str(item).strip()})[:24]
-        now = time.time()
-        with self._connect() as connection:
-            connection.execute(
-                """INSERT INTO memories(
-                    id, title, content, tags_json, source_session_id, source_run_id,
-                    pinned, stale, created_at, updated_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content,
-                    tags_json=excluded.tags_json, pinned=excluded.pinned, stale=excluded.stale,
-                    updated_at=excluded.updated_at""",
-                (identifier, title, content, json.dumps(tags),
-                 str(value.get("source_session_id") or "") or None,
-                 str(value.get("source_run_id") or "") or None,
-                 int(bool(value.get("pinned"))), int(bool(value.get("stale"))), now, now),
-            )
-            row = connection.execute("SELECT * FROM memories WHERE id=?", (identifier,)).fetchone()
-        return self._memory(row)
 
     def delete_memory(self, memory_id: str) -> bool:
         with self._connect() as connection:

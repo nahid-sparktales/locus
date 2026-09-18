@@ -16,7 +16,6 @@ import subprocess
 import threading
 import time
 import uuid
-from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -398,88 +397,6 @@ class TeamPreparation:
     completed_writer_job_ids: set[str] = field(default_factory=set)
 
 
-@dataclass
-class _Lease:
-    id: str
-    run_id: str
-    expires_at: float
-
-
-class ModelCallScheduler:
-    """Authenticated-process model-call leases with round-robin chat fairness."""
-
-    def __init__(self, limit: int = 3, lease_seconds: int = 660) -> None:
-        self.limit = max(1, min(limit, MAX_TEAM_CONCURRENCY))
-        self.lease_seconds = max(30, lease_seconds)
-        self._condition = threading.Condition()
-        self._waiting: deque[tuple[str, str]] = deque()
-        self._active: dict[str, _Lease] = {}
-        self._last_run = ""
-
-    @contextmanager
-    def lease(self, run_id: str, should_stop: Stop | None = None):
-        request_id = uuid.uuid4().hex
-        with self._condition:
-            self._waiting.append((request_id, run_id))
-            while True:
-                self._reap_locked()
-                if should_stop and should_stop():
-                    self._waiting = deque(item for item in self._waiting if item[0] != request_id)
-                    self._condition.notify_all()
-                    raise InterruptedError("orchestration cancelled")
-                next_id = self._next_waiter_locked()
-                if len(self._active) < self.limit and next_id == request_id:
-                    self._waiting = deque(item for item in self._waiting if item[0] != request_id)
-                    self._active[request_id] = _Lease(
-                        request_id, run_id, time.monotonic() + self.lease_seconds
-                    )
-                    self._last_run = run_id
-                    break
-                self._condition.wait(timeout=0.1)
-        try:
-            yield request_id
-        finally:
-            with self._condition:
-                self._active.pop(request_id, None)
-                self._condition.notify_all()
-
-    def heartbeat(self, lease_id: str) -> bool:
-        with self._condition:
-            lease = self._active.get(lease_id)
-            if lease is None:
-                return False
-            lease.expires_at = time.monotonic() + self.lease_seconds
-            return True
-
-    def cleanup_expired(self) -> int:
-        with self._condition:
-            before = len(self._active)
-            self._reap_locked()
-            return before - len(self._active)
-
-    @property
-    def active_count(self) -> int:
-        with self._condition:
-            self._reap_locked()
-            return len(self._active)
-
-    def _next_waiter_locked(self) -> str | None:
-        if not self._waiting:
-            return None
-        for request_id, run_id in self._waiting:
-            if run_id != self._last_run:
-                return request_id
-        return self._waiting[0][0]
-
-    def _reap_locked(self) -> None:
-        now = time.monotonic()
-        expired = [key for key, lease in self._active.items() if lease.expires_at <= now]
-        for key in expired:
-            self._active.pop(key, None)
-        if expired:
-            self._condition.notify_all()
-
-
 LEASE_DATABASE_PREFIX = "model-call-leases-"
 LEASE_DATABASE_SUFFIX = ".sqlite3"
 #: How long a lease database may sit untouched before a sweep may delete it. A
@@ -756,7 +673,7 @@ class TeamOrchestrator:
         self,
         emit: Emit,
         should_stop: Stop,
-        scheduler: ModelCallScheduler | CrossProcessModelCallScheduler = GLOBAL_MODEL_SCHEDULER,
+        scheduler: CrossProcessModelCallScheduler = GLOBAL_MODEL_SCHEDULER,
         run_store: RunStore | None = None,
         approve_dispatch: DispatchApproval | None = None,
     ) -> None:
@@ -830,16 +747,6 @@ class TeamOrchestrator:
             self._call_count = calls
             self._metered_tokens = metered
             self._estimated_cost = estimated
-
-    def route_plan(
-        self,
-        run_id: str,
-        plan: DispatchPlan,
-        team: AgentTeam,
-        profiles: dict[str, AgentProfile],
-        forced_agent: str | None = None,
-    ) -> DispatchPlan:
-        return self._resolve_scorecard(run_id, plan, team, profiles, forced_agent)
 
     def scorecard(self, profile: AgentProfile, team: AgentTeam) -> dict[str, Any]:
         return self._scorecard(profile, team)
@@ -3573,7 +3480,6 @@ __all__ = [
     "AgentTeam",
     "DispatchPlan",
     "GLOBAL_MODEL_SCHEDULER",
-    "ModelCallScheduler",
     "OrchestrationBudget",
     "OrchestrationError",
     "TeamOrchestrator",

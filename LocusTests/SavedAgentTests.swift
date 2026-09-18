@@ -533,36 +533,6 @@ final class SavedAgentTests: XCTestCase {
     }
 
     @MainActor
-    func testLinkingSharedProjectChangesOnlyFutureDefaultAndUnlinkKeepsFiles() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("keep.txt")
-        try Data("Keep project content".utf8).write(to: file)
-        let model = cleanupModel()
-        defer { cancelPendingWork(model) }
-        model.agentHomesRootOverride = root.appendingPathComponent("Homes")
-        let first = AgentProfile(name: "Garp", model: "fixture")
-        let second = AgentProfile(name: "Robin", model: "fixture")
-        model.agentProfiles = [first, second]
-        let old = cleanupSession("old", owner: first.id)
-        model.sessions = [old]
-        model.setSavedAgentDefaultWorkspace(first, path: root.path)
-        model.setSavedAgentDefaultWorkspace(second, path: root.path)
-        let canonical = SessionSummary.canonicalWorkspacePath(root.path)
-        XCTAssertEqual(model.savedAgentWorkspacePath(first), canonical)
-        XCTAssertEqual(model.savedAgentWorkspacePath(second), canonical)
-        XCTAssertEqual(model.sessions.first, old, "Changing a default never moves a saved chat")
-        let persisted = try JSONDecoder().decode([AgentProfile].self, from: JSONEncoder().encode(model.agentProfiles))
-        XCTAssertEqual(persisted.first?.workspacePreferences?.defaultProjectPath, canonical)
-        model.unlinkSavedAgentProject(first, path: root.path)
-        XCTAssertEqual(model.savedAgentWorkspacePath(first), model.savedAgentHomePath(first))
-        XCTAssertEqual(model.savedAgentWorkspacePath(second), canonical)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertEqual(model.sessions.first, old)
-    }
-
-    @MainActor
     func testHomeCreationIsLazyAndRejectsRedirectedOrForeignHomes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let model = cleanupModel()

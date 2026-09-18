@@ -790,9 +790,6 @@ def session_metadata_update(
     return {"ok": True, "id": session_id, **state}
 
 
-session_update = session_metadata_update
-
-
 def session_resume(session_id: str, service: ServiceDependency) -> dict[str, Any]:
     try:
         with service.state_mutation():

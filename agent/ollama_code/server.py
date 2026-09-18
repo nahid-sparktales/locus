@@ -32,7 +32,6 @@ from typing import Any
 import uvicorn
 from fastapi import (
     APIRouter,
-    Body,
     FastAPI,
     HTTPException,
     Request,
@@ -41,7 +40,6 @@ from fastapi.responses import JSONResponse
 
 from . import __version__, proxy
 from .agent_config import AgentConfiguration
-from .api.dependencies import current_service, request_service_context
 from .capabilities import enabled as capability_enabled
 from .chat_service import AgentBusyError, ChatService
 from .chat_transport_runtime import command_error as _command_error
@@ -258,17 +256,11 @@ async def block_browser_origins(request: Request, call_next):
     runtime_webhook = bool(getattr(request.app.state, "runtime", None)) and request.url.path.startswith("/api/runtime/webhooks/") and request.method == "POST"
     if token and not runtime_webhook and request.headers.get("x-locus-token") != token:
         return JSONResponse({"detail": "local agent authentication failed"}, status_code=401)
-    with request_service_context(getattr(request.app.state, "service", None)):
-        return await call_next(request)
+    return await call_next(request)
 
 
 def _allowed_origins(application: FastAPI) -> set[str]:
     return set(getattr(application.state, "allowed_origins", set()))
-
-
-def service() -> ChatService:
-    """Return the current request's service, with a legacy direct-call fallback."""
-    return current_service(app)
 
 
 def _require_capability(name: str) -> None:
@@ -282,56 +274,12 @@ def _require_capability(name: str) -> None:
 # ---------------------------------------------------------- Workspace knowledge
 
 
-def _knowledge_store(workspace: str = "") -> KnowledgeStore:
+def _knowledge_store(workspace: str) -> KnowledgeStore:
     _require_capability("workspace_knowledge")
     try:
-        svc = None if workspace.strip() else service()
-        return _domain_knowledge_store(svc, workspace)
+        return _domain_knowledge_store(None, workspace)
     except KnowledgeError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def _memory_vault(workspace: str = ""):
-    return _domain_memory_vault(workspace)
-
-
-# ------------------------------------------------------------ Durable MCP tasks
-
-
-def session_new(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    """Compatibility entry point for direct callers outside FastAPI."""
-    from .api.sessions import session_new as handler
-
-    return handler(service(), body)
-
-
-def sessions_clear() -> dict[str, Any]:
-    """Compatibility entry point for direct callers outside FastAPI."""
-    from .api.sessions import sessions_clear as handler
-
-    return handler(service())
-
-
-def session_detail(session_id: str) -> dict[str, Any]:
-    """Compatibility entry point for direct callers outside FastAPI."""
-    from .api.sessions import session_detail as handler
-
-    return handler(session_id)
-
-
-def session_metadata_update(
-    session_id: str,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    """Compatibility entry point for direct callers outside FastAPI."""
-    from .api.sessions import session_metadata_update as handler
-
-    return handler(session_id, service(), body)
-
-
-session_update = session_metadata_update
-
-# --------------------------------------------------- Managed background work
 
 
 # ---------------------------------------------------------------- WebSocket
@@ -374,7 +322,7 @@ def _automatic_memory_context(
     workspace = core.workspace_root or core.cwd
     try:
         knowledge = _knowledge_store(workspace).settings()
-        results = _memory_vault(workspace).search(
+        results = _domain_memory_vault(workspace).search(
             query,
             workspace=workspace,
             agent_id=agent_id,
