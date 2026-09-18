@@ -695,103 +695,104 @@ else
         exit 1
     }
     fi # LocusX wallet security checks
-    simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
-    [[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
-        echo "error: direct-download Simulator bridge helpers are missing" >&2
-        exit 1
-    }
-    [[ -f "${simulator_provenance}" ]] || {
-        echo "error: Simulator bridge provenance is missing" >&2
-        exit 1
-    }
-    [[ -f "${resources}/ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE" ]] || {
-        echo "error: Simulator bridge MIT license is missing" >&2
-        exit 1
-    }
-    for pin in \
-        "commit=bd5aca70704fe0fb5e974abaed205f54469799b0" \
-        "license=MIT" \
-        "touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71" \
-        "tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63"
-    do
-        /usr/bin/grep -Fq -- "${pin}" "${simulator_provenance}" || {
-            echo "error: Simulator bridge provenance is missing ${pin}" >&2
-            exit 1
-        }
-    done
-    expected_touch_sha="$(/usr/bin/awk -F= '$1 == "touch_binary_sha256" {print $2}' \
-        "${simulator_provenance}")"
-    expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
-        "${simulator_provenance}")"
-    expected_touch_unsigned="$(/usr/bin/awk -F= '$1 == "touch_unsigned_sha256" {print $2}' "${simulator_provenance}")"
-    expected_tree_unsigned="$(/usr/bin/awk -F= '$1 == "tree_unsigned_sha256" {print $2}' "${simulator_provenance}")"
-    if [[ -n "${expected_touch_unsigned}" && -n "${expected_tree_unsigned}" ]]; then
-        # Xcode export can replace a signing timestamp or certificate without
-        # changing code. The pre-seal unsigned digest survives that operation.
-        [[ "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_touch}")" \
-            == "${expected_touch_unsigned}" \
-            && "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_tree}")" \
-            == "${expected_tree_unsigned}" ]] || {
-            echo "error: Simulator helper executable content differs from build provenance" >&2; exit 1
-        }
-    else
-    [[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
-        == "${expected_touch_sha}" ]] || {
-        echo "error: Simulator touch helper checksum does not match provenance" >&2
-        exit 1
-    }
-    [[ "$(/usr/bin/shasum -a 256 "${simulator_tree}" | /usr/bin/awk '{print $1}')" \
-        == "${expected_tree_sha}" ]] || {
-        echo "error: Simulator tree helper checksum does not match provenance" >&2
-        exit 1
-    }
-    fi
-    expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
-        "${simulator_provenance}")"
-    [[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
-        && "$(/usr/bin/lipo -archs "${simulator_tree}")" == "${expected_simulator_archs}" ]] || {
-        echo "error: Simulator bridge architectures do not match provenance" >&2
-        exit 1
-    }
-    /usr/bin/codesign --verify --strict "${simulator_touch}" || {
-        echo "error: Simulator touch helper signature is invalid" >&2; exit 1
-    }
-    /usr/bin/codesign --verify --strict "${simulator_tree}" || {
-        echo "error: Simulator tree helper signature is invalid" >&2; exit 1
-    }
-    [[ -d "${sparkle}" ]] || {
-        echo "error: the direct-download build is missing Sparkle.framework" >&2
-        exit 1
-    }
-    sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
-        "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
-    [[ "${sparkle_version}" == "2.9.6" ]] || {
-        echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.6" >&2
-        exit 1
-    }
-    for required in \
-        "Versions/B/Autoupdate" \
-        "Versions/B/Updater.app/Contents/MacOS/Updater" \
-        "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
-        "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
-    do
-        [[ -x "${sparkle}/${required}" ]] || {
-            echo "error: Sparkle updater payload is missing ${required}" >&2
-            exit 1
-        }
-    done
-    if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}")" == "manual" ]]; then
-        [[ -z "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${info_plist}" 2>/dev/null || true)" ]] || {
-            echo "error: local edition must not register an update feed" >&2; exit 1
-        }
-    else
-        python3 "${repo_root}/Tools/LocusUpdateFeed.py" configuration "${info_plist}"
-    fi
-    /usr/bin/codesign --verify --deep --strict "${sparkle}" || {
-        echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
-        exit 1
-    }
 fi
+
+simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
+[[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
+    echo "error: direct-download Simulator bridge helpers are missing" >&2
+    exit 1
+}
+[[ -f "${simulator_provenance}" ]] || {
+    echo "error: Simulator bridge provenance is missing" >&2
+    exit 1
+}
+[[ -f "${resources}/ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE" ]] || {
+    echo "error: Simulator bridge MIT license is missing" >&2
+    exit 1
+}
+for pin in \
+    "commit=bd5aca70704fe0fb5e974abaed205f54469799b0" \
+    "license=MIT" \
+    "touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71" \
+    "tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63"
+do
+    /usr/bin/grep -Fq -- "${pin}" "${simulator_provenance}" || {
+        echo "error: Simulator bridge provenance is missing ${pin}" >&2
+        exit 1
+    }
+done
+expected_touch_sha="$(/usr/bin/awk -F= '$1 == "touch_binary_sha256" {print $2}' \
+    "${simulator_provenance}")"
+expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
+    "${simulator_provenance}")"
+expected_touch_unsigned="$(/usr/bin/awk -F= '$1 == "touch_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+expected_tree_unsigned="$(/usr/bin/awk -F= '$1 == "tree_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+if [[ -n "${expected_touch_unsigned}" && -n "${expected_tree_unsigned}" ]]; then
+    # Xcode export can replace a signing timestamp or certificate without
+    # changing code. The pre-seal unsigned digest survives that operation.
+    [[ "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_touch}")" \
+        == "${expected_touch_unsigned}" \
+        && "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_tree}")" \
+        == "${expected_tree_unsigned}" ]] || {
+        echo "error: Simulator helper executable content differs from build provenance" >&2; exit 1
+    }
+else
+[[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
+    == "${expected_touch_sha}" ]] || {
+    echo "error: Simulator touch helper checksum does not match provenance" >&2
+    exit 1
+}
+[[ "$(/usr/bin/shasum -a 256 "${simulator_tree}" | /usr/bin/awk '{print $1}')" \
+    == "${expected_tree_sha}" ]] || {
+    echo "error: Simulator tree helper checksum does not match provenance" >&2
+    exit 1
+}
+fi
+expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
+    "${simulator_provenance}")"
+[[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
+    && "$(/usr/bin/lipo -archs "${simulator_tree}")" == "${expected_simulator_archs}" ]] || {
+    echo "error: Simulator bridge architectures do not match provenance" >&2
+    exit 1
+}
+/usr/bin/codesign --verify --strict "${simulator_touch}" || {
+    echo "error: Simulator touch helper signature is invalid" >&2; exit 1
+}
+/usr/bin/codesign --verify --strict "${simulator_tree}" || {
+    echo "error: Simulator tree helper signature is invalid" >&2; exit 1
+}
+[[ -d "${sparkle}" ]] || {
+    echo "error: the direct-download build is missing Sparkle.framework" >&2
+    exit 1
+}
+sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
+    "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
+[[ "${sparkle_version}" == "2.9.6" ]] || {
+    echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.6" >&2
+    exit 1
+}
+for required in \
+    "Versions/B/Autoupdate" \
+    "Versions/B/Updater.app/Contents/MacOS/Updater" \
+    "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
+    "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+do
+    [[ -x "${sparkle}/${required}" ]] || {
+        echo "error: Sparkle updater payload is missing ${required}" >&2
+        exit 1
+    }
+done
+if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}")" == "manual" ]]; then
+    [[ -z "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${info_plist}" 2>/dev/null || true)" ]] || {
+        echo "error: local edition must not register an update feed" >&2; exit 1
+    }
+else
+    python3 "${repo_root}/Tools/LocusUpdateFeed.py" configuration "${info_plist}"
+fi
+/usr/bin/codesign --verify --deep --strict "${sparkle}" || {
+    echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
+    exit 1
+}
 
 if [[ "${codex_delivery}" == "bundled" ]]; then
 for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
