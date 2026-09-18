@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.2.0 — 2026-09-18
 
 ### Added
 
@@ -13,6 +13,11 @@
   that record who changed what. Agents can read the board, create, move, edit,
   comment on, or delete cards to coordinate work and report progress, and each
   change is attributed to the agent that made it.
+
+### Fixed
+
+- The calendar's accounts menu draws its button again. It asked for a symbol
+  macOS does not ship, so the control rendered empty.
 
 ## 3.1.0 — 2026-09-14
 
