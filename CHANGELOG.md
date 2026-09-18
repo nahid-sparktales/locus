@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Removed
+
+- The Mac App Store build target. Locus ships as one product, the notarized
+  direct download, so there is no longer a sandboxed configuration, a second
+  entitlements set, or a separate update path. The App Store target never
+  shipped, so no installed app is affected and nothing needs reinstalling.
+  Computer Control, application context, git push and pull, the iOS Simulator
+  bridge, local command-based MCP servers and the independent background
+  runtime are no longer described as conditional — the direct download has
+  always included them.
+
+## 3.2.0 — 2026-09-18
+
 ### Added
 
 - Calendar joins the right inspector with a month view, daily agenda, and event
@@ -14,16 +27,10 @@
   comment on, or delete cards to coordinate work and report progress, and each
   change is attributed to the agent that made it.
 
-### Removed
+### Fixed
 
-- The Mac App Store build target. Locus ships as one product, the notarized
-  direct download, so there is no longer a sandboxed configuration, a second
-  entitlements set, or a separate update path. The App Store target never
-  shipped, so no installed app is affected and nothing needs reinstalling.
-  Computer Control, application context, git push and pull, the iOS Simulator
-  bridge, local command-based MCP servers and the independent background
-  runtime are no longer described as conditional — the direct download has
-  always included them.
+- The calendar's accounts menu draws its button again. It asked for a symbol
+  macOS does not ship, so the control rendered empty.
 
 ## 3.1.0 — 2026-09-14
 
