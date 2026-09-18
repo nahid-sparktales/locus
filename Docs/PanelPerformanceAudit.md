@@ -15,7 +15,7 @@ and restoring them, and dragging their divider with an existing long chat.
 
 The sidebar gear menu now includes **Check for Updates…** for automatic-update
 builds, connected to the existing update controller and its enabled state.
-Manual and App Store builds expose **Software Updates…**, which opens the
+Manual builds expose **Software Updates…**, which opens the
 appropriate Settings page. The compact sidebar receives the same controller.
 
 ## Verification

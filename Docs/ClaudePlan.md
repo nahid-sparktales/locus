@@ -26,8 +26,8 @@ check does not cover the broader authentication and execution cases below.
   Run `Tools/PackageComponents.sh <release-directory>` to package both providers
   and include their entries in `components.json`.
   Set `LOCUS_SIGN_IDENTITY` to the distribution signing identity.
-- App Store and development builds default to `LOCUS_BUNDLE_CLAUDE=build`.
-  App Store builds must bundle their runtime; they cannot download it later.
+- Every other configuration, including Debug and `ReleaseExperimental`,
+  defaults to `LOCUS_BUNDLE_CLAUDE=build`.
 - Set `LOCUS_BUNDLE_CLAUDE=skip` explicitly to omit Claude from a local build.
 - For a standalone backend, point `LOCUS_CLAUDE_RUNTIME_PATH` at the verified
   runtime. Installing the SDK alone does not provide Locus's managed runtime path.
@@ -83,5 +83,5 @@ Before release, exercise browser login/cancel/logout, token expiry,
 two simultaneous subscription accounts (including macOS Keychain isolation),
 real attachments and tools, interruption/resume, team/swarm execution, scheduled
 execution, and SSH login on a second host. Verify the signed/notarized component
-and an enabled App Store bundle on clean machines. Unit tests and unsigned
+and an enabled bundled build on clean machines. Unit tests and unsigned
 metadata discovery do not establish these authenticated behaviors.

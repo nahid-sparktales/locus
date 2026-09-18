@@ -42,7 +42,7 @@ approval. Earlier Node 25 reproductions remain historical evidence only.
 Commit the candidate and regenerate the Xcode project before beginning. Use an
 external, new artifact directory; the archive tool rejects dirty source, an
 existing destination, or a destination under the checkout. Debug, Release, and
-ReleaseMAS use separate DerivedData directories.
+ReleaseExperimental use separate DerivedData directories.
 
 Set `LOCUS_WALLET_RELEASE_CHANNEL` to `canary` for the candidate. Supply the public
 verification key, distinct signed non-activating review ceiling, exact provider URLs, connector
@@ -156,7 +156,7 @@ Dormant wallet candidates without a current verified admission cannot check for
 updates. An admitted active canary selects its sealed canary feed and the exact
 candidate archive/version; verified GA promotion selects stable. Normal builds
 without wallet candidate configuration retain ordinary stable updates. The
-App Store artifact must contain neither candidate configuration nor its updater
+Wallet-free Locus must contain neither candidate configuration nor its updater
 authority code. These controls do not replace signed device admissions.
 
 `ArchiveWalletRelease.sh` refuses fresh GA archives and packaging refuses to

@@ -27,7 +27,7 @@ The app's public client ID is the only value embedded in Locus. Device flow does
 
 ## Build setting
 
-`project.yml` defines `LOCUS_GITHUB_OAUTH_CLIENT_ID=Iv23liCL3tit1VOgBjWF` for both app targets. Both direct-download and Mac App Store Info.plists expose it as `LocusGitHubOAuthClientID`. Because this is a public OAuth identifier, it is safe to include in source and signed builds; no GitHub client secret is embedded.
+`project.yml` defines `LOCUS_GITHUB_OAUTH_CLIENT_ID=Iv23liCL3tit1VOgBjWF` for both app targets. Both app Info.plists expose it as `LocusGitHubOAuthClientID`. Because this is a public OAuth identifier, it is safe to include in source and signed builds; no GitHub client secret is embedded.
 
 Development or release builds can override the configured value with the `LOCUS_GITHUB_OAUTH_CLIENT_ID` build setting when rotating the GitHub App registration. A process environment value remains a development fallback when the bundle contains no resolved value. If neither value exists, Locus explains that account sign-in is unavailable and keeps **Use token instead** available.
 

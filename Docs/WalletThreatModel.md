@@ -19,7 +19,7 @@ checked at the signer boundary.
 | Entropy and private keys | `WalletSigner.xpc` | AES-GCM at rest; device-only Keychain wrapping key; user presence; zeroize on lock |
 | Active policies and cumulative budgets | Signer connection | Re-evaluate and reserve at signature release; clear on lock/invalidation |
 | Network evidence | Native app plus signer recheck | Canonical chain identity; primary/fallback comparison; never concurrent duplicate broadcast |
-| External-wallet and dapp sessions | Unsandboxed Direct Locus process and its isolated trusted WebKit runtime | This is an explicitly accepted boundary: the process can access SDK session state, but agents, logs, the public wallet store, and signer APIs cannot; the entire runtime is absent from the Mac App Store build |
+| External-wallet and dapp sessions | Unsandboxed Direct Locus process and its isolated trusted WebKit runtime | This is an explicitly accepted boundary: the process can access SDK session state, but agents, logs, the public wallet store, and signer APIs cannot; the entire runtime is absent from wallet-free Locus |
 | Browser/WalletConnect identity | Native app session plus Direct connector-driver peer session | Immutable normalized origin or stable peer ID through prepare, simulate, confirm, sign, and broadcast |
 | Public wallet metadata | Versioned SQLite store | No phrase, entropy, key, policy authority, signed bytes, or unrestricted diagnostics |
 | Launch authority | Post-package signed activation envelope, independently verified by app and signer | Exact installed source/version/CodeDirectory identity; schema-v3 per-network capability and exact connector/direction/method/ownership grants; provider/configuration identities; signed review-ceiling intersection; expiry and signer-owned monotonic revision |
@@ -42,7 +42,7 @@ relay key, vendor token, recovery secret, signer policy, raw provider object,
 unsigned/signed transaction bytes, or signature. Release-scoped configuration,
 pinned runtime identity, and signed review identity are all required. Direct
 connector Swift, JavaScript, Reown code, resources, configuration, and
-credentials are compile- and package-excluded from the Mac App Store product.
+credentials are compile- and package-excluded from wallet-free Locus.
 
 ## Request-source policy
 

@@ -13,7 +13,7 @@ The runtime is opt-in in direct-download, wallet-free Locus. A signed bundled
 SMAppService launch agent starts the Python supervisor. Its versioned package,
 private credentials, and controller token are stored in the user's Locus Runtime
 directory. macOS registration approval, login and awake requirements are shown in
-Settings. App Store and LocusX do not install this helper.
+Settings. LocusX does not install this helper.
 
 A worker belongs to the supervisor, not a window. Controller websocket connections
 subscribe to durable events; reconnect uses a cursor and pending decision snapshot.
@@ -217,8 +217,8 @@ Final validation on this branch:
   replay, approvals, accounting, evaluations and reusable checks.
 - **59 native tests passed**, covering runtime protocol, evaluations, goals and
   capsules. The temporary-directory XCTest run completed with zero failures.
-- **Direct-download Locus, LocusX and App Store builds passed**, and all three
-  edition artifact audits passed. Bundled backend assets were skipped for these
+- **Locus and LocusX builds passed**, and both edition artifact audits
+  passed. Bundled backend assets were skipped for these
   compile/audit runs; portable runtime packaging remains a separate release gate.
 - Ruff passed for the changed backend Python files, and `git diff --check` passed.
 

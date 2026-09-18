@@ -124,7 +124,7 @@ parser at commit `924936d0427cb25a61169739a7660230bffa6ea6`.
 Direct-download builds include a minimal native touch and accessibility bridge
 based on `ios-mcp-server` commit
 `bd5aca70704fe0fb5e974abaed205f54469799b0`. It is used only with explicitly
-attached Xcode iOS Simulators and is absent from the Mac App Store build.
+attached Xcode iOS Simulators.
 
 - Source: https://github.com/martingeidobler/ios-mcp-server
 - License: MIT
@@ -134,7 +134,7 @@ attached Xcode iOS Simulators and is absent from the Mac App Store build.
 
 Direct-download builds use Sparkle 2.9.6 at commit
 `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a` to verify, download, and install
-Locus updates. Sparkle is not linked or bundled in the Mac App Store build.
+Locus updates.
 
 - Source: https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6
 - License: MIT and bundled permissive component licenses

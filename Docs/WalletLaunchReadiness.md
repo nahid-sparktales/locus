@@ -46,7 +46,7 @@ clean candidate revision before canary activation.
   messages, disabled developer extras, and no arbitrary-page loading. The
   accepted boundary places SDK sessions in the unsandboxed Direct app; its
   Swift, JavaScript, Reown code, resources, and credentials are compile- and
-  package-excluded from the Mac App Store target.
+  package-excluded from wallet-free Locus.
 - [x] Structured SIWE/SIWS signer path reconstructs the canonical message,
   binds domain/origin/chain/account/nonce/timestamps/resources, requires device
   owner approval, consumes the nonce before signing, and exposes no arbitrary
@@ -280,7 +280,7 @@ batching; Uniswap V4; Jupiter; and Cetus.
   WalletConnect proposal approval/rejection, lifecycle, and revocation.
 - [x] Connection SDK source pins, lockfile integrity, deterministic bundle
   digest, licenses, patched Reown tree/archive digests, enabled-runtime SBOM,
-  zero-vulnerability npm audit, and Direct/Mac-App-Store target boundary gates
+  zero-vulnerability npm audit, and wallet/wallet-free target boundary gates
   are recorded and checked. Reviewed transitive overrides keep Axios at
   `1.20.0`, affected UUID consumers at `11.1.1`, and Solana's Jayson dependency
   at `4.1.3` without changing the approved connector SDK versions.

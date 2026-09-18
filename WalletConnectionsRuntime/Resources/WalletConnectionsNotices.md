@@ -1,7 +1,7 @@
 # Locus Wallet Connections — Third-Party Notices
 
-This notice is packaged only in the Direct-download Locus application. The
-Mac App Store target contains none of the connector runtime or these notices.
+This notice is packaged only in the LocusX application. Wallet-free Locus
+contains none of the connector runtime or these notices.
 
 The trusted connector page is built from `WalletConnectionsWeb/package-lock.json`.
 Its complete machine-readable component, version, integrity, source, and
