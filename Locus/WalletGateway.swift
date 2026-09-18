@@ -844,7 +844,6 @@ final class WalletGateway: ObservableObject {
     @Published private(set) var browserProviderEnabled: Bool
     @Published private(set) var idleLockMinutes: Int
     @Published private(set) var recoveryOnlyVaultAvailable = false
-    @Published private(set) var contacts: [WalletContact] = []
     @Published private(set) var assets: [WalletAsset] = []
     @Published private(set) var connections: [WalletConnectionRecord] = []
     @Published private(set) var pendingConnectionProposal: WalletConnectionProposalReview?
@@ -988,7 +987,6 @@ final class WalletGateway: ObservableObject {
             transactionHistory = Array(legacyActivity.prefix(250))
         }
         if let publicStore = self.publicStore {
-            contacts = (try? publicStore.loadContacts()) ?? []
             let storedAssets = (try? publicStore.loadAssets()) ?? []
             assets = Self.mergeReviewedAssets(
                 signed: self.reviewRegistry?.assets ?? [], stored: storedAssets
@@ -1270,8 +1268,6 @@ final class WalletGateway: ObservableObject {
             && vaultState == .rotationRequired && !recoveryCeremonyActive
     }
 
-    var isExperimentalEnabled: Bool { walletEnabled }
-    var signerAvailable: Bool { signer.isAvailable }
     var connectionHelperAvailable: Bool { connectionsClient.isAvailable }
 
     func reportConnectionIntakeError(_ error: Swift.Error) {
@@ -2146,52 +2142,6 @@ final class WalletGateway: ObservableObject {
             recoveryOnlyVaultAvailable = signerStatus.recoveryOnlyVaultAvailable
             replaceVaultAccounts(signerStatus.accounts)
             synchronizeAccountSnapshots(with: accounts)
-            lastError = nil
-            return true
-        } catch {
-            lastError = error.localizedDescription
-            return false
-        }
-    }
-
-    @discardableResult
-    func saveContact(
-        name: String,
-        networkID: String,
-        rawAddress: String,
-        resolvedName: String? = nil,
-        resolutionProof: String? = nil
-    ) -> Bool {
-        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanAddress = rawAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let descriptor = WalletNetworkCatalog.descriptor(id: networkID),
-              !cleanName.isEmpty, cleanName.count <= 128,
-              Self.validAddress(cleanAddress, chain: descriptor.chain),
-              resolvedName == nil || (resolutionProof?.isEmpty == false) else {
-            lastError = "Enter a valid chain-scoped raw address. Resolved names require a verified forward-resolution proof."
-            return false
-        }
-        let now = Date()
-        let existing = contacts.first { contact in
-            contact.networkID == networkID
-                && contact.rawAddress.caseInsensitiveCompare(cleanAddress) == .orderedSame
-        }
-        let contact = WalletContact(
-            id: existing?.id ?? UUID().uuidString.lowercased(),
-            networkID: networkID,
-            chain: descriptor.chain,
-            name: cleanName,
-            rawAddress: cleanAddress,
-            resolvedName: resolvedName,
-            resolutionProof: resolutionProof,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now
-        )
-        do {
-            try publicStore?.upsertContact(contact)
-            contacts.removeAll { $0.id == contact.id }
-            contacts.append(contact)
-            contacts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             lastError = nil
             return true
         } catch {
@@ -5507,12 +5457,6 @@ final class WalletGateway: ObservableObject {
                 direction: .locusVaultToDapp,
                 method: .listAccounts
             ) == true
-    }
-
-    private var evmAddresses: [String] {
-        accounts.filter {
-            $0.chain == .evm && $0.ownership == .locusVault
-        }.map(\.address)
     }
 
     private func activeBrowserConnection(

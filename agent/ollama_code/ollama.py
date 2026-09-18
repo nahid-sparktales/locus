@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -300,43 +300,6 @@ class OllamaClient:
         if isinstance(caps, list) and caps:
             return "vision" in caps
         return None
-
-    def pull(self, name: str) -> Iterator[dict[str, Any]]:
-        """Stream `ollama pull` progress chunks for ``name``."""
-        try:
-            with requests.post(
-                f"{self.host}/api/pull",
-                json={"model": name, "stream": True},
-                stream=True,
-                timeout=(10, 300),
-            ) as r:
-                if r.status_code != 200:
-                    raise OllamaError(f"pull failed: HTTP {r.status_code}: {r.text[:300]}")
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if chunk.get("error"):
-                        raise OllamaError(str(chunk["error"]))
-                    yield chunk
-        except requests.RequestException as e:
-            raise OllamaError(f"pull request failed: {e}") from e
-        finally:
-            # The file on disk is new, so anything memoised about it is stale —
-            # including the trained window the pinned window is derived from.
-            self.forget_model_details(name)
-
-    def delete_model(self, name: str) -> None:
-        try:
-            r = requests.delete(f"{self.host}/api/delete", json={"model": name}, timeout=30)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            raise OllamaError(f"failed to delete {name}: {e}") from e
-        finally:
-            self.forget_model_details(name)
 
     def chat_stream(
         self,

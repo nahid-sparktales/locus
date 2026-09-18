@@ -45,12 +45,6 @@ final class TerminalSession: NSObject, ObservableObject {
         return created
     }
 
-    var workspaceDisplayName: String {
-        let path = currentDirectory.isEmpty ? configuration?.workspacePath ?? "" : currentDirectory
-        guard !path.isEmpty else { return "Workspace" }
-        return URL(fileURLWithPath: path).lastPathComponent
-    }
-
     /// Applies the app's active workspace. A foreground job is never killed
     /// silently; the new workspace waits until the user confirms the restart.
     func configure(workspacePath: String, shell: String, loginShell: Bool) {

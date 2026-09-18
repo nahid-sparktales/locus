@@ -296,11 +296,6 @@ struct SessionState: Codable, Equatable {
     /// the Outputs list. `files` is already newest first.
     var createdFiles: [SessionFileTouch] { files.filter { $0.kind == .create } }
 
-    var contextFraction: Double? {
-        guard let window = model.contextWindow, window > 0 else { return nil }
-        return min(max(Double(resources.tokensUsed) / Double(window), 0), 1)
-    }
-
     var summaryMarkdown: String {
         var lines = [
             "# Session summary",

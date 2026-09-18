@@ -143,10 +143,6 @@ final class StreamingReplyState: ObservableObject {
         )
     }
 
-    func appendReasoning(_ text: String, sectionIndex: Int) {
-        append(text: "", reasoning: "", reasoningSections: [sectionIndex: text])
-    }
-
     func finish(
         id: UUID,
         authoritativeText: String? = nil,

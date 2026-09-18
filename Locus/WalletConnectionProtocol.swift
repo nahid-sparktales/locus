@@ -159,10 +159,6 @@ struct WalletConnectionRecord: Codable, Equatable, Identifiable, Sendable {
         self.revokedAt = revokedAt
     }
 
-    var isUsable: Bool {
-        state == .connected && revokedAt == nil && expiresAt > Date()
-    }
-
     func transitioning(
         to next: WalletConnectionLifecycleState,
         at date: Date = Date()
@@ -680,9 +676,4 @@ struct WalletConnectionServiceStatus: Codable, Equatable, Sendable {
         self.connections = connections
         self.accounts = accounts
     }
-}
-
-struct WalletConnectionServiceError: Codable, Equatable, Sendable {
-    let code: String
-    let message: String
 }

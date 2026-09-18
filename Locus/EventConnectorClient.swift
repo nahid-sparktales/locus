@@ -1177,12 +1177,3 @@ private extension JSONValue {
         return values.compactMap(\.string)
     }
 }
-
-private extension Array {
-    func asyncMap<T>(_ transform: (Element) async throws -> T) async rethrows -> [T] {
-        var result: [T] = []
-        result.reserveCapacity(count)
-        for element in self { result.append(try await transform(element)) }
-        return result
-    }
-}

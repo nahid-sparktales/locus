@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ollama_code import app as app_mod
 from ollama_code import config as config_mod
 from ollama_code import extensions as extensions_mod
 from ollama_code import paths as paths_mod
@@ -18,7 +17,7 @@ from ollama_code.extensions import ExtensionManager
 from ollama_code.sessions import SessionStore
 
 _MODULES = (
-    paths_mod, config_mod, sessions_mod, extensions_mod, app_mod,
+    paths_mod, config_mod, sessions_mod, extensions_mod,
     transcript_search_mod,
 )
 _IMMUTABLE_BUNDLE_PATHS = {

@@ -145,7 +145,7 @@ jobs:
       - run: python -m pip_audit -r agent/requirements-runtime.lock --disable-pip --no-deps
       - name: Release script syntax
         run: |
-          for release_script in Tools/*.sh agent/run.sh; do
+          for release_script in Tools/*.sh; do
             zsh -n "$release_script" || exit "$?"
           done
 

@@ -385,7 +385,6 @@ struct ScheduledTask: Identifiable, Codable, Hashable {
     }
 
     var nextRunDate: Date? { nextRunAt.map(Date.init(timeIntervalSince1970:)) }
-    var lastRunDate: Date? { lastRunAt.map(Date.init(timeIntervalSince1970:)) }
 }
 
 struct ScheduleOccurrence: Identifiable, Codable, Hashable {

@@ -62,21 +62,6 @@ extension AppModel {
         persistCheckpoints()
     }
 
-    func requestPlan(
-        prompt: String = "Create a concise implementation plan for the current request and workspace."
-    ) {
-        guard !isBusy, !hasPendingPermission else {
-            showToast("Finish the active run before creating a plan")
-            return
-        }
-        guard isAgentOnline else {
-            showToast("Reconnect the local agent to create a plan")
-            return
-        }
-        selectedMode = .plan
-        send(prompt, preservingDraftOnFailure: false)
-    }
-
     /// Resolves the final Plan-mode decision without changing permissions.
     func resolvePlanApproval(_ decision: PlanApprovalDecision) {
         guard planApprovalPending else { return }
@@ -177,10 +162,6 @@ extension AppModel {
         }
         pendingBlockingQuestion = nil
         drainQueuedMessages()
-    }
-
-    func cancelBlockingQuestion() {
-        resolveBlockingQuestion([], action: "cancel")
     }
 
     func clearPendingQuestion() {

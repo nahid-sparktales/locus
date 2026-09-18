@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ollama-code"
 version = "0.3.0"
-description = "A local coding agent powered by Ollama, with a CLI and the REST/WebSocket service behind Locus for macOS."
+description = "A local coding agent powered by Ollama, the REST/WebSocket service behind Locus for macOS."
 readme = "README.md"
 requires-python = ">=3.10"
 # Matches the repository's LICENSE. This said MIT before Locus had a LICENSE
@@ -16,8 +16,6 @@ license-files = ["../LICENSE"]
 dependencies = [
     "claude-agent-sdk==0.2.152",
     "requests>=2.31",
-    "rich>=13.7",
-    "prompt_toolkit>=3.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "websockets>=12.0",
@@ -53,7 +51,6 @@ ignore = [
 ]
 
 [project.scripts]
-ollama-code = "ollama_code.app:main"
 ollama-code-server = "ollama_code.server:main"
 locus-runtime = "ollama_code.runtime:main"
 

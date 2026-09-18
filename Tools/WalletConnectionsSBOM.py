@@ -23,8 +23,6 @@ EXPECTED_DIRECT = {
     "@metamask/connect-evm": "2.1.1",
     "@phantom/browser-sdk": "2.0.2",
     "@mysten/slush-wallet": "1.1.23",
-    "@solana/wallet-standard": "1.1.6",
-    "@wallet-standard/core": "1.1.2",
     "esbuild": "0.28.2",
     # Direct because the audited bridge imports these public types.
     "@mysten/sui": "2.29.0",

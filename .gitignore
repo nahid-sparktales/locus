@@ -21,6 +21,7 @@ xcuserdata/
 .release-*/
 .releasebuild-*/
 artifacts/
+/output/
 WalletConnectionsWeb/node_modules/
 AgentWorldWeb/node_modules/
 .derived-wallet-*/

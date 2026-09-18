@@ -29,11 +29,6 @@ final class PlanComponentInstaller<Component: PlanComponentDescriptor>: Observab
             case .idle, .installed, .failed: false
             }
         }
-
-        var fractionComplete: Double? {
-            guard case let .downloading(received, total) = self, total > 0 else { return nil }
-            return min(1, max(0, Double(received) / Double(total)))
-        }
     }
 
     @Published private(set) var state: State = .idle

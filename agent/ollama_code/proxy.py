@@ -76,9 +76,7 @@ def activate_from_env() -> None:
     there is no app binary that sets it and no compatibility to preserve.
     Reading stdin here steals nothing: the
     server entry point is ``ollama_code.server.main`` and nothing it imports
-    touches ``sys.stdin`` — the only ``sys.stdin`` use in the package is
-    app.py's interactive REPL, a different entry point (``ollama_code.app``)
-    that this process never runs.
+    touches ``sys.stdin``.
 
     Safe to call with no credential, no proxy variables, or no readable stdin
     at all, and idempotent: a second call finds nothing to consume and changes

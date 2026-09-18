@@ -357,7 +357,6 @@ final class VoiceControlModel: ObservableObject {
     var isListening: Bool { state == .listening }
     var isSpeaking: Bool { state == .speaking }
     var isDictating: Bool { activePurpose == .dictation && isListening }
-    var isConversing: Bool { activePurpose == .conversation && isListening }
     var isCapabilityTesting: Bool { activePurpose == .capabilityTest }
 
     func startDictation() {

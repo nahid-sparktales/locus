@@ -62,59 +62,6 @@ extension AppModel {
         ])
     }
 
-    func revealSessionProxyConfig() {
-        do {
-            let resolution = try SessionQuickActionFiles.resolveProxyConfig(
-                workspacePath: sessionOverview.state.workspace.path
-            )
-            NSWorkspace.shared.activateFileViewerSelecting([resolution.url])
-            showToast(resolution.created ? "Created the proxy config template" : "Opened proxy config")
-        } catch {
-            showToast("Could not open proxy config: \(error.localizedDescription)")
-        }
-    }
-
-    func revealSessionLogs() {
-        let url = SessionQuickActionFiles.logURL(sessionID: currentSessionID)
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let output = [backendLogHint, backendProcess.recentOutput]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n\n")
-            let contents = output.isEmpty
-                ? "No local agent log output has been captured for this session yet.\n"
-                : output + "\n"
-            try Data(contents.utf8).write(to: url, options: .atomic)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } catch {
-            showToast("Could not open session logs: \(error.localizedDescription)")
-        }
-    }
-
-    func copySessionOverview() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(sessionOverview.state.summaryMarkdown, forType: .string)
-        showToast("Session summary copied")
-    }
-
-    func clearSessionOverviewContext() {
-        contextFiles = contextFiles.map { file in
-            var updated = file
-            updated.isIncluded = false
-            return updated
-        }
-        chatAttachments = []
-        showToast("Attached context cleared")
-    }
-
-    func openSessionModelSettings() {
-        settingsPage = .accounts
-        settingsPresented = true
-    }
-
     /// Opens a file the session touched, addressed by its workspace-relative
     /// path. Classifying it first is what lets an Outputs row for a PDF behave
     /// like the same file's link in the transcript; the peek can only render
@@ -202,10 +149,6 @@ extension AppModel {
             relativePath: relativePath,
             location: location
         )
-    }
-
-    func prefillSessionSuggestion(_ suggestion: String) {
-        prefillComposer(with: suggestion)
     }
 
     var locusRecommendations: [LocusRecommendation] {
@@ -380,57 +323,6 @@ extension AppModel {
                 || name.hasSuffix("spec.ts")
                 || name.hasSuffix("spec.tsx")
         }
-    }
-
-    func viewSessionTranscript() {
-        let target = blocks.last(where: {
-            $0.kind == .assistant || $0.kind == .error || $0.completion != nil
-        })?.id
-        requestTranscriptJump(target)
-        dismissOverview()
-    }
-
-    func jumpToSessionEvent(_ event: SessionEvent) {
-        let target: ChatBlock?
-        switch event {
-        case .fileEdit(let path, _, _, _), .fileRead(let path, _), .fileCreate(let path, _):
-            target = blocks.reversed().first(where: {
-                $0.tool.map { tool in
-                    tool.summary.contains(path) || tool.detail.contains(path)
-                        || (tool.result?.contains(path) == true)
-                } == true
-            })
-        case .command(let command, _, _):
-            target = blocks.reversed().first(where: {
-                $0.tool.map { $0.summary.contains(command) || $0.detail.contains(command) } == true
-            })
-        case .message(let role, _):
-            let kind: ChatBlock.Kind = role == .user ? .user : .assistant
-            target = blocks.reversed().first(where: { $0.kind == kind })
-        case .websiteOutput(let url, _):
-            target = blocks.reversed().first(where: {
-                $0.tool.map { $0.detail.contains(url) || ($0.result?.contains(url) == true) } == true
-            })
-        case .sourceUsed(_, let label, let urlTarget, _):
-            let needle = urlTarget ?? label
-            target = blocks.reversed().first(where: {
-                $0.tool.map { $0.summary.contains(needle) || $0.detail.contains(needle) } == true
-            })
-        case .sourceProvided, .requestStarted:
-            target = blocks.reversed().first(where: { $0.kind == .user })
-        case .runFinished, .status, .tokens, .planCreated, .stepState:
-            target = blocks.reversed().first(where: {
-                $0.kind == .assistant || $0.kind == .error || $0.completion != nil
-            })
-        }
-        guard let target else { return }
-        requestTranscriptJump(target.id)
-        dismissOverview()
-    }
-
-    private func requestTranscriptJump(_ target: UUID?) {
-        transcriptJumpTarget = nil
-        DispatchQueue.main.async { [weak self] in self?.transcriptJumpTarget = target }
     }
 
     /// Adds a workspace-relative path to the context pack.

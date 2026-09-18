@@ -1,12 +1,9 @@
 # ollama-code
 
 A local coding-agent runtime with [Ollama](https://ollama.com) as its default
-model source and explicit support for hosted accounts. It ships as two front
-ends over one agent core:
-
-- **`ollama-code`** — an interactive terminal REPL.
-- **`ollama-code-server`** — the REST + WebSocket service that Locus for
-  macOS (the app in the repository root above this folder) drives.
+model source and explicit support for hosted accounts. It runs as
+**`ollama-code-server`**, the REST + WebSocket service that Locus for macOS
+(the app in the repository root above this folder) drives.
 
 Everything runs on your machine by default. No prompt, file, or model response
 leaves it unless you deliberately select a hosted API account or the managed
@@ -20,7 +17,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 ```
 
-This is only for working on the agent or using the REPL — the Locus app
+This is only for working on the agent — the Locus app
 bundles its own copy of the service with a self-contained Python, so app
 users install nothing. Standard Locus's *fallback backend folder* setting
 expects exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
@@ -29,7 +26,7 @@ error if that runtime is missing instead of launching the standard source tree.
 
 ## Locus and LocusX builds
 
-The source checkout and CLI default to **Locus without a wallet**. The app build
+The source checkout defaults to **Locus without a wallet**. The app build
 uses `Tools/StageBackendEdition.py` to stage a fixed product factory and identity:
 
 - **Locus:** no wallet module, wallet tool schemas, or wallet control handlers
@@ -66,13 +63,10 @@ separates chats, settings, encrypted memories, extensions, and ChatGPT accounts.
 App Store Locus retains its existing container-based home. Workspace files such
 as `.locus/launch.json` remain shared workspace conventions.
 
-## Use it from the terminal
+## Run the server
 
 ```bash
-.venv/bin/ollama-code                    # interactive REPL
-.venv/bin/ollama-code -p "explain app.py"  # one-shot, prints and exits
-.venv/bin/ollama-code -c                 # resume the most recent session
-.venv/bin/ollama-code --serve --port 8791  # run the GUI backend
+.venv/bin/ollama-code-server --port 8791
 ```
 
 ## Tools the agent can call

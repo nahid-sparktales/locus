@@ -496,18 +496,6 @@ extension AppModel {
         _ = transport.send(payload)
     }
 
-    func setBrowserEnabled(_ enabled: Bool) {
-        settings.browserEnabled = enabled
-        announceBrowserCapability()
-        showToast(enabled ? "Browser enabled" : "Browser disabled")
-        if !enabled { browser.cancelPendingActions() }
-    }
-
-    func setBrowserPersistProfile(_ persistent: Bool) {
-        settings.browserPersistProfile = persistent
-        syncBrowserProfile()
-    }
-
     /// Tell every live backend, not just whichever one happens to be in front.
     ///
     /// The computer-control version resolves `conversationBackend`, so when a

@@ -91,10 +91,6 @@ extension AppModel {
         return fallback.message
     }
 
-    func dismissLifecycleRecoveryMessage() {
-        lifecycleRecoveryMessage = nil
-    }
-
     @discardableResult
     func scheduleRuntimeRecovery(
         reason: String,
