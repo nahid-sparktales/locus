@@ -18,7 +18,7 @@ from ollama_code.mcp_runtime import MCPManager, _http_headers, _validated_form_c
 
 
 def configured(tmp_path, values):
-    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state", sandboxed=False)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     server = manager.upsert_mcp_server({"name": "macuse-fixture", **values})
     events = []
     return manager, server, MCPManager(manager, events.append), events

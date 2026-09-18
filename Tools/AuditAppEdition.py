@@ -107,7 +107,7 @@ def audit(app: Path, edition: str, allow_missing_runtime: bool = False) -> dict:
     require(edition in schemes, "MCP callback scheme is missing")
     require(({"locus", "locusx"} - {edition}).isdisjoint(schemes), "Other edition's callback is registered")
     mode = info.get("LocusUpdateMode")
-    require(mode in {"manual", "automatic", "appStore"}, "Unknown app update mode")
+    require(mode in {"manual", "automatic"}, "Unknown app update mode")
     if mode == "automatic":
         try:
             validate_configuration(info)
@@ -115,9 +115,8 @@ def audit(app: Path, edition: str, allow_missing_runtime: bool = False) -> dict:
             raise AuditError(str(exc)) from exc
     else:
         require("SUFeedURL" not in info, "Local artifact still registers an app update feed")
-    require(mode != "appStore" or edition == "locus", "Only Locus supports App Store distribution")
     sparkle = contents / "Frameworks/Sparkle.framework"
-    require(sparkle.is_dir() == (mode != "appStore"), "Sparkle does not match distribution")
+    require(sparkle.is_dir(), "Sparkle is missing from a direct-download build")
     runtime = contents / "Resources/AgentRuntime/source/ollama_code"
     require(allow_missing_runtime or runtime.is_dir(), "Bundled backend source is missing")
     if runtime.is_dir():

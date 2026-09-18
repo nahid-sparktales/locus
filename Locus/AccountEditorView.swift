@@ -8,9 +8,7 @@ import SwiftUI
 struct AccountEditorView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
-#if !LOCUS_APP_STORE
     @EnvironmentObject private var codexComponent: CodexComponentInstaller
-#endif
     @Environment(\.dismiss) private var dismiss
 
     /// The account being edited, or a fresh one for the chosen provider.
@@ -390,9 +388,7 @@ struct AccountEditorView: View {
 
     @ViewBuilder
     private var claudeComponentDownload: some View {
-#if !LOCUS_APP_STORE
         ClaudeComponentDownloadView(account: account, allowUnsavedAccount: isNew)
-#endif
     }
 
     /// The efforts the account's preferred model supports, from the fetched
@@ -412,11 +408,6 @@ struct AccountEditorView: View {
         return efforts
     }
 
-#if LOCUS_APP_STORE
-    /// The App Store build bundles the helpers, so this state is unreachable.
-    @ViewBuilder
-    private var componentDownload: some View { EmptyView() }
-#else
     /// Offered in place of the sign-in button when the ChatGPT-plan helpers
     /// have not been fetched yet. The prompt lives at the moment of need rather
     /// than in a downloads screen nobody would go looking for.
@@ -485,7 +476,6 @@ struct AccountEditorView: View {
         formatter.allowedUnits = [.useMB]
         return formatter.string(fromByteCount: bytes)
     }
-#endif
 
     /// macOS `Form` treats a text field's title as a leading form label and
     /// places the actual editor in the trailing column. Keep the prompt inside

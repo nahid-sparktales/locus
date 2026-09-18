@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Public PDFKit/Vision helper shared by Direct and Mac App Store builds.
+# Public PDFKit/Vision helper shared by every app build.
 set -euo pipefail
 script_dir="${0:A:h}"
 repo_root="${script_dir:h}"
@@ -16,8 +16,4 @@ architecture="${CURRENT_ARCH:-arm64}"
     "${source_file}" -o "${output}"
 identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 [[ -z "${identity}" ]] && identity="-"
-if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
-    /usr/bin/codesign --force --options runtime --entitlements "${repo_root}/Config/AgentRuntime.entitlements" --sign "${identity}" "${output}"
-else
-    /usr/bin/codesign --force --options runtime --sign "${identity}" "${output}"
-fi
+/usr/bin/codesign --force --options runtime --sign "${identity}" "${output}"

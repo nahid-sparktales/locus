@@ -11,8 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def invoke(build, *, target="Locus", experimental=False, **overrides):
     app = f"{target}{' Experimental' if experimental else ''}.app"
-    if target == "LocusMAS":
-        app = "Locus.app"
     environment = os.environ | {
         "TARGET_BUILD_DIR": str(build),
         "PLUGINS_FOLDER_PATH": f"{app}/Contents/PlugIns",
@@ -34,7 +32,6 @@ def invoke(build, *, target="Locus", experimental=False, **overrides):
     ("target", "experimental", "app", "test_bundle"),
     [
         ("Locus", False, "Locus.app", "LocusTests.xctest"),
-        ("LocusMAS", False, "Locus.app", "LocusTests.xctest"),
         ("LocusX", False, "LocusX.app", "LocusXTests.xctest"),
         ("LocusX", True, "LocusX Experimental.app", "LocusXTests.xctest"),
     ],
@@ -60,7 +57,7 @@ def test_cleanup_removes_only_generated_test_bundle(tmp_path, target, experiment
     [
         {"CONFIGURATION": "Release"},
         {"TARGET_NAME": "Locus"},
-        {"TARGET_NAME": "LocusMAS"},
+        {"TARGET_NAME": "LocusUnknown"},
         {"FULL_PRODUCT_NAME": "Other.app"},
         {"PLUGINS_FOLDER_PATH": "../LocusX Experimental.app/Contents/PlugIns"},
         {"TARGET_BUILD_DIR": "/"},

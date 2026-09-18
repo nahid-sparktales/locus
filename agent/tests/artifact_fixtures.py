@@ -7,7 +7,7 @@ def write_info(app, info):
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
 
 
-def make_synthetic_app(tmp_path, edition="locus", *, mode="manual", runtime=True):
+def make_synthetic_app(tmp_path, edition="locus", *, mode="manual", runtime=True, sparkle=True):
     name = "Locus" if edition == "locus" else "LocusX"
     app = tmp_path / f"{name}.app"
     contents = app / "Contents"
@@ -21,7 +21,7 @@ def make_synthetic_app(tmp_path, edition="locus", *, mode="manual", runtime=True
         "LocusUpdateMode": mode,
         "CFBundleURLTypes": [{"CFBundleURLSchemes": [edition]}],
     }
-    if mode == "manual":
+    if sparkle:
         (contents / "Frameworks/Sparkle.framework").mkdir(parents=True)
     backend = contents / "Resources/AgentRuntime/source/ollama_code"
     if runtime:

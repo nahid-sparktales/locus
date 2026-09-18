@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Audits the unsigned Direct and Mac App Store products as a pair. This
-# complements AuditDistribution.sh by proving target separation in CI.
+# Audits the unsigned wallet (LocusX) and wallet-free (Locus) products as a
+# pair. This complements AuditDistribution.sh by proving target separation in CI.
 set -euo pipefail
 
 # BEGIN wallet_audit_reject_matching_output
@@ -48,22 +48,22 @@ wallet_audit_reject_fuzz_host_resources() {
 }
 # END wallet_audit_fuzz_host_exclusions
 
-direct_app="${1:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <MAS Locus.app>}"
-mas_app="${2:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <MAS Locus.app>}"
+direct_app="${1:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <wallet-free Locus.app>}"
+wallet_free_app="${2:?usage: AuditWalletBuildBoundary.sh <LocusX.app> <wallet-free Locus.app>}"
 repo_root="${0:A:h:h}"
 
-[[ -d "${direct_app}" && -d "${mas_app}" ]] || {
-    echo "error: both Direct and Mac App Store app bundles are required" >&2
+[[ -d "${direct_app}" && -d "${wallet_free_app}" ]] || {
+    echo "error: both the wallet and wallet-free app bundles are required" >&2
     exit 1
 }
 
 direct_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${direct_app}/Contents/Info.plist")"
 direct_main="${direct_app}/Contents/MacOS/${direct_executable}"
-mas_main="${mas_app}/Contents/MacOS/Locus"
+wallet_free_main="${wallet_free_app}/Contents/MacOS/Locus"
 direct_signer="${direct_app}/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
 recovery_signer="${direct_app}/Contents/Helpers/WalletRecovery.app/Contents/XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
 
-for executable in "${direct_main}" "${mas_main}" "${direct_signer}" "${recovery_signer}"
+for executable in "${direct_main}" "${wallet_free_main}" "${direct_signer}" "${recovery_signer}"
 do
     [[ -x "${executable}" ]] || {
         echo "error: required build executable is missing: ${executable}" >&2
@@ -76,7 +76,7 @@ audit_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/locus-wallet-binary-text.XXXXXX")"
 trap 'find "$audit_temp_dir" -depth -delete' EXIT
 
 wallet_audit_reject_fuzz_host_resources "${direct_app}"
-wallet_audit_reject_fuzz_host_resources "${mas_app}"
+wallet_audit_reject_fuzz_host_resources "${wallet_free_app}"
 
 [[ ! -e "${direct_app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
     echo "error: obsolete WalletConnections.xpc remains in the Direct app" >&2
@@ -128,7 +128,7 @@ unexpected_direct_signing_symbols="$(/usr/bin/nm -gU "${direct_main}" 2>/dev/nul
     exit 1
 }
 
-unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
+unexpected_wallet_free_resource="$(/usr/bin/find "${wallet_free_app}/Contents" \
     \( -name WalletSigner.xpc -o -name WalletConnections.xpc \
         -o -name WalletRecovery.app -o -name 'WalletConnections*' \
         -o -name 'LocusReownSwift_*' -o -name 'ReownSwift*' \
@@ -138,23 +138,23 @@ unexpected_mas_resource="$(/usr/bin/find "${mas_app}/Contents" \
         -o -name 'phantom-wallet-sdk-*.LICENSE' -o -name 'eyes-0.1.8.LICENSE' \
         -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) \
     -print -quit)"
-[[ -z "${unexpected_mas_resource}" ]] || {
-    echo "error: Mac App Store app contains Direct-only wallet content: ${unexpected_mas_resource}" >&2
+[[ -z "${unexpected_wallet_free_resource}" ]] || {
+    echo "error: wallet-free app contains wallet-only content: ${unexpected_wallet_free_resource}" >&2
     exit 1
 }
 
 wallet_audit_reject_matching_output \
     'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL|WalletExperimentalMainnetEnabled)' \
-    'Mac App Store Info.plist contains connector configuration' \
-    /usr/bin/plutil -p "${mas_app}/Contents/Info.plist"
+    'wallet-free Info.plist contains connector configuration' \
+    /usr/bin/plutil -p "${wallet_free_app}/Contents/Info.plist"
 
-mas_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
-mas_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
-mas_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
-mas_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
-mas_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
+wallet_free_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
+wallet_free_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
+wallet_free_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
+wallet_free_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
+wallet_free_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
 direct_macho_count=0
-mas_macho_count=0
+wallet_free_macho_count=0
 
 while IFS= read -r candidate
 do
@@ -181,30 +181,30 @@ done < <(/usr/bin/find "${direct_app}/Contents" -type f -print)
 while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
-    (( mas_macho_count += 1 ))
+    (( wallet_free_macho_count += 1 ))
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_symbols}" \
-        "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        "wallet-free executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
         python3 "${repo_root}/Tools/WalletFuzzSymbolInventory.py" "${candidate}"
     wallet_audit_reject_matching_output "${wallet_fuzz_forbidden_strings}" \
-        "Mac App Store executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
+        "wallet-free executable contains the test-only wallet fuzz host/runtime: ${candidate}" \
         /usr/bin/strings "${candidate}"
     unexpected="$(/usr/bin/nm -gU "${candidate}" 2>/dev/null \
         | /usr/bin/awk '$NF ~ /^_locus_wallet_/ { print $NF }')"
     [[ -z "${unexpected}" ]] || {
-        echo "error: Mac App Store executable links signer-core exports: ${candidate}" >&2
+        echo "error: wallet-free executable links signer-core exports: ${candidate}" >&2
         exit 1
     }
-    wallet_audit_reject_matching_output "${mas_forbidden}" \
-        "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+    wallet_audit_reject_matching_output "${wallet_free_forbidden}" \
+        "wallet-free executable contains Direct connector code or credentials: ${candidate}" \
         /usr/bin/nm "${candidate}"
-    wallet_audit_reject_matching_output "${mas_forbidden}" \
-        "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+    wallet_audit_reject_matching_output "${wallet_free_forbidden}" \
+        "wallet-free executable contains Direct connector code or credentials: ${candidate}" \
         /usr/bin/strings "${candidate}"
-done < <(/usr/bin/find "${mas_app}/Contents" -type f -print)
+done < <(/usr/bin/find "${wallet_free_app}/Contents" -type f -print)
 
-(( direct_macho_count > 0 && mas_macho_count > 0 )) || {
+(( direct_macho_count > 0 && wallet_free_macho_count > 0 )) || {
     echo "error: executable inventory was empty" >&2
     exit 1
 }
 
-echo "Wallet build boundary is locked (${direct_macho_count} Direct and ${mas_macho_count} App Store Mach-O files audited)."
+echo "Wallet build boundary is locked (${direct_macho_count} wallet and ${wallet_free_macho_count} wallet-free Mach-O files audited)."

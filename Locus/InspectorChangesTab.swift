@@ -35,18 +35,6 @@ struct InspectorChangesTab: View {
                 commitArea
             }
 
-            if gitWorkspace.isGitRepository, !GitRemoteFeatures.isAvailable {
-                Text(
-                    "Push and pull need your SSH agent, which the App Store sandbox "
-                    + "cannot reach — use the direct build or a terminal. Locus never uses Keychain."
-                )
-                .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .accessibilityIdentifier("changes.remoteUnavailable")
-            }
         }
         .task(id: model.workspacePath) {
             gitWorkspace.refreshStatus()
@@ -287,28 +275,26 @@ struct InspectorChangesTab: View {
             if gitWorkspace.isSyncingRemote {
                 ProgressView().controlSize(.mini)
             }
-            if GitRemoteFeatures.isAvailable {
-                headerButton(
-                    symbol: "arrow.down.circle",
-                    help: "Fetch from the remote",
-                    identifier: "changes.fetch"
-                ) { gitWorkspace.fetchRemote() }
-                    .disabled(gitWorkspace.isSyncingRemote)
-                headerButton(
-                    symbol: "arrow.down.to.line",
-                    help: "Pull (fast-forward only)",
-                    identifier: "changes.pull"
-                ) { gitWorkspace.pullFastForwardOnly() }
-                    .disabled(gitWorkspace.isSyncingRemote || gitWorkspace.gitBehind == 0)
-                headerButton(
-                    symbol: "arrow.up.circle",
-                    help: gitWorkspace.gitUpstream == nil
-                        ? "Publish this branch to origin"
-                        : "Push to \(gitWorkspace.gitUpstream ?? "the upstream")",
-                    identifier: "changes.push"
-                ) { gitWorkspace.pushCurrentBranch() }
-                    .disabled(gitWorkspace.isSyncingRemote || !gitWorkspace.gitHasCommits)
-            }
+            headerButton(
+                symbol: "arrow.down.circle",
+                help: "Fetch from the remote",
+                identifier: "changes.fetch"
+            ) { gitWorkspace.fetchRemote() }
+                .disabled(gitWorkspace.isSyncingRemote)
+            headerButton(
+                symbol: "arrow.down.to.line",
+                help: "Pull (fast-forward only)",
+                identifier: "changes.pull"
+            ) { gitWorkspace.pullFastForwardOnly() }
+                .disabled(gitWorkspace.isSyncingRemote || gitWorkspace.gitBehind == 0)
+            headerButton(
+                symbol: "arrow.up.circle",
+                help: gitWorkspace.gitUpstream == nil
+                    ? "Publish this branch to origin"
+                    : "Push to \(gitWorkspace.gitUpstream ?? "the upstream")",
+                identifier: "changes.push"
+            ) { gitWorkspace.pushCurrentBranch() }
+                .disabled(gitWorkspace.isSyncingRemote || !gitWorkspace.gitHasCommits)
             if gitWorkspace.originIsGitHub, gitWorkspace.gitUpstream != nil {
                 headerButton(
                     symbol: "arrow.triangle.pull",

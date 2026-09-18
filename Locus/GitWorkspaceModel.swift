@@ -278,7 +278,7 @@ final class GitWorkspaceModel: ObservableObject {
     }
 
     func pushCurrentBranch() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository,
+        guard isGitRepository,
               !gitDetached, gitHasCommits, !isSyncingRemote,
               let branch = gitBranch
         else { return }
@@ -304,7 +304,7 @@ final class GitWorkspaceModel: ObservableObject {
     }
 
     func fetchRemote() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
+        guard isGitRepository, !isSyncingRemote else { return }
         isSyncingRemote = true
         let client = gitClient
         Task { [weak self] in
@@ -320,7 +320,7 @@ final class GitWorkspaceModel: ObservableObject {
     }
 
     func pullFastForwardOnly() {
-        guard GitRemoteFeatures.isAvailable, isGitRepository, !isSyncingRemote else { return }
+        guard isGitRepository, !isSyncingRemote else { return }
         isSyncingRemote = true
         let client = gitClient
         Task { [weak self] in

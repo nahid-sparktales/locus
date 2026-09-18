@@ -808,7 +808,6 @@ extension WalletReviewedConnector {
     }
 }
 
-#if !LOCUS_APP_STORE
 /// Domain-separated release configuration. Only its digest enters signed review
 /// metadata; the underlying URLs/identifiers must never enter diagnostics.
 /// The Python release audit reproduces these sorted, compact, ASCII JSON bytes.
@@ -958,7 +957,6 @@ enum WalletConnectorReleaseConfiguration {
         return true
     }
 }
-#endif
 
 
 /// A release-reviewed provider configuration without persisting a credential-
@@ -1233,9 +1231,6 @@ struct WalletReviewRegistry: Sendable {
         method: WalletConnectionMethod,
         configurationValues: [String: String]? = nil
     ) -> Bool {
-        #if LOCUS_APP_STORE
-        return false
-        #else
         guard let configurationDigest = WalletConnectorReleaseConfiguration.digest(
             for: connector,
             values: configurationValues ?? WalletConnectorReleaseConfiguration.bundledValues(),
@@ -1253,7 +1248,6 @@ struct WalletReviewRegistry: Sendable {
                         && entry.artifactSHA256 == $0.artifactSHA256
                 } ?? true)
         }
-        #endif
     }
 
     func containsProvider(_ endpoint: WalletProviderEndpoint) -> Bool {
@@ -1668,11 +1662,7 @@ struct WalletLaunchGate: Sendable {
         allowExperimentalMainnet: Bool = false
     ) throws {
         self.bundledNetworks = Dictionary(uniqueKeysWithValues: bundledNetworks.map { ($0.id, $0) })
-        #if LOCUS_APP_STORE
-        self.allowsExperimentalMainnet = false
-        #else
         self.allowsExperimentalMainnet = allowExperimentalMainnet
-        #endif
         guard let signedManifest else {
             effectiveManifest = nil
             return

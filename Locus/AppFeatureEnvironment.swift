@@ -470,10 +470,8 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.toastCenter)
             .environmentObject(model.computerControl)
             .environmentObject(model.simulatorControl)
-#if !LOCUS_APP_STORE
             .environmentObject(model.codexComponent)
             .environmentObject(model.claudeComponent)
-#endif
     }
 }
 

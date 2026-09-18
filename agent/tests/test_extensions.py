@@ -854,7 +854,7 @@ def test_official_mcp_runtime_discovers_and_calls_tools(tmp_path, transport):
             "import sys\nserver.run('streamable-http', host='127.0.0.1', port=int(sys.argv[1]), stateless_http=True, json_response=True)\n"
         )
     )
-    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state", sandboxed=False)
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     process = None
     if transport == "stdio":
         config = {"name": "fixture", "command": sys.executable, "args": [str(script)]}
@@ -913,7 +913,7 @@ def test_marketplace_plugin_skill_mcp_and_restart_end_to_end(tmp_path):
     }))
     _marketplace(market, plugin)
     state = tmp_path / "state"
-    manager = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    manager = ExtensionManager(str(tmp_path), root=state)
     source = manager.add_marketplace(str(market))
     trust = manager.inspect_catalog_plugin(source["id"], "fixture")
     installed = manager.install_plugin(
@@ -946,7 +946,7 @@ def test_marketplace_plugin_skill_mcp_and_restart_end_to_end(tmp_path):
     finally:
         runtime.close()
 
-    restarted = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    restarted = ExtensionManager(str(tmp_path), root=state)
     assert any(item["id"] == installed["id"] for item in restarted.snapshot()["plugins"])
     assert any(item["id"] == "fixture:review" for item in restarted.skills())
     assert any(item["id"] == "plugin:fixture:fixture" for item in restarted.mcp_servers())
@@ -958,7 +958,7 @@ def test_degraded_state_read_is_reported_in_snapshot_errors(tmp_path):
     # is an orphan". A silently degraded read would therefore delete live OAuth
     # refresh tokens, so a read that loses servers has to say so.
     state = tmp_path / "state"
-    manager = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    manager = ExtensionManager(str(tmp_path), root=state)
     manager.upsert_mcp_server({"name": "remote", "transport": "streamable_http",
                                "url": "https://example.com/mcp"})
     assert manager.snapshot()["errors"] == []
@@ -966,7 +966,7 @@ def test_degraded_state_read_is_reported_in_snapshot_errors(tmp_path):
 
     # Corrupt the state file the way a truncated write or a reset container would.
     (state / "state.json").write_text("{ not json")
-    degraded = ExtensionManager(str(tmp_path), root=state, sandboxed=False)
+    degraded = ExtensionManager(str(tmp_path), root=state)
     assert degraded.snapshot()["mcp_servers"] == []
     assert degraded.snapshot()["errors"], "a lost server list must be reported"
 
@@ -974,7 +974,7 @@ def test_degraded_state_read_is_reported_in_snapshot_errors(tmp_path):
 def test_missing_state_file_is_not_an_error(tmp_path):
     # A first run genuinely has no servers; reporting that as degraded would
     # permanently disable orphan reclamation.
-    fresh = ExtensionManager(str(tmp_path), root=tmp_path / "nothing-here", sandboxed=False)
+    fresh = ExtensionManager(str(tmp_path), root=tmp_path / "nothing-here")
     assert fresh.snapshot()["errors"] == []
 
 

@@ -30,14 +30,6 @@ final class TerminalSession: NSObject, ObservableObject {
     private var usesDarkAppearance = false
     private var appliedANSIColorsForDarkAppearance: Bool?
 
-    static var isSandboxedBuild: Bool {
-        #if LOCUS_APP_STORE
-        true
-        #else
-        false
-        #endif
-    }
-
     var hostView: NSView {
         if let terminalView { return terminalView }
         let created = makeTerminalView()

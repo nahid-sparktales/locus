@@ -105,9 +105,7 @@ final class BackendProcess {
                in: .userDomainMask
            ).first
         {
-            profileEnvironment = AppEdition.current.backendHomes(
-                in: support, sandboxed: WorkspaceAccess.isSandboxed
-            )
+            profileEnvironment = AppEdition.current.backendHomes(in: support)
             for path in profileEnvironment.values {
                 try? FileManager.default.createDirectory(
                     atPath: path, withIntermediateDirectories: true
@@ -116,8 +114,8 @@ final class BackendProcess {
         } else if AppEdition.current == .locusX {
             return .failed("Could not locate LocusX's independent app data folder.")
         }
-        // Bundled inside the App Store build; downloaded as a signed component
-        // by the direct-download build. The path is exported even when nothing
+        // Bundled in local builds; downloaded as a signed component by a
+        // Release build. The path is exported even when nothing
         // is installed yet — the backend re-stats it on every availability
         // check, so installing the component takes effect without restarting
         // the agent and dropping live sessions.

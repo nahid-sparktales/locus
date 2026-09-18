@@ -38,10 +38,6 @@ extension AppModel {
             showToast("Finish the active run before restoring a checkpoint")
             return
         }
-        guard workspaceAccess.activateStored(path: checkpoint.workspacePath) else {
-            showToast("Choose that workspace again before restoring this checkpoint")
-            return
-        }
         _ = beginTranscriptTransition(
             source: backend, reasons: ["new_session"], acceptsSocketAcknowledgement: true
         )

@@ -1806,20 +1806,15 @@ private struct ComposerAttachmentSourceMenu: View {
             }
             .accessibilityIdentifier("composer.identityVault")
 
-            if ApplicationContextService.isAvailable {
-                if let current = applicationContext.lastExternalApplication {
-                    Button {
-                        model.attachApplicationSnapshot(current)
-                    } label: {
-                        Label("Attach \(current.name)", systemImage: "macwindow.badge.plus")
-                    }
-                    .disabled(composerState.isLoadingAttachments)
-                } else {
-                    Button("Attach current application", systemImage: "macwindow.badge.plus") {}
-                        .disabled(true)
+            if let current = applicationContext.lastExternalApplication {
+                Button {
+                    model.attachApplicationSnapshot(current)
+                } label: {
+                    Label("Attach \(current.name)", systemImage: "macwindow.badge.plus")
                 }
+                .disabled(composerState.isLoadingAttachments)
             } else {
-                Button("Application context requires the direct-download build") {}
+                Button("Attach current application", systemImage: "macwindow.badge.plus") {}
                     .disabled(true)
             }
 
@@ -1845,13 +1840,9 @@ private struct ComposerAttachmentSourceMenu: View {
                         }
                     }
                 }
-                .disabled(!ApplicationContextService.isAvailable)
 
                 Menu("Attach iOS Simulator…", systemImage: "ipad.and.iphone") {
-                    if !SimulatorControlService.isSupportedBuild {
-                        Button("Requires the direct-download build") {}
-                            .disabled(true)
-                    } else if simulatorControl.devices.isEmpty {
+                    if simulatorControl.devices.isEmpty {
                         Button("No iPhone or iPad simulators found") {
                             model.refreshSimulatorDevices()
                         }

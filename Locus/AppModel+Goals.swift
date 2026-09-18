@@ -197,8 +197,8 @@ extension AppModel {
     func goalExecutionIssue(_ goal: PersistentGoal) -> String? {
         let execution = goal.execution
         let workspace = execution["workspace_root"]?.string ?? ""
-        guard !workspace.isEmpty, FileManager.default.fileExists(atPath: workspace),
-              workspaceAccess.activateStored(path: workspace) else { return "The goal's workspace is unavailable." }
+        guard !workspace.isEmpty, FileManager.default.fileExists(atPath: workspace)
+        else { return "The goal's workspace is unavailable." }
         if let path = execution["execution_path"]?.string,
            !FileManager.default.fileExists(atPath: path) { return "The goal's checkout is unavailable." }
         if execution["provider"]?.string != "ollama" {

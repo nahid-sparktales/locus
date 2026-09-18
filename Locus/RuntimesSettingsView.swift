@@ -20,7 +20,7 @@ struct RuntimesSettingsView: View {
                     }
                     Button("Open macOS Login Items") { SMAppService.openSystemSettingsLoginItems() }
                 } else {
-                    Text("Independent runtime installation is available in direct-download Locus.")
+                    Text("Independent runtime installation is available in wallet-free Locus.")
                 }
             }
             if let snapshot = runtimes.snapshot {

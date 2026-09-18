@@ -74,7 +74,7 @@ enum WalletPolicyAccountEligibility {
 #if LOCUS_WALLET
 #if DEBUG
 /// Explicit in-process XCTest injection only; no preference, environment,
-/// public bridge, Release, or App Store activation override exists.
+/// public bridge, or Release activation override exists.
 struct WalletExperimentalActivationTestConfiguration {
     let key: Curve25519.Signing.PublicKey
     let ceiling: WalletSignedReviewCeiling
@@ -1027,7 +1027,7 @@ final class WalletGateway: ObservableObject {
         ) else { return nil }
         return try? WalletReviewRegistry(signedManifest: signed, publicKey: publicKey)
         #else
-        // The App Store target has no signer, review configuration or activation.
+        // Wallet-free Locus has no signer, review configuration or activation.
         return nil
         #endif
     }
@@ -1965,7 +1965,7 @@ final class WalletGateway: ObservableObject {
 
     var recoveryActionUnavailableMessage: String {
         if !recoveryView.isAvailable {
-            return "The signed recovery helper is unavailable. Reinstall this direct-download build of Locus."
+            return "The signed recovery helper is unavailable. Reinstall LocusX."
         }
         if recoveryCeremonyActive { return "A recovery window is already active." }
         return "Recovery is not available for the vault's current state."

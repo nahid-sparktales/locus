@@ -1,21 +1,5 @@
 import Foundation
 
-/// Per-build gate for git commands that need the network and the user's own
-/// credentials. Push, fetch, and pull run `git` as the user with all credential
-/// helpers disabled, so Locus never invokes macOS Keychain. SSH remotes can use
-/// the user's agent in a direct build; the App Store sandbox cannot reach it
-/// because its container $HOME hides `~/.ssh`. Same shape as
-/// `ComputerControlService.isAvailable`.
-enum GitRemoteFeatures {
-    static var isAvailable: Bool {
-        #if LOCUS_APP_STORE
-        false
-        #else
-        !WorkspaceAccess.isSandboxed
-        #endif
-    }
-}
-
 enum GitRemoteURL {
     /// The GitHub compare page for a branch, prefilled for a pull request —
     /// the human stays in the publish step. Understands the three remote

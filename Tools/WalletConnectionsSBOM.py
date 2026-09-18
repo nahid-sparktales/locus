@@ -144,7 +144,7 @@ def verify_reown(root: Path, project: str) -> dict:
             fail(f"missing {name} target")
         return match.group(1)
 
-    for name in ("Locus", "LocusMAS"):
+    for name in ("Locus",):
         block = target_block(name)
         if any(value in block for value in ("ReownSwift", "WalletConnectionsRuntime", "LocusWalletSwiftSources", "target: WalletSignerService")):
             fail(f"the {name} target references wallet components")
@@ -294,7 +294,6 @@ def main() -> None:
             "properties": [
                 {"name": "locus:dependency-policy", "value": "exact-lock-and-artifact-digest"},
                 {"name": "locus:runtime-enabled", "value": "true-direct-only"},
-                {"name": "locus:app-store-runtime-enabled", "value": "false"},
                 {"name": "locus:bundle-sha256", "value": npm_evidence["bundleSHA256"]},
                 {"name": "locus:package-lock-sha256", "value": npm_evidence["packageLockSHA256"]},
                 {"name": "locus:unresolved-license-count", "value": str(npm_evidence["unresolvedLicenseCount"])},

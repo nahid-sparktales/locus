@@ -50,15 +50,12 @@ final class AppModel: ObservableObject {
     let voiceControl = VoiceControlModel()
     let imageGeneration = ImageGenerationModel()
 
-    #if !LOCUS_APP_STORE
-    /// The ChatGPT-plan helpers ship as a downloadable component in the direct
-    /// download. Owned here so the account editor and the settings row observe
-    /// the same install rather than racing two of them.
+    /// The ChatGPT-plan helpers ship as a downloadable component. Owned here so
+    /// the account editor and the settings row observe the same install rather
+    /// than racing two of them.
     let codexComponent = CodexComponentInstaller()
     let claudeComponent = ClaudeComponentInstaller()
-    #endif
 
-    #if !LOCUS_APP_STORE
     /// Installs the ChatGPT-plan component and then re-reads the account.
     ///
     /// The refresh is the point: the backend only reports `runtime_available`
@@ -72,17 +69,12 @@ final class AppModel: ObservableObject {
             await providerAccountsModel.refreshChatGPTAccount(for: account, allowUnsavedAccount: allowUnsavedAccount)
         }
     }
-    #endif
 
     /// True when a ChatGPT-plan sign-in is blocked only because the helper
     /// component has not been downloaded yet — as opposed to the runtime being
     /// present but broken, which needs a different message.
     var chatGPTComponentMissing: Bool {
-        #if LOCUS_APP_STORE
-        false
-        #else
         CodexComponent.bundledHelper == nil && !CodexComponent.isInstalled
-        #endif
     }
     var claudePlanEnabled: Bool { backendCapabilities["claude_plan_v1"] == true }
     var claudeComponentMissing: Bool { ClaudeComponent.bundledHelper == nil && !ClaudeComponent.isInstalled }
@@ -699,7 +691,6 @@ final class AppModel: ObservableObject {
         )
     }
     let ollamaRuntime = OllamaRuntime()  // internal(for: AppModel extension files)
-    let workspaceAccess: WorkspaceAccess  // internal(for: AppModel extension files)
     var initialWorkspacePath: String?  // internal(for: AppModel extension files)
     var streamingAssistantID: UUID?  // internal(for: AppModel extension files)
     var pendingTokens = ""  // internal(for: AppModel extension files)
@@ -776,7 +767,6 @@ final class AppModel: ObservableObject {
     var pendingCheckpointRestore: SessionCheckpoint?  // internal(for: AppModel extension files)
     var pendingRewindDraft: String?  // internal(for: AppModel extension files)
     var pendingWorkspacePath: String?  // internal(for: AppModel extension files)
-    var workspaceToOpenAfterReconnect: String?  // internal(for: AppModel extension files)
     var appliedWorkspacePath: String?  // internal(for: AppModel extension files)
     var sessionResetWatchdog: Task<Void, Never>?  // internal(for: AppModel extension files)
     /// Retains only the currently requested transcript load. Completion clears
@@ -1017,10 +1007,7 @@ final class AppModel: ObservableObject {
             restoredWorkspaceProfiles = recent
             restoredWorkspacePaths = recent.map(\.path)
         }
-        let access = WorkspaceAccess(defaults: defaults)
-        workspaceAccess = access
-        initialWorkspacePath = access.restoreAvailable(paths: restoredWorkspacePaths)
-            ?? WorkspaceAccess.sandboxWorkspaceURL()?.path
+        initialWorkspacePath = WorkspaceAccess.restoreAvailable(paths: restoredWorkspacePaths)
         ProxyRuntime.shared.noteRoutingContext(
             workspacePath: initialWorkspacePath,
             providerAccountID: loadedSettings.activeAccountID

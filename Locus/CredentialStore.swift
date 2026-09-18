@@ -56,8 +56,7 @@ enum GitHubConnectionConfiguration {
 /// Credential storage for provider API keys and MCP server tokens.
 ///
 /// One JSON file, `~/.locus/auth.json`, mode `0600` inside a `0700` directory —
-/// the same shape Codex uses for `~/.codex/auth.json`. In the sandboxed App
-/// Store build `~` is the app container, so the file lands there instead.
+/// the same shape Codex uses for `~/.codex/auth.json`.
 ///
 /// Be clear about what this protects against: file permissions keep the secrets
 /// away from *other* users on the Mac. They do not keep them away from anything
@@ -107,9 +106,9 @@ enum CredentialStore {
         AppEdition.current.credentialFile(in: URL(fileURLWithPath: NSHomeDirectory()))
     }
 
-    /// The location to show the user. In the sandboxed App Store build
-    /// `NSHomeDirectory()` is the container, so this is not always
-    /// `~/.locus/auth.json` — never hardcode that in a string.
+    /// The location to show the user. Derived from `NSHomeDirectory()` and the
+    /// edition, so it is not always `~/.locus/auth.json` — never hardcode that
+    /// in a string.
     static var displayPath: String {
         (fileURL.path as NSString).abbreviatingWithTildeInPath
     }

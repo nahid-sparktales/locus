@@ -551,7 +551,7 @@ def test_dirty_source_retains_paths_and_never_builds(tmp_path, monkeypatch):
 
     def fake_status(command, **kwargs):
         assert command == ["git", "status", "--short", "--untracked-files=all"]
-        return " M Locus.xcodeproj/xcshareddata/xcschemes/LocusMAS.xcscheme\n"
+        return " M Locus.xcodeproj/xcshareddata/xcschemes/LocusExperimental.xcscheme\n"
 
     monkeypatch.setattr(matrix, "run_locked", fake_run)
     monkeypatch.setattr(matrix.subprocess, "check_output", fake_status)
@@ -562,7 +562,7 @@ def test_dirty_source_retains_paths_and_never_builds(tmp_path, monkeypatch):
         "--edition", "locusx", "--derived-data", str(tmp_path / "never-built"),
         "--output", str(tmp_path / "evidence"),
     ])
-    with pytest.raises(SystemExit, match="LocusMAS.xcscheme"):
+    with pytest.raises(SystemExit, match="LocusExperimental.xcscheme"):
         matrix.main()
     assert len(calls) == 1
     assert not (tmp_path / "never-built").exists()
@@ -571,7 +571,7 @@ def test_dirty_source_retains_paths_and_never_builds(tmp_path, monkeypatch):
     receipt = json.loads((runs[0] / "receipt.json").read_text())
     assert receipt["source"] == source
     assert receipt["edition"] == "locusx"
-    assert "LocusMAS.xcscheme" in receipt["sourceStatus"]
+    assert "LocusExperimental.xcscheme" in receipt["sourceStatus"]
     assert receipt["requestedTests"] == matrix.source_tests(edition="locusx")
     assert receipt["status"] == "blocked"
     assert not receipt["executed"]

@@ -323,22 +323,22 @@ struct AppSettings: Codable, Hashable {
     /// One-time compatibility marker: releases before adaptive Work persisted
     /// Build because an agentic mode was mandatory, not necessarily chosen.
     var adaptiveWorkMigrationCompleted = false
-    /// Computer control is opt-in and is ignored in sandboxed builds.
+    /// Computer control is opt-in.
     var computerControlEnabled = false
     /// Simulator tooling is enabled by the first explicit attach. It remains
     /// opt-in because screenshots can become model input and native helpers use
     /// Xcode's private simulator frameworks.
     var simulatorControlEnabled = false
-    /// The browser is on by default and, unlike computer control, works in the
-    /// sandboxed App Store build too — a web view needs no special access.
+    /// The browser is on by default and, unlike computer control, needs no
+    /// system permission — a web view needs no special access.
     var browserEnabled = true
     #if LOCUS_WALLET
     /// Public Sepolia RPC used only by the native wallet broker. It is never
     /// included in model context or sent to the Python agent.
     var walletSepoliaRPCURL = "https://ethereum-sepolia-rpc.publicnode.com"
-    /// Private-alpha access is an explicit, persisted choice in direct-download
-    /// builds. App Store builds ignore both switches even if the same defaults
-    /// domain was previously written by a direct-download build.
+    /// Private-alpha access is an explicit, persisted choice. A build without
+    /// the signed wallet helpers ignores both switches even if the same
+    /// defaults domain was previously written by a build that had them.
     var walletAlphaEnabled = false
     var walletBrowserProviderEnabled = false
     /// Environment-variable activation existed before the in-app controls.

@@ -137,12 +137,6 @@ private struct TerminalPanel: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 4)
-            if TerminalSession.isSandboxedBuild {
-                Label("Sandboxed", systemImage: "lock.fill")
-                    .font(.locus(size: 7, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
-                    .help("This terminal inherits the App Store sandbox and can access only approved locations.")
-            }
             terminalButton("magnifyingglass", help: "Find") { terminal.showFind() }
             terminalButton("clear", help: "Clear scrollback") { terminal.clear() }
             terminalButton("arrow.clockwise", help: "Restart shell") { terminal.restart() }

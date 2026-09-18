@@ -59,7 +59,6 @@ APP_PLISTS = [
     Path("Config/LocusRelease-Info.plist"),
     Path("Config/LocusX-Info.plist"),
     Path("Config/LocusExperimental-Info.plist"),
-    Path("Config/LocusMAS-Info.plist"),
 ]
 
 # Blanket opt-outs. Each one disables HTTPS enforcement for a whole class of

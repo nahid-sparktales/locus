@@ -408,11 +408,6 @@ extension AppModel {
 
     #endif
     func setComputerControlEnabled(_ enabled: Bool) {
-        guard ComputerControlService.isAvailable else {
-            settings.computerControlEnabled = false
-            showToast("Computer Control is unavailable in the App Store build")
-            return
-        }
         settings.computerControlEnabled = enabled
         computerControl.refreshPermissionStatus()
         announceComputerControlCapability()
@@ -444,7 +439,7 @@ extension AppModel {
                 hasLiveApplication: scope != nil,
                 liveApplicationConnected: scopedApplicationConnected
             ),
-            "native_available": ComputerControlService.isAvailable,
+            "native_available": true,
             "scope": scope == nil ? "all" : "application",
         ]
         if let scope { payload["application"] = scope.scopePayload }

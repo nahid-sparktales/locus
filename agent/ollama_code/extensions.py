@@ -602,8 +602,6 @@ class ExtensionManager:
         self,
         cwd: str,
         root: Path | None = None,
-        *,
-        sandboxed: bool | None = None,
     ) -> None:
         self.cwd = str(Path(cwd).expanduser())
         self.root = (root or APP_DIR / "extensions").expanduser()
@@ -612,8 +610,6 @@ class ExtensionManager:
         self.plugin_data_root = self.root / "plugins/data"
         self.marketplaces_root = self.root / "marketplaces"
         self.skills_root = self.root / "skills"
-        self.sandboxed = bool(os.environ.get("APP_SANDBOX_CONTAINER_ID")) \
-            if sandboxed is None else sandboxed
         self._guard = threading.RLock()
         # Before _load_state, which reports a degraded read through it.
         self._errors: list[str] = []
@@ -767,14 +763,14 @@ class ExtensionManager:
     def capabilities(self) -> dict[str, Any]:
         return {
             "streamable_http": True,
-            "stdio": not self.sandboxed,
+            "stdio": True,
             "oauth": True,
             "mcp_apps": False,
             "plugin_screens": True,
             "hooks": False,
             "npm_marketplaces": False,
             "ssh_marketplaces": False,
-            "sandboxed": self.sandboxed,
+            "sandboxed": False,
         }
 
     def snapshot(self) -> dict[str, Any]:

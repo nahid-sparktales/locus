@@ -1,6 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
-[[ "${LOCUS_EDITION:-locus}" == "locus" && "${CONFIGURATION:-}" != "ReleaseMAS" ]] || exit 0
+[[ "${LOCUS_EDITION:-locus}" == "locus" ]] || exit 0
 script_dir="${0:A:h}"
 repo_root="${script_dir:h}"
 helper_dir="${TARGET_BUILD_DIR:?}/${CONTENTS_FOLDER_PATH:?}/Helpers"

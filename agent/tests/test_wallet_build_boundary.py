@@ -70,16 +70,16 @@ def test_matcher_error_fails_closed(tmp_path, script):
 def test_all_forbidden_patterns_stay_under_checked_producer_helper():
     source = SCRIPT.read_text()
     assert "| /usr/bin/grep -Eq" not in source
-    assert 'wallet_audit_reject_matching_output "${mas_forbidden}"' in source
-    assert source.count('wallet_audit_reject_matching_output "${mas_forbidden}"') == 2
-    assert '    /usr/bin/plutil -p "${mas_app}/Contents/Info.plist"' in source
+    assert 'wallet_audit_reject_matching_output "${wallet_free_forbidden}"' in source
+    assert source.count('wallet_audit_reject_matching_output "${wallet_free_forbidden}"') == 2
+    assert '    /usr/bin/plutil -p "${wallet_free_app}/Contents/Info.plist"' in source
 
 
 def test_distribution_forbidden_patterns_stay_under_checked_producer_helper():
     source = DISTRIBUTION.read_text()
     assert "| /usr/bin/grep -Eq" not in source
-    assert source.count('wallet_audit_reject_matching_output "${mas_connector_forbidden}"') == 2
-    assert '    wallet_audit_reject_matching_output \'^  "SU[^" ]*"\'' in source
+    assert source.count('wallet_audit_reject_matching_output "${wallet_free_connector_forbidden}"') == 2
+    assert "'the wallet-free build contains connector configuration keys'" in source
 
 
 def invoke_ci(tmp_path, producer, expectation, pattern="SyntheticForbiddenIdentity"):
@@ -132,13 +132,13 @@ def test_ci_inspection_invalid_pattern_fails_closed(tmp_path, expectation):
 
 def test_ci_release_boundary_has_no_early_exit_inspection_pipelines():
     source = (ROOT / ".github/workflows/ci.yml").read_text()
-    body = source.split("      - name: LocusX and App Store release configurations compile\n", 1)[1].split(
+    body = source.split("      - name: LocusX and wallet-free release configurations compile\n", 1)[1].split(
         "\n  mobile:\n", 1
     )[0]
     assert "| grep -q" not in body
     assert "| grep -Eq" not in body
-    assert body.count("release_audit_output absent ") == 3
-    assert body.count("release_audit_output present ") == 1
+    assert body.count("release_audit_output absent ") == 1
+    assert body.count("release_audit_output present ") == 2
 
 
 def test_ci_builds_standard_editions_without_wallet_toolchains_and_audits_artifacts():
@@ -146,8 +146,7 @@ def test_ci_builds_standard_editions_without_wallet_toolchains_and_audits_artifa
     standard = source.split("\n  standard-native:\n", 1)[1].split("\n  swift:\n", 1)[0]
     assert "scheme: Locus\n" in standard
     assert "configuration: Release\n" in standard
-    assert "scheme: LocusMAS\n" in standard
-    assert "configuration: ReleaseMAS\n" in standard
+    assert "LocusMAS" not in standard
     assert "LOCUS_CARGO_BIN: /usr/bin/false" in standard
     assert "setup-node" not in standard
     assert "cargo install" not in standard
@@ -157,6 +156,6 @@ def test_ci_builds_standard_editions_without_wallet_toolchains_and_audits_artifa
     assert "-scheme LocusX" in wallet
     assert "-only-testing:LocusXTests" in wallet
     assert 'Tools/AuditAppEdition.py "$direct" --edition locusx --allow-missing-runtime' in wallet
-    assert 'Tools/AuditWalletBuildBoundary.sh "$direct" "$app_store"' in wallet
+    assert 'Tools/AuditWalletBuildBoundary.sh "$direct" "$wallet_free"' in wallet
     for integration in ["RunWalletChainTests.sh", "RunWalletSolanaTests.sh", "RunWalletSuiTests.sh"]:
         assert integration in wallet

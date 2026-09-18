@@ -58,9 +58,6 @@ def test_release_plist_changes_only_the_explicit_update_configuration():
         info = plistlib.loads((ROOT / f"Config/{name}-Info.plist").read_bytes())
         assert info["LocusUpdateMode"] == "manual"
         assert "SUFeedURL" not in info
-    mas = plistlib.loads((ROOT / "Config/LocusMAS-Info.plist").read_bytes())
-    assert mas["LocusUpdateMode"] == "appStore"
-    assert not any(key.startswith("SU") for key in mas)
 
 
 def test_release_plan_uses_only_the_new_feed_and_pinned_zip():
@@ -73,7 +70,7 @@ def test_release_plan_uses_only_the_new_feed_and_pinned_zip():
 @pytest.mark.parametrize("field,value", [
     ("LocusEdition", "locusx"), ("CFBundleIdentifier", "io.sparktales.locusx"),
     ("CFBundleName", "LocusX"), ("CFBundleExecutable", "LocusX"),
-    ("LocusUpdateMode", "manual"), ("LocusUpdateMode", "appStore"),
+    ("LocusUpdateMode", "manual"), ("LocusUpdateMode", "unknown"),
     ("SUFeedURL", feed.FEED_URL.replace("appcast-locus.xml", "appcast.xml")),
     ("SUFeedURL", "https://example.invalid/appcast-locus.xml"),
     ("SUFeedURL", ""), ("SUPublicEDKey", "unknown"),

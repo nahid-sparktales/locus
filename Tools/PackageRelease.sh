@@ -406,7 +406,7 @@ fi
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${app}" "${zip_out}"
 
 if [[ "${LOCUS_NOTARIZE:-0}" == "1" ]]; then
-    # See the note in ArchiveAppStore.sh: not defaulted in a public repo.
+    # Notarization credentials are never defaulted in a public repo.
     key_id="${LOCUS_ASC_KEY_ID:?set LOCUS_ASC_KEY_ID (App Store Connect API key id)}"
     issuer_id="${LOCUS_ASC_ISSUER_ID:?set LOCUS_ASC_ISSUER_ID (App Store Connect issuer id)}"
     key_path="${LOCUS_ASC_KEY_PATH:?set LOCUS_ASC_KEY_PATH (path to the App Store Connect .p8 key)}"

@@ -1,8 +1,6 @@
 import XCTest
 @testable import Locus
-#if LOCUS_DIRECT_DOWNLOAD
 import Sparkle
-#endif
 
 @MainActor
 private final class FakeUpdateDriver: AppUpdateDriving {
@@ -46,7 +44,7 @@ final class AppUpdateControllerTests: XCTestCase {
                 info[key] = value
                 let driver = FakeUpdateDriver()
                 let controller = AppUpdateController(
-                    distribution: .directDownload, updateMode: .automatic,
+                    updateMode: .automatic,
                     bundleInfo: info, driver: driver
                 )
                 XCTAssertNil(AppUpdateConfiguration(info: info))
@@ -70,7 +68,7 @@ final class AppUpdateControllerTests: XCTestCase {
 
     func testValidBundleConfigurationEnablesUpdatesWithoutAnOverride() {
         let controller = AppUpdateController(
-            distribution: .directDownload, bundleInfo: automaticInfo,
+            bundleInfo: automaticInfo,
             driver: FakeUpdateDriver(automaticChecks: false, automaticDownloads: false)
         )
         XCTAssertTrue(controller.isAvailable)
@@ -78,7 +76,6 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertFalse(controller.automaticallyDownloadsUpdates)
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
     func testSparkleUsesSealedFeedAndRetainsSavedOptOuts() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".app")
         let contents = directory.appendingPathComponent("Contents")
@@ -112,12 +109,11 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertFalse(relaunched.automaticallyDownloadsUpdates)
         XCTAssertFalse(relaunched.canCheckForUpdates, "Tests must never start Sparkle")
     }
-    #endif
 
     func testManualUpdatesIgnorePreviouslyEnabledUpdaterPreferences() {
         let driver = FakeUpdateDriver()
         let controller = AppUpdateController(
-            distribution: .directDownload, updateMode: .manual, driver: driver
+            updateMode: .manual, driver: driver
         )
         XCTAssertFalse(controller.isAvailable)
         XCTAssertFalse(controller.canCheckForUpdates)
@@ -138,7 +134,7 @@ final class AppUpdateControllerTests: XCTestCase {
             XCTAssertEqual(AppUpdateController.UpdateMode.configured(bundleValue: value), .manual)
         }
         XCTAssertEqual(AppUpdateController.UpdateMode.configured(bundleValue: "automatic"), .automatic)
-        let controller = AppUpdateController(distribution: .directDownload, updateMode: .manual)
+        let controller = AppUpdateController(updateMode: .manual)
         XCTAssertFalse(controller.isAvailable)
         XCTAssertFalse(controller.canCheckForUpdates)
     }
@@ -157,7 +153,6 @@ final class AppUpdateControllerTests: XCTestCase {
         let driver = FakeUpdateDriver()
         let controller = AppUpdateController(
             startImmediately: false,
-            distribution: .directDownload,
             updateMode: .automatic,
             bundleInfo: automaticInfo,
             driver: driver
@@ -181,7 +176,6 @@ final class AppUpdateControllerTests: XCTestCase {
         let driver = FakeUpdateDriver(canCheck: false, automaticChecks: false, automaticDownloads: false)
         let controller = AppUpdateController(
             startImmediately: false,
-            distribution: .directDownload,
             updateMode: .automatic,
             bundleInfo: automaticInfo,
             driver: driver
@@ -201,7 +195,6 @@ final class AppUpdateControllerTests: XCTestCase {
         let driver = FakeUpdateDriver(canCheck: false)
         let controller = AppUpdateController(
             startImmediately: false,
-            distribution: .directDownload,
             updateMode: .automatic,
             bundleInfo: automaticInfo,
             driver: driver
@@ -216,35 +209,10 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertEqual(driver.checkCount, 1)
     }
 
-    func testAppStoreDistributionCannotUseInjectedUpdater() {
-        let driver = FakeUpdateDriver()
-        let controller = AppUpdateController(
-            startImmediately: false,
-            distribution: .appStore,
-            updateMode: .automatic,
-            bundleInfo: automaticInfo,
-            driver: driver
-        )
-
-        XCTAssertFalse(controller.isAvailable)
-        XCTAssertFalse(controller.canCheckForUpdates)
-        XCTAssertFalse(controller.automaticallyChecksForUpdates)
-        XCTAssertFalse(controller.automaticallyDownloadsUpdates)
-
-        controller.setAutomaticallyChecksForUpdates(false)
-        controller.setAutomaticallyDownloadsUpdates(false)
-        controller.checkForUpdates()
-
-        XCTAssertTrue(driver.automaticallyChecksForUpdates)
-        XCTAssertTrue(driver.automaticallyDownloadsUpdates)
-        XCTAssertEqual(driver.checkCount, 0)
-    }
-
     func testRelaunchHandlerIsForwardedToTheUpdateDriver() {
         let driver = FakeUpdateDriver()
         let controller = AppUpdateController(
             startImmediately: false,
-            distribution: .directDownload,
             updateMode: .automatic,
             bundleInfo: automaticInfo,
             driver: driver

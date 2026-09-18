@@ -159,14 +159,14 @@ def test_failed_inventory_is_not_accepted_as_no_fuzz_payload(tmp_path, script):
 def test_both_audits_cover_all_products_and_every_embedded_macho():
     boundary, distribution = (script.read_text() for script in SCRIPTS)
     assert 'wallet_audit_reject_fuzz_host_resources "${direct_app}"' in boundary
-    assert 'wallet_audit_reject_fuzz_host_resources "${mas_app}"' in boundary
+    assert 'wallet_audit_reject_fuzz_host_resources "${wallet_free_app}"' in boundary
     assert 'wallet_audit_reject_fuzz_host_resources "${app}"' in distribution
     for text, count in [(boundary, 2), (distribution, 1)]:
         for kind in ["symbols", "strings"]:
             assert text.count(
                 f'wallet_audit_reject_matching_output "${{wallet_fuzz_forbidden_{kind}}}"'
             ) == count
-    for counter in ["direct_macho_count", "mas_macho_count"]:
+    for counter in ["direct_macho_count", "wallet_free_macho_count"]:
         loop = boundary.split(f"(( {counter} += 1 ))", 1)[1].split("done <", 1)[0]
         # These must run before the signer-specific exemption, not inside it.
         assert loop.index('"${wallet_fuzz_forbidden_symbols}"') < loop.index("unexpected")

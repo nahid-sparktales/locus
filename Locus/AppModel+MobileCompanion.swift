@@ -217,8 +217,7 @@ extension AppModel {
                     message: "Choose a workspace that is still available on the Mac."
                 )
             }
-            guard FileManager.default.fileExists(atPath: workspace.path),
-                  workspaceAccess.activateStored(path: workspace.path) else {
+            guard FileManager.default.fileExists(atPath: workspace.path) else {
                 throw CompanionProtocolError(
                     code: "workspace_unavailable",
                     message: "Open this workspace again on the Mac to restore access."

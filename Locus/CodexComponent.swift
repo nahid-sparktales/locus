@@ -7,9 +7,8 @@ import Security
 ///
 /// The pair is ~270 MB installed and does nothing unless a ChatGPT-plan account
 /// is signed in, so bundling it charged every Ollama and API-key user for a
-/// feature they never touch. Direct-download builds ship without it and fetch it
-/// on demand; the sandboxed App Store build still bundles it, because the App
-/// Store does not permit downloading executable code.
+/// feature they never touch. Release builds ship without it and fetch it on
+/// demand; other configurations bundle it.
 ///
 /// The install path is deliberately a stable symlink rather than a versioned
 /// directory. The backend resolves the helper once per launch from
@@ -57,8 +56,7 @@ enum CodexComponent: PlanComponentDescriptor {
         currentRoot?.appending(path: "codex", directoryHint: .notDirectory)
     }
 
-    /// Present in the App Store build and in local Debug builds, absent from a
-    /// direct-download release.
+    /// Present in local Debug builds, absent from a Release build.
     static var bundledHelper: URL? {
         let url = Bundle.main.bundleURL.appending(path: "Contents/Helpers/codex")
         return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil

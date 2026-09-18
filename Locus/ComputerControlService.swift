@@ -13,14 +13,6 @@ final class ComputerControlService: ObservableObject {
     @Published private(set) var screenRecordingGranted = CGPreflightScreenCaptureAccess()
     @Published private(set) var isExecuting = false
 
-    static var isAvailable: Bool {
-        #if LOCUS_APP_STORE
-        false
-        #else
-        !WorkspaceAccess.isSandboxed
-        #endif
-    }
-
     private struct ElementDescriptor {
         let element: AXUIElement
         let role: String
@@ -97,9 +89,6 @@ final class ComputerControlService: ObservableObject {
         }
         guard !isExecuting else {
             return ["error": "Computer Control is already in use by another foreground task."]
-        }
-        guard Self.isAvailable else {
-            return ["error": "Computer Control is unavailable in the App Store sandbox build."]
         }
         refreshPermissionStatus()
         guard accessibilityGranted else {

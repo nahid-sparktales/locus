@@ -1403,7 +1403,6 @@ final class LocusUITests: XCTestCase {
         XCTAssertEqual(anyElement("settings.automaticUpdateChecks").exists, automatic)
         XCTAssertEqual(anyElement("settings.automaticUpdateDownloads").exists, automatic)
         XCTAssertEqual(anyElement("settings.checkForUpdates").exists, automatic)
-        XCTAssertFalse(anyElement("settings.appStoreUpdates").exists)
     }
 
     func testSidebarMenuExposesSoftwareUpdatesForThisBuild() {

@@ -48,7 +48,6 @@ private func walletRPCRequestBody(_ request: URLRequest) throws -> Data {
 
 @MainActor
 private final class FakeWalletSigner: WalletSignerClient {
-    #if LOCUS_DIRECT_DOWNLOAD
     var currentReleaseStatus = WalletReleaseAuthorityStatus(
         installationID: String(repeating: "f", count: 64), checkpoint: nil)
     private(set) var releaseHistoryApplyCount = 0
@@ -70,7 +69,6 @@ private final class FakeWalletSigner: WalletSignerClient {
         hasOperationalReleaseAuthority = true
         return accepted
     }
-    #endif
 
     func applyReleaseActivation(
         _ envelope: WalletSignedReleaseActivationEnvelope
@@ -416,7 +414,6 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertNil(policy.minimumOutputBaseUnits)
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
     #if DEBUG
     private func experimentalGatewayFixture() throws
         -> (gateway: WalletGateway, signer: FakeWalletSigner, data: Data) {
@@ -715,7 +712,6 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(signer.authorizationCount, 0)
         XCTAssertTrue(signer.executedIntentIDs.isEmpty)
     }
-    #endif
 
     private func prepared(
         riskFlags: [WalletRiskFlag] = [],
@@ -7677,10 +7673,9 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertFalse(gate.take())
     }
 
-    #if LOCUS_DIRECT_DOWNLOAD
     func testEmbeddedSignerProcessReportsAConnectionLocalLockedSession() async throws {
         let client = XPCWalletSignerClient(bundle: Bundle.main)
-        XCTAssertTrue(client.isAvailable, "The direct build must embed WalletSigner.xpc.")
+        XCTAssertTrue(client.isAvailable, "Locus must embed WalletSigner.xpc.")
         let status = try await client.signerStatus()
         XCTAssertEqual(status.protocolVersion, WalletGateway.protocolVersion)
         XCTAssertNil(status.sessionID)
@@ -7690,7 +7685,7 @@ final class WalletGatewayTests: XCTestCase {
 
     func testEmbeddedRecoveryApplicationAndBothSignerCopiesArePresent() throws {
         let client = ProcessWalletRecoveryViewClient(bundle: Bundle.main)
-        XCTAssertTrue(client.isAvailable, "The direct build must embed signed WalletRecovery.app.")
+        XCTAssertTrue(client.isAvailable, "Locus must embed signed WalletRecovery.app.")
         let contents = Bundle.main.bundleURL.appendingPathComponent("Contents")
         let outerSigner = contents.appendingPathComponent(
             "XPCServices/WalletSigner.xpc/Contents/MacOS/WalletSigner"
@@ -7700,7 +7695,6 @@ final class WalletGatewayTests: XCTestCase {
         )
         XCTAssertEqual(try Data(contentsOf: outerSigner), try Data(contentsOf: innerSigner))
     }
-    #endif
 
     func testRecoveryProcessFramesAreBoundedChunkableAndSecretFree() throws {
         let invocationID = UUID().uuidString.lowercased()
@@ -8057,7 +8051,7 @@ final class WalletGatewayTests: XCTestCase {
         XCTAssertEqual(policy.networkID, WalletNetworkCatalog.solanaDevnet.id)
     }
 
-    func testWalletFeatureSettingsMigrateEnvironmentOnceAndAppStoreStaysOff() {
+    func testWalletFeatureSettingsMigrateEnvironmentOnceAndUnsupportedBuildStaysOff() {
         var direct = AppSettings()
         XCTAssertTrue(direct.migrateLegacyWalletFeatureAccess(environment: [
             "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
@@ -8070,13 +8064,13 @@ final class WalletGatewayTests: XCTestCase {
         ))
         XCTAssertTrue(direct.walletAlphaEnabled, "persisted in-app access becomes authoritative")
 
-        var appStore = AppSettings()
-        XCTAssertTrue(appStore.migrateLegacyWalletFeatureAccess(environment: [
+        var unsupported = AppSettings()
+        XCTAssertTrue(unsupported.migrateLegacyWalletFeatureAccess(environment: [
             "LOCUS_ENABLE_EXPERIMENTAL_WALLET": "1",
             "LOCUS_ENABLE_EXPERIMENTAL_WALLET_BROWSER": "1",
         ], isDirectDownload: false))
-        XCTAssertFalse(appStore.walletAlphaEnabled)
-        XCTAssertFalse(appStore.walletBrowserProviderEnabled)
+        XCTAssertFalse(unsupported.walletAlphaEnabled)
+        XCTAssertFalse(unsupported.walletBrowserProviderEnabled)
         let effective = AppSettings.effectiveWalletFeatureAccess(
             walletEnabled: true, browserEnabled: true, isDirectDownload: false
         )

@@ -23,10 +23,6 @@ extension AppModel {
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: workspacePath)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            showToast("Locus could not retain access to that workspace")
-            return
-        }
         switchWorkspace(to: url.path)
     }
 
@@ -53,10 +49,6 @@ extension AppModel {
                 return
             }
             // The folder already exists — just open it.
-            guard workspaceAccess.rememberAndActivate(url) else {
-                showToast("Locus could not retain access to that workspace")
-                return
-            }
             switchWorkspace(to: url.path)
             return
         }
@@ -64,10 +56,6 @@ extension AppModel {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         } catch {
             showToast("Could not create the folder: \(error.localizedDescription)")
-            return
-        }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            showToast("Locus could not retain access to that workspace")
             return
         }
         showToast("Created \(url.lastPathComponent)")
@@ -80,10 +68,6 @@ extension AppModel {
             return
         }
         let path = SessionSummary.canonicalWorkspacePath(path)
-        guard workspaceAccess.activateStored(path: path) else {
-            showToast("Choose that workspace again to restore access")
-            return
-        }
         guard FileManager.default.fileExists(atPath: path) else {
             showToast("That workspace is no longer available")
             removeWorkspaceProfile(path)
@@ -94,17 +78,6 @@ extension AppModel {
         initialWorkspacePath = path
         expandedWorkspaceIDs.insert(path)
         persistExpandedWorkspaces()
-        if persistenceEnabled, backendProcess.isRunning, WorkspaceAccess.isSandboxed {
-            workspaceToOpenAfterReconnect = path
-            backend.disconnect()
-            sessionInfo = nil
-            Task { [backendProcess] in
-                await backendProcess.stopAndWait()
-                await self.bootstrap()
-            }
-            showToast("Switching to \(URL(fileURLWithPath: path).lastPathComponent)")
-            return
-        }
         if let latest = sessions
             .filter({ $0.workspacePath == path })
             .max(by: { $0.mtime < $1.mtime })

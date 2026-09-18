@@ -6,7 +6,7 @@ import Security
 /// channel. Environment variables and public wallet preferences grant nothing.
 enum WalletExperimentalMainnetBuild {
     static func isEnabled(bundle: Bundle = .main) -> Bool {
-        #if LOCUS_EXPERIMENTAL_MAINNET && !LOCUS_APP_STORE
+        #if LOCUS_EXPERIMENTAL_MAINNET
         return bundle.object(forInfoDictionaryKey: "LocusWalletExperimentalMainnetEnabled") as? Bool == true
         #else
         return false
