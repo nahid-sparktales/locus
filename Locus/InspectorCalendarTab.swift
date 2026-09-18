@@ -437,7 +437,7 @@ struct InspectorCalendarTab: View {
                     Divider()
                     Button("Add Google or Microsoft…", action: openInternetAccounts)
                 } label: {
-                    Image(systemName: "calendar.badge.gearshape")
+                    Image(systemName: "gearshape")
                 }
                 .menuStyle(.borderlessButton)
                 .help("Choose calendars and connect accounts")
@@ -484,7 +484,7 @@ struct InspectorCalendarTab: View {
 
     private var monthGrid: some View {
         LazyVGrid(columns: columns, spacing: 3) {
-            ForEach(weekdaySymbols, id: \.self) { symbol in
+            ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                 Text(symbol.uppercased())
                     .font(.locus(size: 9, weight: .semibold))
                     .foregroundStyle(LocusTheme.textSecondary)
