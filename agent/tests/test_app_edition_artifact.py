@@ -20,14 +20,23 @@ def artifact(tmp_path, monkeypatch):
     return lambda edition="locus", **options: make_synthetic_app(tmp_path, edition, **options)
 
 
-@pytest.mark.parametrize("edition,mode", [("locus", "manual"), ("locus", "appStore"), ("locusx", "manual")])
-def test_valid_artifact_edition_and_distribution_are_independent(artifact, edition, mode):
-    app, _ = artifact(edition, mode=mode)
+@pytest.mark.parametrize("edition", ["locus", "locusx"])
+def test_valid_artifact_passes_the_audit_for_either_edition(artifact, edition):
+    app, _ = artifact(edition)
     result = audit.audit(app, edition)
     assert result["passed"] is True
     assert result["edition"] == edition
     assert result["bundled_backend"] is True
     assert result["mach_o_files"] > 0
+
+
+@pytest.mark.parametrize("edition", ["locus", "locusx"])
+def test_artifact_without_sparkle_is_rejected(artifact, edition):
+    # There is one channel: every shipping build carries the updater, so a
+    # missing framework is a broken artifact rather than another distribution.
+    app, _ = artifact(edition, sparkle=False)
+    with pytest.raises(audit.AuditError, match="Sparkle is missing"):
+        audit.audit(app, edition)
 
 
 @pytest.mark.parametrize("edition", ["locus", "locusx"])

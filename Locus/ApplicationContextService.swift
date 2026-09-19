@@ -29,7 +29,6 @@ struct ApplicationTarget: Identifiable, Hashable, Sendable {
 }
 
 enum ApplicationContextError: LocalizedError {
-    case unavailable
     case applicationClosed
     case accessibilityPermission
     case screenRecordingPermission
@@ -42,8 +41,6 @@ enum ApplicationContextError: LocalizedError {
         switch self {
         case .privateIdentitySurface:
             "Application capture is paused while Identity Vault or a private application is open."
-        case .unavailable:
-            "Application context is unavailable in the Mac App Store build."
         case .applicationClosed:
             "That application is no longer running."
         case .accessibilityPermission:
@@ -68,14 +65,6 @@ enum ApplicationContextError: LocalizedError {
 final class ApplicationContextService: ObservableObject {
     static let maximumAccessibilityCharacters = 60_000
     static let maximumScreenshotBytes = 15 * 1_024 * 1_024
-
-    static var isAvailable: Bool {
-        #if LOCUS_APP_STORE
-        false
-        #else
-        !WorkspaceAccess.isSandboxed
-        #endif
-    }
 
     @Published private(set) var runningApplications: [ApplicationTarget] = []
     @Published private(set) var lastExternalApplication: ApplicationTarget?
@@ -164,7 +153,6 @@ final class ApplicationContextService: ObservableObject {
 
     func captureSnapshot(of target: ApplicationTarget) async throws -> ChatAttachment {
         guard !IdentityPrivacyGuard.shared.blocksCapture else { throw ApplicationContextError.privateIdentitySurface }
-        guard Self.isAvailable else { throw ApplicationContextError.unavailable }
         guard let app = exactApplication(for: target) else {
             throw ApplicationContextError.applicationClosed
         }

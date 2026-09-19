@@ -3,7 +3,7 @@
 Open **Settings → Extensions → MCP servers** to add a server or diagnose an
 existing connection. Choose the transport from the server's setup instructions:
 Streamable HTTP, a local STDIO command, or Legacy SSE. Local commands are available
-in the direct app build; the App Store build supports network transports.
+in the app build; network transports are also supported.
 
 ## Diagnose a connection
 

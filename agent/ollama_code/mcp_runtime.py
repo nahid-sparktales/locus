@@ -253,9 +253,6 @@ class MCPManager:
             self._set_status(server, "connected", None, instructions=existing.get("instructions"))
             return
         await self._disconnect_unlocked(server_id)
-        if server.get("transport") == "stdio" and self.extensions.sandboxed:
-            self._set_status(server, "unsupported", "Local stdio MCP is unavailable in the App Store build.")
-            return
         self._set_status(server, "connecting", None)
         owner: dict[str, Any] = {
             "ready": asyncio.Event(), "stop": asyncio.Event(), "timed_out": False,

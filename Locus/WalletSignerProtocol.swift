@@ -1938,14 +1938,12 @@ struct WalletSignerErrorPayload: Codable, Equatable, Sendable {
     let error: String
 }
 
-#if !LOCUS_APP_STORE
 struct WalletReleaseActivationStatus: Codable, Equatable, Sendable {
     let revision: Int
     let envelopeSHA256: String
     let expiresAt: Date
     let enabledNetworkIDs: Set<String>
 }
-#endif
 
 /// Code-signing requirements enforced by NSXPCConnection before either side
 /// accepts privileged wallet messages. Foundation performs this check from the
@@ -2091,11 +2089,9 @@ struct WalletRecoveryProcessFrameDecoder {
 /// selector spelling and allowed classes cannot silently widen the protocol.
 @objc protocol WalletSignerXPCProtocol {
     func status(reply: @escaping (Data) -> Void)
-    #if !LOCUS_APP_STORE
     func applyReleaseActivation(_ request: Data, reply: @escaping (Data) -> Void)
     func releaseAuthorityStatus(reply: @escaping (Data) -> Void)
     func applyReleaseHistory(_ request: Data, reply: @escaping (Data) -> Void)
-    #endif
     func authorizeSession(_ reason: String, reply: @escaping (Data) -> Void)
     func listAccounts(reply: @escaping (Data) -> Void)
     func encodeEVMContract(_ request: Data, reply: @escaping (Data) -> Void)

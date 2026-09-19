@@ -97,7 +97,7 @@ to be saved before reporting a retryable failure. Optional timings are under
 ## Distribution and verification
 
 `Tools/BuildDocumentExtractor.sh` compiles and signs the native helper for both
-app targets. App Store helpers inherit the containing application's sandbox.
+app targets. A helper signed for a sandboxed host inherits that sandbox.
 The main backend coordinates restored document jobs; per-chat workers share
 durable jobs and cross-process concurrency locks without independently restoring
 the catalog. External workspaces selected after startup require refreshed
@@ -106,7 +106,7 @@ backend access; setup restarts the coordinator after obtaining the folder grant.
 See the document protocol fixtures and focused extraction, output-store,
 onboarding, and Agent-inspector tests for deterministic coverage. Native UI
 tests exercise Library draft preservation and setup navigation. Release
-qualification also requires signed direct-download and App Store builds and
+qualification also requires signed Locus and LocusX builds and
 the connected scanned-PDF → citation → output → revision flow with a real model.
 See [the implementation verification report](LibraryImplementationVerification.md)
 for completed checks, retained evidence, and remaining release acceptance work.

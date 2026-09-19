@@ -1,7 +1,6 @@
 import Combine
 import Foundation
 
-#if !LOCUS_APP_STORE
 
 typealias CodexComponentInstaller = PlanComponentInstaller<CodexComponent>
 typealias ClaudeComponentInstaller = PlanComponentInstaller<ClaudeComponent>
@@ -416,4 +415,3 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unc
     }
 }
 
-#endif

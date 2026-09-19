@@ -225,9 +225,7 @@ struct InspectorSimulatorTab: View {
 
     @ViewBuilder
     private var devicePicker: some View {
-        if !SimulatorControlService.isSupportedBuild {
-            unavailableState
-        } else if service.isRefreshing {
+        if service.isRefreshing {
             loadingState
         } else if service.devices.isEmpty {
             setupState
@@ -246,14 +244,6 @@ struct InspectorSimulatorTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("simulator.loading")
-    }
-
-    private var unavailableState: some View {
-        simulatorEmptyState(
-            symbol: "iphone.slash",
-            title: "Simulator control isn’t available",
-            message: "Use the direct-download build of Locus to view and control iOS Simulator devices."
-        )
     }
 
     private var setupState: some View {
@@ -399,30 +389,6 @@ struct InspectorSimulatorTab: View {
             .fill(LocusTheme.separator)
             .frame(height: 1)
             .padding(.leading, 42)
-    }
-
-    private func simulatorEmptyState(
-        symbol: String,
-        title: String,
-        message: String
-    ) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 30, weight: .light))
-                .foregroundStyle(LocusTheme.textTertiary)
-            Text(title)
-                .font(LocusType.title)
-                .foregroundStyle(LocusTheme.textPrimary)
-                .multilineTextAlignment(.center)
-            Text(message)
-                .font(LocusType.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: 400)
-        .padding(30)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func primaryButton(

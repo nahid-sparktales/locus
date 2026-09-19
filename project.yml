@@ -5,18 +5,15 @@ options:
     macOS: "14.0"
   createIntermediateGroups: true
 configs:
-  # Distribution is independent of edition: Locus is wallet-free; LocusX owns
-  # the optional wallet. Both direct editions keep desktop capabilities.
-  # Release is the direct download: Developer ID signed, notarized, and NOT
-  # sandboxed — a container buys nothing outside the App Store and only
-  # constrains which workspaces the agent can reach. ReleaseMAS is the App
-  # Store build, sandboxed and entitled.
+  # Locus is wallet-free; LocusX owns the optional wallet. Both ship as the
+  # same notarized direct download: Developer ID signed and NOT sandboxed — a
+  # container would buy nothing here and would only constrain which workspaces
+  # the agent can reach.
   Debug: debug
   Release: release
   # Explicit personal mainnet channel. It retains release compilation and XPC
-  # authentication; it is not a Debug, canary, or App Store configuration.
+  # authentication; it is not a Debug or canary configuration.
   ReleaseExperimental: release
-  ReleaseMAS: release
 settings:
   base:
     SWIFT_VERSION: "5.10"
@@ -29,8 +26,8 @@ settings:
     # A stable signing identity rather than ad-hoc. Keychain items are guarded by
     # an ACL bound to the code signature, and an ad-hoc signature changes on every
     # rebuild, so the Autofill vault key would re-prompt after each build. This
-    # touches Debug only — the shipped Release and ReleaseMAS signatures are
-    # unchanged. Building outside the team (CI, contributors) works by appending
+    # touches Debug only — the shipped Release signature is unchanged.
+    # Building outside the team (CI, contributors) works by appending
     # `CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` to the xcodebuild invocation.
     Debug:
       CODE_SIGN_STYLE: Manual
@@ -57,16 +54,6 @@ settings:
       DEVELOPMENT_TEAM: 4X4RJA7GMD
       CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
       ENABLE_APP_SANDBOX: NO
-      ENABLE_HARDENED_RUNTIME: YES
-    ReleaseMAS:
-      ARCHS: arm64
-      CODE_SIGN_STYLE: Automatic
-      DEVELOPMENT_TEAM: 4X4RJA7GMD
-      # Keep local ReleaseMAS verification faithful to a distribution archive:
-      # a development identity must not inject get-task-allow into the sealed
-      # bundle merely because App Store distribution signing is unavailable.
-      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
-      ENABLE_APP_SANDBOX: YES
       ENABLE_HARDENED_RUNTIME: YES
 packages:
   SwiftMarkdown:
@@ -297,7 +284,6 @@ targets:
         INFOPLIST_FILE: Locus/Info.plist
         LOCUS_DIRECT_ENTITLEMENTS: Config/LocusDirect.entitlements
         CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
@@ -333,7 +319,7 @@ targets:
         LOCUS_GOOGLE_OAUTH_REVERSED_CLIENT_ID: ""
         LOCUS_DIRECT_ENTITLEMENTS: Config/LocusX.entitlements
         CODE_SIGN_ENTITLEMENTS: "$(LOCUS_DIRECT_ENTITLEMENTS)"
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
         LOCUS_REOWN_PROJECT_ID: ""
         LOCUS_WALLETCONNECT_REDIRECT_URL: ""
         LOCUS_PHANTOM_APP_ID: ""
@@ -361,7 +347,7 @@ targets:
           PRODUCT_MODULE_NAME: Locus
           EXECUTABLE_NAME: LocusX
           INFOPLIST_FILE: Config/LocusExperimental-Info.plist
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET LOCUS_EXPERIMENTAL_MAINNET"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET LOCUS_EXPERIMENTAL_MAINNET"
           LOCUS_WALLET_RELEASE_ACTIVATION_URL: ""
     dependencies:
       - target: WalletRecoveryApplication
@@ -378,22 +364,6 @@ targets:
       testTargets:
         - LocusXTests
         - LocusXUITests
-  LocusMAS:
-    productName: Locus
-    templates:
-      - LocusSwiftSources
-      - LocusSharedPackages
-      - LocusApplication
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Config/LocusMAS-Info.plist
-        PRODUCT_MODULE_NAME: Locus
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
-      configs:
-        ReleaseMAS:
-          CODE_SIGN_ENTITLEMENTS: Config/Locus.entitlements
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_APP_STORE"
   WalletFuzzHost:
     type: application
     platform: macOS
@@ -418,7 +388,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_DEBUG_DYLIB: NO
         SKIP_INSTALL: YES
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET LOCUS_WALLET_FUZZ_HOST"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET LOCUS_WALLET_FUZZ_HOST"
   LocusTests:
     type: bundle.unit-test
     platform: macOS
@@ -434,7 +404,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.tests
         GENERATE_INFOPLIST_FILE: YES
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD"
   LocusXTests:
     type: bundle.unit-test
     platform: macOS
@@ -449,7 +418,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locusx.tests
         GENERATE_INFOPLIST_FILE: YES
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
   LocusWalletChainTests:
     type: bundle.unit-test
     platform: macOS
@@ -461,7 +430,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.wallet-chain-tests
         GENERATE_INFOPLIST_FILE: YES
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_DIRECT_DOWNLOAD LOCUS_WALLET"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/WalletSignerCore/target/aarch64-apple-darwin/release"
         OTHER_LDFLAGS: "$(inherited) -llocus_wallet_signer_core"
   LocusUITests:
@@ -489,18 +458,6 @@ targets:
         TEST_TARGET_NAME: LocusX
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCUS_WALLET"
-  LocusMASUITests:
-    type: bundle.ui-testing
-    platform: macOS
-    sources:
-      - path: LocusMASUITests
-    dependencies:
-      - target: LocusMAS
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.sparktales.locus.mas-ui-tests
-        TEST_TARGET_NAME: LocusMAS
-        GENERATE_INFOPLIST_FILE: YES
 schemes:
   # Release UI verification must not compile the Debug-only unit-test helpers.
   LocusReleaseUpdates:
@@ -549,13 +506,3 @@ schemes:
         LOCUS_SOLANA_VALIDATOR_VERSION: "$(LOCUS_SOLANA_VALIDATOR_VERSION)"
       targets:
         - LocusWalletChainTests
-  LocusMAS:
-    build:
-      targets:
-        LocusMAS: all
-    archive:
-      config: ReleaseMAS
-    test:
-      config: Debug
-      targets:
-        - LocusMASUITests

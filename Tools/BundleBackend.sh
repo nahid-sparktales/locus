@@ -24,14 +24,10 @@ runtime="${resources}/AgentRuntime"
 source_package="${backend_root}/ollama_code"
 codex_cache="${LOCUS_CODEX_CACHE:-${repo_root}/.codex-app-server}"
 
-# Release is the direct download and the only configuration that fetches the
-# Codex helpers at runtime: they are ~270 MB installed and idle unless a
-# ChatGPT-plan account is signed in. Debug keeps them bundled so local ChatGPT
-# work needs no download, and ReleaseMAS must bundle them because the App Store
-# does not permit downloading executable code.
-# Both halves matter. Keying on the configuration alone would also strip the
-# helpers out of a LocusMAS build made with -configuration Release, which would
-# produce a sandboxed app that can neither bundle nor download them.
+# Release is the only configuration that fetches the Codex helpers at runtime:
+# they are ~270 MB installed and idle unless a ChatGPT-plan account is signed
+# in. Every other configuration keeps them bundled so local ChatGPT work needs
+# no download.
 if [[ -z "${LOCUS_BUNDLE_CODEX:-}" \
     && "${CONFIGURATION:-}" == "Release" \
     && ( "${TARGET_NAME:-}" == "Locus" || "${TARGET_NAME:-}" == "LocusX" ) ]]; then
@@ -107,15 +103,12 @@ bundle_claude_helper() {
     /bin/mkdir -p "${helper:h}"
     copy_without_extended_metadata "${claude_cache}/claude" "${helper}"
     local entitlements="${repo_root}/Config/CodexCodeModeHost.entitlements"
-    if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
-        entitlements="${repo_root}/Config/CodexCodeModeHostSandbox.entitlements"
-    fi
     /usr/bin/codesign --force --options runtime --entitlements "${entitlements}" \
         --identifier io.sparktales.locus.claude --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "${helper}"
 }
 
 bundle_codex_helper() {
-    # build      embed the helpers in the app (App Store build, local Debug)
+    # build      embed the helpers in the app (local Debug and experimental)
     # component  ship only the licence + provenance; the binaries are fetched
     #            at runtime from the signed component published alongside the
     #            release (direct download)
@@ -162,16 +155,7 @@ bundle_codex_helper() {
         local sealed_helper identifier
         for sealed_helper in "${helper}" "${code_mode_host_helper}"; do
             identifier="io.sparktales.locus.${sealed_helper:t}"
-            if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
-                local entitlements="${repo_root}/Config/AgentRuntime.entitlements"
-                if [[ "${sealed_helper}" == "${code_mode_host_helper}" ]]; then
-                    entitlements="${repo_root}/Config/CodexCodeModeHostSandbox.entitlements"
-                fi
-                /usr/bin/codesign --force "${hardened[@]}" \
-                    --identifier "${identifier}" \
-                    --entitlements "${entitlements}" \
-                    --sign "${identity}" "${sealed_helper}"
-            elif [[ "${sealed_helper}" == "${code_mode_host_helper}" ]]; then
+            if [[ "${sealed_helper}" == "${code_mode_host_helper}" ]]; then
                 /usr/bin/codesign --force "${hardened[@]}" \
                     --identifier "${identifier}" \
                     --entitlements "${repo_root}/Config/CodexCodeModeHost.entitlements" \
@@ -200,32 +184,12 @@ bundle_source() {
     local edition="${LOCUS_EDITION:-locus}"
     case "${TARGET_NAME:-}" in
         LocusX) [[ "${edition}" == "locusx" ]] || return 1 ;;
-        Locus|LocusMAS) [[ "${edition}" == "locus" ]] || return 1 ;;
+        Locus) [[ "${edition}" == "locus" ]] || return 1 ;;
         *) echo "error: unsupported backend application target" >&2; return 1 ;;
     esac
     python3 "${script_dir}/StageBackendEdition.py" \
         --source "${source_package}" --destination "${runtime}/source/ollama_code" \
         --edition "${edition}"
-    if [[ "${TARGET_NAME:-}" == "LocusMAS" || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
-        # The App Store runtime must not even contain Simulator tool schemas.
-        # Keep the registry's empty variables so shared lookup code imports,
-        # while removing every tool name/description from the packaged copy.
-        local registry="${runtime}/source/ollama_code/tool_registry.py"
-        local stripped
-        stripped="$(/usr/bin/mktemp "${registry}.mas.XXXXXX")"
-        /usr/bin/awk '
-            /^SIMULATOR_TOOL_SCHEMAS = \[/ {
-                print "SIMULATOR_TOOL_SCHEMAS = []"
-                print "_READ_ONLY_SIMULATOR_TOOLS: set[str] = set()"
-                print "_SIMULATOR_TOOL_NAMES: set[str] = set()"
-                skipping = 1
-                next
-            }
-            skipping && /^#: The one wording/ { skipping = 0 }
-            !skipping { print }
-        ' "${registry}" > "${stripped}"
-        /bin/mv "${stripped}" "${registry}"
-    fi
     for junk in "${runtime}/source/ollama_code"/**/__pycache__(N/); do
         /bin/rm -rf "${junk}"
     done
@@ -305,21 +269,13 @@ sign_runtime_if_needed() {
         hardened=(--options runtime --timestamp)
     fi
 
-    local helper_entitlements="${repo_root}/Config/AgentRuntime.entitlements"
     local item
     for item in "${runtime}"/**/*.dylib(N) "${runtime}"/**/*.so(N); do
         /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${item}"
     done
     for item in "${runtime}/python/bin"/python3.*(N); do
         [[ -L "${item}" ]] && continue
-        if [[ "${ENABLE_APP_SANDBOX:-NO}" == "YES" ]]; then
-            /usr/bin/codesign --force "${hardened[@]}" \
-                --identifier io.sparktales.locus.agent-runtime \
-                --entitlements "${helper_entitlements}" \
-                --sign "${identity}" "${item}"
-        else
-            /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${item}"
-        fi
+        /usr/bin/codesign --force "${hardened[@]}" --sign "${identity}" "${item}"
     done
 }
 

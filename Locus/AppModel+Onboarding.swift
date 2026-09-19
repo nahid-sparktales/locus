@@ -46,10 +46,6 @@ extension AppModel {
         panel.canCreateDirectories = true
         panel.prompt = "Use Workspace"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            onboarding.reportError("Locus could not retain access to that folder.")
-            return
-        }
         onboarding.selectWorkspace(url.resolvingSymlinksInPath().path, sample: false)
     }
 
@@ -59,9 +55,6 @@ extension AppModel {
                 .appendingPathComponent("\(AppEdition.current.displayName)/Quickstart", isDirectory: true)
             let root = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try OnboardingSamples.create(at: root, startingPoint: onboarding.progress.startingPoint)
-            guard workspaceAccess.rememberAndActivate(root) else {
-                throw CocoaError(.fileReadNoPermission)
-            }
             onboarding.selectWorkspace(root.path, sample: true)
         } catch {
             onboarding.reportError("Could not prepare the sample: \(error.localizedDescription)")
@@ -77,17 +70,6 @@ extension AppModel {
         }
         guard isAgentOnline, isModelOnline else {
             throw onboardingError("Connect a ready model before starting.")
-        }
-        guard workspaceAccess.activateStored(path: workspace) else {
-            throw onboardingError("Choose this workspace again to restore access.")
-        }
-        if WorkspaceAccess.isSandboxed, backendProcess.isRunning {
-            // A running child cannot inherit a folder grant obtained later.
-            // Restart the coordinator after activating the chosen workspace.
-            backend.disconnect()
-            await backendProcess.stopAndWait()
-            await bootstrap()
-            guard isAgentOnline else { throw onboardingError("Reconnect the local agent, then retry this task.") }
         }
         let previousSession = currentSessionID
         startNewChat(in: workspace, environment: .local)

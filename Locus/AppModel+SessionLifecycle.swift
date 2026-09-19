@@ -214,10 +214,6 @@ extension AppModel {
             showToast("That workspace is no longer available")
             return
         }
-        guard workspaceAccess.activateStored(path: path) else {
-            showToast("Choose that workspace again to restore access")
-            return
-        }
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         emptySidebarDestination = nil
         savedAgentOverviewID = nil
@@ -314,10 +310,6 @@ extension AppModel {
         if let path = session.workspacePath {
             guard FileManager.default.fileExists(atPath: path) else {
                 showToast("That chat's workspace is no longer available")
-                return
-            }
-            guard workspaceAccess.activateStored(path: path) else {
-                showToast("Choose that workspace again to restore access")
                 return
             }
             pendingWorkspacePath = path

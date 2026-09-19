@@ -41,7 +41,7 @@ fi
 
 # These are generated products only. Keep the containment/symlink checks below.
 case "${TARGET_NAME:-}:${FULL_PRODUCT_NAME:-}" in
-    Locus:Locus.app|LocusMAS:Locus.app)
+    Locus:Locus.app)
         test_bundle_name="LocusTests.xctest" ;;
     LocusX:LocusX.app)
         test_bundle_name="LocusXTests.xctest" ;;

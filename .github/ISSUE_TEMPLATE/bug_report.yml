@@ -34,7 +34,7 @@ body:
     id: version
     attributes:
       label: Locus version
-      description: The version in the About window, and whether it came from the direct download or the Mac App Store.
+      description: The version shown in the About window.
       placeholder: "1.10.0 (14), direct download"
     validations:
       required: true

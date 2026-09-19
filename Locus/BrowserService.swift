@@ -305,7 +305,7 @@ final class BrowserService: NSObject, ObservableObject {
     override init() {
         activityStore = BrowserActivityStore()
         // The fixture key is a known constant, so this branch must not be
-        // reachable in a signed Release or App Store build: anyone able to
+        // reachable in a signed Release build: anyone able to
         // influence the launch environment would otherwise get a vault sealed
         // with a publicly known 32 bytes.
         #if DEBUG

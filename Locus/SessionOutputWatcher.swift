@@ -8,8 +8,8 @@ import Foundation
 /// files a *file* tool touched, and a PDF is usually built by a shell command
 /// (`pandoc`, a Python script, `wkhtmltopdf`) whose arguments say nothing about
 /// its output. Git status misses anything gitignored — generated files
-/// routinely are — and cannot help at all in the App Store build, whose default
-/// workspace is not a repository.
+/// routinely are — and cannot help at all when the workspace is not a
+/// repository.
 ///
 /// A sibling of `WorkspaceKnowledgeWatcher` rather than a change to it: that
 /// one deliberately discards event paths because the backend re-hashes

@@ -565,18 +565,6 @@ extension AppModel {
                 }
             }
             if stillOwnsTranscript { reconcileChatSplitRestoration() }
-            if stillOwnsTranscript, let path = workspaceToOpenAfterReconnect {
-                workspaceToOpenAfterReconnect = nil
-                let canonical = SessionSummary.canonicalWorkspacePath(path)
-                expandedWorkspaceIDs.insert(canonical)
-                persistExpandedWorkspaces()
-                if let latest = sessions
-                    .filter({ $0.workspacePath == canonical })
-                    .max(by: { $0.mtime < $1.mtime })
-                {
-                    resume(latest)
-                }
-            }
         } catch {
             // Preserve the last-known list during reconnects.
         }

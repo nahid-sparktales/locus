@@ -265,9 +265,9 @@ struct KeychainBrowserVaultKeyProvider: BrowserVaultKeyProviding {
     /// Deliberately the file-based keychain, not the data protection keychain. The
     /// latter needs an access group from an `application-identifier` or
     /// `keychain-access-groups` entitlement, which neither the ad-hoc Debug build
-    /// nor the Developer ID direct-download build carries — both would fail every
-    /// read with `errSecMissingEntitlement` (-34018). `CredentialStore` keeps API
-    /// keys in this same keychain and works across all three signing channels.
+    /// nor the Developer ID release build carries — both would fail every read
+    /// with `errSecMissingEntitlement` (-34018). `CredentialStore` keeps API
+    /// keys in this same keychain and works under every signing identity.
     static func readQuery() -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,

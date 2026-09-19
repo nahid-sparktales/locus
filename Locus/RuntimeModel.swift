@@ -4,7 +4,7 @@ import ServiceManagement
 /// Installation identity is independent of individual application windows.
 enum RuntimeInstallation {
     static var supported: Bool {
-        #if LOCUS_DIRECT_DOWNLOAD && !LOCUS_WALLET
+        #if !LOCUS_WALLET
         true
         #else
         false

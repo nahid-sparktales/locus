@@ -60,7 +60,7 @@ The regular Locus app preserves `~/.ollama-code` and its existing
 `~/Library/Application Support/Locus/Codex` home. LocusX uses independent `Agent`
 and `Codex` directories under `~/Library/Application Support/LocusX`. This
 separates chats, settings, encrypted memories, extensions, and ChatGPT accounts.
-App Store Locus retains its existing container-based home. Workspace files such
+A sandboxed host uses its container-based home instead. Workspace files such
 as `.locus/launch.json` remain shared workspace conventions.
 
 ## Run the server
@@ -87,9 +87,9 @@ as `.locus/launch.json` remain shared workspace conventions.
 | `web_fetch` | asks | Fetch a URL as text |
 | `git_status` / `git_diff` | asks | Inspect the working tree |
 
-The signed direct-download Mac app can additionally advertise bounded
-`computer_*` tools after the user enables Computer Control. Those schemas are
-absent in the App Store build and whenever the native broker is unavailable;
+The signed Mac app can additionally advertise bounded `computer_*` tools after
+the user enables Computer Control. Those schemas are absent whenever the native
+broker is unavailable;
 read-only Accessibility inspection is automatic, while mutations use the same
 permission mode and retain non-bypassable high-consequence guardrails.
 

@@ -17,9 +17,6 @@ extension AppModel {
         panel.allowsMultipleSelection = true
         panel.directoryURL = URL(fileURLWithPath: workspacePath)
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            _ = workspaceAccess.rememberAndActivate(url)
-        }
         loadContext(from: panel.urls)
     }
 
@@ -224,11 +221,6 @@ extension AppModel {
     }
 
     func setSimulatorControlEnabled(_ enabled: Bool) {
-        guard SimulatorControlService.isSupportedBuild else {
-            settings.simulatorControlEnabled = false
-            showToast("iOS Simulator control is unavailable in the App Store build")
-            return
-        }
         settings.simulatorControlEnabled = enabled
         if !enabled {
             cancelSimulatorActions()

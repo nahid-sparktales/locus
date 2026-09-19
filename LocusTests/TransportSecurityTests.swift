@@ -138,12 +138,10 @@ final class TransportSecurityTests: XCTestCase {
 
     /// The component feed installs an executable, and ATS would not stop a
     /// cleartext one pointed at a LAN address. This is the check that does.
-    #if !LOCUS_APP_STORE
     @MainActor
     func testComponentFeedURLIsEncryptedOrAbsent() {
         if let feed = CodexComponentInstaller.feedURL {
             XCTAssertTrue(TransportSecurity.isEncrypted(feed), feed.absoluteString)
         }
     }
-    #endif
 }

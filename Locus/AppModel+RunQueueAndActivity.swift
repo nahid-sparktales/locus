@@ -212,8 +212,7 @@ extension AppModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return "Add a schedule name" }
         guard !prompt.isEmpty else { return "Add a prompt" }
-        guard FileManager.default.fileExists(atPath: draft.workspaceRoot),
-              workspaceAccess.activateStored(path: draft.workspaceRoot)
+        guard FileManager.default.fileExists(atPath: draft.workspaceRoot)
         else { return "Choose an available workspace folder" }
         guard !draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               draft.model != "No model"
@@ -243,9 +242,8 @@ extension AppModel {
     }
 
     func scheduleConfigurationIssue(for task: ScheduledTask) -> String? {
-        guard FileManager.default.fileExists(atPath: task.workspaceRoot),
-              workspaceAccess.activateStored(path: task.workspaceRoot)
-        else { return "The workspace bookmark is no longer available" }
+        guard FileManager.default.fileExists(atPath: task.workspaceRoot)
+        else { return "The workspace folder is no longer available" }
         if let profileID = sessions.first(where: {
             $0.agentTriggerID == task.id && $0.agentKind == "schedule"
         })?.savedAgentProfileID {
@@ -1247,8 +1245,7 @@ extension AppModel {
     }
 
     func publishLandedWorktree() {
-        guard let task = activeTaskRecord, let branch = task.branch,
-              GitRemoteFeatures.isAvailable else { return }
+        guard let task = activeTaskRecord, let branch = task.branch else { return }
         let client = GitClient(workspaceRoot: task.executionPath)
         landingFlow.isLandingOperationRunning = true
         Task { @MainActor [weak self] in

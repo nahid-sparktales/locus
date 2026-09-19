@@ -644,7 +644,7 @@ extension AppModel {
         gitWorkspace.gitHasCommits = true
         gitWorkspace.localBranches = ["main", "ship-test"]
         // Remote features stay hidden in the seeded run unless a UI test asks
-        // for them, so the suite also covers the sandboxed layout.
+        // for them, so the suite also covers a workspace with no GitHub origin.
         gitWorkspace.originIsGitHub =
             ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GITHUB_ORIGIN"] == "1"
         gitWorkspace.gitChanges = [

@@ -277,15 +277,9 @@ final class AppModelObservationBoundaryTests: XCTestCase {
             FeatureEvent(name: "getting started") { app.onboarding.objectWillChange.send() },
             FeatureEvent(name: "agent inspector") { app.agentInspector.objectWillChange.send() },
         ]
-#if !LOCUS_APP_STORE
         events.append(FeatureEvent(name: "component installer") {
             app.codexComponent.objectWillChange.send()
         })
-#else
-        // The direct-download-only installer is deliberately absent from MAS,
-        // but the table's shape remains deterministic in both configurations.
-        events.append(FeatureEvent(name: "component installer unavailable in MAS") {})
-#endif
         return events
     }
 }

@@ -532,7 +532,7 @@ private struct ExtensionsSettingsView: View {
                     Text("External tools from MCP servers")
                         .font(.locus(size: 11, weight: .semibold))
                     if !extensionsModel.extensions.capabilities.stdio {
-                        Text("This App Store build supports remote MCP servers and skills. Local command-based servers are unavailable.")
+                        Text("This build supports remote MCP servers and skills. Local command-based servers are unavailable.")
                             .font(.locus(size: 9))
                             .foregroundStyle(LocusTheme.muted)
                     }
@@ -1228,7 +1228,7 @@ private struct MCPServerEditorView: View {
                         .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
                     LocusFormTextField("Working directory (optional)", text: $cwd)
                     if !extensionsModel.extensions.capabilities.stdio {
-                        Text("Local command servers are unavailable in this App Store build.").foregroundStyle(LocusTheme.coral)
+                        Text("Local command servers are unavailable in this build.").foregroundStyle(LocusTheme.coral)
                     }
                 } else {
                     LocusFormTextField("Server URL", text: $url)
@@ -1807,9 +1807,7 @@ struct SettingsView: View {
     @EnvironmentObject private var applicationContext: ApplicationContextService
     @EnvironmentObject private var computerControl: ComputerControlService
     @EnvironmentObject private var simulatorControl: SimulatorControlService
-#if !LOCUS_APP_STORE
     @EnvironmentObject private var codexComponent: CodexComponentInstaller
-#endif
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissWindow) private var dismissWindow
     @State private var draft = AppSettings()
@@ -3135,18 +3133,6 @@ struct SettingsView: View {
                         .font(.locus(size: 9))
                         .foregroundStyle(LocusTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                } else if updates.distribution == .appStore {
-                    Label(
-                        "Updates are installed through the Mac App Store.",
-                        systemImage: "shippingbox.fill"
-                    )
-                    .font(.locus(size: 10))
-                    .accessibilityIdentifier("settings.appStoreUpdates")
-
-                    Text("Keep automatic updates enabled in the App Store to receive new Locus releases without downloading them manually.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Label("Updates are installed manually for this local build.", systemImage: "shippingbox")
                         .font(.locus(size: 10))
@@ -3165,11 +3151,6 @@ struct SettingsView: View {
         .background(LocusTheme.surfaceCanvas)
     }
 
-#if LOCUS_APP_STORE
-    /// The App Store build bundles every helper it needs.
-    @ViewBuilder
-    private var componentsSection: some View { EmptyView() }
-#else
     /// ChatGPT-plan support is the one piece of Locus that is fetched rather
     /// than shipped. It is surfaced here so it can be reclaimed without hunting
     /// through the account editor that installed it.
@@ -3201,7 +3182,6 @@ struct SettingsView: View {
             }
         }
     }
-#endif
 
     private var customAccentColor: Binding<Color> {
         Binding(
@@ -3253,7 +3233,6 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.accentColor.\(preset.rawValue)")
     }
 
-#if !LOCUS_APP_STORE
     private var componentSizeLabel: String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
@@ -3261,7 +3240,6 @@ struct SettingsView: View {
         let version = CodexComponent.installedVersion().map { " · \($0)" } ?? ""
         return formatter.string(fromByteCount: CodexComponent.installedBytes()) + version
     }
-#endif
 
     /// Everything a proxy test depends on, so editing any of it retires the
     /// last result rather than leaving it to describe a stale configuration.
@@ -3604,155 +3582,126 @@ struct SettingsView: View {
             }
 
             Section("Application Context") {
-                if ApplicationContextService.isAvailable {
-                    Text("Appshots are explicit one-message captures. A live application attachment is granted separately for each task and restricts that task to the exact selected process, even when global Computer Control is enabled.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    LabeledContent("Accessibility text") {
-                        permissionStatus(
-                            granted: computerControl.accessibilityGranted,
-                            grant: computerControl.requestAccessibility,
-                            settings: computerControl.openAccessibilitySettings
-                        )
-                    }
-                    LabeledContent("Window screenshots") {
-                        permissionStatus(
-                            granted: computerControl.screenRecordingGranted,
-                            grant: computerControl.requestScreenRecording,
-                            settings: computerControl.openScreenRecordingSettings
-                        )
-                    }
-                    LabeledContent("Live task attachment") {
-                        Text(model.currentLiveApplicationTarget?.name ?? "Not attached")
-                            .foregroundStyle(model.currentLiveApplicationIsConnected
-                                ? LocusTheme.success : LocusTheme.muted)
-                    }
-                } else {
-                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
-                        .font(.locus(size: 10, weight: .semibold))
-                    Text("Install the signed direct-download build to capture or attach another application.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Text("Appshots are explicit one-message captures. A live application attachment is granted separately for each task and restricts that task to the exact selected process, even when global Computer Control is enabled.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("Accessibility text") {
+                    permissionStatus(
+                        granted: computerControl.accessibilityGranted,
+                        grant: computerControl.requestAccessibility,
+                        settings: computerControl.openAccessibilitySettings
+                    )
+                }
+                LabeledContent("Window screenshots") {
+                    permissionStatus(
+                        granted: computerControl.screenRecordingGranted,
+                        grant: computerControl.requestScreenRecording,
+                        settings: computerControl.openScreenRecordingSettings
+                    )
+                }
+                LabeledContent("Live task attachment") {
+                    Text(model.currentLiveApplicationTarget?.name ?? "Not attached")
+                        .foregroundStyle(model.currentLiveApplicationIsConnected
+                            ? LocusTheme.success : LocusTheme.muted)
                 }
             }
 
             Section("Computer Control") {
-                if ComputerControlService.isAvailable {
-                    Toggle("Allow Locus to control Mac apps", isOn: Binding(
-                        get: { model.settings.computerControlEnabled },
-                        set: { model.setComputerControlEnabled($0) }
-                    ))
-                    .accessibilityIdentifier("settings.computerControl.enabled")
+                Toggle("Allow Locus to control Mac apps", isOn: Binding(
+                    get: { model.settings.computerControlEnabled },
+                    set: { model.setComputerControlEnabled($0) }
+                ))
+                .accessibilityIdentifier("settings.computerControl.enabled")
 
-                    Text("Off by default. Read-only app inspection is automatic. Clicks, typing, keys, scrolling, and dragging follow the permission mode above, with non-bypassable safeguards for credentials and high-consequence actions.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                Text("Off by default. Read-only app inspection is automatic. Clicks, typing, keys, scrolling, and dragging follow the permission mode above, with non-bypassable safeguards for credentials and high-consequence actions.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    LabeledContent("Accessibility") {
-                        permissionStatus(
-                            granted: computerControl.accessibilityGranted,
-                            grant: computerControl.requestAccessibility,
-                            settings: computerControl.openAccessibilitySettings
-                        )
-                    }
-                    LabeledContent("Screen Recording") {
-                        permissionStatus(
-                            granted: computerControl.screenRecordingGranted,
-                            grant: computerControl.requestScreenRecording,
-                            settings: computerControl.openScreenRecordingSettings
-                        )
-                    }
-                    Text("Screenshots are target-window scoped and exclude Locus. Before a screenshot is sent to a hosted provider, Locus names that provider and asks once per session. Local Ollama screenshots remain local.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
-                        .font(.locus(size: 10, weight: .semibold))
-                    Text("Apple requires App Sandbox for Mac App Store apps, while assistive Accessibility control is incompatible with that sandbox. Install the signed direct-download build to opt in.")
-                        .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Link(
-                        "Apple App Sandbox guidance",
-                        destination: URL(string: "https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox")!
+                LabeledContent("Accessibility") {
+                    permissionStatus(
+                        granted: computerControl.accessibilityGranted,
+                        grant: computerControl.requestAccessibility,
+                        settings: computerControl.openAccessibilitySettings
                     )
-                    .font(.locus(size: 9, weight: .semibold))
                 }
+                LabeledContent("Screen Recording") {
+                    permissionStatus(
+                        granted: computerControl.screenRecordingGranted,
+                        grant: computerControl.requestScreenRecording,
+                        settings: computerControl.openScreenRecordingSettings
+                    )
+                }
+                Text("Screenshots are target-window scoped and exclude Locus. Before a screenshot is sent to a hosted provider, Locus names that provider and asks once per session. Local Ollama screenshots remain local.")
+                    .font(.locus(size: 9))
+                    .foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("iOS Simulator") {
-                if SimulatorControlService.isSupportedBuild {
-                    Toggle("Allow control of the attached simulator", isOn: Binding(
-                        get: { model.settings.simulatorControlEnabled },
-                        set: { model.setSimulatorControlEnabled($0) }
-                    ))
-                    .disabled(model.currentSimulatorTarget == nil)
-                    .accessibilityIdentifier("settings.simulatorControl.enabled")
+                Toggle("Allow control of the attached simulator", isOn: Binding(
+                    get: { model.settings.simulatorControlEnabled },
+                    set: { model.setSimulatorControlEnabled($0) }
+                ))
+                .disabled(model.currentSimulatorTarget == nil)
+                .accessibilityIdentifier("settings.simulatorControl.enabled")
 
-                    Text("Simulator access stays off until you explicitly attach a device and accept the consent prompt. Avoid real accounts and sensitive data; a hosted model may receive screenshots only after provider-specific session consent.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                Text("Simulator access stays off until you explicitly attach a device and accept the consent prompt. Avoid real accounts and sensitive data; a hosted model may receive screenshots only after provider-specific session consent.")
+                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    LabeledContent("Xcode") {
-                        settingsStatus(
-                            ready: simulatorControl.helperHealth.xcodePath != nil,
-                            readyText: "Ready",
-                            missingText: "Full Xcode required"
-                        )
-                    }
-                    LabeledContent("Signed bridge") {
-                        settingsStatus(
-                            ready: simulatorControl.helperHealth.touchHelperPresent
-                                && simulatorControl.helperHealth.treeHelperPresent,
-                            readyText: "Present",
-                            missingText: "Missing"
-                        )
-                    }
-                    LabeledContent("Bridge compatibility") {
-                        settingsStatus(
-                            ready: simulatorControl.nativeAvailable,
-                            readyText: "Ready",
-                            missingText: simulatorControl.helperHealth.message
-                        )
-                    }
-                    LabeledContent("iOS runtime") {
-                        settingsStatus(
-                            ready: !simulatorControl.devices.isEmpty,
-                            readyText: "\(simulatorControl.devices.count) devices",
-                            missingText: "No installed runtime"
-                        )
-                    }
-                    LabeledContent("Live streaming") {
-                        settingsStatus(
-                            ready: computerControl.screenRecordingGranted,
-                            readyText: "Screen Recording granted",
-                            missingText: "Screen Recording required"
-                        )
-                    }
-                    LabeledContent("Keyboard controls") {
-                        settingsStatus(
-                            ready: computerControl.accessibilityGranted,
-                            readyText: "Accessibility granted",
-                            missingText: "Accessibility required"
-                        )
-                    }
-                    LabeledContent("Attached device") {
-                        Text(model.currentSimulatorTarget?.device.name ?? "Not attached")
-                            .foregroundStyle(model.currentSimulatorTarget == nil
-                                ? LocusTheme.muted : LocusTheme.success)
-                    }
-                    if model.currentSimulatorTarget == nil {
-                        Text("Attach a simulator from the composer’s attachment menu.")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-                    }
-                } else {
-                    Label("Unavailable in the Mac App Store build", systemImage: "lock.app.dashed")
-                        .font(.locus(size: 10, weight: .semibold))
-                    Text("The direct-download build includes the signed Xcode Simulator bridge; the App Store package contains no bridge helper or simulator tool schema.")
+                LabeledContent("Xcode") {
+                    settingsStatus(
+                        ready: simulatorControl.helperHealth.xcodePath != nil,
+                        readyText: "Ready",
+                        missingText: "Full Xcode required"
+                    )
+                }
+                LabeledContent("Signed bridge") {
+                    settingsStatus(
+                        ready: simulatorControl.helperHealth.touchHelperPresent
+                            && simulatorControl.helperHealth.treeHelperPresent,
+                        readyText: "Present",
+                        missingText: "Missing"
+                    )
+                }
+                LabeledContent("Bridge compatibility") {
+                    settingsStatus(
+                        ready: simulatorControl.nativeAvailable,
+                        readyText: "Ready",
+                        missingText: simulatorControl.helperHealth.message
+                    )
+                }
+                LabeledContent("iOS runtime") {
+                    settingsStatus(
+                        ready: !simulatorControl.devices.isEmpty,
+                        readyText: "\(simulatorControl.devices.count) devices",
+                        missingText: "No installed runtime"
+                    )
+                }
+                LabeledContent("Live streaming") {
+                    settingsStatus(
+                        ready: computerControl.screenRecordingGranted,
+                        readyText: "Screen Recording granted",
+                        missingText: "Screen Recording required"
+                    )
+                }
+                LabeledContent("Keyboard controls") {
+                    settingsStatus(
+                        ready: computerControl.accessibilityGranted,
+                        readyText: "Accessibility granted",
+                        missingText: "Accessibility required"
+                    )
+                }
+                LabeledContent("Attached device") {
+                    Text(model.currentSimulatorTarget?.device.name ?? "Not attached")
+                        .foregroundStyle(model.currentSimulatorTarget == nil
+                            ? LocusTheme.muted : LocusTheme.success)
+                }
+                if model.currentSimulatorTarget == nil {
+                    Text("Attach a simulator from the composer’s attachment menu.")
                         .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

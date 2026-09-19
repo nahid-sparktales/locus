@@ -54,11 +54,11 @@ enum AppEdition: String, CaseIterable {
         self == .locus ? canonicalWorkspacePath : "\(bundleIdentifier)\n\(canonicalWorkspacePath)"
     }
 
-    func backendHomes(in applicationSupport: URL, sandboxed: Bool) -> [String: String] {
+    func backendHomes(in applicationSupport: URL) -> [String: String] {
         let support = supportDirectory(in: applicationSupport)
         var values = ["LOCUS_CODEX_HOME": support.appendingPathComponent("Codex").path,
                       "LOCUS_AGENT_HOMES_ROOT": support.appendingPathComponent("AgentHomes").path]
-        if sandboxed || self == .locusX {
+        if self == .locusX {
             values["OLLAMA_CODE_HOME"] = support.appendingPathComponent("Agent").path
         }
         return values

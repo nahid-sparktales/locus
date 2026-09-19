@@ -247,18 +247,10 @@ private enum SimulatorProcessRunner {
     }
 }
 
-/// Direct-download-only iOS Simulator broker. Every action is tied to one
-/// task-owned UDID and every mutation retires the current element snapshot.
+/// iOS Simulator broker. Every action is tied to one task-owned UDID and every
+/// mutation retires the current element snapshot.
 @MainActor
 final class SimulatorControlService: ObservableObject {
-    static var isSupportedBuild: Bool {
-        #if LOCUS_APP_STORE
-        false
-        #else
-        !WorkspaceAccess.isSandboxed
-        #endif
-    }
-
     nonisolated static func mapAccessibilityPoint(
         _ point: CGPoint,
         displaySize: CGSize,
@@ -385,15 +377,6 @@ final class SimulatorControlService: ObservableObject {
     private let osascriptURL = URL(fileURLWithPath: "/usr/bin/osascript")
 
     var helperHealth: SimulatorHelperHealth {
-        guard Self.isSupportedBuild else {
-            return SimulatorHelperHealth(
-                xcodePath: nil,
-                touchHelperPresent: false,
-                treeHelperPresent: false,
-                compatibilityReady: false,
-                message: "Unavailable in the Mac App Store build"
-            )
-        }
         let developer = selectedDeveloperDirectory()
         let touch = FileManager.default.isExecutableFile(atPath: touchHelperURL.path)
         let tree = FileManager.default.isExecutableFile(atPath: treeHelperURL.path)
@@ -448,10 +431,6 @@ final class SimulatorControlService: ObservableObject {
     }
 
     func refreshDevices() async {
-        guard Self.isSupportedBuild else {
-            devices = []
-            return
-        }
         isRefreshing = true
         defer { isRefreshing = false }
         if targets.isEmpty, compatibilityFailure != nil {

@@ -89,7 +89,7 @@ Example: when output pauses, the status may show `Waiting for permission · bash
 
 Open **Settings → Permissions → Computer Control**. The feature is disabled by default and reports Accessibility and Screen Recording permission separately.
 
-Computer Control is available only in the signed direct-download build. The Mac App Store build explains why it is unavailable under App Sandbox.
+Computer Control is available in every build. macOS remembers the Accessibility grant per code signature, so a stable signing identity keeps it from being re-requested after each rebuild.
 
 ### Supported actions
 
@@ -711,7 +711,7 @@ Create memory with:
 
 Memories can be inspected, edited, pinned, linked to their source, marked stale, or deleted. They are never saved automatically from ordinary conversation.
 
-Example: use `/remember ReleaseMAS must never expose Computer Control`. Future eligible agents can retrieve that convention in this workspace.
+Example: use `/remember release builds must never enable the debug proxy`. Future eligible agents can retrieve that convention in this workspace.
 
 ### Delete all knowledge
 

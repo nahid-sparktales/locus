@@ -1,8 +1,9 @@
 # Use Locus Vault
 
-Locus Vault is a self-custodial wallet in the notarized direct-download build.
-The Mac App Store build contains no signer, recovery service, connector runtime,
-or wallet activation configuration. Direct release candidates are dormant.
+Locus Vault is a self-custodial wallet in LocusX, the notarized direct-download
+wallet edition. Wallet-free Locus contains no signer, recovery service,
+connector runtime, or wallet activation configuration. Release candidates are
+dormant.
 Mainnet stays disabled until the app and authenticated signer independently
 verify a post-notarization, evidence-bound activation for that exact build.
 

@@ -5,10 +5,9 @@ wallet implementation. Both use the same core app and agent sources.
 
 ## Build boundaries
 
-`LOCUS_DIRECT_DOWNLOAD` selects desktop distribution features such as Sparkle,
-Computer Control, and Simulator tools. `LOCUS_WALLET` selects the LocusX product.
-Locus and LocusMAS exclude wallet Swift sources, connector SDKs and resources,
-signer/recovery helpers, browser provider injection, and wallet settings.
+`LOCUS_WALLET` selects the LocusX product. Locus excludes wallet Swift sources,
+connector SDKs and resources, signer/recovery helpers, browser provider
+injection, and wallet settings.
 
 The bundled backend has a fixed product factory. `Tools/StageBackendEdition.py`
 selects that factory during packaging; only LocusX receives `_locusx/wallet.py`.
@@ -44,8 +43,6 @@ xcodebuild -project Locus.xcodeproj -scheme Locus -configuration Debug \
   -derivedDataPath build/editions/locus build
 xcodebuild -project Locus.xcodeproj -scheme LocusX -configuration Debug \
   -derivedDataPath build/editions/locusx build
-xcodebuild -project Locus.xcodeproj -scheme LocusMAS -configuration ReleaseMAS \
-  -derivedDataPath build/editions/mas build
 ```
 
 `LocusTests` hosts common tests in Locus. `LocusXTests` hosts common and wallet
@@ -93,9 +90,9 @@ settings and browser data without importing or deleting wallet data.
    already in the Locus feed. Update the version and changelog and commit the
    generated project. This updater implementation itself does not bump versions.
 2. Run the Python release tests, native updater tests and focused update-settings
-   UI tests for Locus Debug and Release, LocusX, and the App Store edition. Build
-   and audit all three editions in separate DerivedData directories. A complete
-   deliverable must include its runtime; `LOCUS_BUNDLE_MODE=skip` is compile-only.
+   UI tests for Locus Debug and Release, and LocusX. Build and audit both
+   editions in separate DerivedData directories. A complete deliverable must
+   include its runtime; `LOCUS_BUNDLE_MODE=skip` is compile-only.
    Use scheme `LocusReleaseUpdates` for the Release UI check: it excludes unit
    tests that rely on Debug-only instrumentation. The focused method is
    `LocusUITests/LocusUITests/testUpdatesSettingsMatchTheBuildDistribution`.

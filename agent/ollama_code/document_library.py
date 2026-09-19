@@ -478,7 +478,6 @@ def _extract(store: DocumentStore, job: dict[str, Any]) -> dict[str, Any]:
     inherited = sanitized_child_environment()
     environment = {key: value for key, value in inherited.items() if key in {
         "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "__CF_USER_TEXT_ENCODING",
-        "APP_SANDBOX_CONTAINER_ID", "CFFIXED_USER_HOME",
     }}
     # Agent source/dependencies may be outside site-packages in the sealed app.
     environment["PYTHONPATH"] = os.pathsep.join(sys.path)

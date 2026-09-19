@@ -52,13 +52,13 @@ def test_only_direct_and_signer_targets_receive_experimental_opt_in():
     targets = block((ROOT / "project.yml").read_text(), "targets:")
     direct = block(targets, "  LocusX:")
     signer = block(targets, "  WalletSignerService:")
-    for name in ("Locus", "LocusMAS", "WalletRecoveryApplication", "LocusTests", "LocusUITests"):
+    for name in ("Locus", "WalletRecoveryApplication", "LocusTests", "LocusUITests"):
         assert MACRO not in block(targets, f"  {name}:")
     assert targets.count(MACRO) == 2
     app_settings = block(direct, "        ReleaseExperimental:")
     signer_settings = block(signer, "        ReleaseExperimental:")
     assert MACRO in app_settings and MACRO in signer_settings
-    assert "LOCUS_DIRECT_DOWNLOAD" in app_settings
+    assert "LOCUS_WALLET" in app_settings
     assert "PRODUCT_NAME: LocusX Experimental" in app_settings
     assert "PRODUCT_MODULE_NAME: Locus" in app_settings
     assert "EXECUTABLE_NAME: LocusX" in app_settings
@@ -84,8 +84,6 @@ def test_experimental_plist_has_only_explicit_channel_differences(base, experime
         for key in ("SUAllowsAutomaticUpdates", "SUAutomaticallyUpdate", "SUEnableAutomaticChecks"):
             expected[key] = False
     assert actual == expected
-    mas = plistlib.loads((ROOT / "Config/LocusMAS-Info.plist").read_bytes())
-    assert FLAG not in mas
 
 
 def test_signer_opt_in_is_sealed_and_not_inferred_from_the_request():
@@ -122,7 +120,7 @@ def test_signer_policy_authorizes_its_resolved_chain_before_reading_accounts():
 
 
 @pytest.mark.parametrize("script", ["AuditWalletBuildBoundary.sh", "AuditDistribution.sh"])
-def test_mas_audits_forbid_experimental_configuration_resources_and_code(script):
+def test_audits_forbid_experimental_configuration_resources_and_code(script):
     source = (ROOT / "Tools" / script).read_text()
     for forbidden in (
         FLAG,

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Direct-download connector coordinator. Vendor SDK state lives in each
+/// LocusX connector coordinator. Vendor SDK state lives in each
 /// driver and never enters this public projection or WalletPublicStore.
 @MainActor
 final class DirectWalletConnectionsClient: WalletConnectionsClient {

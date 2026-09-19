@@ -1,10 +1,8 @@
 import Combine
 import Foundation
 
-#if LOCUS_DIRECT_DOWNLOAD
 import AppKit
 import Sparkle
-#endif
 
 /// Only the released standard app can opt into the new feed. Read this from
 /// the sealed bundle, never UserDefaults (which may retain the legacy feed).
@@ -42,11 +40,6 @@ protocol AppUpdateDriving: AnyObject {
 
 @MainActor
 final class AppUpdateController: ObservableObject {
-    enum Distribution {
-        case directDownload
-        case appStore
-    }
-
     enum UpdateMode: String {
         case automatic
         case manual
@@ -61,11 +54,10 @@ final class AppUpdateController: ObservableObject {
     @Published private(set) var automaticallyChecksForUpdates = false
     @Published private(set) var automaticallyDownloadsUpdates = false
 
-    let distribution: Distribution
     let updateMode: UpdateMode
     private let driver: AppUpdateDriving
 
-    var isAvailable: Bool { distribution == .directDownload && updateMode == .automatic }
+    var isAvailable: Bool { updateMode == .automatic }
 
     var versionLabel: String {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -76,17 +68,10 @@ final class AppUpdateController: ObservableObject {
 
     init(
         startImmediately: Bool = true,
-        distribution: Distribution? = nil,
         updateMode: UpdateMode? = nil,
         bundleInfo: [String: Any]? = nil,
         driver: AppUpdateDriving? = nil
     ) {
-        #if LOCUS_DIRECT_DOWNLOAD
-        let resolvedDistribution = distribution ?? .directDownload
-        #else
-        let resolvedDistribution = distribution ?? .appStore
-        #endif
-        self.distribution = resolvedDistribution
         let info = bundleInfo ?? Bundle.main.infoDictionary ?? [:]
         let configuration = AppUpdateConfiguration(info: info)
         let requestedMode = updateMode ?? .configured(bundleValue: info["LocusUpdateMode"] as? String)
@@ -95,17 +80,10 @@ final class AppUpdateController: ObservableObject {
 
         if let driver {
             self.driver = driver
+        } else if resolvedMode == .automatic, let configuration {
+            self.driver = SparkleUpdateDriver(configuration: configuration, startImmediately: startImmediately)
         } else {
-            #if LOCUS_DIRECT_DOWNLOAD
-            if resolvedDistribution == .directDownload && resolvedMode == .automatic,
-               let configuration {
-                self.driver = SparkleUpdateDriver(configuration: configuration, startImmediately: startImmediately)
-            } else {
-                self.driver = AppStoreUpdateDriver()
-            }
-            #else
-            self.driver = AppStoreUpdateDriver()
-            #endif
+            self.driver = InertUpdateDriver()
         }
 
         self.driver.stateDidChange = { [weak self] in
@@ -142,8 +120,10 @@ final class AppUpdateController: ObservableObject {
     }
 }
 
+/// Stands in wherever Sparkle must not run: a local build, or an edition whose
+/// sealed bundle does not opt into the automatic feed.
 @MainActor
-private final class AppStoreUpdateDriver: AppUpdateDriving {
+private final class InertUpdateDriver: AppUpdateDriving {
     var canCheckForUpdates = false
     var automaticallyChecksForUpdates = false
     var automaticallyDownloadsUpdates = false
@@ -153,7 +133,6 @@ private final class AppStoreUpdateDriver: AppUpdateDriving {
     func checkForUpdates() {}
 }
 
-#if LOCUS_DIRECT_DOWNLOAD
 @MainActor
 final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate {
     var stateDidChange: (() -> Void)?
@@ -294,4 +273,3 @@ final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate 
         relaunchHandler?.updaterWillRelaunch()
     }
 }
-#endif

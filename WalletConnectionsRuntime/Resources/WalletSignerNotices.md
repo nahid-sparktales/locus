@@ -10,5 +10,5 @@ not been reviewed.
 
 The primary direct crates are Alloy 2.4.1, bip39 2.2.2,
 slip10_ed25519 0.1.3, solana-pubkey 4.3.0, sui-crypto 0.3.1,
-sui-sdk-types 0.3.2, and zeroize 1.9.0. Wallet-free Locus and the App Store build do not contain
-the signer.
+sui-sdk-types 0.3.2, and zeroize 1.9.0. Wallet-free Locus does not contain the
+signer.

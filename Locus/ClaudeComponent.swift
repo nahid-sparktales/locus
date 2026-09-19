@@ -39,7 +39,6 @@ enum ClaudeComponent: PlanComponentDescriptor {
     }
 }
 
-#if !LOCUS_APP_STORE
 struct ClaudeComponentDownloadView: View {
     @EnvironmentObject private var claudeComponent: ClaudeComponentInstaller
     let account: ProviderAccount
@@ -74,4 +73,3 @@ private struct ClaudeComponentInstallControls: View {
         }
     }
 }
-#endif

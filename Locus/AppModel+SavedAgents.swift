@@ -82,9 +82,6 @@ extension AppModel {
                 throw AgentWorldError.unavailable("This project folder is unavailable. Choose its new location or use Agent home.")
             }
         }
-        guard workspaceAccess.activateStored(path: canonical) else {
-            throw AgentWorldError.unavailable("Choose that project folder again to restore access.")
-        }
     }
 
     func savedAgentScheduleEnvironment(_ profile: AgentProfile, workspace: String) -> ChatExecutionEnvironment {
@@ -110,10 +107,6 @@ extension AppModel {
         panel.allowsMultipleSelection = false
         panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        guard workspaceAccess.rememberAndActivate(url) else {
-            showToast("Locus could not retain access to that project.")
-            return nil
-        }
         return SessionSummary.canonicalWorkspacePath(url.path)
     }
 

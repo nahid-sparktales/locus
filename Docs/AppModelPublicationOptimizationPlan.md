@@ -233,7 +233,7 @@ Commit boundary: compatibility deletion, documentation, and final guards.
 4. Run the full Swift unit suite.
 5. Run focused sidebar, composer, inspector, split-pane, plan/question,
    permission, accessibility, and keyboard UI tests.
-6. Compile direct-download and App Store release configurations.
+6. Compile the wallet-free and LocusX release configurations.
 7. Run the Python, mobile, wallet-signer, and full protected CI jobs before
    merge.
 

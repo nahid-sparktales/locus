@@ -305,10 +305,8 @@ mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
 }
 
 # Read each pinned version from the wheel's own metadata rather than by running
-# the bundled interpreter. In the App Store configuration that interpreter is
-# signed as an inheriting sandbox helper, so launching it standalone is killed
-# by the kernel (SIGTRAP) — an exec-based check could only ever pass for the
-# direct-download build, and failed every ReleaseMAS archive.
+# the bundled interpreter: an exec-based check depends on how the interpreter
+# happens to be signed, so it verifies the signature rather than the pin.
 for pin in websockets:17.0
 do
     name="${pin%%:*}"
@@ -367,12 +365,15 @@ entitlements="$(/usr/bin/mktemp "${audit_temp_dir}/entitlements.XXXXXX")"
 # --xml: without it codesign writes a human-readable dump plutil cannot parse,
 # and every extraction below fails open. Dots in entitlement names must be
 # escaped or plutil walks them as a key path and never finds the key.
-sandboxed=0
 if /usr/bin/codesign -d --entitlements "${entitlements}" --xml "${app}" >/dev/null 2>&1; then
+    # app-sandbox belongs to the wallet helpers, never to an app target: Locus
+    # ships as a notarized direct download and a container would only constrain
+    # which workspaces the agent can reach.
     for forbidden in \
         com.apple.security.get-task-allow \
         com.apple.security.cs.allow-dyld-environment-variables \
-        com.apple.security.cs.disable-library-validation
+        com.apple.security.cs.disable-library-validation \
+        com.apple.security.app-sandbox
     do
         value="$(/usr/bin/plutil -extract "${forbidden//./\\.}" raw -o - "${entitlements}" 2>/dev/null || true)"
         [[ "${value}" != "true" ]] || {
@@ -380,32 +381,40 @@ if /usr/bin/codesign -d --entitlements "${entitlements}" --xml "${app}" >/dev/nu
             exit 1
         }
     done
-    if [[ "$(/usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
-        "${entitlements}" 2>/dev/null || true)" == "true" ]]
-    then
-        sandboxed=1
+    # Only reachable on a signed bundle: an empty entitlements dump would make
+    # this inequality pass, so it stays inside the successful extraction.
+    if [[ "${edition}" == "locus" ]]; then
+        wallet_free_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
+            "${entitlements}" 2>/dev/null || true)"
+        [[ "${wallet_free_access_group}" != "4X4RJA7GMD.io.sparktales.locus" ]] || {
+            echo "error: the wallet-free build contains the Direct connector access group" >&2
+            exit 1
+        }
     fi
 fi
 
 sparkle="${app}/Contents/Frameworks/Sparkle.framework"
-if [[ "${sandboxed}" == "1" ]]; then
+if [[ "${edition}" == "locus" ]]; then
+    # Negative half of the wallet boundary. The wallet-free product must carry
+    # none of the connector payload that LocusX ships; the positive half is
+    # asserted for locusx below.
     [[ ! -e "${wallet_signer}" ]] || {
-        echo "error: the Mac App Store build contains WalletSigner.xpc" >&2
+        echo "error: the wallet-free build contains WalletSigner.xpc" >&2
         exit 1
     }
     [[ ! -e "${app}/Contents/XPCServices/WalletConnections.xpc" ]] || {
-        echo "error: the Mac App Store build contains obsolete WalletConnections.xpc" >&2
+        echo "error: the wallet-free build contains obsolete WalletConnections.xpc" >&2
         exit 1
     }
     [[ ! -e "${wallet_recovery}" ]] || {
-        echo "error: the Mac App Store build contains WalletRecovery.app" >&2
+        echo "error: the wallet-free build contains WalletRecovery.app" >&2
         exit 1
     }
     unexpected_wallet_helper="$(/usr/bin/find "${app}/Contents" \
         \( -name WalletSigner.xpc -o -name WalletConnections.xpc \
             -o -name WalletRecovery.app \) -print -quit)"
     [[ -z "${unexpected_wallet_helper}" ]] || {
-        echo "error: the Mac App Store build contains wallet helper ${unexpected_wallet_helper}" >&2
+        echo "error: the wallet-free build contains wallet helper ${unexpected_wallet_helper}" >&2
         exit 1
     }
     unexpected_connector_resource="$(/usr/bin/find "${resources}" \
@@ -416,54 +425,20 @@ if [[ "${sandboxed}" == "1" ]]; then
             -o -name 'WalletSignerSBOM*' -o -name 'phantom-wallet-sdk-*.LICENSE' \
             -o -name 'eyes-0.1.8.LICENSE' -o -name 'text-encoding-utf-8-1.0.2.LICENSE' \) -print -quit)"
     [[ -z "${unexpected_connector_resource}" ]] || {
-        echo "error: the Mac App Store build contains Direct-only connector resource ${unexpected_connector_resource}" >&2
+        echo "error: the wallet-free build contains Direct-only connector resource ${unexpected_connector_resource}" >&2
         exit 1
     }
     wallet_audit_reject_matching_output \
         'Locus(ReownProjectID|WalletConnectRedirectURL|PhantomAppID|PhantomRedirectURL|WalletReleaseActivation|WalletCapability|WalletReview|WalletAlchemy|WalletQuickNode|CanaryUpdateFeedURL|WalletCandidateArchiveURL|WalletExperimentalMainnetEnabled)' \
-        'the Mac App Store build contains connector configuration keys' \
+        'the wallet-free build contains connector configuration keys' \
         /usr/bin/plutil -p "${info_plist}"
-    mas_access_group="$(/usr/bin/plutil -extract 'keychain-access-groups.0' raw -o - \
-        "${entitlements}" 2>/dev/null || true)"
-    [[ "${mas_access_group}" != "4X4RJA7GMD.io.sparktales.locus" ]] || {
-        echo "error: the Mac App Store build contains the Direct connector access group" >&2
-        exit 1
-    }
     if /usr/bin/grep -a -Fq 'LocusWalletConnectPrivateBindingsV1' \
         "${app}/Contents/MacOS/Locus"; then
-        echo "error: the Mac App Store executable contains the Direct WalletConnect runtime" >&2
+        echo "error: the wallet-free executable contains the Direct WalletConnect runtime" >&2
         exit 1
     fi
-    [[ ! -e "${simulator_touch}" && ! -e "${simulator_tree}" ]] || {
-        echo "error: the Mac App Store build contains a Simulator bridge helper" >&2
-        exit 1
-    }
-    registry="${runtime}/source/ollama_code/tool_registry.py"
-    if [[ -f "${registry}" ]] && /usr/bin/grep -Eq \
-        'simulator_(list_devices|attach|get_state|tap|swipe|type_text|press_button|open_url|build_and_launch|screenshot|detach)' \
-        "${registry}"
-    then
-        echo "error: the Mac App Store runtime contains Simulator tool schemas" >&2
-        exit 1
-    fi
-    [[ ! -e "${sparkle}" ]] || {
-        echo "error: the Mac App Store build contains Sparkle.framework" >&2
-        exit 1
-    }
-    wallet_audit_reject_matching_output '^  "SU[^" ]*"' \
-        'the Mac App Store build contains Sparkle updater configuration' \
-        /usr/bin/plutil -p "${app}/Contents/Info.plist"
-    unexpected_updater="$(/usr/bin/find "${app}/Contents" \
-        \( -name Updater.app -o -name Autoupdate -o -name Downloader.xpc -o -name Installer.xpc \) \
-        -print -quit)"
-    [[ -z "${unexpected_updater}" ]] || {
-        echo "error: the Mac App Store build contains updater helper ${unexpected_updater}" >&2
-        exit 1
-    }
+    python3 "${repo_root}/Tools/VerifyRuntimeHelper.py" "${app}"
 else
-    if [[ "${edition}" == "locus" ]]; then
-        python3 "${repo_root}/Tools/VerifyRuntimeHelper.py" "${app}"
-    fi
     if [[ "${edition}" == "locusx" ]]; then
     [[ -x "${wallet_signer}/Contents/MacOS/WalletSigner" ]] || {
         echo "error: the direct-download build is missing WalletSigner.xpc" >&2
@@ -720,118 +695,110 @@ else
         exit 1
     }
     fi # LocusX wallet security checks
-    simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
-    [[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
-        echo "error: direct-download Simulator bridge helpers are missing" >&2
-        exit 1
-    }
-    [[ -f "${simulator_provenance}" ]] || {
-        echo "error: Simulator bridge provenance is missing" >&2
-        exit 1
-    }
-    [[ -f "${resources}/ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE" ]] || {
-        echo "error: Simulator bridge MIT license is missing" >&2
-        exit 1
-    }
-    for pin in \
-        "commit=bd5aca70704fe0fb5e974abaed205f54469799b0" \
-        "license=MIT" \
-        "touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71" \
-        "tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63"
-    do
-        /usr/bin/grep -Fq -- "${pin}" "${simulator_provenance}" || {
-            echo "error: Simulator bridge provenance is missing ${pin}" >&2
-            exit 1
-        }
-    done
-    expected_touch_sha="$(/usr/bin/awk -F= '$1 == "touch_binary_sha256" {print $2}' \
-        "${simulator_provenance}")"
-    expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
-        "${simulator_provenance}")"
-    expected_touch_unsigned="$(/usr/bin/awk -F= '$1 == "touch_unsigned_sha256" {print $2}' "${simulator_provenance}")"
-    expected_tree_unsigned="$(/usr/bin/awk -F= '$1 == "tree_unsigned_sha256" {print $2}' "${simulator_provenance}")"
-    if [[ -n "${expected_touch_unsigned}" && -n "${expected_tree_unsigned}" ]]; then
-        # Xcode export can replace a signing timestamp or certificate without
-        # changing code. The pre-seal unsigned digest survives that operation.
-        [[ "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_touch}")" \
-            == "${expected_touch_unsigned}" \
-            && "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_tree}")" \
-            == "${expected_tree_unsigned}" ]] || {
-            echo "error: Simulator helper executable content differs from build provenance" >&2; exit 1
-        }
-    else
-    [[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
-        == "${expected_touch_sha}" ]] || {
-        echo "error: Simulator touch helper checksum does not match provenance" >&2
-        exit 1
-    }
-    [[ "$(/usr/bin/shasum -a 256 "${simulator_tree}" | /usr/bin/awk '{print $1}')" \
-        == "${expected_tree_sha}" ]] || {
-        echo "error: Simulator tree helper checksum does not match provenance" >&2
-        exit 1
-    }
-    fi
-    expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
-        "${simulator_provenance}")"
-    [[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
-        && "$(/usr/bin/lipo -archs "${simulator_tree}")" == "${expected_simulator_archs}" ]] || {
-        echo "error: Simulator bridge architectures do not match provenance" >&2
-        exit 1
-    }
-    /usr/bin/codesign --verify --strict "${simulator_touch}" || {
-        echo "error: Simulator touch helper signature is invalid" >&2; exit 1
-    }
-    /usr/bin/codesign --verify --strict "${simulator_tree}" || {
-        echo "error: Simulator tree helper signature is invalid" >&2; exit 1
-    }
-    [[ -d "${sparkle}" ]] || {
-        echo "error: the direct-download build is missing Sparkle.framework" >&2
-        exit 1
-    }
-    sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
-        "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
-    [[ "${sparkle_version}" == "2.9.6" ]] || {
-        echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.6" >&2
-        exit 1
-    }
-    for required in \
-        "Versions/B/Autoupdate" \
-        "Versions/B/Updater.app/Contents/MacOS/Updater" \
-        "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
-        "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
-    do
-        [[ -x "${sparkle}/${required}" ]] || {
-            echo "error: Sparkle updater payload is missing ${required}" >&2
-            exit 1
-        }
-    done
-    if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}")" == "manual" ]]; then
-        [[ -z "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${info_plist}" 2>/dev/null || true)" ]] || {
-            echo "error: local edition must not register an update feed" >&2; exit 1
-        }
-    else
-        python3 "${repo_root}/Tools/LocusUpdateFeed.py" configuration "${info_plist}"
-    fi
-    /usr/bin/codesign --verify --deep --strict "${sparkle}" || {
-        echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
-        exit 1
-    }
 fi
+
+simulator_provenance="${resources}/SimulatorBridgeProvenance.txt"
+[[ -x "${simulator_touch}" && -x "${simulator_tree}" ]] || {
+    echo "error: direct-download Simulator bridge helpers are missing" >&2
+    exit 1
+}
+[[ -f "${simulator_provenance}" ]] || {
+    echo "error: Simulator bridge provenance is missing" >&2
+    exit 1
+}
+[[ -f "${resources}/ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE" ]] || {
+    echo "error: Simulator bridge MIT license is missing" >&2
+    exit 1
+}
+for pin in \
+    "commit=bd5aca70704fe0fb5e974abaed205f54469799b0" \
+    "license=MIT" \
+    "touch_source_sha256=af01bb7412a7c4c1db14a49ea21b7c1a055f7cffd6440c04059348885832fb71" \
+    "tree_source_sha256=b16c270de8121e5b53626949ff818aca8ee29ba0c8b8372edd957d41bd243b63"
+do
+    /usr/bin/grep -Fq -- "${pin}" "${simulator_provenance}" || {
+        echo "error: Simulator bridge provenance is missing ${pin}" >&2
+        exit 1
+    }
+done
+expected_touch_sha="$(/usr/bin/awk -F= '$1 == "touch_binary_sha256" {print $2}' \
+    "${simulator_provenance}")"
+expected_tree_sha="$(/usr/bin/awk -F= '$1 == "tree_binary_sha256" {print $2}' \
+    "${simulator_provenance}")"
+expected_touch_unsigned="$(/usr/bin/awk -F= '$1 == "touch_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+expected_tree_unsigned="$(/usr/bin/awk -F= '$1 == "tree_unsigned_sha256" {print $2}' "${simulator_provenance}")"
+if [[ -n "${expected_touch_unsigned}" && -n "${expected_tree_unsigned}" ]]; then
+    # Xcode export can replace a signing timestamp or certificate without
+    # changing code. The pre-seal unsigned digest survives that operation.
+    [[ "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_touch}")" \
+        == "${expected_touch_unsigned}" \
+        && "$(python3 "${repo_root}/Tools/WalletExportProvenance.py" unsigned-digest "${simulator_tree}")" \
+        == "${expected_tree_unsigned}" ]] || {
+        echo "error: Simulator helper executable content differs from build provenance" >&2; exit 1
+    }
+else
+[[ "$(/usr/bin/shasum -a 256 "${simulator_touch}" | /usr/bin/awk '{print $1}')" \
+    == "${expected_touch_sha}" ]] || {
+    echo "error: Simulator touch helper checksum does not match provenance" >&2
+    exit 1
+}
+[[ "$(/usr/bin/shasum -a 256 "${simulator_tree}" | /usr/bin/awk '{print $1}')" \
+    == "${expected_tree_sha}" ]] || {
+    echo "error: Simulator tree helper checksum does not match provenance" >&2
+    exit 1
+}
+fi
+expected_simulator_archs="$(/usr/bin/awk -F= '$1 == "architectures" {print $2}' \
+    "${simulator_provenance}")"
+[[ "$(/usr/bin/lipo -archs "${simulator_touch}")" == "${expected_simulator_archs}" \
+    && "$(/usr/bin/lipo -archs "${simulator_tree}")" == "${expected_simulator_archs}" ]] || {
+    echo "error: Simulator bridge architectures do not match provenance" >&2
+    exit 1
+}
+/usr/bin/codesign --verify --strict "${simulator_touch}" || {
+    echo "error: Simulator touch helper signature is invalid" >&2; exit 1
+}
+/usr/bin/codesign --verify --strict "${simulator_tree}" || {
+    echo "error: Simulator tree helper signature is invalid" >&2; exit 1
+}
+[[ -d "${sparkle}" ]] || {
+    echo "error: the direct-download build is missing Sparkle.framework" >&2
+    exit 1
+}
+sparkle_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - \
+    "${sparkle}/Resources/Info.plist" 2>/dev/null || true)"
+[[ "${sparkle_version}" == "2.9.6" ]] || {
+    echo "error: bundled Sparkle is ${sparkle_version:-unknown}, expected 2.9.6" >&2
+    exit 1
+}
+for required in \
+    "Versions/B/Autoupdate" \
+    "Versions/B/Updater.app/Contents/MacOS/Updater" \
+    "Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
+    "Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+do
+    [[ -x "${sparkle}/${required}" ]] || {
+        echo "error: Sparkle updater payload is missing ${required}" >&2
+        exit 1
+    }
+done
+if [[ "$(/usr/bin/plutil -extract LocusUpdateMode raw -o - "${info_plist}")" == "manual" ]]; then
+    [[ -z "$(/usr/bin/plutil -extract SUFeedURL raw -o - "${info_plist}" 2>/dev/null || true)" ]] || {
+        echo "error: local edition must not register an update feed" >&2; exit 1
+    }
+else
+    python3 "${repo_root}/Tools/LocusUpdateFeed.py" configuration "${info_plist}"
+fi
+/usr/bin/codesign --verify --deep --strict "${sparkle}" || {
+    echo "error: Sparkle.framework or a nested updater helper has an invalid signature" >&2
+    exit 1
+}
 
 if [[ "${codex_delivery}" == "bundled" ]]; then
 for sealed_helper in "${codex_helper}" "${code_mode_host}"; do
     helper_entitlements="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/locus-helper-entitlements.XXXXXX")"
     if /usr/bin/codesign -d --entitlements "${helper_entitlements}" --xml \
         "${sealed_helper}" >/dev/null 2>&1; then
-        if /usr/bin/plutil -extract 'com\.apple\.security\.app-sandbox' raw -o - \
-            "${entitlements}" >/dev/null 2>&1; then
-            inherit="$(/usr/bin/plutil -extract 'com\.apple\.security\.inherit' raw -o - \
-                "${helper_entitlements}" 2>/dev/null || true)"
-            [[ "${inherit}" == "true" ]] || {
-                echo "error: sandboxed Codex helper is not signed with inherit: ${sealed_helper:t}" >&2
-                exit 1
-            }
-        fi
         if [[ "${sealed_helper}" == "${code_mode_host}" ]]; then
             for required_jit_entitlement in \
                 com.apple.security.cs.allow-jit \
@@ -851,14 +818,14 @@ done
 fi
 
 # Audit the main executable and every embedded Mach-O. Signer-core exports may
-# exist only in the two audited WalletSigner executables; the App Store artifact
-# may contain neither those exports nor statically linked Direct connector code.
+# exist only in the two audited WalletSigner executables; the wallet-free
+# artifact may contain neither those exports nor statically linked connector code.
 wallet_macho_count=0
-mas_connector_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
-mas_connector_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
-mas_connector_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
-mas_connector_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
-mas_connector_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
+wallet_free_connector_forbidden='WalletConnectorWebRuntime|WalletConnectDriver|WalletConnectorDriverFactory|LocusWalletConnectPrivateBindingsV1|WalletConnectSign|WalletConnectRelay|WalletConnectPairing|WalletConnectVerify|WalletConnectKMS|WalletConnectJWT|WalletConnectNetworking|LOCUS_REOWN_PROJECT_ID|LOCUS_PHANTOM_APP_ID|LocusReownProjectID|LocusPhantomAppID|@metamask/connect-evm|@phantom/browser-sdk|@mysten/slush-wallet|WalletReleaseActivationVerifier|WalletReleaseActivationEnvelope|WalletReleaseActivationSource|WalletReleaseRevisionStore|WalletReleaseActivationCache|LocusWalletReleaseActivationURL|LOCUS_WALLET_RELEASE_ACTIVATION_URL'
+wallet_free_connector_forbidden+='|WalletConnectorReleaseConfiguration|locus-wallet-connector-config-v1'
+wallet_free_connector_forbidden+='|WalletCandidateUpdateAuthority|LocusCanaryUpdateFeedURL|LocusWalletCandidateArchiveURL|LOCUS_CANARY_UPDATE_FEED_URL|LOCUS_WALLET_CANDIDATE_ARCHIVE_URL'
+wallet_free_connector_forbidden+='|WalletReleaseHistoryVerifier|WalletReleaseHistorySource|WalletSignerReleaseAuthorityStore|WalletReleaseTransitionEnvelope|WalletSignedReviewCeiling|WalletCanaryAdmission|WalletReleaseAuthorityCheckpoint|LOCUS_WALLET_REVIEW_CEILING_BASE64'
+wallet_free_connector_forbidden+='|WalletExperimentalMainnetBuild|LocusWalletExperimentalMainnetEnabled|LOCUS_EXPERIMENTAL_MAINNET'
 while IFS= read -r candidate
 do
     [[ "$(/usr/bin/file -b "${candidate}")" == *Mach-O* ]] || continue
@@ -879,12 +846,12 @@ do
             exit 1
         }
     fi
-    if [[ "${sandboxed}" == "1" ]]; then
-        wallet_audit_reject_matching_output "${mas_connector_forbidden}" \
-            "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+    if [[ "${edition}" == "locus" ]]; then
+        wallet_audit_reject_matching_output "${wallet_free_connector_forbidden}" \
+            "wallet-free executable contains Direct connector code or credentials: ${candidate}" \
             /usr/bin/nm "${candidate}"
-        wallet_audit_reject_matching_output "${mas_connector_forbidden}" \
-            "Mac App Store executable contains Direct connector code or credentials: ${candidate}" \
+        wallet_audit_reject_matching_output "${wallet_free_connector_forbidden}" \
+            "wallet-free executable contains Direct connector code or credentials: ${candidate}" \
             /usr/bin/strings "${candidate}"
     fi
 done < <(/usr/bin/find "${app}/Contents" -type f -print)

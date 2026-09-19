@@ -74,7 +74,7 @@ final class BrowserPrivacyTests: XCTestCase {
     /// The master key must live in the file-based keychain. Opting into the data
     /// protection keychain requires an access group from an `application-identifier`
     /// or `keychain-access-groups` entitlement, which neither the ad-hoc Debug build
-    /// nor the Developer ID direct-download build carries; every read then failed
+    /// nor the Developer ID release build carries; every read then failed
     /// with errSecMissingEntitlement (-34018) and all three Autofill managers showed
     /// "Autofill Unavailable" on every launch.
     func testKeychainKeyProviderAvoidsDataProtectionKeychain() {

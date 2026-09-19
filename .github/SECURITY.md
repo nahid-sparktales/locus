@@ -18,7 +18,7 @@ are documented in [WalletVulnerabilityRewards.md](../Docs/WalletVulnerabilityRew
 ## Supported versions
 
 Only the latest release receives fixes. Locus is distributed as a notarized
-direct download and through the Mac App Store; both track the same tag.
+direct download.
 
 ## What Locus does with your credentials
 
@@ -26,8 +26,7 @@ Worth stating plainly, because it changed in 1.10.0 and it is the thing most
 likely to be reported.
 
 Provider API keys and MCP server tokens are stored in `~/.locus/auth.json`,
-mode `0600` inside a `0700` directory. In the sandboxed Mac App Store build the
-file lives in the app container instead. Earlier versions used the macOS login
+mode `0600` inside a `0700` directory. Earlier versions used the macOS login
 keychain.
 
 A ChatGPT-plan sign-in is separate. The bundled OpenAI Codex helper owns and
@@ -37,8 +36,8 @@ Locus does not copy those tokens into Swift state, `~/.locus/auth.json`, team
 manifests, transcripts, logs, or API-key provider routes.
 
 **File permissions keep those secrets from other user accounts on the Mac and
-from nothing else.** In the direct-download build, any program running as you
-can read either credential file. There is no per-application access control and
+from nothing else.** Any program running as you can read either credential
+file. There is no per-application access control and
 no authorization prompt — the keychain provided those and these file-backed
 stores deliberately do not. This is a known and accepted trade-off, not an
 oversight; please do not report the documented storage choice alone as a

@@ -1,10 +1,8 @@
 #!/bin/zsh
-# Builds the pinned direct-download-only Simulator bridge into the app. The
-# Mac App Store target must never contain either helper or its private schemas.
+# Builds the pinned Simulator bridge into the app.
 set -euo pipefail
 
-if [[ ( "${TARGET_NAME:-}" != "Locus" && "${TARGET_NAME:-}" != "LocusX" ) \
-    || "${CONFIGURATION:-}" == "ReleaseMAS" ]]; then
+if [[ "${TARGET_NAME:-}" != "Locus" && "${TARGET_NAME:-}" != "LocusX" ]]; then
     exit 0
 fi
 

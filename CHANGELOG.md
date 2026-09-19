@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- The Mac App Store build target. Locus ships as one product, the notarized
+  direct download, so there is no longer a sandboxed configuration, a second
+  entitlements set, or a separate update path. The App Store target never
+  shipped, so no installed app is affected and nothing needs reinstalling.
+  Computer Control, application context, git push and pull, the iOS Simulator
+  bridge, local command-based MCP servers and the independent background
+  runtime are no longer described as conditional — the direct download has
+  always included them.
+
 ## 3.2.0 — 2026-09-18
 
 ### Added

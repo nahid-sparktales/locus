@@ -99,15 +99,15 @@ your progress if you return later.
 | **Locus** | No wallet implementation, tools, or helpers | Keeps existing Locus chats, accounts, settings, and browser data |
 | **LocusX** | Separate optional wallet implementation | Independent chats, accounts, settings, and browser profile |
 
-Both editions share the regular desktop workspace. The Mac App Store build
-target is also wallet-free. Existing wallet files and Keychain entries are left
+Both editions share the regular desktop workspace and ship as the same
+notarized direct download. Existing wallet files and Keychain entries are left
 untouched; wallet data is not automatically imported or migrated. LocusX Gmail sign-in
 is unavailable until its separate Google OAuth registration is configured.
 
 Locus release builds support **automatic app updates**: daily checks, background
 downloads, and installation when the app quits. Settings preserves your existing
 update preferences and includes a manual check button. Development builds and
-LocusX remain manual; App Store builds update through the store.
+LocusX remain manual.
 
 Existing manual installations, including 2.6.0, need one manual upgrade to
 2.7.0 or later. The new Locus feed is separate from the preserved
@@ -128,8 +128,8 @@ Use an Apple Silicon Mac running macOS 14 or later, plus one model source:
 Packaged apps include their Python agent runtime. Ollama and model weights are
 separate installations. ChatGPT-plan access and API billing are separate.
 
-ChatGPT-plan accounts use pinned Codex helpers. Debug and Mac App Store builds
-bundle them; direct Release builds normally offer a separate component download.
+ChatGPT-plan accounts use pinned Codex helpers. Debug builds bundle them;
+Release builds normally offer a separate component download.
 Builds can also explicitly bundle the helpers. Downloaded components must pass
 checksum and SparkTales code-signing checks before installation or execution.
 Ollama and API-key accounts do not need this component.
@@ -147,8 +147,9 @@ app and agent communicate over authenticated loopback connections.
 
 Computer Control and Mobile Access are optional and off by default. Mobile
 pairing uses a private TLS gateway and a pinned Mac certificate, without a
-Locus cloud relay. Computer Control is excluded from the Mac App Store target;
-the built-in browser is available in both distributions.
+Locus cloud relay. Computer Control and the built-in browser are available in
+every build; macOS remembers the Accessibility grant per code signature, so a
+stable signing identity keeps it from being re-requested after each rebuild.
 
 ## Build from source
 
@@ -175,7 +176,7 @@ in `WalletSignerCore/rust-toolchain.toml`.
 Use separate build directories for Locus and LocusX. `project.yml` is the source
 of truth for the generated Xcode project. See [Contributing](CONTRIBUTING.md)
 for signing and development details, and [Editions](Docs/Editions.md) for the
-LocusX and Mac App Store build commands.
+LocusX build commands.
 
 ### Tests
 

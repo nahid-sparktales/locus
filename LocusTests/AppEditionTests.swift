@@ -53,9 +53,8 @@ final class AppEditionTests: XCTestCase {
         XCTAssertEqual(edition.mcpRedirectURI, "locus://mcp/oauth")
         XCTAssertEqual(edition.browserProfileKey(for: "/tmp/project"), "/tmp/project")
         XCTAssertEqual(edition.companionCertificateLabel, "Locus Companion TLS")
-        XCTAssertNil(edition.backendHomes(in: support, sandboxed: false)["OLLAMA_CODE_HOME"])
-        XCTAssertEqual(edition.backendHomes(in: support, sandboxed: true)["OLLAMA_CODE_HOME"],
-                       support.path + "/Locus/Agent")
+        XCTAssertNil(edition.backendHomes(in: support)["OLLAMA_CODE_HOME"],
+                     "Wallet-free Locus uses the default agent home")
     }
 
     func testLocusXHasIndependentHomesCredentialsAndCallbacks() {
@@ -72,7 +71,7 @@ final class AppEditionTests: XCTestCase {
         XCTAssertNotEqual(edition.browserProfileKey(for: "/tmp/project"),
                           AppEdition.locus.browserProfileKey(for: "/tmp/project"))
         XCTAssertNotEqual(edition.companionCertificateLabel, AppEdition.locus.companionCertificateLabel)
-        XCTAssertEqual(edition.backendHomes(in: support, sandboxed: false), [
+        XCTAssertEqual(edition.backendHomes(in: support), [
             "OLLAMA_CODE_HOME": support.path + "/LocusX/Agent",
             "LOCUS_CODEX_HOME": support.path + "/LocusX/Codex",
             "LOCUS_AGENT_HOMES_ROOT": support.path + "/LocusX/AgentHomes",

@@ -2,7 +2,7 @@
 
 This channel is for explicitly opted-in personal use. It is not a canary, an
 audited release, or public GA, and it does not provide any of their evidence.
-Production release gates and Mac App Store exclusions remain unchanged.
+Production release gates and wallet-free exclusions remain unchanged.
 
 ## Build boundary
 
@@ -15,8 +15,8 @@ copies can run together. Do not replace or modify an existing app implicitly.
 Only the Direct app and nested signer compile `LOCUS_EXPERIMENTAL_MAINNET` and
 use an experimental Info.plist containing the Boolean
 `LocusWalletExperimentalMainnetEnabled = true`. Both the compiled opt-in and
-the sealed flag are required. The ordinary Direct, Debug and App Store builds
-do not receive that opt-in. The experimental app disables automatic Sparkle
+the sealed flag are required. The ordinary Release and Debug builds do not
+receive that opt-in. The experimental app disables automatic Sparkle
 updates and the production activation endpoint; local authority must be
 explicitly supplied and verified by the app and signer.
 
