@@ -55,9 +55,15 @@ final class LocusCalendarStore: ObservableObject {
 
     func requestAccess() async {
         do {
-            _ = try await eventStore.requestFullAccessToEvents()
+            let granted = try await eventStore.requestFullAccessToEvents()
             updateAccessState()
             refresh()
+            // macOS answers from its stored decision when it has one, so the
+            // prompt never appears and the button looks dead. Say so instead.
+            if !granted && accessState == .notDetermined {
+                errorMessage = "macOS did not grant calendar access and showed no prompt. "
+                    + "Open Privacy Settings and allow Calendars for Locus."
+            }
         } catch {
             updateAccessState()
             errorMessage = error.localizedDescription
@@ -395,7 +401,8 @@ struct InspectorCalendarTab: View {
                     title: "Bring your calendars into Locus",
                     detail: "See events from Calendar, Google, and Microsoft, and let agents schedule with your approval.",
                     action: "Allow Calendar Access",
-                    handler: { Task { await store.requestAccess() } }
+                    handler: { Task { await store.requestAccess() } },
+                    settingsAction: "Open Privacy Settings"
                 )
             case .denied, .writeOnly:
                 permissionState(
@@ -572,7 +579,8 @@ struct InspectorCalendarTab: View {
         title: String,
         detail: String,
         action: String,
-        handler: @escaping () -> Void
+        handler: @escaping () -> Void,
+        settingsAction: String? = nil
     ) -> some View {
         VStack(spacing: 12) {
             Image(systemName: symbol)
@@ -587,8 +595,20 @@ struct InspectorCalendarTab: View {
                 .fixedSize(horizontal: false, vertical: true)
             Button(action, action: handler)
                 .buttonStyle(.locus(.primary))
+            if let settingsAction {
+                Button(settingsAction, action: openCalendarPrivacy)
+                    .buttonStyle(.locus())
+            }
             Button("Connect Google or Microsoft", action: openInternetAccounts)
                 .buttonStyle(.locus())
+            if let message = store.errorMessage {
+                Text(message)
+                    .font(.locus(size: 11))
+                    .foregroundStyle(LocusTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("calendar.permission.error")
+            }
         }
         .padding(28)
         .frame(maxWidth: 360, maxHeight: .infinity)
@@ -614,8 +634,14 @@ struct InspectorCalendarTab: View {
     }
 
     private func openCalendarPrivacy() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
-            NSWorkspace.shared.open(url)
+        // System Settings replaced the old preference-pane identifier; the
+        // legacy one stays as a fallback for older macOS.
+        let candidates = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Calendars",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) { break }
         }
     }
 }
