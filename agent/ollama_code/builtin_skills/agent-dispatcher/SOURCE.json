@@ -114,7 +114,7 @@
     "recipes/security-review.md": "31b2944cc572289f5e97593e9ee0be21ec4f06c7bdb675f28395af4e07d5433b",
     "recipes/ship-feature.md": "e91a4989b59e87ab752059d4fc387e5c42565cd16eaf7a02e138075b89601071",
     "references/ACTIVITY.md": "dd6b29ead33446ebb43c01f4b2141f421ab91938bafe1f5d0b5b051a32d38758",
-    "references/CONTEXT.md": "8a9a3abb74b6499eaf53dbaa1f0caf2dab3c2b19b892a6972ea091c63471ab79",
+    "references/CONTEXT.md": "798f93e05ee49a328ce38650e7e2ab507e63fc70a98057294e2781685c27ace1",
     "references/CONTROLS.md": "b5a2edfab6a0469dc73d21e55f9fa1249d110ab83393bcdd1970c58bf01e5fff",
     "references/DELEGATION.md": "d69e9c85bb36209102615a3be6ef8a44afd8ce891fb4bd5fea713de2d0069d30",
     "references/INDEX.md": "836327efa5df82cf8ce6463d3f2c99b69273a4afb4705193a106a2dde4ac5dad",
@@ -149,7 +149,7 @@
     "roles/tester.md": "9712cb890c4a94604e6cbff59ad27f711b67533aa758e2c969770713bae8f5d9",
     "roles/ui-ux-designer.md": "32430581e0ceffb92dc700398a55a3c306e88aa9b21562d79a7691986993c139",
     "roles/version-control.md": "de6c1abe4316fb595b23d4e2a54cb4b70cd72633c8f7f505fc2d5b9632870a33",
-    "scripts/context.py": "cc89559e1f5eaa739f99bfb87740b6aba5eec37ce945f7e4c46faddcd0b7bc07",
+    "scripts/context.py": "11e48538fa7cacafb46fd220588768b91e8115293e8c7ba8781f7092d7a4c218",
     "scripts/project_map.py": "81f6d3b1de109ee0a402b53ae32c43345e44b6b4082c29ffc8fd92b51ab17541"
   }
 }

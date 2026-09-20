@@ -40,7 +40,13 @@ final class BoardWindowTests: XCTestCase {
         defer { model.boardWindows.window(for: store.workspacePath)?.close() }
         model.boardWindows.open(store: store, model: model)
         let first = try XCTUnwrap(model.boardWindows.window(for: store.workspacePath))
-        XCTAssertEqual(first.contentLayoutRect.size, NSSize(width: 1280, height: 780))
+        let screen = try XCTUnwrap(first.screen)
+        // AppKit fits the initial window to the available display. CI's
+        // smaller virtual screen cannot hold the full preferred content size.
+        let availableContent = first.contentRect(forFrameRect: screen.visibleFrame).size
+        XCTAssertEqual(first.contentLayoutRect.width, min(1280, availableContent.width), accuracy: 1)
+        XCTAssertEqual(first.contentLayoutRect.height, min(780, availableContent.height), accuracy: 1)
+        XCTAssertEqual(first.minSize, NSSize(width: 620, height: 440))
         XCTAssertEqual(first.title, "Board · project")
         model.boardWindows.open(store: BoardStore.shared(
             workspacePath: store.workspacePath + "/", applicationSupport: root.appendingPathComponent("Support")

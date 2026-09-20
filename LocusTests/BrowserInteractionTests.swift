@@ -358,6 +358,7 @@ final class BrowserCaptureTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        collector?.onMessage = nil
         host = nil
         waiter = nil
         collector = nil
@@ -368,14 +369,26 @@ final class BrowserCaptureTests: XCTestCase {
     /// own scripts treated as cross-origin, and WebKit redacts uncaught error
     /// messages to "Script error." — the page's own listeners see the same
     /// thing, so a fixture without an origin cannot test error text at all.
-    private func loadAndCollect(_ html: String) async throws {
+    private func loadAndCollect(
+        _ html: String,
+        awaiting description: String,
+        until condition: @escaping (Collector) -> Bool
+    ) async throws {
+        let captured = expectation(description: description)
+        // Observe before navigation: a batch can arrive before didFinish. Clear
+        // the callback on success or failure so later batches cannot fulfill twice.
+        collector.onMessage = { [weak collector] in
+            guard let collector, condition(collector) else { return }
+            collector.onMessage = nil
+            captured.fulfill()
+        }
+        defer { collector.onMessage = nil }
         waiter.reset()
         host.webView.loadHTMLString(html, baseURL: URL(string: "http://127.0.0.1/fixture"))
         try await waiter.wait()
-        // The page-world queue flushes on a 250ms timer, on purpose: a
-        // hot-reload error loop would otherwise post thousands of messages a
-        // second straight onto the main thread.
-        try await Task.sleep(for: .milliseconds(700))
+        // WebKit can throttle the page's 250ms batch timer while offscreen.
+        // Wait for this fixture's evidence, including subsequent batches.
+        await fulfillment(of: [captured], timeout: 10)
     }
 
     func testConsoleOutputIsCaptured() async throws {
@@ -384,7 +397,12 @@ final class BrowserCaptureTests: XCTestCase {
           console.log('a plain message');
           console.error('something broke');
         </script></body>
-        """)
+        """, awaiting: "Both console messages captured") { collector in
+            let messages = collector.entries
+                .filter { $0["kind"] as? String == "console" }
+                .compactMap { $0["message"] as? String }
+            return messages.contains("a plain message") && messages.contains("something broke")
+        }
 
         let console = collector.entries.filter { $0["kind"] as? String == "console" }
         let messages = console.compactMap { $0["message"] as? String }
@@ -402,7 +420,13 @@ final class BrowserCaptureTests: XCTestCase {
           setTimeout(() => { throw new Error('boom'); }, 0);
           Promise.reject(new Error('nope'));
         </script></body>
-        """)
+        """, awaiting: "Uncaught error and rejected promise captured") { collector in
+            let messages = collector.entries
+                .filter { $0["kind"] as? String == "console" }
+                .compactMap { $0["message"] as? String }
+                .joined(separator: "\n")
+            return messages.contains("Error: boom") && messages.contains("unhandled rejection: Error: nope")
+        }
 
         let messages = collector.entries
             .filter { $0["kind"] as? String == "console" }
@@ -418,7 +442,12 @@ final class BrowserCaptureTests: XCTestCase {
     func testFailedSubresourceLoadsAreCaptured() async throws {
         try await loadAndCollect("""
         <body><img src="http://127.0.0.1:9/definitely-missing.png"></body>
-        """)
+        """, awaiting: "Failed subresource load captured") { collector in
+            collector.entries.contains {
+                $0["kind"] as? String == "console"
+                    && ($0["message"] as? String)?.contains("failed to load") == true
+            }
+        }
 
         let messages = collector.entries
             .filter { $0["kind"] as? String == "console" }
@@ -432,11 +461,34 @@ final class BrowserCaptureTests: XCTestCase {
         <body><script>
           for (let i = 0; i < 400; i += 1) { console.log('line ' + i); }
         </script></body>
-        """)
+        """, awaiting: "Capture overflow reported") { collector in
+            collector.batches.contains { ($0["dropped"] as? Int ?? 0) > 0 }
+        }
 
         // The queue caps at 200 entries; the overflow has to be reported rather
         // than making the log look complete.
         let dropped = collector.batches.compactMap { $0["dropped"] as? Int }.reduce(0, +)
         XCTAssertGreaterThan(dropped, 0, "overflow must be counted, not hidden")
+    }
+
+    func testCaptureWaitsForRequiredMessagesAcrossDelayedBatches() async throws {
+        try await loadAndCollect("""
+        <body><script>
+          console.log('first batch');
+          setTimeout(() => { console.log('delayed batch'); }, 1500);
+        </script></body>
+        """, awaiting: "Immediate and delayed console messages captured") { collector in
+            let messages = collector.entries
+                .filter { $0["kind"] as? String == "console" }
+                .compactMap { $0["message"] as? String }
+            return messages.contains("first batch") && messages.contains("delayed batch")
+        }
+
+        let messages = collector.entries
+            .filter { $0["kind"] as? String == "console" }
+            .compactMap { $0["message"] as? String }
+        XCTAssertTrue(messages.contains("first batch"), messages.description)
+        XCTAssertTrue(messages.contains("delayed batch"), messages.description)
+        XCTAssertNil(collector.onMessage)
     }
 }

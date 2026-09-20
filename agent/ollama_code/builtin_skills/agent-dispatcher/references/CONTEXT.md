@@ -15,8 +15,11 @@ python3 -B PACK/scripts/context.py --pack PACK --project PROJECT --role ID --siz
 
 Quote each absolute path separately and pass only the task on standard input through
 structured input or safe literal quoting. Never interpolate task text into shell code.
-The helper uses Python's standard library and Git or ripgrep, performs no network calls,
-does not execute project commands, and writes no project files. If the terminal or Python
+The helper uses Python's standard library, preferring Git or ripgrep for ignore-aware
+enumeration. Without either working enumerator, a bounded portable fallback inspects
+plain folders, conservatively omitting folders protected by ignore or version-control
+rules. It performs no network calls, executes no project commands, and writes no project
+files. If the terminal or Python
 is unavailable or denied, use the manual method below and continue achievable work.
 
 Start with exact identifiers and requested paths, then matching definitions, tests, and

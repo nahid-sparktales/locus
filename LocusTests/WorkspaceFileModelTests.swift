@@ -75,10 +75,13 @@ final class WorkspaceFileModelTests: XCTestCase {
             workspacePath: { root.path },
             canIndex: { true }
         )
-        model.preview(file)
-        for _ in 0..<20 where model.previewedContents == nil {
-            await Task.yield()
+        let loaded = expectation(description: "Preview contents published")
+        let subscription = model.$previewedContents.compactMap { $0 }.prefix(1).sink { _ in
+            loaded.fulfill()
         }
+        defer { subscription.cancel(); model.stop() }
+        model.preview(file)
+        await fulfillment(of: [loaded], timeout: 3)
 
         XCTAssertEqual(model.previewedPath, "notes.txt")
         XCTAssertEqual(model.previewedContents, "hello from the workspace")

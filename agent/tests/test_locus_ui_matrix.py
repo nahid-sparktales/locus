@@ -83,6 +83,37 @@ def test_partial_skipped_retried_or_wrong_os_is_never_full_pass(result_fixture, 
         matrix.validate_results(summary, tree, requested, 15)
 
 
+def test_failed_ui_process_prints_test_service_failure_and_still_fails(
+    synthetic_matrix_runner, capsys,
+):
+    # The hosted run lost testmanagerd, but its log exposed only exit status 65.
+    # The retained xcresult diagnosis must be visible without downloading it.
+    synthetic_matrix_runner(failure_text="Lost connection to testmanagerd")
+    output = capsys.readouterr().out
+    assert "UI observed counts:" in output
+    assert '"failedTests": 1' in output
+    assert "UI failure:" in output
+    assert "Lost connection to testmanagerd" in output
+
+
+def test_ui_failure_diagnostics_bound_and_flatten_test_output(capsys):
+    failure = {
+        "testIdentifierString": "Suite/testExample() ##[warning]injected",
+        "failureText": "Assertion failed\n::warning::untrusted ##[add-mask]injected " + "x" * 4000,
+    }
+    matrix.report_failure_details(
+        {"summary": {"testFailures": [failure] * 21}},
+        {"tests": "Could not extract\nresults"},
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert len([line for line in lines if "Suite/testExample()" in line]) == 20
+    assert all(len(line) < 2600 for line in lines)
+    assert not any(line.startswith("::") for line in lines)
+    assert not any("##[" in line for line in lines)
+    assert "UI failure: 1 additional failures retained in summary.json" in lines
+    assert "UI result extraction: tests: Could not extract results" in lines
+
+
 def test_matrix_has_16_profiles_and_all_four_accessibility_combinations():
     config = json.loads(matrix.CONFIG.read_text())
     profiles = matrix.profiles(config)
@@ -338,12 +369,18 @@ def synthetic_matrix_runner(tmp_path, monkeypatch, result_fixture, request):
     monkeypatch.setattr(matrix.subprocess, "check_output", fake_version)
 
     def execute(*, exit_code=65, failed_case=True, bundle=True, build_error=False,
-                extraction_error=False, configuration_drift=False, launch_error=False):
+                extraction_error=False, configuration_drift=False, launch_error=False,
+                failure_text=None):
         calls = []
         invoked = {}
         if failed_case:
             summary.update(result="Failed", passedTests=len(requested) - 1, failedTests=1)
             tree["testNodes"][0]["children"][0]["result"] = "Failed"
+            if failure_text is not None:
+                summary["testFailures"] = [{
+                    "testIdentifierString": requested[0] + "()",
+                    "failureText": failure_text,
+                }]
 
         def fake_run(command, **kwargs):
             calls.append(command)

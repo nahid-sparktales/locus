@@ -158,8 +158,11 @@ python3 -B PACK/scripts/context.py --pack PACK --project PROJECT --role ID --siz
 
 Quote each absolute path separately and pass only the task on standard input through
 structured input or safe literal quoting. Never interpolate task text into shell code.
-The helper uses Python's standard library and Git or ripgrep, performs no network calls,
-does not execute project commands, and writes no project files. If the terminal or Python
+The helper uses Python's standard library, preferring Git or ripgrep for ignore-aware
+enumeration. Without either working enumerator, a bounded portable fallback inspects
+plain folders, conservatively omitting folders protected by ignore or version-control
+rules. It performs no network calls, executes no project commands, and writes no project
+files. If the terminal or Python
 is unavailable or denied, use the manual method below and continue achievable work.
 
 Start with exact identifiers and requested paths, then matching definitions, tests, and
@@ -340,6 +343,19 @@ def contained_source(source: Path, relative: str) -> Path:
     return path
 
 
+def context_helper(source: str) -> str:
+    """Keep the upstream selector while adding a reviewed portable enumerator."""
+    marker = '    diagnostics.append("Ignore-aware file enumeration unavailable (Git or ripgrep required); no files scanned.")\n    return []'
+    boundary = "\ndef _enumerate(project, diagnostics):"
+    if source.count(marker) != 1 or source.count(boundary) != 1:
+        raise ValueError("Context enumeration changed upstream; review the portable adaptation")
+    fallback = (Path(__file__).resolve().parent / "DispatcherContextFallback.py").read_text(encoding="utf-8")
+    # Only function definitions belong in the helper, after its original imports.
+    fallback = fallback[fallback.index("def _portable_enumerate("):].rstrip()
+    source = source.replace(boundary, "\n" + fallback + "\n\n" + boundary)
+    return source.replace(marker, "    return _portable_enumerate(project, diagnostics, MAX_FILES, MAX_LIST_BYTES, _skip)")
+
+
 def export(source: Path, destination: Path) -> dict:
     source = source.resolve()
     destination = destination.absolute()
@@ -442,7 +458,8 @@ def export(source: Path, destination: Path) -> dict:
         write_json(pack / "catalog/mcp.json", mcps)
         write_json(pack / "catalog/context-plan.schema.json", read_json(source / "catalog/context-plan.schema.json"))
         for helper in ("context.py", "project_map.py"):
-            write(pack / "scripts" / helper, contained_source(source, helper).read_text(encoding="utf-8"))
+            content = contained_source(source, helper).read_text(encoding="utf-8")
+            write(pack / "scripts" / helper, context_helper(content) if helper == "context.py" else content)
         write(pack / "decision/redact.py", contained_source(source, "decision/redact.py").read_text(encoding="utf-8"))
         for name in ("LICENSE", "NOTICE"):
             write(pack / name, contained_source(source, name).read_text(encoding="utf-8"))

@@ -195,7 +195,12 @@ def test_controls_finish_without_calling_the_provider(core, monkeypatch):
     assert events[-2]["type"] == "turn_done"
 
 
-def test_context_control_selects_source_evidence_without_workspace_writes(tmp_path):
+@pytest.mark.parametrize("missing_tools", [(), ("rg",), ("rg", "git")],
+                         ids=["available-tools", "without-ripgrep", "without-enumerators"])
+def test_context_control_selects_source_evidence_without_workspace_writes(tmp_path, monkeypatch, missing_tools):
+    import shutil
+    original_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda command: None if command in missing_tools else original_which(command))
     project = tmp_path / "project"
     project.mkdir()
     (project / "billing.py").write_text("def calculate_invoice_total(items):\n    return sum(items)\n")

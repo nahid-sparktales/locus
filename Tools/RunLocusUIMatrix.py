@@ -260,6 +260,31 @@ def observed_counts(results: dict) -> dict | None:
     }
 
 
+def report_failure_details(results: dict, extraction_errors: dict) -> None:
+    """Expose retained XCTest failures in CI logs without changing acceptance.
+
+    Keep messages bounded and on one prefixed line, so test output cannot
+    introduce CI workflow commands. Neutralize the legacy command delimiter,
+    which GitHub recognizes anywhere in a line. Complete details remain in
+    the artifact.
+    """
+    def rendered(value: object, limit: int = 2000) -> str:
+        return " ".join(str(value).split()).replace("##[", "## [")[:limit]
+
+    counts = observed_counts(results)
+    if counts is not None:
+        print(f"UI observed counts: {json.dumps(counts, sort_keys=True)}")
+    failures = results.get("summary", {}).get("testFailures", [])
+    for failure in failures[:20]:
+        identifier = failure.get("testIdentifierString") or failure.get("testName") or "Unknown test"
+        message = failure.get("failureText") or "No failure message reported"
+        print(f"UI failure: {rendered(identifier, 500)}: {rendered(message)}")
+    if len(failures) > 20:
+        print(f"UI failure: {len(failures) - 20} additional failures retained in summary.json")
+    for name, error in sorted(extraction_errors.items()):
+        print(f"UI result extraction: {rendered(name, 500)}: {rendered(error)}")
+
+
 def validate_results(
     summary: dict, tree: dict, requested: list[str], os_major: int
 ) -> dict:
@@ -590,6 +615,7 @@ def main():
             receipt["receiptSHA256"] = digest(receipt)
             immutable_json(run / "receipt.json", receipt)
         if status != "passed":
+            report_failure_details(results, extraction_errors)
             raise SystemExit(
                 f"UI profile incomplete: {error}; evidence retained at {run}"
             )

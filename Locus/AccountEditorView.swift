@@ -575,7 +575,7 @@ struct AccountEditorView: View {
     private var endpointDraftAccount: ProviderAccount {
         var updated = account
         updated.name = ProviderAccountStore.uniqueName(name, kind: kind,
-            existing: model.providerAccounts, excluding: account.id)
+            existing: providerAccounts.providerAccounts, excluding: account.id)
         updated.baseURLOverride = kind.allowsBaseURLOverride
             ? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             : account.baseURLOverride
