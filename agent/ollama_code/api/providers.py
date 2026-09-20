@@ -208,6 +208,10 @@ def chatgpt_models(
                 "description": str(row.get("description") or ""),
                 "is_default": bool(row.get("isDefault")),
                 "supported_reasoning_efforts": _chatgpt_efforts(row),
+                "supports_image_input": (
+                    "image" in row["inputModalities"]
+                    if isinstance(row.get("inputModalities"), list) else None
+                ),
                 "default_reasoning_effort": str(row.get("defaultReasoningEffort") or ""),
             }
             for row in rows

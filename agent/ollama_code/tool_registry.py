@@ -30,6 +30,7 @@ _SAFE_EXTENSION_TOOLS = {
     "load_extension_prompt",
     "load_skill",
     "read_skill_file",
+    "read_dispatcher_resource",
 }
 
 _MODERN_MCP_TOOLS = {
@@ -240,6 +241,12 @@ def parity_to_canonical(name: str, arguments: dict[str, Any]) -> tuple[str, dict
 
 
 EXTENSION_TOOL_SCHEMAS = [
+    _schema(
+        "read_dispatcher_resource",
+        "Read a bundled specialist role, guide, recipe, or reference. Read roles/<id>.md before using an automatically selected role. Returns the resource contents without running scripts.",
+        {"path": {"type": "string", "description": "Relative path inside the bundled Agent Dispatcher pack."}},
+        ["path"],
+    ),
     _schema(
         "search_extension_tools",
         "Search installed MCP tools and make matching tools available for the next step.",
@@ -1099,6 +1106,7 @@ class ToolRegistry:
         mcp: Any | None = None,
     ) -> None:
         self.extensions = extensions
+        self.dispatcher: Any | None = None
         self.mcp = mcp
         self._mcp_by_qualified: dict[str, dict[str, Any]] = {}
         self._active_mcp: set[str] = set()
@@ -1388,6 +1396,8 @@ class ToolRegistry:
             schema for schema in _base_schemas(self._agent_access_ceiling)
             if schema["function"]["name"] != "submit_workflow_result"
             if self._user_allows(schema["function"]["name"])
+            if schema["function"]["name"] != "read_dispatcher_resource"
+            or self.dispatcher is not None and self.dispatcher.mode_enabled()
         ]
         if (workflow_schema := self._workflow_result_schema()) is not None:
             schemas.append(workflow_schema)
@@ -1495,6 +1505,10 @@ class ToolRegistry:
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted
         )
+        if (self.dispatcher is not None and self.dispatcher.mode_enabled()
+                and self._user_allows("read_dispatcher_resource")):
+            schemas.extend(schema for schema in EXTENSION_TOOL_SCHEMAS
+                           if schema["function"]["name"] == "read_dispatcher_resource")
         if not plan_mode:
             # Plan mode modifies no files; the image tools write one.
             schemas.extend(self.image_schemas())
@@ -1757,11 +1771,14 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: dict[str, Any], ctx: ToolContext, *,
                 media_receiver: Callable[[list[dict[str, Any]]], None] | None = None,
-                invocation_context: dict[str, str] | None = None) -> str:
+                invocation_context: dict[str, str] | None = None,
+                dispatcher_helper: bool = False) -> str:
         if name == "wait_for_locus" and self.runtime_wait_enabled and ctx.wait_for_locus:
             return ctx.wait_for_locus(arguments)
         if not self._user_allows(name):
             return "Error: this tool is disabled by the agent's capability settings."
+        if name == "read_dispatcher_resource":
+            return self.dispatcher.read(arguments.get("path"), helper=dispatcher_helper) if self.dispatcher is not None else "Error: Agent Dispatcher is unavailable."
         if name in _MODERN_MCP_TOOLS and not capability_enabled("modern_mcp"):
             return "Error: modern MCP resources and prompts are disabled."
         if name in _KNOWLEDGE_TOOLS and not capability_enabled("workspace_knowledge"):

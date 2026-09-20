@@ -377,7 +377,7 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
     assert builtin["enabled"] is False
     assert next(item for item in skills if item["id"] == "frontend-design")["enabled"] is True
     bundled = [item for item in skills if item.get("builtin")]
-    assert len(bundled) == 25
+    assert len(bundled) == 26
     assert {
         "builtin:using-superpowers",
         "builtin:grill-me",

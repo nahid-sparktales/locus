@@ -121,6 +121,10 @@ targetTemplates:
       - path: Locus/Resources/ThirdPartyLicenses
         type: folder
         buildPhase: resources
+      # The picker works before the backend starts, including UI-test builds
+      # that omit AgentRuntime. Both copies come from this one generated file.
+      - path: agent/ollama_code/builtin_skills/agent-dispatcher/catalog.json
+        buildPhase: resources
     preBuildScripts:
       - name: Clean stale embedded test bundle
         basedOnDependencyAnalysis: false

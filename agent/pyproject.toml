@@ -50,12 +50,20 @@ ignore = [
     "E501",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Preserve the upstream helper source order in the reproducible dispatcher export.
+"ollama_code/builtin_skills/agent-dispatcher/scripts/*.py" = ["I001"]
+
 [project.scripts]
 ollama-code-server = "ollama_code.server:main"
 locus-runtime = "ollama_code.runtime:main"
 
 [tool.setuptools.packages.find]
 include = ["ollama_code*"]
+
+[tool.setuptools.package-data]
+# Include nested role guides, their references, and bundled helper scripts in wheels.
+ollama_code = ["builtin_skills/**/*"]
 
 # Deliberately no [tool.pytest.ini_options] here: a second pytest config in this
 # directory made `cd agent && pytest` treat `agent` as the rootdir, which is a

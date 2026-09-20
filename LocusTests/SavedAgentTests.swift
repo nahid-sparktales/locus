@@ -4,6 +4,29 @@ import XCTest
 
 final class SavedAgentTests: XCTestCase {
     @MainActor
+    func testUnusedChatCreationModeIsOnlyAFallback() throws {
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let info = try JSONDecoder().decode(SessionInfo.self, from: Data(#"{"session_id":"new-plan-chat","initial_mode":"plan","messages":1}"#.utf8))
+        model.installTranscriptSession(info.sessionID, blocks: [])
+        model.sessionInfo = info
+        model.selectedMode = .work
+        model.applyUnusedChatInitialMode(info)
+        XCTAssertEqual(model.selectedMode, .plan)
+        XCTAssertEqual(model.splitPaneModes[info.sessionID], .plan)
+        model.splitPaneModes[info.sessionID] = .grill
+        model.selectedMode = .grill
+        model.applyUnusedChatInitialMode(info)
+        XCTAssertEqual(model.selectedMode, .grill)
+
+        let used = try JSONDecoder().decode(SessionInfo.self, from: Data(#"{"session_id":"used-plan-chat","initial_mode":"plan","messages":2}"#.utf8))
+        model.applyUnusedChatInitialMode(used)
+        XCTAssertNil(model.splitPaneModes[used.sessionID])
+        XCTAssertEqual(info.replacingPermissions(info.permissions).initialMode, .plan)
+        XCTAssertEqual(info.replacingTask(nil).initialMode, .plan)
+    }
+
+    @MainActor
     func testOpeningOwnedAutomationPromotesTheVisibleSavedAgent() {
         let model = cleanupModel()
         defer { cancelPendingWork(model) }
@@ -579,6 +602,41 @@ final class SavedAgentTests: XCTestCase {
         XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().last?["agent_home"] as? Bool, true)
     }
 
+    @MainActor
+    func testNewSavedAgentChatUsesRoleModeWithoutChangingPreviousChatMode() async throws {
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { model.activeTranscriptLoad?.task.cancel(); cancelPendingWork(model) }
+        var profile = AgentProfile(name: "Planner", model: "fixture")
+        profile.defaultMode = .plan
+        model.agentProfiles = [profile]
+        let previous = SessionSummary(id: "foreground", name: "Previous", preview: "", mtime: 1, size: 0, cwd: "/tmp")
+        model.installTranscriptSession(previous.id, blocks: [])
+        model.selectedMode = .ask
+        model.draftText = "Keep this unfinished question"
+
+        model.newSavedAgentChat(profile, workspace: "/tmp")
+        let deadline = Date().addingTimeInterval(3)
+        while model.creatingSavedAgentChatIDs.contains(profile.id), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(model.creatingSavedAgentChatIDs.contains(profile.id))
+        await model.activeTranscriptLoad?.task.value
+        let created = try XCTUnwrap(model.savedAgentChats(profile.id).first)
+        XCTAssertEqual(model.currentSessionID, created.id)
+        XCTAssertEqual(model.selectedMode, .plan)
+        XCTAssertEqual(model.splitPaneModes[previous.id], .ask)
+        XCTAssertEqual(model.splitPaneDrafts[previous.id], "Keep this unfinished question")
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().last?["mode"] as? String, "plan")
+
+        model.resume(previous)
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertEqual(model.currentSessionID, previous.id)
+        XCTAssertEqual(model.selectedMode, .ask)
+        XCTAssertEqual(model.draftText, "Keep this unfinished question")
+        XCTAssertEqual(model.splitPaneModes[created.id], .plan)
+    }
+
     func testNewWritableAgentsDefaultToAllServicesWithoutUndoingOptOuts() {
         for ceiling in [AgentAccessCeiling.workspaceWrite, .computerControl] {
             var profile = AgentProfile(name: "Test", model: "fixture", accessCeiling: ceiling)
@@ -965,6 +1023,9 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
                 "size": 0, "title": body["title"] ?? "", "cwd": body["cwd"] ?? "/tmp",
                 "agent_profile_id": body["agent_profile_id"] ?? ""])
             result = ["session_id": id]
+        case let path where path.hasPrefix("/api/sessions/") && path.hasSuffix("/resume"):
+            Self.current = request.url!.pathComponents.dropLast().last ?? "foreground"
+            result = ["ok": true, "messages": [], "session_info": Self.sessionInfo()]
         case let path where path.hasPrefix("/api/sessions/agent-profile/") && path.hasSuffix("/cleanup"):
             let profileID = UUID(uuidString: request.url!.pathComponents.dropLast().last ?? "")
             let action = body["action"] as? String ?? ""

@@ -252,7 +252,7 @@ struct AgentTeamsSettingsView: View {
                         providerLogo(for: profile.route)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.name).font(.locus(size: 11, weight: .semibold))
-                            Text("\(profile.role.title) · \(profile.accessCeiling.title) · \(routeTitle(profile.route))")
+                            Text("\(profile.specialtyTitle) · \(profile.accessCeiling.title) · \(routeTitle(profile.route))")
                                 .font(.locus(size: 9))
                                 .foregroundStyle(LocusTheme.muted)
                                 .lineLimit(1)
@@ -450,7 +450,7 @@ struct AgentTeamsSettingsView: View {
     private var filteredProfiles: [AgentProfile] {
         let query = profileSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         return agentTeams.agentProfiles.filter {
-            query.isEmpty || "\($0.name) \($0.role.title) \($0.model)".localizedCaseInsensitiveContains(query)
+            query.isEmpty || "\($0.name) \($0.specialtyTitle) \($0.model)".localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -1629,6 +1629,13 @@ struct AgentProfileEditor: View {
     @State private var connectionsExpanded = false
     @State private var previousInstructions: String?
     @State private var modelRefreshID: UUID?
+    @State private var choosingRole = false
+    @State private var roleTemplates: [AgentRoleTemplate] = []
+    @State private var roleCatalogError: String?
+    @State private var previousTemplateProfile: AgentProfile?
+    @State private var recommendationID: UUID?
+    @State private var recommendationMessage: String?
+    @State private var recommendationTask: Task<Void, Never>?
     @FocusState private var nameFocused: Bool
     let isNew: Bool
     let existingProfiles: [AgentProfile]
@@ -1662,10 +1669,12 @@ struct AgentProfileEditor: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
+                        roleSelection
                         identityFields
-                        AgentWorkspacePreferencesEditor(profile: $draft)
                         Divider()
                         instructionsEditor
+                        Divider()
+                        AgentWorkspacePreferencesEditor(profile: $draft)
                         Divider()
                         environmentDisclosure
                         Divider()
@@ -1697,6 +1706,11 @@ struct AgentProfileEditor: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.editor")
         .task { nameFocused = isNew }
+        .task {
+            do { roleTemplates = try AgentRoleCatalog.load(backendRoot: model.settings.backendRoot).roles }
+            catch { roleCatalogError = error.localizedDescription }
+        }
+        .onDisappear { recommendationTask?.cancel() }
         .task(id: draft.route) { await refreshModels() }
         .onReceive(model.eventAutomations.$connections) { connectedServices = $0 }
         .onChange(of: draft.accessCeiling) { _, _ in
@@ -1717,6 +1731,10 @@ struct AgentProfileEditor: View {
             }
             .environmentObject(model)
             .environmentObject(providerAccounts)
+        }
+        .sheet(isPresented: $choosingRole) {
+            AgentRolePickerView(roles: roleTemplates, selectedID: draft.resolvedBehavior.specialistRoleID,
+                                error: roleCatalogError, select: applyRole)
         }
     }
 
@@ -1742,7 +1760,7 @@ struct AgentProfileEditor: View {
     }
 
     private var identityFields: some View {
-        HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Name")
                     .font(.locus(size: 11, weight: .medium))
@@ -1753,17 +1771,107 @@ struct AgentProfileEditor: View {
                     .accessibilityLabel("Name")
                     .accessibilityIdentifier("agent.name")
             }
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Specialty")
-                    .font(.locus(size: 11, weight: .medium))
-                Picker("Specialty", selection: $draft.role) {
-                    ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
-                }
-                .labelsHidden()
-                .accessibilityIdentifier("agent.role")
+            TextField("Description", text: Binding(
+                get: { draft.resolvedBehavior.selfDescription },
+                set: { value in var behavior = draft.resolvedBehavior; behavior.selfDescription = value; draft.behavior = behavior }
+            ), axis: .vertical)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("agent.description")
+            Picker("Default mode", selection: Binding(
+                get: { draft.defaultMode ?? .work }, set: { draft.defaultMode = $0 }
+            )) {
+                ForEach(WorkMode.automationCases) { Text($0 == .ask ? "Just Chat" : $0.title).tag($0) }
             }
-            .frame(width: 170, alignment: .leading)
+            .accessibilityIdentifier("agent.defaultMode")
         }
+    }
+
+    private var roleSelection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedTemplate?.name ?? "Custom")
+                        .font(.locus(size: 13, weight: .semibold))
+                        .accessibilityIdentifier("agent.selectedRole")
+                    Text(selectedTemplate?.category ?? "Your instructions and settings")
+                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+                }
+                Spacer()
+                if previousTemplateProfile != nil {
+                    Button("Undo") { undoRole() }.accessibilityIdentifier("agent.undoRole")
+                }
+                Button("Choose role") { choosingRole = true }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("agent.chooseRole")
+            }
+            if recommendationID != nil {
+                Text("Finding a suitable connected model…").font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+            } else if let recommendationMessage {
+                Text(recommendationMessage).font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("agent.modelRecommendation")
+            }
+        }
+        .padding(14)
+        .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var selectedTemplate: AgentRoleTemplate? {
+        roleTemplates.first { $0.id == draft.resolvedBehavior.specialistRoleID }
+    }
+
+    private func applyRole(_ role: AgentRoleTemplate?) {
+        cancelRecommendation()
+        var previous = draft
+        previous.capabilityTags = csv(tags)
+        previous.behavior?.customInstructions = draft.instructions
+        previousTemplateProfile = previous
+        previousInstructions = nil
+        guard let role else {
+            draft.behavior?.specialistRoleID = nil
+            return
+        }
+        draft = role.applying(to: previous)
+        tags = draft.capabilityTags.joined(separator: ", ")
+        environmentExpanded = true
+        permissionsExpanded = true
+        let requestID = UUID()
+        recommendationID = requestID
+        let selectedDraft = draft
+        recommendationTask = Task {
+            let result = await model.recommendAgentRoleModel(role, draft: selectedDraft)
+            guard !Task.isCancelled, recommendationID == requestID,
+                  draft.resolvedBehavior.specialistRoleID == role.id,
+                  draft.route == selectedDraft.route, draft.model == selectedDraft.model else { return }
+            if let candidate = result.candidate {
+                draft.route = candidate.route
+                draft.model = candidate.model
+                draft.metering = candidate.route.accountID == nil || candidate.subscription ? .selfHosted : .metered
+                if candidate.route != selectedDraft.route || candidate.model != selectedDraft.model {
+                    draft.inputCostPerMillion = nil
+                    draft.outputCostPerMillion = nil
+                }
+                connectionResult = nil
+                connectionTestID = nil
+            }
+            recommendationMessage = result.reason
+            recommendationID = nil
+        }
+    }
+
+    private func undoRole() {
+        guard let previousTemplateProfile else { return }
+        cancelRecommendation()
+        draft = previousTemplateProfile
+        tags = draft.capabilityTags.joined(separator: ", ")
+        self.previousTemplateProfile = nil
+    }
+
+    private func cancelRecommendation() {
+        recommendationTask?.cancel()
+        recommendationTask = nil
+        recommendationID = nil
+        recommendationMessage = nil
     }
 
     private var environmentDisclosure: some View {
@@ -1984,9 +2092,10 @@ struct AgentProfileEditor: View {
                     .font(.locus(size: 11, weight: .medium))
                     .accessibilityIdentifier("agent.instructionsLabel")
                 Spacer()
-                Button("Use \(draft.role.title) Template") {
+                Button("Use \(selectedTemplate?.name ?? draft.role.title) Template") {
                     previousInstructions = draft.instructions
-                    draft.instructions = draft.role.defaultInstructions
+                    draft.instructions = selectedTemplate?.instructions ?? draft.role.defaultInstructions
+                    draft.behavior?.customInstructions = draft.instructions
                 }
                 .font(.locus(size: 9))
                 .buttonStyle(.borderless)
@@ -1995,6 +2104,7 @@ struct AgentProfileEditor: View {
                 if let previousInstructions {
                     Button("Undo") {
                         draft.instructions = previousInstructions
+                        draft.behavior?.customInstructions = previousInstructions
                         self.previousInstructions = nil
                     }
                     .font(.locus(size: 9))
@@ -2144,6 +2254,10 @@ struct AgentProfileEditor: View {
 
     private var advancedSettingsContent: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Picker("Team function", selection: $draft.role) {
+                ForEach(AgentRole.allCases) { Text($0.title).tag($0) }
+            }
+            .accessibilityIdentifier("agent.role")
             Button("Edit behavior & memory…") {
                 var behavior = draft.resolvedBehavior
                 behavior.customInstructions = draft.instructions
@@ -2264,7 +2378,7 @@ struct AgentProfileEditor: View {
                 .buttonStyle(.borderedProminent)
                 .tint(LocusTheme.accentAction)
                 .keyboardShortcut(.defaultAction)
-                .disabled(nameValidationMessage != nil || modelValidationMessage != nil)
+                .disabled(nameValidationMessage != nil || modelValidationMessage != nil || recommendationID != nil)
                 .accessibilityIdentifier("agent.save")
         }
         .padding(.horizontal, 22)
@@ -2334,6 +2448,7 @@ struct AgentProfileEditor: View {
 
     private var providerRouteBinding: Binding<AgentRoute> {
         Binding(get: { draft.route }, set: { route in
+            cancelRecommendation()
             guard route != draft.route else { return }
             // Replace the pair in one action; an onChange reset briefly leaves
             // the old provider's model attached to the newly chosen account.
@@ -2345,6 +2460,7 @@ struct AgentProfileEditor: View {
 
     private var modelBinding: Binding<String> {
         Binding(get: { draft.model }, set: { value in
+            cancelRecommendation()
             draft.model = value
             connectionResult = nil
             connectionTestID = nil
@@ -2457,7 +2573,7 @@ private struct AgentTeamEditor: View {
                                     }
                                 }
                             )) {
-                                Text("\(profile.name) · \(profile.role.title)")
+                                Text("\(profile.name) · \(profile.specialtyTitle)")
                             }
                         }
                     }

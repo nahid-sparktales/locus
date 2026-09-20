@@ -182,8 +182,17 @@ class AgentWorkerRuntime:
         core.codex_manager = _HelperNativeTransport(svc.core.codex_manager if parent.provider == "claude_plan" else svc.codex, self)
         core.session.session_id = spec.agent_id
         core._suppress_turn_done = True
+        core.dispatcher.inherit_preferences(parent.dispatcher)
+        helper_configuration = parent.agent_configuration.structured()
+        if helper_configuration.get("specialist_role_id"):
+            # The helper receives its own assignment and specialist. A saved
+            # root template must not turn a verifier into its implementer.
+            helper_configuration["specialist_role_id"] = None
+            helper_configuration["custom_instructions"] = ""
+            helper_configuration["mode_instructions"] = {}
+            helper_configuration["self_description"] = "A scoped specialist helping with the assigned task."
         core.configure_agent(
-            parent.agent_configuration.structured(),
+            helper_configuration,
             mode="plan" if spec.mode == "research" else parent.agent_mode,
             agent_id=spec.agent_id,
             role_contract=(

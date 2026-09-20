@@ -135,6 +135,7 @@ extension AppModel {
             if let behavior = encodedJSONObject(profile.resolvedBehavior) {
                 entry["behavior"] = behavior
             }
+            if let mode = profile.defaultMode { entry["default_mode"] = mode.rawValue }
             if let rate = profile.inputCostPerMillion { entry["input_cost_per_million"] = rate }
             if let rate = profile.outputCostPerMillion { entry["output_cost_per_million"] = rate }
             if let policy = profile.mcpPolicy,

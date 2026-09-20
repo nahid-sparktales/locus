@@ -143,18 +143,25 @@ Locus updates.
 ## Bundled development skills
 
 Locus includes complete, offline copies of upstream skills plus lightweight
-native workflow routers. Every directory has a `SOURCE.json` pinning its
-source repository, path, commit, activation policy, and adaptation notes;
-startup does not download, update, or activate them. All bundled skills are
-optional and require explicit invocation.
+native workflow routers. Each `SOURCE.json` records provenance, activation
+policy, and adaptation notes, with source revisions or catalog versions and
+file hashes identifying the included material. Optional skills retain their
+explicit-invocation policy; startup does not download or update them.
 
-| Skill | Upstream commit | License |
+Agent Dispatcher provides app-owned specialist routing enabled by default in
+Work, Plan, and Grill chats. Users can disable it in Skills settings or for
+an individual conversation. Its guides load only as needed, and Just Chat
+keeps its existing behavior. This exception does not activate other skills
+or observation workflows.
+
+| Skill | Upstream revision or catalog | License |
 | --- | --- | --- |
 | Anthropic Frontend Design | `f17010c9bb483898c1d9c9f42dde2b3a98889434` | Apache-2.0 |
 | Vercel React Best Practices | `7c180d9044c9ae2b442b567aad4e42a28dd5ed62` | MIT |
 | Superpowers (complete 14-skill suite) | `b36e0829c6d0140e93cfef2ca599b1b07d4a7797` | MIT |
 | GSD (six native Locus routers) | `bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815` | MIT |
 | Matt Pocock Grill Me and Grilling | `068b6e0c62393147daf03530149cdce209c93da8` | MIT |
+| [Agent Dispatcher](https://github.com/nahid-sparktales/agent-dispatcher) | Catalog `2.2.0`; bundled file hashes in `SOURCE.json` | MIT |
 | Context Mode and Claude Mem | design references only | Elastic-2.0 / AGPL-3.0 |
 
 License texts are retained at
@@ -165,6 +172,11 @@ License texts are retained at
 `ThirdPartyLicenses/builtin-skills-matt-pocock/`, and alongside each bundled
 upstream skill inside the agent runtime. Context Mode and Claude Mem code,
 services, hooks, workers, and databases are not distributed by Locus.
+
+Agent Dispatcher is copyright © 2026 Nahid Masad. Its canonical role
+templates, guides, recipes, and context helpers are adapted for Locus. The
+MIT license and provenance notice are retained as `LICENSE` and `NOTICE`
+under `AgentRuntime/source/ollama_code/builtin_skills/agent-dispatcher/`.
 
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the

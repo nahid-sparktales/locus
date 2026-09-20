@@ -197,22 +197,24 @@ extension AppModel {
         }
     }
 
+    @discardableResult
     func startNewChat(
         in rawPath: String,
         environment requestedEnvironment: ChatExecutionEnvironment?,
-        baseRef: String = "HEAD"
-    ) {
+        baseRef: String = "HEAD",
+        initialDraft: String? = nil
+    ) -> Task<Bool, Never>? {
         activity.activityCenterPresented = false
         guard !pendingSessionReset else {
             showToast("Wait for the current chat change to finish")
-            return
+            return nil
         }
         voiceControl.exitVoiceMode()
         detachForegroundWorkerUIIfNeeded()
         let path = SessionSummary.canonicalWorkspacePath(rawPath)
         guard FileManager.default.fileExists(atPath: path) else {
             showToast("That workspace is no longer available")
-            return
+            return nil
         }
         rememberSidebarSession(sessions.first { $0.id == currentSessionID })
         emptySidebarDestination = nil
@@ -229,12 +231,12 @@ extension AppModel {
         pendingSessionReset = true
         armSessionResetWatchdog()
         showToast("Starting a new chat in \(URL(fileURLWithPath: path).lastPathComponent)…")
-        Task {
+        return Task {
             do {
                 let isGit = (try? await GitClient(workspaceRoot: path).run(
                     ["rev-parse", "--show-toplevel"]
                 )) != nil
-                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return false }
                 let environment = requestedEnvironment
                     ?? (settings.newGitChatsUseWorktree && isGit ? .worktree : .local)
                 let response = try await backend.post(
@@ -248,14 +250,21 @@ extension AppModel {
                     ],
                     as: NewSessionResponse.self
                 )
-                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return false }
+                if initialDraft != nil { prepareSplitSelection(response.sessionInfo.sessionID) }
                 applySessionStarted(response.sessionInfo, reason: response.reason)
+                if let initialDraft {
+                    setPaneDraft(initialDraft, for: response.sessionInfo.sessionID)
+                    composerFocusToken = UUID()
+                }
+                return true
             } catch {
-                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return }
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(loadToken) else { return false }
                 invalidatePendingTranscriptTransition()
                 pendingWorkspacePath = nil
                 sessionResetWatchdog?.cancel()
                 showToast("Could not start the chat: \(error.localizedDescription)")
+                return false
             }
         }
     }
@@ -377,6 +386,7 @@ extension AppModel {
                 refreshAnchoredRunsIfNeeded()
                 applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
+                applyUnusedChatInitialMode(response.sessionInfo)
                 activeTaskRecord = response.sessionInfo.task
                 sendComputerControlCapability()
                 sendSimulatorControlCapability()
@@ -416,6 +426,17 @@ extension AppModel {
                 blocks.append(ChatBlock(kind: .error, text: error.localizedDescription))
             }
         })
+    }
+
+    func applyUnusedChatInitialMode(_ info: SessionInfo) {
+        // The runtime counts its initial system message; initialMode is only
+        // emitted while the durable user/assistant transcript is still empty.
+        guard info.messages <= 1, let mode = info.initialMode, mode != .duo,
+              splitPaneModes[info.sessionID] == nil,
+              goals.goal(for: info.sessionID)?.status != .active else { return }
+        splitPaneModes[info.sessionID] = mode
+        paneState(containing: info.sessionID)?.mode = mode
+        if currentSessionID == info.sessionID { selectedMode = mode }
     }
 
     func detachForegroundWorkerUIIfNeeded() {

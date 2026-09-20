@@ -303,7 +303,7 @@ extension AppModel {
             .map(AgentRoute.providerAccount) ?? .localOllama
         return AgentProfile(name: "", route: route, model: selectedModel, role: .generalist,
                             instructions: "", accessCeiling: .readOnly,
-                            behavior: AgentBehavior(selfDescription: "A specialist for delegated tasks."))
+                            behavior: AgentBehavior(selfDescription: ""))
     }
 
     func presentSavedAgentEditor(_ profile: AgentProfile) {
@@ -366,7 +366,6 @@ extension AppModel {
                 agentInspector.show(.fleet)
                 configureAgentPresented = false
                 sidebarDestination = .agents
-                selectedMode = .work
                 resume(session)
             } catch {
                 showToast("Could not open \(profile.name)’s chat: \(error.localizedDescription)")
@@ -389,7 +388,9 @@ extension AppModel {
             "cwd": workspace, "title": "Chat \(count + 1)", "agent_profile_id": profile.id.uuidString,
             "execution_environment": "automatic",
             "agent_home": workspace == savedAgentHomePath(profile),
+            "mode": (profile.defaultMode ?? .work).rawValue,
         ], as: Created.self)
+        splitPaneModes[response.session_id] = profile.defaultMode ?? .work
         agentWorld.bindConversation(response.session_id, workspace: workspace, profileID: profile.id)
         await refreshMetadata()
         guard let session = sessionCatalog.snapshot.sessionsByID[response.session_id] else {
@@ -433,6 +434,7 @@ extension AppModel {
                 draft.provider = route.provider
                 draft.providerAccountID = route.accountID
                 draft.model = profile.model
+                draft.mode = profile.defaultMode ?? .work
                 draft.runner = .solo
                 draft.teamID = nil
                 draft.teamName = ""
@@ -447,6 +449,8 @@ extension AppModel {
             draft.templateSessionID = ""
             draft.workspaceRoot = workspace
             draft.agentProfileID = profile.id.uuidString
+            draft.mode = profile.defaultMode ?? .work
+            draft.workflow = .singleAgent(instruction: draft.instruction, mode: draft.mode)
             draft.profileRoute = ["provider": route.provider, "model": profile.model,
                                   "provider_account_id": route.accountID ?? ""]
             eventAutomations.editorDraft = draft

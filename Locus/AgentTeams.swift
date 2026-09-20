@@ -275,6 +275,8 @@ struct AgentBehavior: Codable, Hashable {
     var capabilityPolicy = AgentCapabilityPolicy()
     var memoryPolicy = AgentMemoryPolicy()
     var runtimePolicy = AgentRuntimePolicy()
+    /// Stable dispatcher template identity; custom/legacy agents have no template.
+    var specialistRoleID: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case version
@@ -286,6 +288,7 @@ struct AgentBehavior: Codable, Hashable {
         case capabilityPolicy = "capability_policy"
         case memoryPolicy = "memory_policy"
         case runtimePolicy = "runtime_policy"
+        case specialistRoleID = "specialist_role_id"
     }
 
     init(
@@ -297,7 +300,8 @@ struct AgentBehavior: Codable, Hashable {
         modeInstructions: AgentModeOverlays = .init(),
         capabilityPolicy: AgentCapabilityPolicy = .init(),
         memoryPolicy: AgentMemoryPolicy = .init(),
-        runtimePolicy: AgentRuntimePolicy = .init()
+        runtimePolicy: AgentRuntimePolicy = .init(),
+        specialistRoleID: String? = nil
     ) {
         self.version = version
         self.displayName = displayName
@@ -308,6 +312,7 @@ struct AgentBehavior: Codable, Hashable {
         self.capabilityPolicy = capabilityPolicy
         self.memoryPolicy = memoryPolicy
         self.runtimePolicy = runtimePolicy
+        self.specialistRoleID = specialistRoleID
     }
 
     init(from decoder: Decoder) throws {
@@ -327,7 +332,8 @@ struct AgentBehavior: Codable, Hashable {
             memoryPolicy: (try? container.decode(AgentMemoryPolicy.self, forKey: .memoryPolicy))
                 ?? .init(),
             runtimePolicy: (try? container.decode(AgentRuntimePolicy.self, forKey: .runtimePolicy))
-                ?? .init()
+                ?? .init(),
+            specialistRoleID: try? container.decode(String.self, forKey: .specialistRoleID)
         )
         clamp()
     }
@@ -354,6 +360,10 @@ struct AgentBehavior: Codable, Hashable {
         modeInstructions.grill = String(modeInstructions.grill.prefix(4_000))
         memoryPolicy.clamp()
         runtimePolicy.clamp()
+        specialistRoleID = specialistRoleID.flatMap {
+            let value = $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return value.isEmpty ? nil : String(value.prefix(80))
+        }
     }
 }
 
@@ -636,6 +646,8 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     var mcpPolicy: MCPAgentPolicy? = nil
     var behavior: AgentBehavior? = nil
     var workspacePreferences: AgentWorkspacePreferences? = nil
+    /// Applied only when creating a chat; existing chats keep their selected mode.
+    var defaultMode: WorkMode? = nil
 
     init(
         id: UUID = UUID(),
@@ -653,7 +665,8 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         outputCostPerMillion: Double? = nil,
         mcpPolicy: MCPAgentPolicy? = nil,
         behavior: AgentBehavior? = nil,
-        workspacePreferences: AgentWorkspacePreferences? = nil
+        workspacePreferences: AgentWorkspacePreferences? = nil,
+        defaultMode: WorkMode? = nil
     ) {
         self.id = id
         self.name = name
@@ -671,6 +684,7 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         self.mcpPolicy = mcpPolicy
         self.behavior = behavior ?? .migrated(name: name, instructions: instructions ?? role.defaultInstructions)
         self.workspacePreferences = workspacePreferences
+        self.defaultMode = defaultMode == .duo ? .work : defaultMode
         clamp()
     }
 
@@ -2410,7 +2424,7 @@ enum TeamMentionTarget: Identifiable, Hashable {
 
     var subtitle: String {
         switch self {
-        case .agent(let profile): "Force \(profile.role.title) · \(profile.model)"
+        case .agent(let profile): "Force \(profile.specialtyTitle) · \(profile.model)"
         case .team(let team): "Use team · \(team.memberIDs.count) members"
         }
     }

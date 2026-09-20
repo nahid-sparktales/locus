@@ -8,6 +8,7 @@ import SwiftUI
 /// it publishes, so this view only renders and reports errors.
 struct InspectorBoardTab: View {
     @ObservedObject var store: BoardStore
+    var isDetached = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -19,13 +20,14 @@ struct InspectorBoardTab: View {
     @State private var columnPrompt: BoardColumnPrompt?
     @State private var columnTitleDraft = ""
     @State private var actionError: String?
+    @State private var openingChat = false
 
     static let columnWidth: CGFloat = 232
     private static let quickAddAnchor = "board.quickAdd.anchor"
 
     var body: some View {
         GeometryReader { proxy in
-            let compact = proxy.size.width < 480 && !model.inspectorZoomed
+            let compact = proxy.size.width < 480 && (isDetached || !model.inspectorZoomed)
             VStack(spacing: 0) {
                 header
                 Divider()
@@ -118,6 +120,24 @@ struct InspectorBoardTab: View {
             Spacer(minLength: 4)
             if store.isAvailable {
                 searchField
+            }
+            if openingChat {
+                ProgressView().controlSize(.small)
+                    .help("Opening a new chat for this card")
+                    .accessibilityLabel("Opening a new chat for this card")
+            }
+            if !isDetached {
+                Button { model.boardWindows.open(store: store, model: model) } label: {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.locus(size: 12, weight: .medium))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.locus(.icon))
+                .disabled(!store.isAvailable)
+                .help("Open board in window")
+                .accessibilityLabel("Open board in window")
+                .accessibilityIdentifier("board.openWindow")
             }
             Button { newCard = BoardNewCardRequest(columnID: nil) } label: {
                 Image(systemName: "plus")
@@ -616,7 +636,20 @@ struct InspectorBoardTab: View {
 
     private func workInChat(_ card: BoardCard) {
         openCard = nil
-        model.prefillComposerFromBoard(store.chatPrompt(for: card))
+        guard isDetached else {
+            model.prefillComposerFromBoard(store.chatPrompt(for: card))
+            return
+        }
+        guard !openingChat else { return }
+        openingChat = true
+        actionError = nil
+        Task { @MainActor in
+            let opened = await model.openBoardCardInNewChat(card, store: store)
+            openingChat = false
+            if !opened {
+                actionError = "The card’s chat could not be opened. Finish any pending chat change and check that this workspace is still available, then try again."
+            }
+        }
     }
 
     private func beginAddColumn() {

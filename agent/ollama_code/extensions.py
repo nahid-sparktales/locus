@@ -1439,6 +1439,18 @@ class ExtensionManager:
         """Compatibility surface: Locus no longer injects startup skills."""
         return []
 
+    def refresh_saved_state(self) -> None:
+        """Observe Settings changes made by another conversation's worker."""
+        try:
+            stat = self.state_path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stamp = None
+        with self._guard:
+            if stamp != getattr(self, "_saved_state_stamp", object()):
+                self._state = self._load_state()
+                self._saved_state_stamp = stamp
+
     def explicit_skill_ids(self, text: str, workspace: str = "") -> list[str]:
         enabled = [item for item in self.skills(workspace) if item.get("enabled")]
         available = {str(item["id"]).lower(): str(item["id"]) for item in enabled}
