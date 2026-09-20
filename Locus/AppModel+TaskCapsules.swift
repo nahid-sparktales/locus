@@ -217,6 +217,7 @@ extension AppModel {
             "token_limit": profile.tokenLimit, "metering": subscription ? "self_hosted" : profile.metering.rawValue,
             "route": route]
         if let behavior = encodedJSONObject(profile.resolvedBehavior) { payload["behavior"] = behavior }
+        if let mode = profile.defaultMode { payload["default_mode"] = mode.rawValue }
         if let policy = profile.mcpPolicy, let raw = encodedJSONObject(policy) { payload["mcp_policy"] = raw }
         if !subscription {
             payload["input_cost_per_million"] = profile.inputCostPerMillion

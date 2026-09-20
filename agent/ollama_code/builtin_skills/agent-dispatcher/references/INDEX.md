@@ -1,0 +1,119 @@
+# Bundled guide index
+
+Read exact paths with `read_dispatcher_resource`. Load relevant guides only.
+
+- `accessibility` → `guides/design/accessibility/GUIDE.md` — UI is being built, changed or repaired and it has to be operable by keyboard and assistive technology — including turning an audit finding into an actual code change.
+- `accessibility-verification` → `guides/design/accessibility-verification/GUIDE.md` — Someone is about to claim a screen or flow is accessible, keyboard-operable, screen-reader usable or WCAG-conformant, or an accessibility fix needs re-checking.
+- `agent-design` → `guides/ai/agent-design/GUIDE.md` — An agent or subagent is being scoped, granted tools, or reviewed after looping, over-reaching or reporting work it did not do.
+- `agent-evals` → `guides/ai/agent-evals/GUIDE.md` — A prompt, model, tool definition or retrieval change is about to be called an improvement, agent behaviour must not silently regress, or a production failure needs to become a case that cannot come back.
+- `agent-security` → `guides/security/agent-security/GUIDE.md` — An agent or subagent is being granted tools, credentials or MCP access, is about to reach a shared or production system, or acted beyond what the requester could have done.
+- `api-contract-verification` → `guides/backend/api-contract-verification/GUIDE.md` — An endpoint, API client or third-party integration is about to be reported as working, or someone asks whether an integration is actually verified.
+- `api-design` → `guides/backend/api-design/GUIDE.md` — An HTTP endpoint is being added or reshaped, a response or error shape has to be decided, or a change to a published API has to be judged for breakage.
+- `auth-security` → `guides/security/auth-security/GUIDE.md` — An existing auth path is reviewed, changed or doubted — sessions, tokens, reset and invite flows, impersonation, role elevation, MFA — or someone reports reaching another account's data.
+- `authentication` → `guides/backend/authentication/GUIDE.md` — A credential is issued, accepted, refreshed or revoked — login, logout, sessions, tokens, API keys, or an OAuth/OIDC integration.
+- `authorization` → `guides/backend/authorization/GUIDE.md` — A rule of the form 'only X may do Y to Z' is added, changed or doubted — roles, permissions, per-owner or per-tenant scoping, admin paths.
+- `background-jobs` → `guides/backend/background-jobs/GUIDE.md` — Work is being moved off a request path onto a queue or scheduler, or a job ran twice, never ran, ran out of order, or is stuck retrying.
+- `browser-verification` → `guides/quality/browser-verification/GUIDE.md` — A change touches rendered UI and someone is about to claim it works, or you are asked whether a screen actually functions.
+- `caching` → `guides/backend/caching/GUIDE.md` — A cache is about to be added to a read path, or existing cached data is stale, leaking across users, or being blamed for a bug.
+- `ci-cd` → `guides/devops/ci-cd/GUIDE.md` — A delivery pipeline is being designed or restructured, something broken reached an environment through a passing pipeline, or a stage is claiming more than it actually ran.
+- `competitive-analysis` → `guides/knowledge/competitive-analysis/GUIDE.md` — A choice between real alternatives — library, service, vendor, build versus buy — has to be defended, or someone arrives with a comparison table and a conclusion.
+- `component-architecture` → `guides/frontend/component-architecture/GUIDE.md` — A component is being added, has grown props or responsibilities, or a structure is under review for whether it will hold.
+- `context-engineering` → `guides/ai/context-engineering/GUIDE.md` — A prompt, agent or session loads substantial material, quality decays as context grows, or context has to be trimmed, summarized or split between inlining and retrieval.
+- `copywriting` → `guides/knowledge/copywriting/GUIDE.md` — Copy aimed at an audience outside the product is being written or rewritten — landing page, product messaging, email, ad, announcement — or an existing draft's claims need auditing before it ships.
+- `data-analysis` → `guides/knowledge/data-analysis/GUIDE.md` — A dataset has to answer a question, a reported number needs explaining or reconciling, or a finding from data is about to reach someone who will act on it.
+- `data-integrity` → `guides/database/data-integrity/GUIDE.md` — A rule about what must always be true of the data needs to be enforced in a live schema, or an invariant that was enforced has drifted.
+- `data-pipelines` → `guides/database/data-pipelines/GUIDE.md` — A batch or streaming pipeline, scheduled transform or ingestion job is being built, repaired or backfilled, or a run dropped, duplicated or reshaped rows.
+- `data-quality` → `guides/database/data-quality/GUIDE.md` — Checks on a dataset are being written or reviewed, a wrong value reached a consumer with nothing catching it, or an existing check is noisy enough to be ignored.
+- `database-migration-verification` → `guides/database/database-migration-verification/GUIDE.md` — A migration has been applied to some environment and someone is about to report it as working, or that claim is being reviewed.
+- `deep-research` → `guides/knowledge/deep-research/GUIDE.md` — An open question's answer will change a decision and the evidence is not already in the conversation — unfamiliar, contested or fast-moving material that needs framing, primary sources and a stopping rule.
+- `dependency-security` → `guides/security/dependency-security/GUIDE.md` — An advisory or audit finding needs judging, a dependency is being added or bumped, a lockfile diff needs review, or someone asks whether a named CVE affects this project.
+- `deployment` → `guides/devops/deployment/GUIDE.md` — A change is going to an environment other people use, or the path that takes it there is being built or changed.
+- `design-systems` → `guides/design/design-systems/GUIDE.md` — The project already has design tokens, a component library or a shared theme, and UI is being added or changed inside it.
+- `design-to-code` → `guides/design/design-to-code/GUIDE.md` — A design, mockup, Figma frame or screenshot is the source for a UI change, or an existing implementation is being compared against one.
+- `docker` → `guides/devops/docker/GUIDE.md` — A Dockerfile is being written, changed or reviewed, an image build is slow, bloated or non-deterministic, or configuration and secrets need a route into a container.
+- `documentation-verification` → `guides/knowledge/documentation-verification/GUIDE.md` — Documentation is about to be called correct, current or ready to publish, or a setup guide, quickstart or onboarding path fails at an unidentified step.
+- `e2e-testing` → `guides/quality/e2e-testing/GUIDE.md` — An automated end-to-end suite is being created, extended, triaged for flake, or pruned, or a case has to be placed at or below this level.
+- `experimentation` → `guides/product/experimentation/GUIDE.md` — An A/B or online experiment is being designed, sized, sanity-checked or interpreted — including deciding whether the traffic can support one at all.
+- `frontend-design` → `guides/design/frontend-design/GUIDE.md` — A new or reshaped UI surface needs a visual direction decided — hierarchy, type, colour, spacing, density — and no design system already decides it.
+- `frontend-performance` → `guides/frontend/frontend-performance/GUIDE.md` — A page is reported slow, a Core Web Vital or bundle size is named, or a change is about to be described as a performance improvement.
+- `github-actions` → `guides/devops/github-actions/GUIDE.md` — A GitHub Actions workflow is being added, changed or reviewed, or CI is slow, flaky, or reporting green when it should be red.
+- `idempotency-and-retries` → `guides/backend/idempotency-and-retries/GUIDE.md` — An operation with an external side effect has to survive being repeated, a caller needs a retry policy, or duplicate effects have appeared and must be prevented.
+- `incident-response` → `guides/devops/incident-response/GUIDE.md` — Production is failing or degraded right now and stopping the ongoing harm matters more than a complete causal explanation.
+- `llm-observability` → `guides/ai/llm-observability/GUIDE.md` — An agent fails in ways that will not reproduce, cost or latency is unaccounted for, or failure modes must be found before evals can be written.
+- `mcp-design` → `guides/ai/mcp-design/GUIDE.md` — An MCP server is being written, an internal system is being wrapped as one, or a third-party server is being assessed before it is wired into a project.
+- `memory-design` → `guides/ai/memory-design/GUIDE.md` — An agent must carry facts, preferences or decisions past the current context, or an existing memory store has become noisy, contradictory or wrongly scoped.
+- `migrations` → `guides/database/migrations/GUIDE.md` — A schema or data migration is being written, reviewed or sequenced against a database that holds real data and has live readers.
+- `model-routing` → `guides/ai/model-routing/GUIDE.md` — More than one model is in play and a call has to be assigned to one, or cost, latency or a silently firing fallback has become a problem.
+- `motion-design` → `guides/design/motion-design/GUIDE.md` — Transitions, animated state changes, gesture movement or loading indicators are being added, tuned or reviewed, or an interface reads as janky or sluggish.
+- `observability` → `guides/devops/observability/GUIDE.md` — A service or a new critical path is going to production, an incident ended with a question the data could not answer, or a dependency, queue or job is being added whose failure would otherwise be silent.
+- `owasp-web` → `guides/security/owasp-web/GUIDE.md` — Web code that takes requests, builds queries, renders output, fetches URLs, deserializes data, handles sessions or accepts files is being written or reviewed, or an app needs a sweep for the recurring vulnerability classes.
+- `performance-profiling` → `guides/quality/performance-profiling/GUIDE.md` — Something is slow, or an optimization is about to be written from a hunch rather than from a measurement.
+- `positioning` → `guides/knowledge/positioning/GUIDE.md` — The product must be described to people who do not know it — homepage, deck, launch, a new segment — or "who is this for" and "how is this different" have no crisp, evidenced answer.
+- `postgres` → `guides/database/postgres/GUIDE.md` — The project runs on Postgres and the decision depends on engine behaviour — a column type, an index kind, a plan to read, an isolation level, DDL lock behaviour, or a row-level security policy.
+- `prd-and-stories` → `guides/product/prd-and-stories/GUIDE.md` — A settled problem needs a written scope others can build and check against — a brief, PRD, epic or stories — or a ticket is too vague to estimate or verify.
+- `prioritization` → `guides/product/prioritization/GUIDE.md` — The candidate list is longer than the capacity, someone asks what to cut or what ships first, or an existing order cannot be justified.
+- `product-analytics` → `guides/product/product-analytics/GUIDE.md` — A product metric, funnel or dashboard number is being defined, disputed, or about to be instrumented — including before tracking is added to a feature.
+- `product-discovery` → `guides/product/product-discovery/GUIDE.md` — A request arrives phrased as a solution, or a plan rests on a belief about users that nobody has checked, and the question is whether the problem is real.
+- `prompt-engineering` → `guides/ai/prompt-engineering/GUIDE.md` — A prompt is being written or patched, its output is inconsistent or the wrong shape, a model version changed, or someone has declared a prompt improved.
+- `prompt-injection-defense` → `guides/ai/prompt-injection-defense/GUIDE.md` — An agent ingests content it did not author — retrieval, browsing, email, files, MCP tool results, subagent output — and also holds tools that can act.
+- `query-optimization` → `guides/database/query-optimization/GUIDE.md` — A specific statement is slow and the database is the suspect, a query plan needs interpreting, or an index is being proposed without evidence.
+- `regression-testing` → `guides/quality/regression-testing/GUIDE.md` — A bug has just been fixed, or keeps coming back, and the fix needs a test that is proven to fail without it.
+- `release-verification` → `guides/devops/release-verification/GUIDE.md` — A deploy has completed to a shared environment and someone is about to call the release good, or that claim is being checked.
+- `responsive-design` → `guides/design/responsive-design/GUIDE.md` — A layout has to hold across viewport widths — building it, repairing an overflow or collapse at some size, or filling in the sizes a single-width design never specified.
+- `retrieval-rag` → `guides/ai/retrieval-rag/GUIDE.md` — A retrieval-backed system returns wrong or thin answers, or an index is being designed, chunked, embedded or rebuilt.
+- `rollback` → `guides/devops/rollback/GUIDE.md` — A release plan needs its way back written and rehearsed, or a deploy is going wrong and someone is deciding whether it can be undone.
+- `schema-design` → `guides/database/schema-design/GUIDE.md` — New tables are being designed, ORM models or migration DDL are under review, or a defect traces back to the data model permitting a state that should be impossible.
+- `secrets-management` → `guides/security/secrets-management/GUIDE.md` — A credential is added, moved, shared or due for rotation, or one has turned up in code, history, logs or a client bundle.
+- `secure-code-review` → `guides/security/secure-code-review/GUIDE.md` — A pull request, feature or repository needs a security read before shipping — especially anything touching auth, money, tenancy, uploads, deserialization or secrets — or someone reports reaching data they should not have.
+- `seo` → `guides/knowledge/seo/GUIDE.md` — A page is written or revised to be found in search, search traffic drops, a page is missing from results, or someone asks which query to target.
+- `shadcn-ui` → `guides/frontend/shadcn-ui/GUIDE.md` — Adding, customizing or debugging a shadcn/ui component in a repo with components.json and a vendored UI directory.
+- `source-evaluation` → `guides/knowledge/source-evaluation/GUIDE.md` — A claim is about to be relied on, quoted or cited — or sources disagree, a number arrives without its method, or a 'widely reported' fact needs its origin traced.
+- `stack-detection` → `guides/frontend/stack-detection/GUIDE.md` — You are about to work in a frontend repo whose stack you have not yet confirmed this session, or about to load framework-specific guidance.
+- `structured-output` → `guides/ai/structured-output/GUIDE.md` — A model's output feeds code rather than a human — extraction, classification, routing, scoring — or parsing keeps failing, fields arrive invented, or a schema is being designed for a model to fill.
+- `systematic-debugging` → `guides/quality/systematic-debugging/GUIDE.md` — Something is broken, the cause is not yet known, and someone is about to start editing code to find out.
+- `tailwind` → `guides/frontend/tailwind/GUIDE.md` — Writing or editing Tailwind utility classes in a project that already uses Tailwind.
+- `technical-writing` → `guides/knowledge/technical-writing/GUIDE.md` — Documentation is being written, restructured or repaired — README, setup guide, how-to, reference, architecture note, release notes, runbook — or a reader cannot get from the docs to a working result.
+- `test-design` → `guides/quality/test-design/GUIDE.md` — Unit or integration tests are being written or repaired — new coverage, pinning a reported bug, or a suite that stays green while the behaviour is wrong.
+- `test-strategy` → `guides/quality/test-strategy/GUIDE.md` — Coverage has to be planned or defended — before writing a batch of tests, when a suite is slow and nobody can say what it buys, or after a bug escaped and nothing caught it.
+- `threat-modeling` → `guides/security/threat-modeling/GUIDE.md` — A system's shape is being designed or changed — new service, integration, tenancy model, uploads, payments or auth — and someone needs to know which few things are actually worth defending.
+- `tool-design` → `guides/ai/tool-design/GUIDE.md` — A tool or function an LLM calls is being added or reshaped, or an agent is selecting the wrong tool, passing malformed arguments, looping, or stalling after a call.
+- `ui-audit` → `guides/design/ui-audit/GUIDE.md` — An interface already exists and someone needs to know what is wrong with it, ranked and concrete enough to act on.
+- `ux-writing` → `guides/design/ux-writing/GUIDE.md` — Interface strings are being written, reviewed or repaired — labels, errors, empty states, confirmations, form hints — or a control's wording is causing hesitation.
+- `visual-verification` → `guides/frontend/visual-verification/GUIDE.md` — A change affects appearance and is about to be called done, or a screenshot-comparison result is about to be trusted as proof.
+- `webhooks` → `guides/backend/webhooks/GUIDE.md` — A webhook endpoint is being built, integrated or debugged, or the service has to deliver events to external consumers.
+
+## Optional external guides
+
+These are references, not bundled content or proof of installation.
+
+- `anthropic-frontend-design` — Distinctive, intentional visual design: aesthetic direction, typography, avoiding templated defaults. Fallback: The local frontend-design skill.
+- `anthropic-webapp-testing` — Testing web applications through a real browser. Fallback: The local browser-verification skill.
+- `anthropic-skill-creator` — Authoring Agent Skills: structure, progressive disclosure, description quality. Fallback: The agent-design skill, plus the role's own method.
+- `anthropic-mcp-builder` — Building an MCP server. Fallback: The local mcp-design skill.
+- `anthropic-claude-api` — Current Claude API surface: model ids, pricing, tool use, caching, agents. Fallback: Official Anthropic documentation via the browser.
+- `anthropic-claude-security` — Security review guidance from Anthropic. Fallback: The local secure-code-review skill.
+- `anthropic-agent-development` — Authoring subagents: frontmatter, triggering conditions, system-prompt design. Fallback: The local agent-design skill.
+- `anthropic-skill-development` — Skill structure and progressive disclosure for Claude Code plugins. Fallback: anthropic-skill-creator when installed, otherwise the agent-design skill and the role's own method.
+- `anthropic-plugin-structure` — Plugin layout, manifest and auto-discovery conventions. Fallback: The role's own method; this pack's own layout is the worked example.
+- `anthropic-mcp-integration` — Wiring MCP servers into a plugin (.mcp.json, transports, auth). Fallback: The local mcp-design skill.
+- `anthropic-doc-coauthoring` — Co-authoring documents with a person in the loop. Fallback: The local technical-writing skill.
+- `anthropic-brand-guidelines` — Applying a brand's voice and visual guidelines. Fallback: The local copywriting skill plus the project's own brand material.
+- `vercel-vercel-optimize` — Vercel cost and performance audit for a deployed project: usage metrics, config and code scan into ranked recommendations. Fallback: The local equivalent skill, or official documentation.
+- `vercel-react-best-practices` — Current React patterns and pitfalls. Fallback: The local equivalent skill, or official documentation.
+- `vercel-web-design-guidelines` — Vercel's web design guidelines. Fallback: The local equivalent skill, or official documentation.
+- `vercel-writing-guidelines` — Vercel's writing guidelines. Fallback: The local equivalent skill, or official documentation.
+- `vercel-react-native-skills` — React Native implementation guidance. Fallback: The local equivalent skill, or official documentation.
+- `vercel-react-view-transitions` — View Transitions in React. Fallback: The local equivalent skill, or official documentation.
+- `vercel-composition-patterns` — Component composition patterns. Fallback: The local equivalent skill, or official documentation.
+- `vercel-deploy-to-vercel` — Deploying a project to Vercel. Fallback: The local equivalent skill, or official documentation.
+- `vercel-vercel-cli-with-tokens` — Driving the Vercel CLI with tokens. Fallback: The local equivalent skill, or official documentation.
+- `nextjs-next-cache-components-adoption` — Turning on Cache Components and working through the errors it surfaces. Fallback: Official Next.js documentation, or Context7.
+- `nextjs-next-cache-components-optimizer` — Tuning Cache Components once adopted. Fallback: Official Next.js documentation, or Context7.
+- `nextjs-next-dev-loop` — The Next.js development loop. Fallback: Official Next.js documentation, or Context7.
+- `nextjs-next-partial-prefetching-adoption` — Adopting partial prefetching. Fallback: Official Next.js documentation, or Context7.
+- `nextjs-next-partial-prefetching-optimizer` — Tuning partial prefetching. Fallback: Official Next.js documentation, or Context7.
+- `microsoft-playwright-cli` — Automating browser interactions and working with Playwright tests from the CLI. Fallback: The local browser-verification skill.
+- `microsoft-playwright-trace` — Inspecting Playwright trace files: actions, requests, console, errors, snapshots. Fallback: The local browser-verification skill.
+- `microsoft-playwright-component-testing` — Playwright component testing. Fallback: The local browser-verification skill.
+- `community-frontend-ui-ux` — Single-file doctrine: Nielsen heuristics, Fitts/Hick/Miller laws, WCAG 2.2 AA, Core Web Vitals budgets, plus a definition-of-done gate. Ships 5 reference files. Fallback: The local accessibility and ui-audit skills, which cover the same ground.
+- `community-playwright-skill` — Community Playwright automation skill, versioned and released. Fallback: microsoft-playwright-cli, or the playwright MCP.

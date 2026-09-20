@@ -290,6 +290,7 @@ struct ChatGPTModelsResponse: Codable, Hashable {
         /// reporting decode unchanged.
         let supportedReasoningEfforts: [EffortOption]?
         let defaultReasoningEffort: String?
+        var supportsImageInput: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
             case id, description
@@ -297,6 +298,7 @@ struct ChatGPTModelsResponse: Codable, Hashable {
             case isDefault = "is_default"
             case supportedReasoningEfforts = "supported_reasoning_efforts"
             case defaultReasoningEffort = "default_reasoning_effort"
+            case supportsImageInput = "supports_image_input"
         }
     }
 

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Agent Dispatcher routes Work, Plan, and Grill chats to relevant specialists
+  by default, with conversation controls, saved roles, and guides loaded as
+  needed. Just Chat keeps its existing behavior.
+- New and edited agents can choose from 27 role templates or Custom using a
+  searchable card picker. Templates fill editable instructions, permissions,
+  mode, and a recommended connected model, with Undo for replaced draft settings.
+- Workspace boards can open in separate windows that stay synchronized with
+  the main window. Card handoffs create a draft chat in the board's workspace.
+
 ### Removed
 
 - The Mac App Store build target. Locus ships as one product, the notarized

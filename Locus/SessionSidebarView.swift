@@ -1479,7 +1479,7 @@ struct SessionSidebarView: View {
             guard !text.isEmpty else { return profiles }
             return profiles.filter {
                 $0.name.localizedCaseInsensitiveContains(text)
-                    || $0.role.title.localizedCaseInsensitiveContains(text)
+                    || $0.specialtyTitle.localizedCaseInsensitiveContains(text)
                     || $0.model.localizedCaseInsensitiveContains(text)
             }
         }
@@ -1490,7 +1490,7 @@ struct SessionSidebarView: View {
 
         private static func subtitle(_ profile: AgentProfile) -> String {
             let model = profile.model.trimmingCharacters(in: .whitespacesAndNewlines)
-            return model.isEmpty ? profile.role.title : "\(profile.role.title) · \(model)"
+            return model.isEmpty ? profile.specialtyTitle : "\(profile.specialtyTitle) · \(model)"
         }
 
         private func agentTile(side: CGFloat, glyph: CGFloat) -> some View {
@@ -1992,7 +1992,7 @@ struct TeamProgressPopover: View {
             sectionLabel("TEAM MODELS")
             ForEach(teamProfiles) { profile in
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(profile.role.title)
+                    Text(profile.specialtyTitle)
                         .font(.locus(size: 8, weight: .semibold))
                         .foregroundStyle(LocusTheme.muted)
                         .frame(width: 72, alignment: .leading)
@@ -2967,7 +2967,7 @@ private struct AgentGroupRow: View {
                                     .font(.locus(size: 7))
                             }
                             Text(agent.runningChatCount > 0 || agent.sourceNeedsAttention || status != .active
-                                ? agent.statusTitle : agent.profile?.role.title ?? record?.kindTitle ?? "Saved chats")
+                                ? agent.statusTitle : agent.profile?.specialtyTitle ?? record?.kindTitle ?? "Saved chats")
                             Text("·")
                             Text("\(agent.totalChatCount) \(agent.totalChatCount == 1 ? "chat" : "chats")")
                         }

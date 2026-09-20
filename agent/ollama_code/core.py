@@ -59,6 +59,7 @@ from .config import (
     non_negative_int,
     save_config,
 )
+from .dispatcher_runtime import DispatcherRuntime
 from .extensions import ExtensionManager
 from .identity import IDENTITY_ACTIONS, IDENTITY_SYSTEM_PROMPT, source_references
 from .image_generation import IMAGE_TOOL_NAMES
@@ -523,6 +524,8 @@ class AgentCore:
         self.tool_event_context: dict[str, Any] = {}
         self.external_should_stop: Callable[[], bool] | None = None
         self.last_turn_result: dict[str, Any] = {"reason": "complete", "duration_ms": 0}
+        self.dispatcher = DispatcherRuntime(self)
+        self.tool_registry.dispatcher = self.dispatcher
 
     # --------------------------------------------------------------- events
 
@@ -901,6 +904,14 @@ class AgentCore:
             memory_context=self.memory_context,
             continuity_context=self.continuity_context,
         )
+        if resolved_mode in {"work", "plan", "grill"}:
+            for title, content in (
+                ("Specialist routing", self.dispatcher.stable_prompt()),
+                ("Current specialist routing", self.dispatcher.turn_prompt()),
+            ):
+                if content:
+                    text += "\n\n" + content
+                    layers.append({"name": title, "content": content, "editable": False})
         if resolved_mode != "ask" and (output_context := self._chat_output_context()):
             text += "\n\n" + output_context
             layers.append({"name": "Chat output folder", "content": output_context, "editable": False})
@@ -1844,6 +1855,8 @@ class AgentCore:
             sections.append(GOAL_CONTRACT)
         sections.append("## Editable agent behavior\n" + render_agent_behavior(self.agent_configuration, self.agent_mode))
         sections.append("## Locus answer contract\n" + ANSWER_CONTRACT)
+        if dispatcher_prompt := self.dispatcher.stable_prompt():
+            sections.append(dispatcher_prompt)
         return "\n\n".join(sections)
 
     def start_new_session(
@@ -1984,6 +1997,7 @@ class AgentCore:
                 "starting_ref": str(self.task_metadata.get("starting_ref") or "HEAD"),
             })
         saved = SessionMeta.get(self.session.session_id)
+        initial_mode = saved.get("mode")
         saved_environment = saved.get("environment")
         if (isinstance(saved_environment, dict)
                 and saved.get("workspace_root") == self.workspace_root
@@ -2004,6 +2018,13 @@ class AgentCore:
             "environment": environment,
             "session": str(self.session.path),
             "session_id": self.session.session_id,
+            # A template's initial mode applies only before its first turn.
+            # Restoring an established conversation must keep its own mode.
+            "initial_mode": (initial_mode
+                             if isinstance(initial_mode, str)
+                             and initial_mode in {"ask", "work", "plan", "grill"}
+                             and self._last_user_message is None
+                             and not SessionStore.has_messages(self.session.path) else None),
             "identity_mode": self.identity_mode,
             "messages": len(self.messages),
             "approx_tokens": approx,
@@ -2130,6 +2151,15 @@ class AgentCore:
         self._compaction_completion_pending = 0
         self._compaction_call_limit = model_call_limit
         self._context_preservation_error = ""
+        if allow_tools and not self.identity_mode:
+            recognized, reply = self.dispatcher.control(persisted_user_text or user_text)
+            if recognized and reply is not None:
+                self._finish_dispatcher_control(user_text, reply,
+                    persisted_user_text=persisted_user_text,
+                    persist_user_message=persist_user_message,
+                    persisted_user_metadata=persisted_user_metadata)
+                return
+        self.dispatcher.begin_turn()
         if self.identity_mode and self.provider in {"chatgpt", "claude_plan"}:
             self._emit({"type": "error", "message": "Private Identity tasks require a local model or an API provider. Managed ChatGPT retains provider-side thread context and cannot use private vault sources."})
             self._emit({"type": "turn_done", "reason": "error", "duration_ms": 0})
@@ -2734,6 +2764,8 @@ class AgentCore:
                     ) + [{"type": "text", "text": raw_request}]
                 else:
                     text_items = [{"type": "text", "text": turn_text}]
+                if parity and (dispatcher_state := self.dispatcher.turn_prompt()):
+                    text_items.insert(0, {"type": "text", "text": dispatcher_state})
                 from .context_preservation import runtime_context
                 task_snapshot = runtime_context(self)
                 if task_snapshot:
@@ -4498,6 +4530,7 @@ class AgentCore:
                             if info.get("origin") == "builtin"
                             else self.tool_registry.execute(
                                 tc.name, tc.arguments, self.tool_ctx,
+                                **({"dispatcher_helper": not track_active} if tc.name == "read_dispatcher_resource" else {}),
                                 **({"media_receiver": lambda images: self._receive_mcp_media(tc, images),
                                     "invocation_context": {
                                         **(getattr(self.mcp, "context_provider", lambda: {})() or {}),
@@ -4676,10 +4709,40 @@ class AgentCore:
 
     # ---------------------------------------------------------- slash commands
 
+    def _finish_dispatcher_control(
+        self, user_text: str, reply: str, *, persisted_user_text: str | None = None,
+        persist_user_message: bool = True,
+        persisted_user_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Render an inspection/control without issuing a model or task call."""
+        self._output_run_id = self.tool_ctx.memory_run_id or uuid.uuid4().hex
+        saved = {"role": "user", "content": persisted_user_text or user_text, "_dispatcher_control": True,
+                 **(persisted_user_metadata or {})}
+        self._add_message({"role": "user", "content": user_text, "_dispatcher_control": True}, saved,
+                          persist=persist_user_message)
+        item_id = uuid.uuid4().hex
+        self._emit({"type": "assistant_item_start", "kind": "message", "item_id": item_id,
+                    "phase": "final_answer", "reasoning_format": "none"})
+        self._add_message({"role": "assistant", "content": reply, "_item_id": item_id,
+                           "_phase": "final_answer", "_reasoning_format": "none"})
+        self._emit({"type": "assistant_item_end", "kind": "message", "item_id": item_id,
+                    "phase": "final_answer", "text": reply, "reasoning_format": "none"})
+        self.last_turn_result = {"type": "turn_done", "reason": "complete", "duration_ms": 0,
+                                "model_calls": 0, "tool_steps": 0,
+                                "prompt_tokens": 0, "completion_tokens": 0}
+        if not self._suppress_turn_done:
+            self._emit(self.last_turn_result)
+        self._emit_info()
+
     def handle_slash(self, text: str, decider: PermissionDecider | None = None) -> dict[str, Any]:
         if self.identity_mode:
             return {"command": "identity", "error": "Slash commands are unavailable in private Identity tasks."}
         """Run a slash command. Returns {command, text?, data?, error?}."""
+        recognized, reply = self.dispatcher.control(text)
+        if recognized:
+            if reply is None:
+                self.run_turn(text, decider)
+            return {"command": "agent-dispatcher", "text": reply or "Finished the specialist task."}
         parts = text.strip().split(maxsplit=1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""

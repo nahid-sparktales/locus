@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Owns provider accounts and the model catalogs around them: the agent's
@@ -18,7 +19,15 @@ final class ProviderAccountsModel: ObservableObject {
     /// Ollama's complete installed list, including models the user has hidden
     /// from Locus. Settings uses this to make hiding reversible.
     @Published var installedLocalModels: [ModelInfo] = []
-    @Published var providerAccounts: [ProviderAccount] = []
+    @Published private(set) var hasAuthoritativeLocalModelCatalog = false
+    @Published var providerAccounts: [ProviderAccount] = [] {
+        didSet {
+            for previous in oldValue where providerAccounts.first(where: { $0.id == previous.id }) != previous {
+                exactModelConfirmations[previous.id] = nil
+                exactModelVerificationRequests[previous.id] = nil
+            }
+        }
+    }
     @Published var accountModels: [UUID: [String]] = [:]
     /// The full ChatGPT catalog rows, kept beside the plain name list because
     /// the account editor needs each model's supported reasoning efforts.
@@ -26,7 +35,15 @@ final class ProviderAccountsModel: ObservableObject {
     /// Cached choices can outlive a failed refresh. Only a complete provider
     /// response can establish that an unlisted selection is unavailable.
     @Published private(set) var accountCatalogComplete: [UUID: Bool] = [:]
-    @Published var accountStatus: [UUID: ProviderAccountStatus] = [:]
+    @Published var accountStatus: [UUID: ProviderAccountStatus] = [:] {
+        didSet {
+            let ids = Set(exactModelConfirmations.keys).union(exactModelVerificationRequests.keys)
+            for id in ids where accountStatus[id]?.isHealthy != true {
+                exactModelConfirmations[id] = nil
+                exactModelVerificationRequests[id] = nil
+            }
+        }
+    }
     /// ChatGPT plan state is per account: each one signs in to its own
     /// isolated credential home, so a single set of these would report the
     /// account that happened to refresh last.
@@ -38,6 +55,8 @@ final class ProviderAccountsModel: ObservableObject {
     var lastOllamaHost = "http://127.0.0.1:11434" {
         didSet {
             guard lastOllamaHost != oldValue else { return }
+            hasAuthoritativeLocalModelCatalog = false
+            localCatalogRequestID = nil
             // The bypass list keeps Ollama direct, so the proxy layer has to
             // hear about the real host the agent just reported.
             ProxyRuntime.shared.noteOllamaHost(lastOllamaHost)
@@ -45,6 +64,26 @@ final class ProviderAccountsModel: ObservableObject {
     }
     private var accountCatalogFetchedAt: [UUID: Date] = [:]
     private var accountCatalogRequests: [UUID: UUID] = [:]
+    private var localCatalogRequestID: UUID?
+    private struct ExactModelConfirmation {
+        let model: String
+        let account: ProviderAccount
+        let credentialDigest: SHA256.Digest
+        let verifiedAt: Date
+    }
+    /// Carries an explicit Settings test across Save without retaining a key.
+    /// Its original timestamp and tested account must survive unchanged.
+    struct ExactModelConnectionEvidence {
+        fileprivate let model: String
+        fileprivate let account: ProviderAccount
+        fileprivate let credentialDigest: SHA256.Digest
+        fileprivate let verifiedAt: Date
+        fileprivate let outcome: RemoteEndpointTester.Outcome
+    }
+    private var exactModelConfirmations: [UUID: [String: ExactModelConfirmation]] = [:]
+    private var exactModelVerificationRequests: [UUID: UUID] = [:]
+    private let verificationDate: () -> Date
+    private let endpointConnectionTest: (String, String, String, ProviderKind) async -> RemoteEndpointTester.Outcome
 
     private var backend: BackendService?
     private var persistenceEnabled = false
@@ -55,8 +94,16 @@ final class ProviderAccountsModel: ObservableObject {
     private var toastHandler: (String) -> Void = { _ in }
     let credentialStore: any CredentialStoring
 
-    init(credentialStore: any CredentialStoring = CredentialStore.shared) {
+    init(
+        credentialStore: any CredentialStoring = CredentialStore.shared,
+        verificationDate: @escaping () -> Date = Date.init,
+        endpointConnectionTest: @escaping (String, String, String, ProviderKind) async -> RemoteEndpointTester.Outcome = {
+            await RemoteEndpointTester.test(baseURL: $0, model: $1, apiKey: $2, kind: $3)
+        }
+    ) {
         self.credentialStore = credentialStore
+        self.verificationDate = verificationDate
+        self.endpointConnectionTest = endpointConnectionTest
     }
 
     func configure(
@@ -78,6 +125,9 @@ final class ProviderAccountsModel: ObservableObject {
     }
 
     func refreshLocalModels() async {
+        let requestID = UUID()
+        localCatalogRequestID = requestID
+        hasAuthoritativeLocalModelCatalog = false
         guard let url = URL(string: lastOllamaHost + "/api/tags") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
@@ -86,8 +136,9 @@ final class ProviderAccountsModel: ObservableObject {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = root["models"] as? [[String: Any]]
         else { return }  // Ollama not running is normal; keep the last list.
-        let knownWindows = Dictionary(
-            (installedLocalModels + models).map { ($0.name, $0.contextLength) },
+        guard localCatalogRequestID == requestID else { return }
+        let knownModels = Dictionary(
+            (installedLocalModels + models).map { ($0.name, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         installedLocalModels = entries.compactMap { entry in
@@ -100,10 +151,13 @@ final class ProviderAccountsModel: ObservableObject {
                 // all. Zeroing it unconditionally meant that with an account
                 // active, every local model in the picker read as unknown even
                 // though the agent had already reported a window for it.
-                contextLength: knownWindows[name] ?? 0
+                contextLength: knownModels[name]?.contextLength ?? 0,
+                trainedContextLength: knownModels[name]?.trainedContextLength ?? 0,
+                visionCapable: knownModels[name]?.visionCapable
             )
         }
         localModels = visibleLocalModels(in: installedLocalModels)
+        hasAuthoritativeLocalModelCatalog = true
     }
 
     func visibleLocalModels(in models: [ModelInfo]) -> [ModelInfo] {
@@ -164,6 +218,60 @@ final class ProviderAccountsModel: ObservableObject {
 
     func hasAuthoritativeModelCatalog(for accountID: UUID) -> Bool {
         accountCatalogComplete[accountID] == true
+    }
+
+    /// Non-listing providers need an explicit, successful chat probe for the
+    /// exact model. A saved key or curated menu is never availability evidence.
+    /// This memory-only evidence expires with the normal catalog freshness and
+    /// cannot survive changed settings, credentials, or a failed connection.
+    func confirmedExactModels(for accountID: UUID) -> [String] {
+        guard let account = providerAccounts.first(where: { $0.id == accountID }),
+              !account.kind.listsModels, accountStatus[accountID]?.isHealthy == true else {
+            exactModelConfirmations[accountID] = nil
+            return []
+        }
+        let digest = SHA256.hash(data: Data((credentialStore.get(account: account.credentialAccount) ?? "").utf8))
+        let now = verificationDate()
+        let valid = (exactModelConfirmations[accountID] ?? [:]).filter { _, confirmation in
+            let age = now.timeIntervalSince(confirmation.verifiedAt)
+            return confirmation.account == account && confirmation.credentialDigest == digest
+                && age >= 0 && age < Self.accountCatalogTTL
+        }
+        exactModelConfirmations[accountID] = valid.isEmpty ? nil : valid
+        return valid.values.map(\.model).sorted()
+    }
+
+    func exactModelConnectionEvidence(
+        for account: ProviderAccount, model: String, apiKey: String, outcome: RemoteEndpointTester.Outcome
+    ) -> ExactModelConnectionEvidence? {
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !account.kind.listsModels, !name.isEmpty else { return nil }
+        return ExactModelConnectionEvidence(model: name, account: account,
+            credentialDigest: SHA256.hash(data: Data(apiKey.utf8)), verifiedAt: verificationDate(), outcome: outcome)
+    }
+
+    /// Unsaved or edited Settings drafts cannot establish availability for a
+    /// saved route, even when their probe succeeds. Save may offer the same
+    /// evidence again after its exact settings and key have been committed.
+    @discardableResult
+    func acceptExactModelConnectionEvidence(_ evidence: ExactModelConnectionEvidence) -> Bool {
+        let id = evidence.account.id
+        let age = verificationDate().timeIntervalSince(evidence.verifiedAt)
+        guard providerAccounts.first(where: { $0.id == id }) == evidence.account,
+              age >= 0, age < Self.accountCatalogTTL,
+              SHA256.hash(data: Data((credentialStore.get(account: evidence.account.credentialAccount) ?? "").utf8))
+                == evidence.credentialDigest else { return false }
+        guard evidence.outcome.ok else {
+            exactModelConfirmations[id] = nil
+            accountStatus[id] = .failed(evidence.outcome.message)
+            return false
+        }
+        exactModelConfirmations[id, default: [:]][evidence.model.lowercased()] = ExactModelConfirmation(
+            model: evidence.model, account: evidence.account, credentialDigest: evidence.credentialDigest,
+            verifiedAt: evidence.verifiedAt
+        )
+        accountStatus[id] = .connected(models: exactModelConfirmations[id]?.count ?? 1)
+        return true
     }
 
     private func beginCatalogRequest(for account: ProviderAccount) -> UUID {
@@ -246,6 +354,8 @@ final class ProviderAccountsModel: ObservableObject {
             return "Connected to \(account.displayName). \(model) is available."
         }
         let request = beginCatalogRequest(for: account)
+        let apiKey = credentialStore.get(account: account.credentialAccount) ?? ""
+        if !account.kind.listsModels { exactModelVerificationRequests[accountID] = request }
         let result = await ProviderModelCatalog.fetch(for: account, credentialStore: credentialStore)
         guard isCurrentCatalogRequest(request, for: account) else {
             return "The provider account changed. Test the connection again."
@@ -263,12 +373,24 @@ final class ProviderAccountsModel: ObservableObject {
             }
             return result.status.summary
         }
-        let outcome = await RemoteEndpointTester.test(
-            baseURL: account.resolvedBaseURL, model: model,
-            apiKey: credentialStore.get(account: account.credentialAccount) ?? "", kind: account.kind
-        )
+        let outcome = await endpointConnectionTest(account.resolvedBaseURL, model, apiKey, account.kind)
         guard isCurrentCatalogRequest(request, for: account) else {
             return "The provider account changed. Test the connection again."
+        }
+        if !account.kind.listsModels {
+            guard exactModelVerificationRequests[accountID] == request,
+                  providerAccounts.first(where: { $0.id == accountID }) == account,
+                  (credentialStore.get(account: account.credentialAccount) ?? "") == apiKey else {
+                exactModelConfirmations[accountID] = nil
+                return "The provider account changed. Test the connection again."
+            }
+            exactModelVerificationRequests[accountID] = nil
+            if let evidence = exactModelConnectionEvidence(for: account, model: model, apiKey: apiKey, outcome: outcome) {
+                acceptExactModelConnectionEvidence(evidence)
+            } else {
+                exactModelConfirmations[accountID] = nil
+                accountStatus[accountID] = .failed(outcome.message)
+            }
         }
         return outcome.message
     }
@@ -283,6 +405,8 @@ final class ProviderAccountsModel: ObservableObject {
         accountModelCatalogs[id] = nil
         accountCatalogComplete[id] = nil
         accountCatalogRequests[id] = nil
+        exactModelConfirmations[id] = nil
+        exactModelVerificationRequests[id] = nil
         accountStatus[id] = nil
     }
 

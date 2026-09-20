@@ -291,6 +291,9 @@ def session_detached(
             or any(ord(character) < 32 or ord(character) == 127 for character in title):
         raise HTTPException(422, "title must contain 1–120 characters")
     profile_id = body.get("agent_profile_id")
+    mode = body.get("mode", "work")
+    if not isinstance(mode, str) or mode not in {"ask", "work", "plan", "grill"}:
+        raise HTTPException(422, "mode must be ask, work, plan, or grill")
     if profile_id is not None:
         try:
             profile_id = str(uuid.UUID(profile_id))
@@ -323,6 +326,7 @@ def session_detached(
         saved_metadata = SessionMeta.update(
             session.session_id,
             title=title.strip(),
+            mode=mode,
             **allocation.metadata(),
             **({"agent_profile_id": profile_id, "agent_world_profile_id": profile_id}
                if profile_id is not None else {}),

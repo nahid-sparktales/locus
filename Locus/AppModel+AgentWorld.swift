@@ -100,6 +100,7 @@ extension AppModel {
             "timeout_seconds": profile.timeoutSeconds, "token_limit": profile.tokenLimit,
         ]
         value["behavior"] = encodedJSONObject(profile.resolvedBehavior)
+        if let mode = profile.defaultMode { value["default_mode"] = mode.rawValue }
         if let policy = profile.mcpPolicy { value["mcp_policy"] = encodedJSONObject(policy) }
         return value
     }

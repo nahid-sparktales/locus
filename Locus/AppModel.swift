@@ -110,6 +110,7 @@ final class AppModel: ObservableObject {
     let backgroundServicesModel = BackgroundServicesModel()
     let extensionsModel: ExtensionsModel
     let agentWorld = AgentWorldModel()
+    let boardWindows = BoardWindowController()
     let agentCrewChat: AgentCrewChatModel
     @Published var agentCrewChatPresented = false
     @Published var agentWorldOwnsPresentations = false

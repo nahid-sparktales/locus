@@ -245,6 +245,9 @@ struct SessionInfo: Codable, Hashable {
     let workspaceRoot: String?
     let executionPath: String?
     let environment: [String: String]?
+    /// Creation preference for a new, unused chat; never a replacement for a
+    /// mode the user has already chosen in a conversation.
+    let initialMode: WorkMode?
     let permissions: SessionPermissions
 
     init(
@@ -268,6 +271,7 @@ struct SessionInfo: Codable, Hashable {
         workspaceRoot: String? = nil,
         executionPath: String? = nil,
         environment: [String: String]? = nil,
+        initialMode: WorkMode? = nil,
         permissions: SessionPermissions
     ) {
         self.model = model
@@ -290,6 +294,7 @@ struct SessionInfo: Codable, Hashable {
         self.workspaceRoot = workspaceRoot
         self.executionPath = executionPath
         self.environment = environment
+        self.initialMode = initialMode
         self.permissions = permissions
     }
 
@@ -321,6 +326,7 @@ struct SessionInfo: Codable, Hashable {
             workspaceRoot: workspaceRoot,
             executionPath: executionPath,
             environment: environment,
+            initialMode: initialMode,
             permissions: permissions
         )
     }
@@ -347,6 +353,7 @@ struct SessionInfo: Codable, Hashable {
             workspaceRoot: task?.workspaceRoot ?? workspaceRoot,
             executionPath: task?.executionPath ?? executionPath,
             environment: environment,
+            initialMode: initialMode,
             permissions: permissions
         )
     }
@@ -365,6 +372,7 @@ struct SessionInfo: Codable, Hashable {
         case hasProjectContext = "has_project_context"
         case workspaceRoot = "workspace_root"
         case executionPath = "execution_path"
+        case initialMode = "initial_mode"
     }
 
     // Tolerant decoding: `session_info` arrives on every turn, and a single
@@ -392,6 +400,7 @@ struct SessionInfo: Codable, Hashable {
         workspaceRoot = try? container.decodeIfPresent(String.self, forKey: .workspaceRoot)
         executionPath = try? container.decodeIfPresent(String.self, forKey: .executionPath)
         environment = try? container.decodeIfPresent([String: String].self, forKey: .environment)
+        initialMode = try? container.decodeIfPresent(WorkMode.self, forKey: .initialMode)
         permissions = (try? container.decodeIfPresent(SessionPermissions.self, forKey: .permissions))
             ?? SessionPermissions(skipAll: false, allowed: [])
     }

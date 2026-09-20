@@ -564,7 +564,7 @@ final class LocusUITests: XCTestCase {
         return sampled ? (darkest, lightest) : nil
     }
 
-    private func auditCurrentSurface() throws {
+    private func auditCurrentSurface(within scope: XCUIElement? = nil) throws {
         // Keep transient Help tags out of the audit. AppKit exposes a visible
         // Help tag as a separate, undescribed accessibility element even when
         // the control that owns it has a complete label.
@@ -583,6 +583,17 @@ final class LocusUITests: XCTestCase {
             .sufficientElementDescription,
             .action,
         ]) { issue in
+            // XCTest audits dimmed ancestors of nested sheets as well. When
+            // given a modal scope, inspect its elements; the parent surface
+            // has its own accessibility test while it is active.
+            if let scope, let element = issue.element {
+                let matches = scope.descendants(matching: element.elementType).matching(
+                    NSPredicate(format: "identifier == %@ AND label == %@", element.identifier, element.label)
+                )
+                if !matches.allElementsBoundByIndex.contains(where: {
+                    ($0.value as? String) == (element.value as? String)
+                }) { return true }
+            }
             // SwiftUI's hosting view is exposed as a disabled, unlabeled group
             // around the explicitly labeled root workspace. It has the exact
             // window frame and is not a user-navigable element.
@@ -3028,6 +3039,40 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("board.content").waitForExistence(timeout: 3))
     }
 
+    func testBoardOpensSeparateWindowAndSharesCreatedCardsWithInspector() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_BOARD"] = "empty"
+        app.launch()
+        let popOut = anyElement("board.openWindow")
+        XCTAssertTrue(popOut.waitForExistence(timeout: 10))
+        popOut.click()
+        let windows = app.windows.matching(NSPredicate(format: "identifier BEGINSWITH %@", "locus.board."))
+        let boardWindow = windows.firstMatch
+        XCTAssertTrue(boardWindow.waitForExistence(timeout: 5))
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertFalse(boardWindow.buttons["board.openWindow"].exists)
+        XCTAssertTrue(boardWindow.buttons["board.newCard"].exists)
+        XCTAssertTrue(boardWindow.descendants(matching: .any)["board.column.backlog"].exists)
+        XCTAssertTrue(boardWindow.descendants(matching: .any)["board.column.done"].exists)
+        boardWindow.buttons["board.newCard"].click()
+        let title = anyElement("board.card.title")
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        title.click()
+        title.typeText("Card from a separate window")
+        anyElement("board.card.create").click()
+        let createdCard = boardWindow.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Card from a separate window")).firstMatch
+        XCTAssertTrue(createdCard.waitForExistence(timeout: 3))
+
+        boardWindow.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(waitForDisappearance(boardWindow))
+        XCTAssertTrue(anyElement("board.content").exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Card from a separate window")).firstMatch.waitForExistence(timeout: 3))
+        popOut.click()
+        XCTAssertTrue(boardWindow.waitForExistence(timeout: 3))
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertTrue(createdCard.exists)
+    }
+
     func testRouterAndProxiesLiveOnlyInMorePanelsMenu() {
         XCTAssertTrue(anyElement("inspector.rail.notes").waitForExistence(timeout: 3))
         XCTAssertFalse(anyElement("inspector.rail.router").exists)
@@ -3846,6 +3891,38 @@ final class LocusUITests: XCTestCase {
         relaunchForAccessibilitySurface("agent-editor", anchor: "agent.instructions")
         XCTAssertTrue(anyElement("agent.nameLabel").exists)
         try auditCurrentSurface()
+    }
+
+    func testAgentRolePickerSupportsScrollingCategoriesAndAccessibility() throws {
+        relaunchForAccessibilitySurface("agent-editor", anchor: "agent.instructions")
+        anyElement("agent.chooseRole").click()
+        XCTAssertTrue(anyElement("agent.rolePicker.search").waitForExistence(timeout: 3))
+        try auditCurrentSurface(within: anyElement("agent.rolePicker"))
+        let scroll = anyElement("agent.rolePicker.scroll")
+        let lastRole = anyElement("agent.rolePicker.version-control")
+        for _ in 0..<10 where !lastRole.isHittable {
+            scroll.scroll(byDeltaX: 0, deltaY: -420)
+        }
+        XCTAssertTrue(lastRole.isHittable, "All 27 roles must be reachable by scrolling")
+        let category = anyElement("agent.rolePicker.category")
+        category.click()
+        app.menuItems["Product & Design"].click()
+        XCTAssertTrue(anyElement("agent.rolePicker.ui-ux-designer").waitForExistence(timeout: 3))
+        XCTAssertFalse(anyElement("agent.rolePicker.version-control").exists)
+        category.click()
+        XCTAssertTrue(app.menuItems["All roles"].waitForExistence(timeout: 3))
+        app.menuItems["All roles"].click()
+        let search = anyElement("agent.rolePicker.search")
+        search.click()
+        search.typeText("UI/UX")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.rolePicker")))
+        XCTAssertEqual(anyElement("agent.name").value as? String, "UI/UX Designer")
+        anyElement("agent.chooseRole").click()
+        anyElement("agent.rolePicker.search").click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.rolePicker")))
+        XCTAssertTrue(anyElement("agent.save").exists)
     }
 
     func testPermissionAndPlanApprovalPassAccessibilityAudit() throws {
@@ -4879,6 +4956,50 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(confirm))
         XCTAssertTrue(profile.exists)
         XCTAssertTrue(anyElement("session.live-agent-chat").exists)
+    }
+
+    func testNewAgentRolePickerSupportsSearchEditableSetupAndCustom() {
+        revealSidebarForNavigation()
+        anyElement("sidebar.mode.agents").click()
+        anyElement("sidebar.newSession").click()
+        let choose = anyElement("agent.chooseRole")
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        choose.click()
+        let search = anyElement("agent.rolePicker.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        let rolesScreenshot = XCTAttachment(screenshot: app.screenshot())
+        rolesScreenshot.name = "agent-role-picker"
+        rolesScreenshot.lifetime = .keepAlways
+        add(rolesScreenshot)
+        search.click()
+        search.typeText("architect")
+        let architect = anyElement("agent.rolePicker.architect")
+        XCTAssertTrue(architect.waitForExistence(timeout: 3))
+        architect.click()
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.rolePicker")))
+        XCTAssertEqual(anyElement("agent.name").value as? String, "Architect")
+        XCTAssertEqual(anyElement("agent.defaultMode").value as? String, "Plan")
+        let name = anyElement("agent.name")
+        name.click()
+        app.typeKey("a", modifierFlags: .command)
+        name.typeText("My architect")
+        choose.click()
+        let customSearch = anyElement("agent.rolePicker.search")
+        customSearch.click()
+        customSearch.typeText("custom")
+        XCTAssertTrue(anyElement("agent.rolePicker.custom").exists)
+        XCTAssertFalse(app.staticTexts["No matching roles. Try another search."].exists)
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.rolePicker")))
+        XCTAssertEqual(name.value as? String, "My architect", "Custom keeps edited draft fields")
+        anyElement("agent.undoRole").click()
+        XCTAssertEqual(name.value as? String, "My architect")
+        XCTAssertTrue(anyElement("agent.selectedRole").exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "agent-role-template-applied"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        anyElement("agent.cancel").click()
     }
 
     func testNewAgentFromSidebarUsesTheSharedProfileEditor() {

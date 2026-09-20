@@ -205,7 +205,7 @@ struct ConfigureAgentView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.name).font(.locus(size: 15, weight: .semibold))
-                        Text("\(profile.role.title) · \(profile.model)")
+                        Text("\(profile.specialtyTitle) · \(profile.model)")
                             .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
                         if !profile.instructions.isEmpty {
                             Text(profile.instructions).font(.locus(size: 10)).lineLimit(2)

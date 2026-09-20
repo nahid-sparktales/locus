@@ -1,0 +1,2255 @@
+{
+  "schema_version": "2.2.0",
+  "generated_from": "templates/*/*.md",
+  "roles": [
+    {
+      "id": "ai-agent-engineer",
+      "slug": "aiengineer",
+      "name": "AI & Agent Engineer",
+      "category": "Engineering",
+      "summary": "Builds and evaluates agent prompts, routing, tools, memory, and execution behavior.",
+      "use_when": "The task involves an AI workflow, specialist template, model route, tool contract, retrieval, memory, or evaluation harness.",
+      "not_for": "prompt-only security enforcement, judging an agent from one impressive output, or guessing provider capabilities.",
+      "tags": [
+        "agents",
+        "prompts",
+        "evaluations",
+        "tool-use",
+        "routing",
+        "memory",
+        "retrieval"
+      ],
+      "capabilities": [
+        "ai.agent-design",
+        "ai.prompting",
+        "ai.tool-design",
+        "ai.evaluation",
+        "ai.context"
+      ],
+      "skills": {
+        "core": [
+          "agent-design",
+          "prompt-engineering",
+          "context-engineering"
+        ],
+        "preferred": [
+          "tool-design"
+        ],
+        "optional": [
+          "memory-design",
+          "model-routing"
+        ],
+        "conditional": {
+          "structured_output": [
+            "structured-output"
+          ],
+          "production_agent": [
+            "llm-observability"
+          ],
+          "mcp_server": [
+            "mcp-design",
+            "anthropic-mcp-builder"
+          ],
+          "retrieval": [
+            "retrieval-rag"
+          ],
+          "security_sensitive": [
+            "prompt-injection-defense",
+            "agent-security"
+          ],
+          "authoring_skills": [
+            "anthropic-skill-creator",
+            "anthropic-agent-development"
+          ],
+          "anthropic_api": [
+            "anthropic-claude-api"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "context7"
+        ],
+        "conditional": []
+      },
+      "recipes": [
+        "ship-feature",
+        "debug-application"
+      ],
+      "verification": [
+        "agent-evals"
+      ],
+      "retrieval_hints": [
+        "agent prompt templates",
+        "tool schema definitions",
+        "model routing config",
+        "evaluation cases and fixtures",
+        "memory and context stores",
+        "runtime permission config"
+      ],
+      "conditions": [
+        "anthropic_api",
+        "authoring_skills",
+        "mcp_server",
+        "production_agent",
+        "retrieval",
+        "security_sensitive",
+        "structured_output"
+      ],
+      "template": "roles/ai-agent-engineer.md",
+      "role_path": "roles/ai-agent-engineer.md",
+      "aliases": [
+        "aiengineer"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "api-integration-engineer",
+      "slug": "api",
+      "name": "API & Integration Engineer",
+      "category": "Engineering",
+      "summary": "Connects services with correct contracts, authorization, retry behavior, and failure handling.",
+      "use_when": "A feature needs a service connector, webhook, API client, synchronization path, or structured external data exchange.",
+      "not_for": "unverified API assumptions, broad account access, blind retries of actions with external side effects, or a scheduled pipeline that lands and reshapes that data for downstream consumers.",
+      "tags": [
+        "api",
+        "integration",
+        "webhooks",
+        "connectors",
+        "contracts",
+        "idempotency"
+      ],
+      "capabilities": [
+        "backend.api",
+        "backend.webhooks",
+        "backend.reliability",
+        "backend.authn",
+        "verification.api"
+      ],
+      "skills": {
+        "core": [
+          "api-design",
+          "idempotency-and-retries"
+        ],
+        "preferred": [
+          "authentication",
+          "secrets-management"
+        ],
+        "optional": [
+          "caching",
+          "observability"
+        ],
+        "conditional": {
+          "webhooks": [
+            "webhooks"
+          ],
+          "background_processing": [
+            "background-jobs"
+          ],
+          "security_sensitive": [
+            "auth-security",
+            "owasp-web"
+          ],
+          "mcp_server": [
+            "mcp-design",
+            "anthropic-mcp-integration"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "context7",
+          "github"
+        ],
+        "conditional": [
+          "supabase",
+          "cloudflare"
+        ]
+      },
+      "recipes": [
+        "ship-feature"
+      ],
+      "verification": [
+        "api-contract-verification"
+      ],
+      "retrieval_hints": [
+        "integration client modules",
+        "webhook receivers",
+        "auth scopes and secret config",
+        "retry and idempotency code",
+        "contract and sandbox tests",
+        "integration setup docs"
+      ],
+      "conditions": [
+        "background_processing",
+        "mcp_server",
+        "security_sensitive",
+        "webhooks"
+      ],
+      "template": "roles/api-integration-engineer.md",
+      "role_path": "roles/api-integration-engineer.md",
+      "aliases": [
+        "api"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "architect",
+      "slug": "architect",
+      "name": "Architect",
+      "category": "Engineering",
+      "summary": "Designs system boundaries, contracts, and tradeoffs that fit the existing product and constraints.",
+      "use_when": "A change spans components, data models, execution boundaries, or technical decisions with long-term consequences.",
+      "not_for": "routine implementation details, needless platform rewrites, or product prioritization.",
+      "tags": [
+        "architecture",
+        "interfaces",
+        "system-design",
+        "tradeoffs",
+        "data-flow",
+        "reliability"
+      ],
+      "capabilities": [
+        "backend.api",
+        "database.schema",
+        "security.threat-modeling",
+        "backend.reliability"
+      ],
+      "skills": {
+        "core": [
+          "api-design",
+          "schema-design"
+        ],
+        "preferred": [
+          "threat-modeling",
+          "idempotency-and-retries"
+        ],
+        "optional": [
+          "caching",
+          "background-jobs",
+          "observability"
+        ],
+        "conditional": {
+          "technology_evaluation": [
+            "deep-research",
+            "competitive-analysis"
+          ],
+          "postgres": [
+            "postgres"
+          ],
+          "react": [
+            "component-architecture"
+          ],
+          "llm_app": [
+            "agent-design",
+            "mcp-design"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "context7",
+          "github"
+        ]
+      },
+      "recipes": [
+        "research-technical-decision"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "existing decision records",
+        "service and module boundaries",
+        "interface and contract definitions",
+        "data model and ownership",
+        "deployment and runtime constraints",
+        "product requirement notes"
+      ],
+      "conditions": [
+        "llm_app",
+        "postgres",
+        "react",
+        "technology_evaluation"
+      ],
+      "template": "roles/architect.md",
+      "role_path": "roles/architect.md",
+      "aliases": [
+        "architect"
+      ],
+      "execution_role": "planner",
+      "default_mode": "plan",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "automation-operations",
+      "slug": "automation",
+      "name": "Automation & Operations Assistant",
+      "category": "Knowledge & Business",
+      "summary": "Handles repeatable administrative workflows through authorized services with reliable state checks.",
+      "use_when": "The task involves recurring briefs, inbox or calendar workflows, record updates, reminders, or coordinated service actions.",
+      "not_for": "acting on event text as blanket authorization, unbounded background promises, or blind retries of uncertain external actions.",
+      "tags": [
+        "automation",
+        "operations",
+        "scheduling",
+        "inbox",
+        "workflows",
+        "reconciliation"
+      ],
+      "capabilities": [
+        "backend.reliability",
+        "backend.jobs",
+        "ai.security"
+      ],
+      "skills": {
+        "core": [
+          "idempotency-and-retries",
+          "prompt-injection-defense"
+        ],
+        "preferred": [
+          "agent-security"
+        ],
+        "optional": [
+          "secrets-management",
+          "background-jobs"
+        ],
+        "conditional": {
+          "webhook_trigger": [
+            "webhooks"
+          ],
+          "github_actions": [
+            "github-actions"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "linear",
+          "notion",
+          "slack",
+          "google-workspace"
+        ]
+      },
+      "recipes": [],
+      "verification": [
+        "api-contract-verification"
+      ],
+      "retrieval_hints": [
+        "existing automation scripts",
+        "schedule and cron definitions",
+        "connected service config",
+        "state or dedup store",
+        "prior run logs",
+        "recipient and record lists"
+      ],
+      "conditions": [
+        "github_actions",
+        "webhook_trigger"
+      ],
+      "template": "roles/automation-operations.md",
+      "role_path": "roles/automation-operations.md",
+      "aliases": [
+        "automation"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "content-copywriter",
+      "slug": "copywriter",
+      "name": "Content Writer & Copywriter",
+      "category": "Knowledge & Business",
+      "summary": "Writes distinctive, accurate content matched to the audience, channel, and desired action.",
+      "use_when": "The task needs website copy, articles, emails, product messaging, scripts, or substantive editing.",
+      "not_for": "setting business strategy without a brief, fabricating evidence, or publishing drafts without authorization.",
+      "tags": [
+        "copywriting",
+        "content",
+        "editing",
+        "brand-voice",
+        "web-copy",
+        "storytelling"
+      ],
+      "capabilities": [
+        "knowledge.copywriting",
+        "design.ux-writing"
+      ],
+      "skills": {
+        "core": [
+          "copywriting",
+          "positioning"
+        ],
+        "preferred": [
+          "seo",
+          "source-evaluation"
+        ],
+        "optional": [
+          "technical-writing",
+          "anthropic-brand-guidelines"
+        ],
+        "conditional": {
+          "ui_copy": [
+            "ux-writing"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": []
+      },
+      "recipes": [],
+      "verification": [],
+      "retrieval_hints": [
+        "existing copy and drafts",
+        "brand voice guide",
+        "product feature descriptions",
+        "approved claims and proof points"
+      ],
+      "conditions": [
+        "ui_copy"
+      ],
+      "template": "roles/content-copywriter.md",
+      "role_path": "roles/content-copywriter.md",
+      "aliases": [
+        "copywriter"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "data-analyst",
+      "slug": "dataanalyst",
+      "name": "Data Analyst",
+      "category": "Knowledge & Business",
+      "summary": "Turns datasets into reproducible, decision-relevant analysis with clear limitations.",
+      "use_when": "A question requires inspecting data, calculating metrics, comparing cohorts, or explaining trends.",
+      "not_for": "causal claims unsupported by the design, invented metrics, silently cleaning away inconvenient records, or repairing the job or pipeline that produced the data.",
+      "tags": [
+        "data-analysis",
+        "metrics",
+        "sql",
+        "spreadsheets",
+        "visualization",
+        "experiments"
+      ],
+      "capabilities": [
+        "data.analysis",
+        "product.analytics",
+        "product.experiments"
+      ],
+      "skills": {
+        "core": [
+          "data-analysis",
+          "data-quality"
+        ],
+        "preferred": [
+          "product-analytics"
+        ],
+        "optional": [
+          "source-evaluation",
+          "experimentation"
+        ],
+        "conditional": {
+          "postgres": [
+            "postgres"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "postgres-community",
+          "supabase"
+        ]
+      },
+      "recipes": [],
+      "verification": [],
+      "retrieval_hints": [
+        "raw data files",
+        "schema and table definitions",
+        "existing queries and notebooks",
+        "metric definition docs",
+        "prior analysis reports"
+      ],
+      "conditions": [
+        "postgres"
+      ],
+      "template": "roles/data-analyst.md",
+      "role_path": "roles/data-analyst.md",
+      "aliases": [
+        "dataanalyst"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "data-engineer",
+      "slug": "dataeng",
+      "name": "Data Engineer",
+      "category": "Engineering",
+      "summary": "Builds and repairs the pipelines, jobs, and transforms that produce the data downstream consumers depend on.",
+      "use_when": "The task involves a data pipeline, scheduled job, transform, notebook promoted to production, or a backfill of produced data.",
+      "not_for": "code-level defects inside a failing job, destination schema design and its migrations, the scheduler platform or CI itself, or interpreting what the resulting numbers mean.",
+      "tags": [
+        "data-pipeline",
+        "etl",
+        "lineage",
+        "backfill",
+        "idempotency",
+        "notebooks"
+      ],
+      "capabilities": [
+        "data.pipelines",
+        "data.quality",
+        "backend.jobs",
+        "backend.reliability"
+      ],
+      "skills": {
+        "core": [
+          "data-pipelines",
+          "data-quality",
+          "background-jobs"
+        ],
+        "preferred": [],
+        "optional": [
+          "test-design",
+          "observability",
+          "idempotency-and-retries"
+        ],
+        "conditional": {
+          "postgres": [
+            "postgres"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "postgres-community",
+          "supabase",
+          "context7"
+        ]
+      },
+      "recipes": [
+        "ship-feature"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "pipeline job definitions",
+        "transform scripts",
+        "upstream source datasets",
+        "destination tables",
+        "downstream reports and consumers",
+        "notebooks promoted to jobs"
+      ],
+      "conditions": [
+        "postgres"
+      ],
+      "template": "roles/data-engineer.md",
+      "role_path": "roles/data-engineer.md",
+      "aliases": [
+        "dataeng",
+        "dataengineer"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "database-engineer",
+      "slug": "database",
+      "name": "Database Engineer",
+      "category": "Engineering",
+      "summary": "Designs and changes data storage with integrity, compatibility, and safe migration behavior.",
+      "use_when": "The task involves schemas, persistence, transactions, access rules, queries, or data migrations.",
+      "not_for": "casual production mutations, guessing at data distribution, treating a backup as a verified rollback, or reprocessing and backfilling rows through the pipeline that produces them.",
+      "tags": [
+        "database",
+        "schema",
+        "queries",
+        "transactions",
+        "migrations",
+        "data-integrity"
+      ],
+      "capabilities": [
+        "database.schema",
+        "database.migrations",
+        "database.integrity",
+        "database.performance",
+        "verification.database"
+      ],
+      "skills": {
+        "core": [
+          "schema-design",
+          "migrations",
+          "data-integrity"
+        ],
+        "preferred": [
+          "query-optimization"
+        ],
+        "optional": [
+          "authorization",
+          "rollback",
+          "test-design"
+        ],
+        "conditional": {
+          "slow_query": [
+            "query-optimization",
+            "postgres"
+          ],
+          "postgres": [
+            "postgres"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [],
+        "conditional": [
+          "postgres-community",
+          "supabase",
+          "context7"
+        ]
+      },
+      "recipes": [
+        "database-migration"
+      ],
+      "verification": [
+        "database-migration-verification"
+      ],
+      "retrieval_hints": [
+        "schema definitions",
+        "migration history",
+        "data access and query code",
+        "constraints and access rules",
+        "fixtures and seed data"
+      ],
+      "conditions": [
+        "postgres",
+        "slow_query"
+      ],
+      "template": "roles/database-engineer.md",
+      "role_path": "roles/database-engineer.md",
+      "aliases": [
+        "database"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "debugger",
+      "slug": "debugger",
+      "name": "Debugger",
+      "category": "Engineering",
+      "summary": "Reproduces failures, tests hypotheses, and fixes the underlying cause with regression evidence.",
+      "use_when": "A defect, crash, inconsistent behavior, or failing test needs a disciplined root-cause investigation.",
+      "not_for": "random trial-and-error edits, speculative rewrites, treating a disappearing symptom as proof of a fix, or an outage still in progress, where mitigation comes before a complete causal explanation.",
+      "tags": [
+        "debugging",
+        "root-cause",
+        "reproduction",
+        "logs",
+        "regression",
+        "diagnostics"
+      ],
+      "capabilities": [
+        "quality.debugging",
+        "quality.regression",
+        "quality.tests"
+      ],
+      "skills": {
+        "core": [
+          "systematic-debugging",
+          "regression-testing"
+        ],
+        "preferred": [
+          "test-design",
+          "performance-profiling"
+        ],
+        "optional": [
+          "idempotency-and-retries",
+          "background-jobs",
+          "caching"
+        ],
+        "conditional": {
+          "browser_available": [
+            "browser-verification"
+          ],
+          "postgres": [
+            "query-optimization",
+            "postgres"
+          ],
+          "llm_app": [
+            "llm-observability"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "github",
+          "sentry",
+          "playwright"
+        ]
+      },
+      "recipes": [
+        "debug-application"
+      ],
+      "verification": [
+        "browser-verification",
+        "api-contract-verification"
+      ],
+      "retrieval_hints": [
+        "failing module",
+        "its tests",
+        "recent changes to it",
+        "error and log sites",
+        "reproduction scripts",
+        "related state or persistence"
+      ],
+      "conditions": [
+        "browser_available",
+        "llm_app",
+        "postgres"
+      ],
+      "template": "roles/debugger.md",
+      "role_path": "roles/debugger.md",
+      "aliases": [
+        "debugger"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "devops-release",
+      "slug": "devops",
+      "name": "DevOps & Release Engineer",
+      "category": "Engineering",
+      "summary": "Builds reproducible delivery workflows and prepares or executes authorized releases with recovery checks.",
+      "use_when": "The work involves builds, CI, packaging, environments, deployment configuration, observability, or release readiness.",
+      "not_for": "unapproved production changes, credential collection, claiming a healthy service from build success alone, or an outage in progress, where restoring service outranks the release process.",
+      "tags": [
+        "devops",
+        "ci-cd",
+        "builds",
+        "deployment",
+        "release",
+        "observability"
+      ],
+      "capabilities": [
+        "devops.pipeline",
+        "devops.deployment",
+        "devops.rollback",
+        "verification.deployment"
+      ],
+      "skills": {
+        "core": [
+          "ci-cd",
+          "deployment",
+          "rollback"
+        ],
+        "preferred": [],
+        "optional": [
+          "technical-writing",
+          "observability",
+          "secrets-management"
+        ],
+        "conditional": {
+          "github_actions": [
+            "github-actions"
+          ],
+          "docker": [
+            "docker"
+          ],
+          "vercel": [
+            "vercel-deploy-to-vercel"
+          ],
+          "schema_migration": [
+            "migrations"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "github"
+        ],
+        "conditional": [
+          "vercel",
+          "cloudflare",
+          "sentry"
+        ]
+      },
+      "recipes": [
+        "investigate-incident"
+      ],
+      "verification": [
+        "release-verification"
+      ],
+      "retrieval_hints": [
+        "ci workflow files",
+        "build and packaging config",
+        "deployment manifests",
+        "environment config and secret refs",
+        "release and rollback scripts",
+        "health check definitions"
+      ],
+      "conditions": [
+        "docker",
+        "github_actions",
+        "schema_migration",
+        "vercel"
+      ],
+      "template": "roles/devops-release.md",
+      "role_path": "roles/devops-release.md",
+      "aliases": [
+        "devops"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "dispatcher",
+      "slug": "orchestrator",
+      "name": "Dispatcher",
+      "category": "Core",
+      "summary": "Coordinates bounded work, chooses available specialists, and owns the combined outcome.",
+      "use_when": "The goal has separable workstreams, dependencies, or independent verification that genuinely benefit from multiple agents.",
+      "not_for": "routine tasks that one agent can finish directly, or a planner that never executes its handoffs.",
+      "tags": [
+        "orchestration",
+        "delegation",
+        "routing",
+        "coordination",
+        "handoffs",
+        "synthesis"
+      ],
+      "capabilities": [
+        "ai.agent-design",
+        "ai.context",
+        "security.agents"
+      ],
+      "skills": {
+        "core": [
+          "agent-design",
+          "context-engineering"
+        ],
+        "preferred": [
+          "agent-security"
+        ],
+        "optional": [],
+        "conditional": {
+          "untrusted_content": [
+            "prompt-injection-defense"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": [
+          "linear"
+        ]
+      },
+      "recipes": [
+        "ship-feature"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "role catalog and profiles",
+        "role template files",
+        "evidence to hand a worker",
+        "files each job owns",
+        "worktree or branch state",
+        "returned subagent artifacts"
+      ],
+      "conditions": [
+        "untrusted_content"
+      ],
+      "template": "roles/dispatcher.md",
+      "role_path": "roles/dispatcher.md",
+      "aliases": [
+        "orchestrator"
+      ],
+      "execution_role": "dispatcher",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "documentation-writer",
+      "slug": "docs",
+      "name": "Documentation Writer",
+      "category": "Knowledge & Business",
+      "summary": "Produces accurate, task-oriented documentation grounded in the actual product.",
+      "use_when": "Users or developers need setup instructions, guides, reference material, release notes, or maintainable knowledge.",
+      "not_for": "inventing product behavior, rewriting source systems, or marketing copy that disguises missing functionality.",
+      "tags": [
+        "documentation",
+        "guides",
+        "readme",
+        "reference",
+        "onboarding",
+        "release-notes"
+      ],
+      "capabilities": [
+        "knowledge.writing",
+        "verification.documentation"
+      ],
+      "skills": {
+        "core": [
+          "technical-writing",
+          "documentation-verification"
+        ],
+        "preferred": [
+          "source-evaluation"
+        ],
+        "optional": [],
+        "conditional": {
+          "coauthoring_with_user": [
+            "anthropic-doc-coauthoring"
+          ],
+          "public_docs_site": [
+            "seo"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": [
+          "context7",
+          "notion"
+        ]
+      },
+      "recipes": [],
+      "verification": [
+        "documentation-verification"
+      ],
+      "retrieval_hints": [
+        "existing docs pages",
+        "readme and changelog",
+        "source code being documented",
+        "config and env samples",
+        "cli and api entry points",
+        "docs navigation index"
+      ],
+      "conditions": [
+        "coauthoring_with_user",
+        "public_docs_site"
+      ],
+      "template": "roles/documentation-writer.md",
+      "role_path": "roles/documentation-writer.md",
+      "aliases": [
+        "docs"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "explorer",
+      "slug": "explorer",
+      "name": "Explorer",
+      "category": "Engineering",
+      "summary": "Maps an unfamiliar workspace and finds the exact code, files, and execution paths relevant to a task.",
+      "use_when": "Another agent needs to understand where behavior lives, how components connect, or where a change should begin.",
+      "not_for": "broad web research, product planning, or making code changes.",
+      "tags": [
+        "codebase",
+        "navigation",
+        "discovery",
+        "dependencies",
+        "entry-points",
+        "impact-analysis"
+      ],
+      "capabilities": [
+        "frontend.detection",
+        "frontend.architecture",
+        "knowledge.writing"
+      ],
+      "skills": {
+        "core": [
+          "stack-detection",
+          "technical-writing"
+        ],
+        "preferred": [
+          "component-architecture"
+        ],
+        "optional": [],
+        "conditional": {
+          "postgres": [
+            "postgres",
+            "schema-design"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": [
+          "context7"
+        ]
+      },
+      "recipes": [
+        "ship-feature"
+      ],
+      "verification": [
+        "documentation-verification"
+      ],
+      "retrieval_hints": [
+        "repository guidance files",
+        "entry points and main modules",
+        "user visible strings",
+        "config and build files",
+        "existing tests for the area",
+        "directory structure listings"
+      ],
+      "conditions": [
+        "postgres"
+      ],
+      "template": "roles/explorer.md",
+      "role_path": "roles/explorer.md",
+      "aliases": [
+        "explorer"
+      ],
+      "execution_role": "researcher",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "generalist",
+      "slug": "generalist",
+      "name": "Generalist",
+      "category": "Core",
+      "summary": "Handles everyday tasks end to end and adapts depth and tools to the actual goal.",
+      "use_when": "A task spans several domains, is small enough for one agent, or does not fit a more specific specialty.",
+      "not_for": "unnecessary multi-agent orchestration or pretending to have expertise, tools, or access it lacks.",
+      "tags": [
+        "general",
+        "execution",
+        "writing",
+        "analysis",
+        "problem-solving",
+        "assistance"
+      ],
+      "capabilities": [
+        "quality.debugging",
+        "quality.tests",
+        "knowledge.writing",
+        "research.deep"
+      ],
+      "skills": {
+        "core": [
+          "systematic-debugging",
+          "test-design"
+        ],
+        "preferred": [
+          "regression-testing"
+        ],
+        "optional": [],
+        "conditional": {
+          "research_question": [
+            "deep-research",
+            "source-evaluation"
+          ],
+          "writing_task": [
+            "technical-writing",
+            "copywriting"
+          ],
+          "data_question": [
+            "data-analysis"
+          ],
+          "ui_task": [
+            "frontend-design",
+            "accessibility",
+            "responsive-design"
+          ],
+          "security_sensitive": [
+            "owasp-web",
+            "secrets-management"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "github",
+          "context7"
+        ]
+      },
+      "recipes": [
+        "ship-feature",
+        "debug-application"
+      ],
+      "verification": [
+        "browser-verification",
+        "documentation-verification"
+      ],
+      "retrieval_hints": [
+        "files the request names",
+        "readily available context",
+        "sources or commands to verify"
+      ],
+      "conditions": [
+        "data_question",
+        "research_question",
+        "security_sensitive",
+        "ui_task",
+        "writing_task"
+      ],
+      "template": "roles/generalist.md",
+      "role_path": "roles/generalist.md",
+      "aliases": [
+        "generalist"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "growth-marketing-strategist",
+      "slug": "marketing",
+      "name": "Growth & Marketing Strategist",
+      "category": "Knowledge & Business",
+      "summary": "Develops evidence-grounded positioning, channel plans, and measurable marketing experiments.",
+      "use_when": "A product needs clearer positioning, acquisition strategy, launch planning, or a practical marketing test.",
+      "not_for": "unsupported growth promises, fabricated market research, or autonomous spending and campaign publication.",
+      "tags": [
+        "marketing",
+        "growth",
+        "positioning",
+        "campaigns",
+        "acquisition",
+        "experimentation"
+      ],
+      "capabilities": [
+        "knowledge.positioning",
+        "knowledge.seo",
+        "product.experiments"
+      ],
+      "skills": {
+        "core": [
+          "positioning",
+          "experimentation"
+        ],
+        "preferred": [
+          "copywriting",
+          "product-analytics"
+        ],
+        "optional": [
+          "seo"
+        ],
+        "conditional": {
+          "market_research": [
+            "deep-research",
+            "source-evaluation"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "notion",
+          "google-workspace"
+        ]
+      },
+      "recipes": [],
+      "verification": [],
+      "retrieval_hints": [
+        "current positioning copy",
+        "landing pages and site content",
+        "past campaign briefs",
+        "analytics and funnel data",
+        "competitor notes",
+        "product capability docs"
+      ],
+      "conditions": [
+        "market_research"
+      ],
+      "template": "roles/growth-marketing-strategist.md",
+      "role_path": "roles/growth-marketing-strategist.md",
+      "aliases": [
+        "marketing"
+      ],
+      "execution_role": "generalist",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "implementer",
+      "slug": "implementer",
+      "name": "Implementer",
+      "category": "Core",
+      "summary": "Builds focused, maintainable changes and verifies them against the task.",
+      "use_when": "The task calls for authorized creation or modification of software, configuration, or other technical artifacts.",
+      "not_for": "independent approval of its own work, broad redesign without need, or implementing a plan that is still awaiting approval.",
+      "tags": [
+        "implementation",
+        "coding",
+        "features",
+        "fixes",
+        "configuration",
+        "integration"
+      ],
+      "capabilities": [
+        "backend.api",
+        "frontend.architecture",
+        "database.schema",
+        "design.implementation"
+      ],
+      "skills": {
+        "core": [
+          "test-design",
+          "regression-testing"
+        ],
+        "preferred": [
+          "api-design"
+        ],
+        "optional": [],
+        "conditional": {
+          "shadcn": [
+            "shadcn-ui"
+          ],
+          "tailwind": [
+            "tailwind"
+          ],
+          "nextjs": [
+            "nextjs-next-dev-loop"
+          ],
+          "react": [
+            "vercel-react-best-practices"
+          ],
+          "ui_task": [
+            "component-architecture",
+            "accessibility"
+          ],
+          "frontend_stack": [
+            "stack-detection"
+          ],
+          "design_handoff": [
+            "design-to-code",
+            "responsive-design"
+          ],
+          "data_model": [
+            "schema-design",
+            "postgres"
+          ],
+          "security_sensitive": [
+            "authentication",
+            "authorization",
+            "owasp-web"
+          ],
+          "async_workload": [
+            "background-jobs"
+          ],
+          "cache_layer": [
+            "caching"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github",
+          "context7"
+        ],
+        "conditional": [
+          "playwright",
+          "supabase",
+          "vercel",
+          "figma"
+        ]
+      },
+      "recipes": [
+        "ship-feature",
+        "debug-application",
+        "build-production-ui"
+      ],
+      "verification": [
+        "api-contract-verification",
+        "browser-verification"
+      ],
+      "retrieval_hints": [
+        "target source files",
+        "project conventions and config",
+        "existing tests for it",
+        "current uncommitted diff",
+        "similar existing patterns",
+        "build and check commands"
+      ],
+      "conditions": [
+        "async_workload",
+        "cache_layer",
+        "data_model",
+        "design_handoff",
+        "frontend_stack",
+        "nextjs",
+        "react",
+        "security_sensitive",
+        "shadcn",
+        "tailwind",
+        "ui_task"
+      ],
+      "template": "roles/implementer.md",
+      "role_path": "roles/implementer.md",
+      "aliases": [
+        "implementer",
+        "coder",
+        "dev"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "incident-responder",
+      "slug": "incident",
+      "name": "Incident Responder",
+      "category": "Engineering",
+      "summary": "Stabilizes an actively failing system with the smallest reversible mitigation and a timestamped incident record.",
+      "use_when": "A production system is failing right now and time to mitigation matters more than a complete causal explanation.",
+      "not_for": "a defect that is not currently failing in production, release preparation and pipeline work, or a postmortem write-up after recovery.",
+      "tags": [
+        "incident",
+        "triage",
+        "mitigation",
+        "rollback",
+        "outage",
+        "on-call"
+      ],
+      "capabilities": [
+        "devops.incident",
+        "devops.rollback",
+        "devops.observability",
+        "verification.deployment"
+      ],
+      "skills": {
+        "core": [
+          "incident-response",
+          "rollback"
+        ],
+        "preferred": [
+          "observability",
+          "deployment"
+        ],
+        "optional": [
+          "background-jobs"
+        ],
+        "conditional": {
+          "recent_schema_change": [
+            "migrations",
+            "database-migration-verification"
+          ],
+          "security_incident": [
+            "secrets-management",
+            "auth-security"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "sentry",
+          "grafana",
+          "datadog",
+          "github"
+        ]
+      },
+      "recipes": [
+        "investigate-incident"
+      ],
+      "verification": [
+        "release-verification"
+      ],
+      "retrieval_hints": [
+        "recent deploy records",
+        "feature flag config",
+        "alerting and monitoring config",
+        "runbooks and rollback procedures",
+        "incident log files",
+        "dependency version bumps"
+      ],
+      "conditions": [
+        "recent_schema_change",
+        "security_incident"
+      ],
+      "template": "roles/incident-responder.md",
+      "role_path": "roles/incident-responder.md",
+      "aliases": [
+        "incident"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "performance-engineer",
+      "slug": "performance",
+      "name": "Performance Engineer",
+      "category": "Engineering",
+      "summary": "Measures bottlenecks and makes targeted improvements with reproducible before-and-after evidence.",
+      "use_when": "Latency, resource use, throughput, startup time, or responsiveness needs measurable improvement.",
+      "not_for": "speculative optimization, cherry-picked benchmarks, or reporting percentages without comparable measurements.",
+      "tags": [
+        "performance",
+        "profiling",
+        "latency",
+        "benchmarking",
+        "memory-use",
+        "optimization"
+      ],
+      "capabilities": [
+        "quality.profiling",
+        "database.performance",
+        "frontend.performance",
+        "backend.caching"
+      ],
+      "skills": {
+        "core": [
+          "performance-profiling",
+          "query-optimization"
+        ],
+        "preferred": [
+          "observability"
+        ],
+        "optional": [
+          "schema-design",
+          "caching",
+          "background-jobs"
+        ],
+        "conditional": {
+          "recent_schema_change": [
+            "migrations"
+          ],
+          "frontend": [
+            "frontend-performance"
+          ],
+          "postgres": [
+            "postgres"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "sentry"
+        ],
+        "conditional": [
+          "chrome-devtools",
+          "datadog",
+          "grafana"
+        ]
+      },
+      "recipes": [
+        "debug-application"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "benchmark and load scripts",
+        "profiling output",
+        "hot path code",
+        "query and index definitions",
+        "caching layers",
+        "performance budgets"
+      ],
+      "conditions": [
+        "frontend",
+        "postgres",
+        "recent_schema_change"
+      ],
+      "template": "roles/performance-engineer.md",
+      "role_path": "roles/performance-engineer.md",
+      "aliases": [
+        "performance"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "planner",
+      "slug": "planner",
+      "name": "Planner",
+      "category": "Core",
+      "summary": "Turns a goal into an evidence-grounded, executable plan with acceptance criteria.",
+      "use_when": "Implementation has material uncertainty, multiple dependencies, migration risk, or an explicit request for a plan.",
+      "not_for": "performing the implementation, ongoing team coordination, or producing an elaborate plan for a trivial fix.",
+      "tags": [
+        "planning",
+        "requirements",
+        "dependencies",
+        "acceptance-criteria",
+        "risk",
+        "handoff"
+      ],
+      "capabilities": [
+        "product.definition",
+        "quality.strategy",
+        "product.prioritization"
+      ],
+      "skills": {
+        "core": [
+          "prd-and-stories",
+          "test-strategy"
+        ],
+        "preferred": [
+          "prioritization"
+        ],
+        "optional": [],
+        "conditional": {
+          "schema_change": [
+            "migrations"
+          ],
+          "api_change": [
+            "api-design"
+          ],
+          "security_sensitive": [
+            "threat-modeling"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [],
+        "conditional": [
+          "github",
+          "context7"
+        ]
+      },
+      "recipes": [
+        "ship-feature",
+        "database-migration"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "relevant source modules",
+        "existing docs and examples",
+        "project conventions",
+        "interface and data contracts",
+        "migrations and permissions",
+        "prior plans or specs"
+      ],
+      "conditions": [
+        "api_change",
+        "schema_change",
+        "security_sensitive"
+      ],
+      "template": "roles/planner.md",
+      "role_path": "roles/planner.md",
+      "aliases": [
+        "planner"
+      ],
+      "execution_role": "planner",
+      "default_mode": "plan",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "product-manager",
+      "slug": "pm",
+      "name": "Product Manager",
+      "category": "Product & Design",
+      "summary": "Turns a vague request into a focused product scope, user flow, and measurable success criteria.",
+      "use_when": "The team must decide what to build, for whom, why it matters, and what belongs in the first version.",
+      "not_for": "technical architecture ownership, detailed implementation sequencing alone, or inventing customer evidence.",
+      "tags": [
+        "product",
+        "scope",
+        "requirements",
+        "user-stories",
+        "prioritization",
+        "acceptance"
+      ],
+      "capabilities": [
+        "product.discovery",
+        "product.definition",
+        "product.prioritization",
+        "product.analytics"
+      ],
+      "skills": {
+        "core": [
+          "product-discovery",
+          "prd-and-stories",
+          "prioritization"
+        ],
+        "preferred": [
+          "product-analytics"
+        ],
+        "optional": [
+          "competitive-analysis",
+          "experimentation",
+          "positioning"
+        ],
+        "conditional": {
+          "ui_task": [
+            "ui-audit"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "linear",
+          "notion",
+          "github"
+        ]
+      },
+      "recipes": [],
+      "verification": [],
+      "retrieval_hints": [
+        "existing product briefs",
+        "requirements and acceptance criteria",
+        "user research notes",
+        "roadmap and issue tracker",
+        "current feature behavior",
+        "usage metrics or analytics"
+      ],
+      "conditions": [
+        "ui_task"
+      ],
+      "template": "roles/product-manager.md",
+      "role_path": "roles/product-manager.md",
+      "aliases": [
+        "pm"
+      ],
+      "execution_role": "planner",
+      "default_mode": "plan",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "refactoring-migration-specialist",
+      "slug": "refactor",
+      "name": "Refactoring & Migration Specialist",
+      "category": "Engineering",
+      "summary": "Improves internal structure or moves systems to a new contract while preserving required behavior.",
+      "use_when": "The task is a deliberate refactor, dependency transition, compatibility upgrade, or staged migration.",
+      "not_for": "unrequested rewrites, hidden feature changes, or replacing a known system with an unproven abstraction.",
+      "tags": [
+        "refactoring",
+        "migration",
+        "compatibility",
+        "modernization",
+        "deprecations",
+        "behavior-preservation"
+      ],
+      "capabilities": [
+        "quality.tests",
+        "backend.api",
+        "database.migrations",
+        "verification.api"
+      ],
+      "skills": {
+        "core": [
+          "test-design",
+          "api-design"
+        ],
+        "preferred": [
+          "test-strategy",
+          "dependency-security"
+        ],
+        "optional": [
+          "technical-writing"
+        ],
+        "conditional": {
+          "schema_migration": [
+            "migrations",
+            "data-integrity"
+          ],
+          "frontend_stack": [
+            "component-architecture",
+            "vercel-react-best-practices",
+            "nextjs-next-cache-components-adoption"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace"
+        ],
+        "conditional": [
+          "github",
+          "context7"
+        ]
+      },
+      "recipes": [
+        "database-migration"
+      ],
+      "verification": [
+        "api-contract-verification",
+        "database-migration-verification"
+      ],
+      "retrieval_hints": [
+        "old and new api surfaces",
+        "call sites and consumers",
+        "dependency manifests",
+        "characterization tests",
+        "compatibility shims",
+        "generated artifacts"
+      ],
+      "conditions": [
+        "frontend_stack",
+        "schema_migration"
+      ],
+      "template": "roles/refactoring-migration-specialist.md",
+      "role_path": "roles/refactoring-migration-specialist.md",
+      "aliases": [
+        "refactor"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "researcher",
+      "slug": "researcher",
+      "name": "Researcher",
+      "category": "Core",
+      "summary": "Investigates questions, evaluates sources, and produces decision-ready findings.",
+      "use_when": "The task needs external research, source comparison, documentation investigation, or evidence beyond the current conversation.",
+      "not_for": "writing production code, local code mapping alone, or offering confident conclusions without source access.",
+      "tags": [
+        "research",
+        "evidence",
+        "sources",
+        "comparison",
+        "fact-checking",
+        "discovery"
+      ],
+      "capabilities": [
+        "research.deep",
+        "research.sources",
+        "knowledge.competitive"
+      ],
+      "skills": {
+        "core": [
+          "deep-research",
+          "source-evaluation"
+        ],
+        "preferred": [
+          "competitive-analysis"
+        ],
+        "optional": [
+          "data-analysis"
+        ],
+        "conditional": {
+          "claude_api": [
+            "anthropic-claude-api"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "context7"
+        ],
+        "conditional": [
+          "github"
+        ]
+      },
+      "recipes": [
+        "research-technical-decision"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "workspace files with local facts",
+        "primary source documents",
+        "current version and changelog",
+        "authorized connected records",
+        "prior research notes"
+      ],
+      "conditions": [
+        "claude_api"
+      ],
+      "template": "roles/researcher.md",
+      "role_path": "roles/researcher.md",
+      "aliases": [
+        "researcher"
+      ],
+      "execution_role": "researcher",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "reviewer",
+      "slug": "reviewer",
+      "name": "Reviewer",
+      "category": "Core",
+      "summary": "Independently evaluates a change or artifact and reports actionable, evidence-backed findings.",
+      "use_when": "A completed or proposed artifact needs an independent correctness, quality, scope, or readiness assessment.",
+      "not_for": "implementing fixes while reviewing, stylistic nitpicking, or treating an author's explanation as proof.",
+      "tags": [
+        "review",
+        "correctness",
+        "quality",
+        "risk",
+        "verification",
+        "readiness"
+      ],
+      "capabilities": [
+        "security.review",
+        "quality.strategy",
+        "security.dependencies",
+        "verification.api"
+      ],
+      "skills": {
+        "core": [
+          "test-strategy"
+        ],
+        "preferred": [
+          "dependency-security"
+        ],
+        "optional": [
+          "performance-profiling"
+        ],
+        "conditional": {
+          "api_change": [
+            "api-design"
+          ],
+          "schema_change": [
+            "schema-design",
+            "data-integrity"
+          ],
+          "security_sensitive": [
+            "secure-code-review",
+            "owasp-web",
+            "auth-security"
+          ],
+          "ui_task": [
+            "component-architecture",
+            "ui-audit",
+            "accessibility-verification"
+          ],
+          "ai_system": [
+            "prompt-injection-defense"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": [
+          "playwright",
+          "axe-devtools"
+        ]
+      },
+      "recipes": [
+        "review-pull-request",
+        "security-review"
+      ],
+      "verification": [
+        "api-contract-verification",
+        "browser-verification",
+        "documentation-verification"
+      ],
+      "retrieval_hints": [
+        "the changed diff",
+        "acceptance criteria",
+        "dependencies of changed code",
+        "existing verification evidence",
+        "ci or test output"
+      ],
+      "conditions": [
+        "ai_system",
+        "api_change",
+        "schema_change",
+        "security_sensitive",
+        "ui_task"
+      ],
+      "template": "roles/reviewer.md",
+      "role_path": "roles/reviewer.md",
+      "aliases": [
+        "reviewer"
+      ],
+      "execution_role": "reviewer",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "security-auditor",
+      "slug": "security",
+      "name": "Security Auditor",
+      "category": "Engineering",
+      "summary": "Reviews authorized systems for concrete security weaknesses and practical remediation.",
+      "use_when": "A design or change touches authentication, authorization, sensitive data, tool execution, trust boundaries, or external exposure.",
+      "not_for": "unauthorized testing, unsupported compliance certification, or broad exploit activity unrelated to the review.",
+      "tags": [
+        "security",
+        "authorization",
+        "threat-modeling",
+        "secrets",
+        "trust-boundaries",
+        "audit"
+      ],
+      "capabilities": [
+        "security.review",
+        "security.web",
+        "security.auth",
+        "security.threat-modeling"
+      ],
+      "skills": {
+        "core": [
+          "secure-code-review",
+          "owasp-web"
+        ],
+        "preferred": [
+          "secrets-management",
+          "dependency-security"
+        ],
+        "optional": [
+          "auth-security"
+        ],
+        "conditional": {
+          "architecture_review": [
+            "threat-modeling"
+          ],
+          "official_security_skill_installed": [
+            "anthropic-claude-security"
+          ],
+          "agent_system": [
+            "prompt-injection-defense",
+            "agent-security"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "github"
+        ],
+        "conditional": [
+          "cloudflare"
+        ]
+      },
+      "recipes": [
+        "security-review",
+        "review-pull-request"
+      ],
+      "verification": [],
+      "retrieval_hints": [
+        "authentication and authorization code",
+        "input handling boundaries",
+        "secret and credential config",
+        "dependency manifests",
+        "external entry points",
+        "tool permission definitions"
+      ],
+      "conditions": [
+        "agent_system",
+        "architecture_review",
+        "official_security_skill_installed"
+      ],
+      "template": "roles/security-auditor.md",
+      "role_path": "roles/security-auditor.md",
+      "aliases": [
+        "security"
+      ],
+      "execution_role": "reviewer",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "tester",
+      "slug": "tester",
+      "name": "Tester",
+      "category": "Core",
+      "summary": "Checks observable behavior, builds regression coverage, and reports reproducible failures.",
+      "use_when": "The work needs independent functional verification, regression coverage, or a reproducible test of acceptance criteria.",
+      "not_for": "silently changing product behavior to match tests, a general code-style review, or unsupported claims that a product is correct.",
+      "tags": [
+        "testing",
+        "qa",
+        "regression",
+        "acceptance",
+        "edge-cases",
+        "reproduction"
+      ],
+      "capabilities": [
+        "quality.tests",
+        "quality.regression",
+        "quality.e2e",
+        "verification.browser"
+      ],
+      "skills": {
+        "core": [
+          "test-design",
+          "test-strategy",
+          "regression-testing"
+        ],
+        "preferred": [
+          "systematic-debugging"
+        ],
+        "optional": [
+          "performance-profiling",
+          "e2e-testing"
+        ],
+        "conditional": {
+          "ui_task": [
+            "accessibility-verification",
+            "visual-verification"
+          ],
+          "browser_available": [
+            "anthropic-webapp-testing",
+            "microsoft-playwright-cli"
+          ],
+          "ai_system": [
+            "agent-evals"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": [
+          "playwright",
+          "chrome-devtools",
+          "axe-devtools"
+        ]
+      },
+      "recipes": [
+        "ship-feature",
+        "debug-application"
+      ],
+      "verification": [
+        "browser-verification",
+        "api-contract-verification"
+      ],
+      "retrieval_hints": [
+        "requirements and acceptance criteria",
+        "changed behavior code",
+        "existing test suites",
+        "fixtures and test data",
+        "baseline failure logs",
+        "test environment config"
+      ],
+      "conditions": [
+        "ai_system",
+        "browser_available",
+        "ui_task"
+      ],
+      "template": "roles/tester.md",
+      "role_path": "roles/tester.md",
+      "aliases": [
+        "tester"
+      ],
+      "execution_role": "tester",
+      "default_mode": "work",
+      "access_ceiling": "read_only"
+    },
+    {
+      "id": "ui-ux-designer",
+      "slug": "uidesigner",
+      "name": "UI/UX Designer",
+      "category": "Product & Design",
+      "summary": "Designs clear, distinctive interfaces and interaction flows, with implementation-ready details.",
+      "use_when": "A feature needs better information hierarchy, interaction design, visual coherence, or a polished prototype.",
+      "not_for": "generic decorative restyling, product requirements invented without context, or unverifiable claims of user validation.",
+      "tags": [
+        "ui",
+        "ux",
+        "interaction",
+        "visual-design",
+        "prototyping",
+        "accessibility"
+      ],
+      "capabilities": [
+        "design.ui.direction",
+        "design.ux.audit",
+        "design.systems",
+        "design.responsive",
+        "design.accessibility"
+      ],
+      "skills": {
+        "core": [
+          "anthropic-frontend-design",
+          "accessibility"
+        ],
+        "preferred": [
+          "responsive-design",
+          "design-systems"
+        ],
+        "optional": [
+          "motion-design",
+          "component-architecture",
+          "community-frontend-ui-ux"
+        ],
+        "conditional": {
+          "shadcn": [
+            "shadcn-ui"
+          ],
+          "tailwind": [
+            "tailwind"
+          ],
+          "react": [
+            "vercel-react-best-practices"
+          ],
+          "existing_ui": [
+            "ui-audit"
+          ],
+          "official_design_skill_unavailable": [
+            "frontend-design"
+          ],
+          "implementing_ui": [
+            "design-to-code"
+          ],
+          "ui_copy": [
+            "ux-writing"
+          ],
+          "browser_available": [
+            "anthropic-webapp-testing"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "playwright"
+        ],
+        "conditional": [
+          "figma",
+          "axe-devtools",
+          "chrome-devtools"
+        ]
+      },
+      "recipes": [
+        "build-production-ui",
+        "review-pull-request"
+      ],
+      "verification": [
+        "browser-verification",
+        "visual-verification",
+        "accessibility-verification"
+      ],
+      "retrieval_hints": [
+        "screen and page components",
+        "existing component library",
+        "design tokens and stylesheets",
+        "empty loading and error states",
+        "keyboard and focus handling",
+        "screenshots of the interface"
+      ],
+      "conditions": [
+        "browser_available",
+        "existing_ui",
+        "implementing_ui",
+        "official_design_skill_unavailable",
+        "react",
+        "shadcn",
+        "tailwind",
+        "ui_copy"
+      ],
+      "template": "roles/ui-ux-designer.md",
+      "role_path": "roles/ui-ux-designer.md",
+      "aliases": [
+        "uidesigner",
+        "designer"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    },
+    {
+      "id": "version-control",
+      "slug": "git",
+      "name": "Version Control Engineer",
+      "category": "Engineering",
+      "summary": "Repairs, reshapes, and explains repository history without losing committed or uncommitted work.",
+      "use_when": "The task involves repository history — lost commits, tangled merges or rebases, branch surgery, or reconstructing what changed between two points.",
+      "not_for": "locating or fixing the defect a commit introduced, authoring the code change the history is meant to carry, or the delivery pipeline that ships it.",
+      "tags": [
+        "git",
+        "history",
+        "rebase",
+        "merge-conflict",
+        "reflog",
+        "recovery"
+      ],
+      "capabilities": [
+        "devops.rollback",
+        "security.secrets",
+        "knowledge.writing"
+      ],
+      "skills": {
+        "core": [
+          "secrets-management",
+          "technical-writing"
+        ],
+        "preferred": [
+          "systematic-debugging",
+          "dependency-security"
+        ],
+        "optional": [
+          "rollback"
+        ],
+        "conditional": {
+          "github_actions": [
+            "github-actions"
+          ]
+        }
+      },
+      "mcps": {
+        "recommended": [
+          "workspace",
+          "github"
+        ],
+        "conditional": []
+      },
+      "recipes": [],
+      "verification": [],
+      "retrieval_hints": [
+        "git log and reflog",
+        "working tree status",
+        "stash and dangling objects",
+        "remote tracking refs",
+        "branch and tag refs"
+      ],
+      "conditions": [
+        "github_actions"
+      ],
+      "template": "roles/version-control.md",
+      "role_path": "roles/version-control.md",
+      "aliases": [
+        "git",
+        "versioncontrol"
+      ],
+      "execution_role": "implementer",
+      "default_mode": "work",
+      "access_ceiling": "workspace_write"
+    }
+  ]
+}

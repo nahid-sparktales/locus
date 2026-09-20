@@ -190,6 +190,7 @@ class AgentProfile:
     route: dict[str, Any] = field(repr=False)
     memory_context: str = field(default="", repr=False)
     usage_rates: dict[str, Any] = field(default_factory=dict)
+    default_mode: str = "work"
 
     @classmethod
     def parse(cls, value: Any, *, require_route: bool = True) -> AgentProfile:
@@ -217,9 +218,12 @@ class AgentProfile:
             route=dict(value.get("route") or {}),
             memory_context=str(value.get("_memory_context") or "")[:24_000],
             usage_rates=dict(value.get("usage_rates") or {}),
+            default_mode=str(value.get("default_mode") or "work"),
         )
         if not profile.name or not profile.model:
             raise OrchestrationError("every team member needs a name and exact model")
+        if profile.default_mode not in {"ask", "work", "plan", "grill"}:
+            raise OrchestrationError("unknown agent default mode")
         if profile.role not in {
             "dispatcher", "planner", "researcher", "implementer", "tester",
             "reviewer", "generalist",

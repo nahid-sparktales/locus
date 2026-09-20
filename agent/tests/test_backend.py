@@ -8448,21 +8448,19 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
 
 
 def test_a_small_window_still_compacts_rather_than_giving_up(tmp_path):
-    """The reply allowance scales with the window. Reserving a flat 4k of a 9k
+    """The reply allowance scales with the window. Reserving a flat 4k of a 12k
     window would leave a budget below the system prompt, and compacting on
     every turn while never getting under it is worse than not compacting.
 
-    This ran at 8k until the default tool surface (image/interactive answer
-    parts) and the answer contract (image teaching) pushed an 8k window's
-    budget below the compaction floor: at 8k the conversation's share is now
-    smaller than the system prompt plus a summary, so compaction cannot win
-    anything back and is correctly skipped. 9k is the smallest window where
-    the scaled allowance still compacts and a flat 4k reservation still
-    would not."""
+    The default tool surface and compact specialist-routing catalog leave
+    smaller windows below the compaction floor: the conversation's share
+    cannot hold the system prompt plus a summary. 12k is a small window where
+    the scaled allowance still compacts and a flat 4k reservation would not.
+    """
     from ollama_code.core import RESERVED_REPLY_TOKENS
 
     core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)] * 4)
-    core.context_limit = 9_216
+    core.context_limit = 12_288
     assert core._reply_room() < RESERVED_REPLY_TOKENS
     core.messages = [
         core.system_message(),
@@ -8666,10 +8664,10 @@ def test_mid_turn_eviction_keeps_tool_pairing_and_the_newest_result(tmp_path, mo
             "Read all three files; the oldest results no longer fit the window."
         ], done=True),
     ])
-    core.client.loaded_window = 8_192
-    # A model whose ceiling *is* 8k, so the pin cannot raise the window and the
-    # turn really does have to out-read it.
-    core.client.trained_window = 8_192
+    core.client.loaded_window = 12_288
+    # The window can hold the default system/tool contract, but not these
+    # results. Its trained ceiling prevents the pin from raising the window.
+    core.client.trained_window = 12_288
     events = []
     core.on_event(events.append)
 
@@ -8690,6 +8688,25 @@ def test_mid_turn_eviction_keeps_tool_pairing_and_the_newest_result(tmp_path, mo
     saved = SessionStore.load(core.session.path)
     full = [m for m in saved if m.get("role") == "tool" and m.get("content") == "x" * 25_000]
     assert len(full) == 3
+
+
+def test_dispatcher_contract_at_8k_stops_before_an_overflowing_model_call(tmp_path):
+    """A small local model keeps the request intact and never receives overflow."""
+    core = _core(tmp_path, [])
+    core.client.loaded_window = core.client.trained_window = 8_192
+    events = []
+    core.on_event(events.append)
+    request = "Read the implementation and explain its behavior."
+
+    core.run_turn(request)
+
+    assert "Locus Agent Dispatcher" in core.system_message()["content"]
+    assert core.client.calls == 0
+    assert any(event.get("error") and "Essential task instructions exceed" in event.get("text", "")
+               for event in events)
+    saved = SessionStore.load(core.session.path)
+    assert any(message.get("role") == "user" and message.get("content") == request for message in saved)
+    assert not any("compacting the conversation" in event.get("text", "") for event in events)
 
 
 def test_a_tool_call_cut_off_by_the_window_is_retried_once(tmp_path, monkeypatch):

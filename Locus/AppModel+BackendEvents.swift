@@ -85,6 +85,7 @@ extension AppModel {
                 }
                 providerAccountsModel.noteLocalHost(from: info)
                 applyWorkspaceProfileIfNeeded(for: info)
+                applyUnusedChatInitialMode(info)
                 activateSessionOverview(info)
             }
 
@@ -992,6 +993,7 @@ extension AppModel {
         computerControl.beginSession(info.sessionID)
         browser.beginSession(info.sessionID)
         sessionInfo = info
+        applyUnusedChatInitialMode(info)
         syncBrowserProfile()
         if previousSessionID != info.sessionID {
             voiceControl.sessionDidChange()

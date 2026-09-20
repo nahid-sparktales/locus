@@ -360,7 +360,7 @@ private struct SavedAgentOverviewContent: View {
     private var headerSubtitle: String {
         let path = workspace ?? profile.workspacePreferences?.defaultProjectPath ?? model.savedAgentHomePath(profile)
         let title = model.savedAgentWorkspaceTitle(profile, path: path)
-        return "\(profile.role.title) · " + (workspace == nil ? "New chats start in \(title)" : "Working in \(title)")
+        return "\(profile.specialtyTitle) · " + (workspace == nil ? "New chats start in \(title)" : "Working in \(title)")
     }
 
     private func statusChip(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
@@ -463,7 +463,7 @@ private struct SavedAgentOverviewContent: View {
                 }
             }
             if text.isEmpty {
-                Text("No custom instructions — follows the \(profile.role.title) defaults.")
+                Text("No custom instructions — follows the \(profile.specialtyTitle) defaults.")
                     .font(.locus(size: 13)).foregroundStyle(secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("savedAgent.instructions.content")

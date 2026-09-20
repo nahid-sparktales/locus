@@ -772,6 +772,7 @@ private struct ExtensionsSettingsView: View {
                                     skill.provenance?.provider ?? skill.source,
                                     skill.shadowed == true ? "superseded by your copy" : nil,
                                     skill.activation == "startup" ? "always on in development chats" : nil,
+                                    skill.id == "builtin:agent-dispatcher" ? "automatic in Work, Plan, and Grill" :
                                     skill.activation == "explicit" || skill.allowImplicitInvocation == false
                                         ? "explicit only"
                                         : (skill.activation == "startup" ? nil : "automatic or explicit"),

@@ -55,6 +55,7 @@ from .continuity import (
     workspace_changed_files,
 )
 from .core import AgentCore
+from .dispatcher_runtime import is_dispatcher_request
 from .document_extract import MAX_SOURCE_BYTES
 from .evaluation_runtime import EvaluationTeamRunner
 from .goal_runtime import attach_goal_runtime, bind_goal_runtime
@@ -2523,7 +2524,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Choose an explicit agent profile for this capsule stage.")
             return
         if msg.get("agent_profile") is not None:
-            if core.identity_mode or team_manifest is not None or text.startswith("/"):
+            if core.identity_mode or team_manifest is not None or (text.startswith("/") and not is_dispatcher_request(text)):
                 _command_error(svc, str(mtype), "An agent profile cannot replace a team route or run a slash command.")
                 return
             if approved_plan is not None and (mode != "work" or capsule_context is not None):
@@ -2547,7 +2548,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             call = _run_user_turn
             args = (svc, text, False, attachments, agent_config, mode or "plan",
                     str(msg.get("run_id") or uuid.uuid4().hex), False, None, None, capsule_context)
-        elif text.startswith("/") and not just_chat:
+        elif text.startswith("/") and not just_chat and not is_dispatcher_request(text):
             call, args = _run_slash, (svc, text)
         elif team_manifest is not None:
             if approved_plan is not None:

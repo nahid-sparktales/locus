@@ -41,7 +41,7 @@ enum AgentCrewChatRouter {
             let intents = tokens.intersection(roleTerms[profile.role] ?? [])
             let score = hits.count * 10 + min(intents.count, 3) * 6
             guard score >= 6 else { return nil }
-            let reason = !hits.isEmpty ? "Matches \(hits.prefix(3).joined(separator: ", "))." : "Their \(profile.role.title.lowercased()) role fits this request."
+            let reason = !hits.isEmpty ? "Matches \(hits.prefix(3).joined(separator: ", "))." : "Their \(profile.specialtyTitle.lowercased()) role fits this request."
             return Candidate(profile: profile, score: score, intents: intents, reason: reason)
         }.sorted { $0.score == $1.score ? $0.profile.id.uuidString < $1.profile.id.uuidString : $0.score > $1.score }
         guard let first = scored.first else {

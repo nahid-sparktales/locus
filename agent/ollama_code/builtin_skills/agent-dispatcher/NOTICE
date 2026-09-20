@@ -1,0 +1,26 @@
+Provenance
+==========
+
+Everything in this repository is under the MIT License (see LICENSE).
+
+24 of the 27 role files began as the "Locus Agent Template Pack v1.0.0" (2026-09-18), a
+content pack generated for this repository's author from their own screenshots of the Locus
+application. That pack carries no copyright line, no author attribution, and no license,
+and its own metadata describes its contents as "original suggested content" and "not
+official built-in behavior" of Locus. It is not Locus's product documentation and not a
+third party's work product — so there is no separate rights holder to license from, and the
+MIT grant above covers it.
+
+The adaptation here replaced that pack's runtime, mode, memory-scope, and access-level
+vocabulary with Claude Code's equivalents and dropped its grading metadata. The working
+methods, deliverables, boundaries, and mode guidance remain substantially the pack's text.
+
+Three roles are original to this repository: version-control, data-engineer, and
+incident-responder.
+
+"Locus" is the name of the application those templates were originally written for
+(locushost.co). It is used here only to say where the text came from; this project is not
+affiliated with or endorsed by Locus.
+
+If that pack in fact came from someone else who claims rights in it, this notice is wrong
+and the 24 derived roles need their permission or a rewrite.

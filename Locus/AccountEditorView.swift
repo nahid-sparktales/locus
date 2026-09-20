@@ -22,6 +22,7 @@ struct AccountEditorView: View {
     @State private var isTesting = false
     @State private var testResult: String?
     @State private var testFailed = false
+    @State private var exactModelConnectionEvidence: ProviderAccountsModel.ExactModelConnectionEvidence?
     @State private var contextWindow = ""
     // Overwritten from the account on appear; the initial value only decides
     // what a new ChatGPT account paints for one frame, so it matches the
@@ -558,8 +559,23 @@ struct AccountEditorView: View {
             return
         }
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if model.saveProviderAccount(
+            endpointDraftAccount,
+            apiKey: trimmedKey.isEmpty ? nil : trimmedKey
+        ) {
+            if let exactModelConnectionEvidence {
+                providerAccounts.acceptExactModelConnectionEvidence(exactModelConnectionEvidence)
+            }
+            dismiss()
+        }
+    }
+
+    /// The same snapshot is tested and saved. A successful probe cannot be
+    /// transferred to fields or a key edited after that test began.
+    private var endpointDraftAccount: ProviderAccount {
         var updated = account
-        updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.name = ProviderAccountStore.uniqueName(name, kind: kind,
+            existing: model.providerAccounts, excluding: account.id)
         updated.baseURLOverride = kind.allowsBaseURLOverride
             ? baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             : account.baseURLOverride
@@ -569,12 +585,7 @@ struct AccountEditorView: View {
         // Empty means "use the published figure"; a number overrides it.
         let typed = contextWindow.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.contextWindow = typed.isEmpty ? nil : Int(typed)
-        if model.saveProviderAccount(
-            updated,
-            apiKey: trimmedKey.isEmpty ? nil : trimmedKey
-        ) {
-            dismiss()
-        }
+        return updated
     }
 
     /// Side-effect free, like the endpoint test it grew out of: it reads the
@@ -582,13 +593,15 @@ struct AccountEditorView: View {
     private func testConnection() {
         isTesting = true
         testResult = nil
+        exactModelConnectionEvidence = nil
         let typedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let usedSavedCredential = typedKey.isEmpty
         let key = usedSavedCredential
             ? (model.credentialStore.get(account: account.credentialAccount) ?? "")
             : typedKey
-        let base = resolvedBaseURL
-        let probeModel = account.preferredModel.isEmpty ? kind.probeModel : account.preferredModel
+        let testedAccount = endpointDraftAccount
+        let base = testedAccount.resolvedBaseURL
+        let probeModel = testedAccount.preferredModel
         Task {
             let outcome = await RemoteEndpointTester.test(
                 baseURL: base,
@@ -596,6 +609,12 @@ struct AccountEditorView: View {
                 apiKey: key,
                 kind: kind
             )
+            if let evidence = providerAccounts.exactModelConnectionEvidence(
+                for: testedAccount, model: probeModel, apiKey: key, outcome: outcome
+            ) {
+                exactModelConnectionEvidence = evidence
+                providerAccounts.acceptExactModelConnectionEvidence(evidence)
+            }
             var message = outcome.message
             var failed = !outcome.ok
             if outcome.ok {

@@ -96,6 +96,7 @@ class AgentConfiguration:
     capability_policy: CapabilityPolicy = field(default_factory=CapabilityPolicy)
     memory_policy: MemoryPolicy = field(default_factory=MemoryPolicy)
     runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)
+    specialist_role_id: str | None = None
 
     @classmethod
     def parse(
@@ -144,6 +145,8 @@ class AgentConfiguration:
             return _bounded_int(value, lower, lower, upper)
 
         import math
+
+        from .dispatcher_runtime import normalize_role_id
         spending = runtime_raw.get("max_estimated_usd")
         if spending is not None and (isinstance(spending, bool) or not isinstance(spending, (int, float)) or not math.isfinite(spending) or spending <= 0):
             raise ValueError("Estimated spending limit must be a positive finite number")
@@ -199,6 +202,7 @@ class AgentConfiguration:
                 max_total_tokens=optional_int("max_total_tokens", 1, 1_000_000_000),
                 max_estimated_usd=spending,
             ),
+            specialist_role_id=normalize_role_id(raw.get("specialist_role_id")),
         )
 
     def structured(self) -> dict[str, Any]:
@@ -215,6 +219,7 @@ class AgentConfiguration:
                 "scopes": list(self.memory_policy.scopes),
             },
             "runtime_policy": self.runtime_policy.__dict__,
+            "specialist_role_id": self.specialist_role_id,
         }
 
 
@@ -270,6 +275,11 @@ def compose_system_prompt(
         # only confuse it.
         sections.append(("Locked answer contract", ANSWER_CONTRACT))
     sections.append(("Editable agent behavior", editable_behavior))
+    if (mode in {"work", "plan", "grill"} and configuration.specialist_role_id
+            and not configuration.custom_instructions):
+        from .dispatcher_runtime import role_instructions
+        if method := role_instructions(configuration.specialist_role_id):
+            sections.append(("Saved specialist method", method))
     if memory_context.strip():
         sections.append(("Approved memory", memory_context.strip()))
     if mode != "ask" and continuity_context.strip():
