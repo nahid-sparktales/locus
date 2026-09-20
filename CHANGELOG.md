@@ -13,6 +13,13 @@
 - Workspace boards can open in separate windows that stay synchronized with
   the main window. Card handoffs create a draft chat in the board's workspace.
 
+### Fixed
+
+- Dispatcher source inspection can find files in plain workspace folders when
+  ripgrep is unavailable, while preserving file exclusions and bounded reads.
+- The account editor observes provider-account changes directly when preparing
+  an updated account.
+
 ### Removed
 
 - The Mac App Store build target. Locus ships as one product, the notarized

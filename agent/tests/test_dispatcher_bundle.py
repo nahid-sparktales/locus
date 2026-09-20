@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PACK = ROOT / "agent/ollama_code/builtin_skills/agent-dispatcher"
@@ -110,7 +111,6 @@ class DispatcherBundleTests(unittest.TestCase):
             # per-resource read budget. Instructions must use the small indexes.
             self.assertNotIn("`catalog.json`", path.read_text(), str(path.relative_to(PACK)))
 
-    @unittest.skipUnless(shutil.which("rg") or shutil.which("git"), "helper needs ignore-aware file enumeration")
     def test_context_and_map_helpers_are_self_contained_and_read_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -120,8 +120,6 @@ class DispatcherBundleTests(unittest.TestCase):
             project = root / "workspace"
             project.mkdir()
             (project / "login.py").write_text("def verify_login(name):\n    return bool(name)\n")
-            if not shutil.which("rg"):
-                subprocess.run(["git", "init", "-q", str(project)], check=True)
             before = {str(path.relative_to(project)): path.read_bytes() for path in project.rglob("*") if path.is_file()}
             result = subprocess.run([sys.executable, "-B", str(bundle / "scripts/context.py"),
                                      "--pack", str(bundle), "--project", str(project), "--role", "implementer",
@@ -138,6 +136,64 @@ class DispatcherBundleTests(unittest.TestCase):
             after = {str(path.relative_to(project)): path.read_bytes() for path in project.rglob("*") if path.is_file()}
             self.assertEqual(before, after)
             self.assertFalse((project / ".agent-dispatcher").exists())
+
+    def test_portable_enumeration_withholds_guarded_and_unsafe_files(self):
+        spec = importlib.util.spec_from_file_location("dispatcher_context", PACK / "scripts/context.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        with tempfile.TemporaryDirectory() as directory, patch.object(helper.shutil, "which", return_value=None):
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            (project / "billing.py").write_text("def calculate_invoice_total(items):\n    return sum(items)\n")
+            outside = root / "outside.py"
+            outside.write_text("calculate_invoice_total = 'outside evidence'\n")
+            (project / "linked.py").symlink_to(outside)
+            (project / "linked-directory").symlink_to(root, target_is_directory=True)
+            (project / ".env").write_text("calculate_invoice_total=credential\n")
+            for name in ("private", "node_modules", ".agent-dispatcher"):
+                child = project / name
+                child.mkdir()
+                (child / "billing.py").write_text("calculate_invoice_total = 'withheld evidence'\n")
+            # The shipped app runs on commonly case-insensitive filesystems.
+            (project / "private/.GITIGNORE").write_text("billing.py\n")
+            before = {str(path.relative_to(project)): path.read_bytes() for path in project.rglob("*")
+                      if path.is_file() and not path.is_symlink()}
+            result = helper.select_context(project, "Review calculate_invoice_total in billing.py", pack=PACK)
+            self.assertEqual([item["path"] for item in result["excerpts"]], ["billing.py"])
+            self.assertTrue(any("ignore or version-control" in item for item in result["diagnostics"]))
+            after = {str(path.relative_to(project)): path.read_bytes() for path in project.rglob("*")
+                     if path.is_file() and not path.is_symlink()}
+            self.assertEqual(before, after)
+            # An incomplete directory cannot contribute evidence: an ignore
+            # rule may occur beyond the entry, byte, or time bound.
+            for limits in ({"MAX_FILES": 1}, {"MAX_LIST_BYTES": 1}):
+                with self.subTest(limits=limits), patch.multiple(helper, **limits):
+                    result = helper.select_context(project, "Review calculate_invoice_total", pack=PACK)
+                    self.assertEqual(result["context"], [])
+                    self.assertTrue(any("limit" in item for item in result["diagnostics"]))
+            with patch.object(helper.time, "monotonic", side_effect=[0, 11]):
+                diagnostics = []
+                self.assertEqual(helper._enumerate(project, diagnostics), [])
+                self.assertTrue(any("limit" in item for item in diagnostics))
+            (project / ".gitignore").write_text("private/\n")
+            self.assertEqual(helper._enumerate(project, []), [])
+
+    def test_context_fallback_adaptation_is_reproducible(self):
+        spec = importlib.util.spec_from_file_location("dispatcher_export", ROOT / "Tools/ExportAgentDispatcher.py")
+        exporter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(exporter)
+        exported = (PACK / "scripts/context.py").read_text()
+        fallback = (ROOT / "Tools/DispatcherContextFallback.py").read_text()
+        fallback = fallback[fallback.index("def _portable_enumerate("):].rstrip()
+        insertion = "\n" + fallback + "\n\n"
+        self.assertEqual(exported.count(insertion), 1)
+        original = exported.replace(insertion, "", 1).replace(
+            "    return _portable_enumerate(project, diagnostics, MAX_FILES, MAX_LIST_BYTES, _skip)",
+            '    diagnostics.append("Ignore-aware file enumeration unavailable (Git or ripgrep required); no files scanned.")\n    return []', 1)
+        self.assertEqual(exporter.context_helper(original), exported)
+        with self.assertRaisesRegex(ValueError, "changed upstream"):
+            exporter.context_helper("unexpected upstream implementation")
 
     def test_exporter_refuses_to_write_inside_source_or_overwrite_unowned_data(self):
         spec = importlib.util.spec_from_file_location("dispatcher_export", ROOT / "Tools/ExportAgentDispatcher.py")
@@ -156,7 +212,6 @@ class DispatcherBundleTests(unittest.TestCase):
             self.assertEqual((destination / "keep.txt").read_text(), "user content")
 
     @unittest.skipUnless(importlib.util.find_spec("requests"), "staged runtime needs agent dependencies")
-    @unittest.skipUnless(shutil.which("rg") or shutil.which("git"), "helper needs ignore-aware file enumeration")
     def test_both_product_stages_retain_and_use_the_complete_dispatcher(self):
         probe = """import json, sys
 from pathlib import Path
@@ -202,8 +257,6 @@ print(json.dumps({'product': PRODUCT_NAME, 'roles': len(catalog['roles']),
                     project = temporary / f"{edition}-workspace"
                     project.mkdir()
                     (project / "login.py").write_text("def verify_login(name):\n    return bool(name)\n")
-                    if not shutil.which("rg"):
-                        subprocess.run(["git", "init", "-q", str(project)], check=True)
                     before = {str(path.relative_to(project)): path.read_bytes()
                               for path in project.rglob("*") if path.is_file()}
                     result = subprocess.run([sys.executable, "-I", "-B", "-c", probe, str(stage), str(project)],
