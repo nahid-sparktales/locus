@@ -2141,7 +2141,7 @@ struct ScheduleEditorView: View {
                     .accessibilityLabel("Time zone")
                     .accessibilityIdentifier("scheduleEditor.timezone")
                 Button("Use local") { draft.timezone = TimeZone.current.identifier }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.locus(.quiet))
                     .font(.locus(size: 9))
                     .help("Use \(TimeZone.current.identifier)")
                     .accessibilityIdentifier("scheduleEditor.localTimezone")

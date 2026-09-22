@@ -568,7 +568,7 @@ private struct AgentWorldSurface: View {
                     Label(ocean ? "WELCOME ABOARD" : "YOUR WORKSPACE", systemImage: ocean ? "sun.max" : "person.3")
                         .font(.locus(size: 11, weight: .semibold)).tracking(2).foregroundStyle(palette.warning)
                     Text(ocean ? "All hands on deck" : "Your agents")
-                        .font(.system(size: 30, weight: .semibold, design: ocean ? .serif : .default))
+                        .font(.locus(size: 30, weight: .semibold, design: ocean ? .serif : .default))
                     Text("Choose a crewmate to open their overview, or start a chat with tools at your side.")
                         .font(.locus(size: 13)).foregroundStyle(palette.inkSoft).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 16) {
@@ -609,7 +609,7 @@ private struct AgentWorldSurface: View {
                                 .font(.locus(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(palette.warning)
+                        Image(systemName: "chevron.right").font(.locus(size: 11)).foregroundStyle(palette.warning)
                     }
                     HStack(spacing: 6) {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 6, height: 6)
@@ -617,7 +617,7 @@ private struct AgentWorldSurface: View {
                             .font(.locus(size: 12, weight: .medium)).foregroundStyle(palette.inkSoft)
                     }
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).help("Open \(resident.name)’s overview")
+            }.buttonStyle(.locus(.card)).help("Open \(resident.name)’s overview")
             Rectangle().fill(palette.line).frame(height: 1)
             HStack {
                 Button("Overview") { model.openAgentProfile(resident.id) }
