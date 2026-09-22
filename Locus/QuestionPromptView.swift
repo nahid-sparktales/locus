@@ -5,6 +5,10 @@ import SwiftUI
 /// the decision replaces the input. Options are keyboard-driven; a free-text
 /// row is always present, and `esc` hands the answer back to the composer.
 struct QuestionPromptView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
 
     let question: UserQuestion
@@ -50,7 +54,7 @@ struct QuestionPromptView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.55), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.55), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .focusable()
@@ -107,15 +111,15 @@ struct QuestionPromptView: View {
             Text("QUESTION")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             HStack(spacing: 7) {
                 Image(systemName: "questionmark.circle")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .accessibilityHidden(true)
                 Text(question.title)
                     .font(.locus(size: 12, weight: .bold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
             }
         }
     }
@@ -123,11 +127,11 @@ struct QuestionPromptView: View {
     private var bodyCard: some View {
         Text(question.question)
             .font(.locus(size: 10, weight: .medium))
-            .foregroundStyle(LocusTheme.ink)
+            .foregroundStyle(viewColors.ink)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(LocusTheme.paperDeep.opacity(0.65))
+            .background(viewColors.paperDeep.opacity(0.65))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .accessibilityIdentifier("questionPrompt.body")
     }
@@ -161,7 +165,7 @@ struct QuestionPromptView: View {
             // way the Runs panel's small text does.
             Text("esc dismisses and answers in the composer")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.top, 5)
@@ -182,19 +186,19 @@ struct QuestionPromptView: View {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text("\(index + 1).")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                     if !detail.isEmpty {
                         Text(detail)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                 }
                 .lineLimit(1)
@@ -202,21 +206,21 @@ struct QuestionPromptView: View {
                 if recommended {
                     Text("Recommended")
                         .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .padding(.horizontal, 5)
                         .frame(height: 15)
-                        .background(LocusTheme.paperDeep)
+                        .background(viewColors.paperDeep)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
                 if isSelected {
                     Text("↵")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(.horizontal, 8)
             .frame(height: 38)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -237,17 +241,17 @@ struct QuestionPromptView: View {
         return HStack(spacing: 8) {
             Text(isSelected ? "❯" : " ")
                 .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .frame(width: 10)
                 .accessibilityHidden(true)
             Text("\(index + 1).")
                 .font(.locus(size: 10, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityHidden(true)
             TextField("Type your own answer…", text: $answerText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .lineLimit(1...4)
                 .focused($textFocused)
                 .onSubmit { confirm(.freeText) }
@@ -258,7 +262,7 @@ struct QuestionPromptView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.locus(size: 13, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                 }
                 .buttonStyle(.locus())
                 .help("Send answer")
@@ -266,13 +270,13 @@ struct QuestionPromptView: View {
             } else if isSelected {
                 Text("↵")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 8)
         .frame(minHeight: 38)
-        .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+        .background(isSelected ? viewColors.paperDeep : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { textFocused = true }

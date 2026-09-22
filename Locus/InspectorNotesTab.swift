@@ -544,6 +544,10 @@ private struct NotesColorMenuButton: NSViewRepresentable {
 
 /// The formatting and export bar above the notes editor.
 struct NotesFormatToolbar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: NotesStore
     @ObservedObject var proxy: NotesEditorProxy
     /// Only seeds the export panel's starting directory, behind a
@@ -597,9 +601,9 @@ struct NotesFormatToolbar: View {
         }
         .padding(.horizontal, 7)
         .frame(height: 34)
-        .background(LocusTheme.paperDeep.opacity(0.5))
+        .background(viewColors.paperDeep.opacity(0.5))
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(identifierPrefix).toolbar")
@@ -607,7 +611,7 @@ struct NotesFormatToolbar: View {
 
     private var toolbarDivider: some View {
         Rectangle()
-            .fill(LocusTheme.line)
+            .fill(viewColors.line)
             .frame(width: 1, height: 14)
             .padding(.horizontal, 4)
     }
@@ -622,9 +626,9 @@ struct NotesFormatToolbar: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(active ? LocusTheme.paper : LocusTheme.muted)
+                .foregroundStyle(active ? viewColors.paper : viewColors.muted)
                 .frame(width: 24, height: 24)
-                .background(active ? LocusTheme.ink : Color.clear)
+                .background(active ? viewColors.ink : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle())
         }
@@ -654,7 +658,7 @@ struct NotesFormatToolbar: View {
                 Text("\(Int(proxy.fontSize))")
                     .font(.locus(size: 9, weight: .semibold, design: .monospaced))
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(height: 24)
             .contentShape(Rectangle())
         }
@@ -703,7 +707,7 @@ struct NotesFormatToolbar: View {
         } label: {
             Image(systemName: "list.bullet.indent")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
@@ -744,7 +748,7 @@ struct NotesFormatToolbar: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
@@ -790,6 +794,10 @@ struct NotesFormatToolbar: View {
 /// Identity strip above the toolbar: which document is open, whether the last
 /// keystroke has landed on disk, and how much is in it.
 struct NotesHeaderBar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: NotesStore
     let workspaceName: String
     let identifierPrefix: String
@@ -845,10 +853,10 @@ struct NotesHeaderBar: View {
         HStack(spacing: 6) {
             Image(systemName: store.documentID.isStandalone ? "note.text" : store.scope.symbol)
                 .font(.locus(size: 10, weight: .medium))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(store.documentID.isStandalone ? "Note" : store.scope.documentTitle)
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
         }
         .frame(minHeight: 28)
     }
@@ -900,7 +908,7 @@ struct NotesHeaderBar: View {
 
             Text(subtitle)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(-1)
@@ -917,7 +925,7 @@ struct NotesHeaderBar: View {
                         .font(.locus(size: 8, weight: .semibold, design: .monospaced))
                 }
                 .foregroundStyle(progress.done == progress.total
-                    ? LocusTheme.success : LocusTheme.muted)
+                    ? viewColors.success : viewColors.muted)
                 .help("\(progress.done) of \(progress.total) checklist items done")
                 .accessibilityLabel(
                     "\(progress.done) of \(progress.total) checklist items done"
@@ -930,24 +938,24 @@ struct NotesHeaderBar: View {
                     ? "\(store.text.count.formatted()) / \(NotesStore.maximumCharacters.formatted()) characters"
                     : "\(wordCount.formatted()) \(wordCount == 1 ? "word" : "words")")
                     .font(.locus(size: 8))
-                    .foregroundStyle(nearsLimit ? LocusTheme.warning : LocusTheme.muted)
+                    .foregroundStyle(nearsLimit ? viewColors.warning : viewColors.muted)
                     .accessibilityIdentifier("\(identifierPrefix).wordCount")
             }
 
             Image(systemName: store.saveError != nil ? "exclamationmark.circle"
                 : store.hasUnsavedChanges ? "arrow.triangle.2.circlepath" : "checkmark.circle")
                 .font(.locus(size: 9, weight: .medium))
-                .foregroundStyle(store.saveError != nil ? LocusTheme.warning
-                    : store.hasUnsavedChanges ? LocusTheme.muted : LocusTheme.success)
+                .foregroundStyle(store.saveError != nil ? viewColors.warning
+                    : store.hasUnsavedChanges ? viewColors.muted : viewColors.success)
                 .help(store.saveError != nil ? "Could not save" : store.hasUnsavedChanges ? "Saving…" : "Saved")
                 .accessibilityLabel(store.saveError != nil ? "Could not save" : store.hasUnsavedChanges ? "Saving" : "Saved")
                 .accessibilityIdentifier("\(identifierPrefix).saveState")
         }
         .padding(.horizontal, 10)
         .frame(height: 34)
-        .background(LocusTheme.paperDeep.opacity(0.5))
+        .background(viewColors.paperDeep.opacity(0.5))
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(identifierPrefix).header")
@@ -959,6 +967,10 @@ struct NotesHeaderBar: View {
 /// caller, so the inspector and the Notebook drive one editor rather than two
 /// copies of it.
 struct NotesDocumentEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     /// Observed, not owned. The store cache owns the lifetime, and that shared
     /// instance is what keeps this editor and any other view of the same
     /// document consistent: one document, one debounce timer.
@@ -995,9 +1007,9 @@ struct NotesDocumentEditor: View {
                     .buttonStyle(.locus())
                     .accessibilityIdentifier("\(identifierPrefix).retrySave")
                 }
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .padding(10)
-                .background(LocusTheme.warning.opacity(0.10))
+                .background(viewColors.warning.opacity(0.10))
                 .accessibilityIdentifier("\(identifierPrefix).saveError")
             }
             if store.lifecycle != .active && !readOnly {
@@ -1006,7 +1018,7 @@ struct NotesDocumentEditor: View {
                 documentBody
             }
         }
-        .background(LocusTheme.paper)
+        .background(viewColors.paper)
     }
 
     private var documentBody: some View {
@@ -1032,12 +1044,12 @@ struct NotesDocumentEditor: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Nothing here yet")
                             .font(.locus(size: 11, weight: .semibold))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                         Text(store.documentID.isStandalone
                             ? "Jot down anything worth keeping. This note stays in your notebook."
                             : "Jot down anything worth keeping. The agent can read and append to these notes when you ask it to.")
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, 14)
@@ -1055,7 +1067,7 @@ struct NotesDocumentEditor: View {
         VStack(spacing: 12) {
             Image(systemName: "trash")
                 .font(.locus(size: 25))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityHidden(true)
             Text(store.lifecycle == .trashed ? "This note is in Recently Deleted" : "This note was permanently deleted")
                 .font(.locus(size: 12, weight: .semibold))
@@ -1063,7 +1075,7 @@ struct NotesDocumentEditor: View {
                 ? "Restore it to continue writing. It will stay there until you remove it."
                 : "You can start a new blank note here.")
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .multilineTextAlignment(.center)
             Button(store.lifecycle == .trashed ? "Restore Note" : "Start a New Note") {
                 recoverNote()

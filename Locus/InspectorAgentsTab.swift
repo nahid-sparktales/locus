@@ -175,6 +175,10 @@ enum AgentInstructionsStarter: String, CaseIterable, Identifiable {
 }
 
 struct InspectorAgentsTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentInstructions: AgentInstructionsModel
 
@@ -202,16 +206,16 @@ struct InspectorAgentsTab: View {
             HStack(spacing: 9) {
                 Image(systemName: "doc.text.fill")
                     .font(.locus(size: 13, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 28, height: 28)
-                    .background(LocusTheme.signal.opacity(0.10))
+                    .background(viewColors.signal.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("AGENTS.md")
                         .font(.locus(size: 12, weight: .bold, design: .monospaced))
                     Text("Shared workspace guidance")
                         .font(.locus(size: 11, weight: .medium))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("agents.content")
                 }
                 Spacer(minLength: 4)
@@ -221,7 +225,7 @@ struct InspectorAgentsTab: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .disabled(agentInstructions.isLoadingAgentInstructions || agentInstructions.isSavingAgentInstructions)
                 .help("Reload AGENTS.md from disk")
                 .accessibilityLabel("Reload AGENTS.md from disk")
@@ -234,7 +238,7 @@ struct InspectorAgentsTab: View {
                             .accessibilityHidden(true)
                     }
                     .buttonStyle(.locus())
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .help("Reveal AGENTS.md in Finder")
                     .accessibilityLabel("Reveal AGENTS.md in Finder")
                     .accessibilityIdentifier("agents.reveal")
@@ -243,7 +247,7 @@ struct InspectorAgentsTab: View {
 
             Text("Project conventions and boundaries for every agent working in this workspace.")
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -253,13 +257,13 @@ struct InspectorAgentsTab: View {
                 Spacer(minLength: 0)
             }
             .font(.locus(size: 11, weight: .medium))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Loaded for every Work turn and stored as a project file")
 
             Text("These instructions belong to the workspace. Configure an individual agent’s purpose and trigger in Manage Agents.")
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement()
                 .accessibilityLabel("How AGENTS.md works")
@@ -268,14 +272,14 @@ struct InspectorAgentsTab: View {
             if let error = agentInstructions.agentInstructionsError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.locus(size: 11, weight: .medium))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agents.error")
             }
         }
         .padding(14)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -292,36 +296,36 @@ struct InspectorAgentsTab: View {
                 .font(.locus(size: 11, weight: .semibold))
                 .foregroundStyle(
                     agentInstructions.agentInstructionsHasUnsavedChanges
-                        ? LocusTheme.warning
-                        : LocusTheme.success
+                        ? viewColors.warning
+                        : viewColors.success
                 )
                 .accessibilityIdentifier("agents.saveState")
             }
             .padding(.horizontal, 13)
             .frame(height: 38)
-            .background(LocusTheme.paperDeep.opacity(0.42))
+            .background(viewColors.paperDeep.opacity(0.42))
             .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
 
             TextEditor(text: Binding(
                 get: { agentInstructions.agentInstructionsDraft },
                 set: { agentInstructions.agentInstructionsDraft = $0 }
             ))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.accentAction)
                 .font(.locus(size: 12, design: .monospaced))
                 .lineSpacing(2)
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .background(LocusTheme.white)
+                .background(viewColors.white)
                 .accessibilityLabel("AGENTS.md contents")
                 .accessibilityIdentifier("agents.editor")
 
             HStack(spacing: 10) {
                 Text(model.isBusy ? "Save after this run" : model.hasPendingPermission ? "Resolve the pending request to save" : "Applies on the next Work turn")
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Spacer(minLength: 4)
                 Button("Revert") {
                     agentInstructions.revertAgentInstructions()
@@ -340,7 +344,7 @@ struct InspectorAgentsTab: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.accentAction)
+                .tint(viewColors.accentAction)
                 .controlSize(.small)
                 .disabled(
                     !agentInstructions.agentInstructionsHasUnsavedChanges
@@ -353,9 +357,9 @@ struct InspectorAgentsTab: View {
             }
             .padding(.horizontal, 13)
             .frame(height: 46)
-            .background(LocusTheme.paperDeep.opacity(0.42))
+            .background(viewColors.paperDeep.opacity(0.42))
             .overlay(alignment: .top) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
         }
     }
@@ -389,12 +393,12 @@ struct InspectorAgentsTab: View {
         VStack(spacing: 12) {
             Image(systemName: "doc.badge.plus")
                 .font(.locus(size: 26))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text("No AGENTS.md in this workspace")
                 .font(.locus(size: 11, weight: .bold))
             Text("Create one at the workspace root, then add the instructions the agent should follow while planning, editing, and verifying work.")
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -404,7 +408,7 @@ struct InspectorAgentsTab: View {
                 Label("Create AGENTS.md", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.accentAction)
+            .tint(viewColors.accentAction)
             .controlSize(.small)
             .disabled(model.isBusy || model.hasPendingPermission || agentInstructions.isSavingAgentInstructions)
             .accessibilityIdentifier("agents.create")

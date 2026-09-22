@@ -143,6 +143,10 @@ extension Data {
 /// Accepts Finder files and raw image drags anywhere the modifier is applied,
 /// with a visible target highlight while a drag hovers.
 struct ChatAttachmentDropTarget: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @State private var isTargeted = false
 
@@ -154,18 +158,18 @@ struct ChatAttachmentDropTarget: ViewModifier {
             .overlay {
                 if isTargeted {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(LocusTheme.signal, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                        .stroke(viewColors.signal, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
                         .background(
                             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .fill(LocusTheme.signal.opacity(0.06))
+                                .fill(viewColors.signal.opacity(0.06))
                         )
                         .overlay {
                             Label("Drop to attach", systemImage: "paperclip")
                                 .font(.locus(size: 11, weight: .semibold))
-                                .foregroundStyle(LocusTheme.signal)
+                                .foregroundStyle(viewColors.signal)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(LocusTheme.white.opacity(0.92))
+                                .background(viewColors.white.opacity(0.92))
                                 .clipShape(Capsule())
                         }
                         .allowsHitTesting(false)

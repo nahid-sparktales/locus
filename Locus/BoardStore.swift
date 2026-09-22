@@ -177,9 +177,11 @@ final class BoardStore: ObservableObject {
         priority: BoardPriority = .none,
         labels: [String] = [],
         assignee: String? = nil,
+        agentIDs: [UUID] = [],
         position: Int? = nil,
         author: BoardAuthor = .user
     ) throws -> BoardCard {
+        guard agentIDs.count <= 64 else { throw BoardStoreError.invalidArgument("Tag at most 64 agents.") }
         let title = try Self.validatedTitle(title)
         let details = try Self.validatedDetails(details)
         let labels = try Self.validatedLabels(labels)
@@ -210,7 +212,8 @@ final class BoardStore: ObservableObject {
                     author: author,
                     text: "Created in \(column.title)",
                     createdAt: now
-                )]
+                )],
+                agentIDs: Array(Set(agentIDs)).sorted { $0.uuidString < $1.uuidString }
             )
             state.nextNumber += 1
             Self.insert(card, at: position, into: &state.cards)
@@ -227,12 +230,13 @@ final class BoardStore: ObservableObject {
         priority: BoardPriority? = nil,
         labels: [String]? = nil,
         assignee: String?? = nil,
+        agentIDs: [UUID]? = nil,
         author: BoardAuthor = .user
     ) throws {
         try commit(by: author) { state in
             _ = try Self.applyUpdate(
                 id, title: title, details: details, priority: priority,
-                labels: labels, assignee: assignee, author: author, in: &state
+                labels: labels, assignee: assignee, agentIDs: agentIDs, author: author, in: &state
             )
         }
     }
@@ -388,6 +392,7 @@ final class BoardStore: ObservableObject {
             priority: try BoardToolArguments.priority(arguments) ?? BoardPriority.none,
             labels: try BoardToolArguments.labels(arguments) ?? [],
             assignee: try BoardToolArguments.string(arguments, "assignee"),
+            agentIDs: try BoardToolArguments.agentIDs(arguments) ?? [],
             position: try BoardToolArguments.int(arguments, "position"),
             author: author
         )
@@ -405,15 +410,16 @@ final class BoardStore: ObservableObject {
         let details = try BoardToolArguments.string(arguments, "description")
         let priority = try BoardToolArguments.priority(arguments)
         let labels = try BoardToolArguments.labels(arguments)
+        let agentIDs = try BoardToolArguments.agentIDs(arguments)
         let assignee: String?? = try BoardToolArguments.string(arguments, "assignee").map { .some($0) }
         let column = try BoardToolArguments.nonBlankString(arguments, "column")
             .map { try requireColumn(matching: $0) }
         let position = try BoardToolArguments.int(arguments, "position")
         guard title != nil || details != nil || priority != nil || labels != nil
-            || assignee != nil || column != nil || position != nil
+            || assignee != nil || agentIDs != nil || column != nil || position != nil
         else {
             throw BoardStoreError.invalidArgument(
-                "\(tool) needs at least one of title, description, column, position, priority, labels, or assignee."
+                "\(tool) needs at least one of title, description, column, position, priority, labels, assignee, or agent_ids."
             )
         }
         // Fields and the move land in one save, so a rejected value changes nothing.
@@ -428,7 +434,7 @@ final class BoardStore: ObservableObject {
             }
             changes += try Self.applyUpdate(
                 card.id, title: title, details: details, priority: priority,
-                labels: labels, assignee: assignee, author: author, in: &state
+                labels: labels, assignee: assignee, agentIDs: agentIDs, author: author, in: &state
             )
             return changes
         }
@@ -480,6 +486,7 @@ final class BoardStore: ObservableObject {
         priority: BoardPriority?,
         labels: [String]?,
         assignee: String??,
+        agentIDs: [UUID]? = nil,
         author: BoardAuthor,
         in state: inout State
     ) throws -> [String] {
@@ -516,6 +523,15 @@ final class BoardStore: ObservableObject {
             card.assignee = assignee
             activity.append(assignee.map { "Assigned to \($0)" } ?? "Cleared the assignee")
             summaries.append(assignee.map { "assignee \($0)" } ?? "assignee cleared")
+        }
+        if let agentIDs {
+            guard agentIDs.count <= 64 else { throw BoardStoreError.invalidArgument("Tag at most 64 agents.") }
+            let ids = Array(Set(agentIDs)).sorted { $0.uuidString < $1.uuidString }
+            if ids != (card.agentIDs ?? []).sorted(by: { $0.uuidString < $1.uuidString }) {
+                card.agentIDs = ids
+                activity.append(ids.isEmpty ? "Cleared tagged agents" : "Updated tagged agents")
+                summaries.append("tagged agents updated")
+            }
         }
         guard !activity.isEmpty else { return [] }
         record(activity, by: author, on: &card)

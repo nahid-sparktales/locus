@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct AgentTeamsSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var evaluations: EvaluationsModel
@@ -28,7 +32,7 @@ struct AgentTeamsSettingsView: View {
                         .font(.locus(size: 15, weight: .semibold))
                     Text("Specialists are reusable instructions, models, and permissions for delegated work. Combine them into a team when a task benefits from multiple perspectives.")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
@@ -65,13 +69,13 @@ struct AgentTeamsSettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .accessibilityIdentifier("settings.agents.root")
-        .sheet(isPresented: $projectChecksPresented) {
+        .locusSheet(isPresented: $projectChecksPresented) {
             ReusableChecksView(source: ReusableCheckSource(correction: "", messageIndex: nil, runID: nil, generateRequested: false))
                 .environmentObject(model)
         }
-        .sheet(item: $editingProfile) { profile in
+        .locusSheet(item: $editingProfile) { profile in
             AgentProfileEditor(
                 profile: profile,
                 isNew: !agentTeams.agentProfiles.contains(where: { $0.id == profile.id }),
@@ -83,11 +87,11 @@ struct AgentTeamsSettingsView: View {
             .environmentObject(model)
             .environmentObject(providerAccounts)
         }
-        .sheet(isPresented: $quickTeamPresented) {
+        .locusSheet(isPresented: $quickTeamPresented) {
             QuickTeamBuilderView(suggestedName: agentTeams.suggestedQuickTeamName())
                 .environmentObject(model)
         }
-        .sheet(isPresented: $editingPrimaryAgent) {
+        .locusSheet(isPresented: $editingPrimaryAgent) {
             AgentBehaviorEditor(
                 title: "Primary Agent",
                 behavior: agentTeams.primaryAgentBehavior,
@@ -99,17 +103,17 @@ struct AgentTeamsSettingsView: View {
             .environmentObject(model)
             .environmentObject(providerAccounts)
         }
-        .sheet(item: $editingTeam) { team in
+        .locusSheet(item: $editingTeam) { team in
             AgentTeamEditor(team: team) {
                 agentTeams.saveAgentTeam($0)
                 editingTeam = nil
             }
             .environmentObject(model)
         }
-        .sheet(item: $evaluationReport) { report in
+        .locusSheet(item: $evaluationReport) { report in
             EvaluationReportView(report: report)
         }
-        .sheet(item: $editingSuite) { suite in
+        .locusSheet(item: $editingSuite) { suite in
             EvaluationSuiteEditor(suite: suite) {
                 evaluations.saveEvaluationSuite($0)
                 editingSuite = nil
@@ -180,7 +184,7 @@ struct AgentTeamsSettingsView: View {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "person.3.sequence.fill")
                     .font(.locus(size: 15, weight: .semibold))
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .frame(width: 28)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
@@ -188,13 +192,13 @@ struct AgentTeamsSettingsView: View {
                         .font(.locus(size: 11, weight: .semibold))
                     Text("Choose the models. Locus creates the specialist profiles and connects the team for you.")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
                 Button("Create Team…") { quickTeamPresented = true }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .controlSize(.small)
                     .disabled(model.isBusy)
                     .accessibilityIdentifier("settings.quickTeam.create")
@@ -212,7 +216,7 @@ struct AgentTeamsSettingsView: View {
             )
             Text("Limits model calls across all running chats and teams. Automatic triggers have their own run-processing settings in Manage Agents.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -224,7 +228,7 @@ struct AgentTeamsSettingsView: View {
                         .font(.locus(size: 11, weight: .semibold))
                     Text("Used by your main assistant · \(model.selectedModel)")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
                 Spacer()
                 Button("Edit Behavior") { editingPrimaryAgent = true }
@@ -233,7 +237,7 @@ struct AgentTeamsSettingsView: View {
             }
             Text("Set the response style, instructions, and memory policy for your main assistant. Changes apply to its next turn.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -254,7 +258,7 @@ struct AgentTeamsSettingsView: View {
                             Text(profile.name).font(.locus(size: 11, weight: .semibold))
                             Text("\(profile.specialtyTitle) · \(profile.accessCeiling.title) · \(routeTitle(profile.route))")
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -299,13 +303,13 @@ struct AgentTeamsSettingsView: View {
                     let errors = AgentTeamValidation.errors(team: team, profiles: agentTeams.agentProfiles)
                     HStack(spacing: 10) {
                         Image(systemName: errors.isEmpty ? "person.2.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(errors.isEmpty ? LocusTheme.inkSoft : LocusTheme.warningForeground)
+                            .foregroundStyle(errors.isEmpty ? viewColors.inkSoft : viewColors.warningForeground)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(team.name).font(.locus(size: 11, weight: .semibold))
                             Text(errors.first ?? "\(team.memberIDs.count) members · \(team.budget.maxConcurrentCalls) concurrent calls · \(team.budget.callBudgetMode.title.lowercased())")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(errors.isEmpty ? LocusTheme.muted : LocusTheme.coral)
+                                .foregroundStyle(errors.isEmpty ? viewColors.muted : viewColors.coral)
                                 .lineLimit(2)
                         }
                         Spacer()
@@ -329,7 +333,7 @@ struct AgentTeamsSettingsView: View {
         Section("Automatic hosted routing") {
             Text("Locus asks once per account before a dispatcher may route team data to it automatically.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
             ForEach(providerAccounts.providerAccounts) { account in
                 HStack(spacing: 10) {
                     ProviderLogo(
@@ -341,7 +345,7 @@ struct AgentTeamsSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(account.displayName).font(.locus(size: 10, weight: .semibold))
                         Text(account.resolvedBaseURL).font(.locus(size: 8, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Spacer()
                     if agentTeams.teamRoutingConsentAccountIDs.contains(account.id) {
@@ -377,7 +381,7 @@ struct AgentTeamsSettingsView: View {
             }
             Text("Metadata export is off by default. The authorization value is stored unencrypted in local app settings and is never written to logs or traces. Visible content requires a separate confirmation for each run.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -388,7 +392,7 @@ struct AgentTeamsSettingsView: View {
             HStack {
                 Text("Local, reproducible suites")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Spacer()
                 Button("Import JSON") { evaluations.importEvaluationSuite() }
                     .buttonStyle(.locus())
@@ -402,12 +406,12 @@ struct AgentTeamsSettingsView: View {
                 ForEach(evaluations.evaluationSuites) { suite in
                     HStack(spacing: 10) {
                         Image(systemName: "checkmark.seal")
-                            .foregroundStyle(LocusTheme.signalDeep)
+                            .foregroundStyle(viewColors.signalDeep)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(suite.name).font(.locus(size: 10, weight: .semibold))
                             Text("\(suite.cases.count) cases · disposable checkouts")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         Spacer()
                         Button("Run") { evaluations.runEvaluationSuite(suite) }
@@ -440,7 +444,7 @@ struct AgentTeamsSettingsView: View {
             if let status = evaluations.evaluationStatus {
                 Label(status, systemImage: evaluations.activeEvaluationID == nil ? "checkmark.circle" : "progress.indicator")
                     .font(.locus(size: 9, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .padding(.vertical, 6)
             }
         }
@@ -470,7 +474,7 @@ struct AgentTeamsSettingsView: View {
     private func emptyRow(_ text: String) -> some View {
         Text(text)
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 9)
     }
@@ -489,8 +493,8 @@ struct AgentTeamsSettingsView: View {
                 Spacer()
                 Button(actionTitle, systemImage: "plus", action: action)
                     .buttonStyle(.borderless)
-                    .foregroundStyle(LocusTheme.inkSoft)
-                    .tint(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.inkSoft)
+                    .tint(viewColors.accentAction)
                     .textCase(nil)
             }
         }
@@ -517,6 +521,10 @@ struct AgentTeamsSettingsView: View {
 }
 
 struct QuickTeamBuilderView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -589,7 +597,7 @@ struct QuickTeamBuilderView: View {
         // window. The catalog already scrolls, so height belongs to the
         // viewport instead of being forced beyond the sheet's host window.
         .frame(width: 700, height: 580)
-        .background(LocusTheme.paper)
+        .background(viewColors.paper)
         .accessibilityIdentifier("quickTeam.builder")
         .task {
             await model.refreshMetadata()
@@ -619,16 +627,16 @@ struct QuickTeamBuilderView: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "person.3.sequence.fill")
                 .font(.locus(size: 16, weight: .semibold))
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .frame(width: 38, height: 38)
-                .background(LocusTheme.signal.opacity(0.10))
+                .background(viewColors.signal.opacity(0.10))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text("Create a Quick Team")
                     .font(.locus(size: 16, weight: .bold))
                 Text("Choose a lane, then click a model. Advanced settings remain available afterward.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             Spacer()
             Button {
@@ -650,7 +658,7 @@ struct QuickTeamBuilderView: View {
             Text("TEAM NAME")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             TextField("Quick Team", text: $draft.name)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Quick team name")
@@ -663,7 +671,7 @@ struct QuickTeamBuilderView: View {
             Text("1. CHOOSE WHERE THE MODEL WILL WORK")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             HStack(alignment: .top, spacing: 10) {
                 ForEach(Lane.allCases) { lane in
                     laneCard(lane)
@@ -681,32 +689,32 @@ struct QuickTeamBuilderView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 7) {
                     Image(systemName: lane.symbol)
-                        .foregroundStyle(selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                        .foregroundStyle(selected ? viewColors.signalDeep : viewColors.muted)
                     Text(lane.title)
                         .font(.locus(size: 11, weight: .semibold))
                     Spacer(minLength: 4)
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(LocusTheme.signalDeep)
+                            .foregroundStyle(viewColors.signalDeep)
                     }
                 }
                 Text(laneSelectionTitle(lane))
                     .font(.locus(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(laneHasSelection(lane) ? LocusTheme.ink : LocusTheme.muted)
+                    .foregroundStyle(laneHasSelection(lane) ? viewColors.ink : viewColors.muted)
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .frame(minHeight: 23, alignment: .topLeading)
                 Text(lane.detail)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .padding(11)
             .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-            .background(selected ? LocusTheme.signal.opacity(0.09) : LocusTheme.white.opacity(0.62))
+            .background(selected ? viewColors.signal.opacity(0.09) : viewColors.white.opacity(0.62))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.65) : LocusTheme.line, lineWidth: selected ? 1.5 : 1)
+                    .stroke(selected ? viewColors.signalDeep.opacity(0.65) : viewColors.line, lineWidth: selected ? 1.5 : 1)
             }
             .contentShape(Rectangle())
         }
@@ -723,12 +731,12 @@ struct QuickTeamBuilderView: View {
                     Text("2. PICK \(activeLane.title.uppercased()) MODELS")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(activeLane == .helpers
                         ? "Choose any number of helpers, including a model another role uses. Click again to remove one."
                         : "Choose one model. Any role can reuse a model with its own rules.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 Spacer()
                 TextField("Search models", text: $search)
@@ -743,7 +751,7 @@ struct QuickTeamBuilderView: View {
                         ? "No catalog models are available yet. Connect a provider or install an Ollama model."
                         : "No models match “\(search)”.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Button("Manage Models & Providers…") { openProviders() }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -751,7 +759,7 @@ struct QuickTeamBuilderView: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(LocusTheme.white.opacity(0.55))
+                .background(viewColors.white.opacity(0.55))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -761,7 +769,7 @@ struct QuickTeamBuilderView: View {
                                 Text(section.title.uppercased())
                                     .font(.locus(size: 8, weight: .bold))
                                     .tracking(0.7)
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                                 LazyVGrid(
                                     columns: [GridItem(.adaptive(minimum: 205), spacing: 8)],
                                     alignment: .leading,
@@ -777,11 +785,11 @@ struct QuickTeamBuilderView: View {
                                 Text(section.title.uppercased())
                                     .font(.locus(size: 8, weight: .bold))
                                     .tracking(0.7)
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                                 HStack(spacing: 10) {
                                     Text(emptyMessage)
                                         .font(.locus(size: 8))
-                                        .foregroundStyle(LocusTheme.muted)
+                                        .foregroundStyle(viewColors.muted)
                                     Spacer()
                                     Button("Manage…") { openProviders() }
                                         .buttonStyle(.bordered)
@@ -789,7 +797,7 @@ struct QuickTeamBuilderView: View {
                                         .accessibilityLabel("Manage models for \(section.title)")
                                 }
                                 .padding(10)
-                                .background(LocusTheme.white.opacity(0.45))
+                                .background(viewColors.white.opacity(0.45))
                                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             }
                         }
@@ -811,8 +819,8 @@ struct QuickTeamBuilderView: View {
                             if selected {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(LocusTheme.accentAction)
-                                    .background(Circle().fill(LocusTheme.surfaceCard))
+                                    .foregroundStyle(viewColors.accentAction)
+                                    .background(Circle().fill(viewColors.surfaceCard))
                             }
                         }
                     Text(choice.model)
@@ -824,7 +832,7 @@ struct QuickTeamBuilderView: View {
                 HStack(spacing: 5) {
                     Text(choice.providerShortName)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                     Spacer(minLength: 2)
                     assignmentBadges(choice)
@@ -832,11 +840,11 @@ struct QuickTeamBuilderView: View {
             }
             .padding(9)
             .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
-            .background(selected ? LocusTheme.signal.opacity(0.09) : LocusTheme.white.opacity(0.62))
+            .background(selected ? viewColors.signal.opacity(0.09) : viewColors.white.opacity(0.62))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(selected ? LocusTheme.signalDeep.opacity(0.62) : LocusTheme.line, lineWidth: selected ? 1.5 : 1)
+                    .stroke(selected ? viewColors.signalDeep.opacity(0.62) : viewColors.line, lineWidth: selected ? 1.5 : 1)
             }
             .contentShape(Rectangle())
         }
@@ -857,9 +865,9 @@ struct QuickTeamBuilderView: View {
     private func assignmentBadge(_ label: String) -> some View {
         Text(label)
             .font(.locus(size: 7, weight: .bold))
-            .foregroundStyle(LocusTheme.signalDeep)
+            .foregroundStyle(viewColors.signalDeep)
             .frame(width: 16, height: 16)
-            .background(LocusTheme.signal.opacity(0.12))
+            .background(viewColors.signal.opacity(0.12))
             .clipShape(Circle())
             .accessibilityHidden(true)
     }
@@ -869,7 +877,7 @@ struct QuickTeamBuilderView: View {
             Text("WHAT HAPPENS WHEN YOU RUN IT")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             summaryRow("Dispatcher chooses only the useful helpers", symbol: "arrow.triangle.branch")
             summaryRow("Lead editor is the only quick-team member that can edit files", symbol: "lock.shield")
             summaryRow("You review the complete plan once before work starts", symbol: "checkmark.shield")
@@ -882,7 +890,7 @@ struct QuickTeamBuilderView: View {
     private func summaryRow(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.inkSoft)
+            .foregroundStyle(viewColors.inkSoft)
     }
 
     @ViewBuilder
@@ -892,10 +900,10 @@ struct QuickTeamBuilderView: View {
             VStack(alignment: .leading, spacing: 9) {
                 Label("Hosted routing needs your approval", systemImage: "lock.shield.fill")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                 Text("Approve each selected hosted account before creating the team. This never stores its credentials in the team.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 ForEach(accounts) { account in
                     HStack {
                         Text(account.displayName)
@@ -910,11 +918,11 @@ struct QuickTeamBuilderView: View {
                 }
             }
             .padding(12)
-            .background(LocusTheme.coral.opacity(0.07))
+            .background(viewColors.coral.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(LocusTheme.coral.opacity(0.35))
+                    .stroke(viewColors.coral.opacity(0.35))
             }
         }
     }
@@ -924,27 +932,27 @@ struct QuickTeamBuilderView: View {
             if let message = creationError ?? blockingMessage {
                 Label(message, systemImage: "info.circle")
                     .font(.locus(size: 8))
-                    .foregroundStyle(creationError == nil ? LocusTheme.muted : LocusTheme.coral)
+                    .foregroundStyle(creationError == nil ? viewColors.muted : viewColors.coral)
                     .lineLimit(2)
                     .accessibilityIdentifier("quickTeam.status")
             } else {
                 Text("Ready to create and select \(draft.name.trimmingCharacters(in: .whitespacesAndNewlines)).")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             Spacer()
             Button("Cancel") { dismiss() }
                 .accessibilityIdentifier("quickTeam.cancel")
             Button("Create & Use Team") { createTeam() }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(blockingMessage != nil)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("quickTeam.create")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .background(LocusTheme.paper)
+        .background(viewColors.paper)
     }
 
     private var choiceSections: [ChoiceSection] {
@@ -1086,6 +1094,10 @@ struct QuickTeamBuilderView: View {
 }
 
 private struct EvaluationReportView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     let report: EvaluationReport
 
@@ -1108,7 +1120,7 @@ private struct EvaluationReportView: View {
                 Text(report.suite.name).font(.locus(size: 16, weight: .bold))
                 Text("Evaluation results")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             Spacer()
             Button("Done") { dismiss() }
@@ -1144,7 +1156,7 @@ private struct EvaluationReportView: View {
             Text("COMPARISON")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.7)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             ForEach(report.comparison) { comparison in
                 HStack {
                     Text(comparisonTitle(comparison)).font(.locus(size: 9, weight: .semibold))
@@ -1173,7 +1185,7 @@ private struct EvaluationReportView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Image(systemName: result.state == "passed" ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .foregroundStyle(result.state == "passed" ? LocusTheme.success : LocusTheme.coral)
+                                .foregroundStyle(result.state == "passed" ? viewColors.success : viewColors.coral)
                             Text(result.caseID).font(.locus(size: 9, weight: .semibold))
                             Spacer()
                             Text("\(result.durationMilliseconds ?? 0) ms")
@@ -1182,10 +1194,10 @@ private struct EvaluationReportView: View {
                         if let score = result.rubricScore {
                             Text("Subjective judge · \(Int(score))/100")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         if let error = result.error, !error.isEmpty {
-                            Text(error).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
+                            Text(error).font(.locus(size: 8)).foregroundStyle(viewColors.coral)
                         }
                     }
                     .padding(9)
@@ -1198,12 +1210,16 @@ private struct EvaluationReportView: View {
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value).font(.locus(size: 11, weight: .bold, design: .monospaced))
-            Text(title).font(.locus(size: 7)).foregroundStyle(LocusTheme.muted)
+            Text(title).font(.locus(size: 7)).foregroundStyle(viewColors.muted)
         }
     }
 }
 
 private struct AgentBehaviorEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -1240,13 +1256,13 @@ private struct AgentBehaviorEditor: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: "text.bubble")
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.locus(size: 17, weight: .semibold))
                     Text("Instructions, response style, and memory")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
                 Spacer()
             }
@@ -1270,16 +1286,16 @@ private struct AgentBehaviorEditor: View {
 
                     Section("Custom instructions") {
                         TextEditor(text: $draft.customInstructions)
-                            .foregroundStyle(LocusTheme.inkSoft)
-                            .tint(LocusTheme.accentAction)
+                            .foregroundStyle(viewColors.inkSoft)
+                            .tint(viewColors.accentAction)
                             .scrollContentBackground(.hidden)
-                            .background(LocusTheme.surfaceCard)
+                            .background(viewColors.surfaceCard)
                             .font(.locus(size: 10))
                             .frame(minHeight: 130)
-                            .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+                            .overlay { RoundedRectangle(cornerRadius: 6).stroke(viewColors.line) }
                         Text("These are added below locked safety, tool, permission, and factual model-identity rules.")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
 
                     Section {
@@ -1307,7 +1323,7 @@ private struct AgentBehaviorEditor: View {
             HStack {
                 Text("Changes apply to the next turn; running work keeps its starting snapshot.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -1316,14 +1332,14 @@ private struct AgentBehaviorEditor: View {
                     onSave(draft)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.accentAction)
+                .tint(viewColors.accentAction)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(14)
-            .background(LocusTheme.paper)
+            .background(viewColors.paper)
         }
         .frame(width: 650, height: 580)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .task(id: previewRequest) { await refreshPromptPreview() }
     }
 
@@ -1331,7 +1347,7 @@ private struct AgentBehaviorEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Group {
                 Text("MODE-SPECIFIC GUIDANCE")
-                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(viewColors.muted)
                 LocusFormTextField("Just Chat", text: $draft.modeInstructions.ask, axis: .vertical)
                 LocusFormTextField("Adaptive Work", text: $draft.modeInstructions.work, axis: .vertical)
                 LocusFormTextField("Plan", text: $draft.modeInstructions.plan, axis: .vertical)
@@ -1340,7 +1356,7 @@ private struct AgentBehaviorEditor: View {
             Divider()
             Group {
                 Text("CAPABILITY CEILINGS")
-                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(viewColors.muted)
                 Toggle("Workspace reading", isOn: $draft.capabilityPolicy.workspaceRead)
                 Toggle("Workspace editing", isOn: $draft.capabilityPolicy.workspaceWrite)
                 Toggle("Shell commands", isOn: $draft.capabilityPolicy.shell)
@@ -1349,12 +1365,12 @@ private struct AgentBehaviorEditor: View {
                 Toggle("Computer control", isOn: $draft.capabilityPolicy.computerControl)
                 Toggle("iOS Simulator control", isOn: $draft.capabilityPolicy.simulatorControl)
                 Text("These switches can only remove access. The selected mode, permission policy, and team role can narrow it further. Image generation needs both Workspace editing and Network and browser.")
-                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             }
             Divider()
             Group {
                 Text("MEMORY")
-                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8, weight: .bold)).foregroundStyle(viewColors.muted)
                 Toggle("Automatically recall relevant approved memory", isOn: $draft.memoryPolicy.recallEnabled)
                 Toggle("Allow conservative Memory Inbox suggestions", isOn: $draft.memoryPolicy.proposalsEnabled)
                 Toggle("Allow explicit memory search", isOn: $draft.memoryPolicy.searchEnabled)
@@ -1391,7 +1407,7 @@ private struct AgentBehaviorEditor: View {
                 )
                 .disabled(!draft.memoryPolicy.crossChatContextEnabled)
                 Text("Just Chat receives neither workspace memory nor session snapshots. Unpinned snapshots expire after 30 days.")
-                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             }
             Divider()
             Toggle("Custom tool-step limit", isOn: Binding(
@@ -1453,7 +1469,7 @@ private struct AgentBehaviorEditor: View {
             }
             Text("Managed providers are interrupted at the next usage boundary they report.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
         .padding(.vertical, 6)
     }
@@ -1501,11 +1517,11 @@ private struct AgentBehaviorEditor: View {
         .accessibilityIdentifier("settings.behavior.preview.mode")
         if previewLoading {
             HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading effective prompt…") }
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
         } else if let previewError {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Prompt preview unavailable", systemImage: "exclamationmark.triangle")
-                Text(previewError).foregroundStyle(LocusTheme.muted)
+                Text(previewError).foregroundStyle(viewColors.muted)
                 Button("Retry") { previewRetry = UUID() }.buttonStyle(.locus())
             }
             .font(.locus(size: 9))
@@ -1513,9 +1529,9 @@ private struct AgentBehaviorEditor: View {
         } else if let preview {
             Text((previewRoute == nil ? "Current conversation route" : "Selected agent route") +
                 " · \(preview.provider) · \(preview.model ?? previewModelName ?? model.selectedModel) · \(preview.route)")
-                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             Text(preview.basePrompt)
-                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             previewText(preview.text)
                 .accessibilityIdentifier("settings.behavior.preview.text")
             DisclosureGroup("Prompt layers") {
@@ -1537,7 +1553,7 @@ private struct AgentBehaviorEditor: View {
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(LocusTheme.white.opacity(0.8))
+            .background(viewColors.white.opacity(0.8))
             .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
@@ -1608,6 +1624,10 @@ struct EffectiveResponsePreview: Decodable, Equatable {
 }
 
 struct AgentProfileEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -1702,7 +1722,7 @@ struct AgentProfileEditor: View {
             footer
         }
         .frame(width: 640, height: 580)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.editor")
         .task { nameFocused = isNew }
@@ -1716,7 +1736,7 @@ struct AgentProfileEditor: View {
         .onChange(of: draft.accessCeiling) { _, _ in
             if isNew { draft.applyNewAgentServiceDefaults() }
         }
-        .sheet(isPresented: $editingBehavior) {
+        .locusSheet(isPresented: $editingBehavior) {
             AgentBehaviorEditor(
                 title: "\(draft.name.isEmpty ? "Specialist" : draft.name) Behavior",
                 behavior: draft.resolvedBehavior,
@@ -1732,7 +1752,7 @@ struct AgentProfileEditor: View {
             .environmentObject(model)
             .environmentObject(providerAccounts)
         }
-        .sheet(isPresented: $choosingRole) {
+        .locusSheet(isPresented: $choosingRole) {
             AgentRolePickerView(roles: roleTemplates, selectedID: draft.resolvedBehavior.specialistRoleID,
                                 error: roleCatalogError, select: applyRole)
         }
@@ -1742,16 +1762,16 @@ struct AgentProfileEditor: View {
         HStack(spacing: 12) {
             Image(systemName: "person.crop.square")
                 .font(.locus(size: 19, weight: .medium))
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .frame(width: 42, height: 42)
-                .background(LocusTheme.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .background(viewColors.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(isNew ? "New Agent" : "Edit Agent")
                     .font(.locus(size: 17, weight: .semibold))
                 Text("One agent for chats, Agent World, and teams.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             Spacer()
         }
@@ -1794,7 +1814,7 @@ struct AgentProfileEditor: View {
                         .font(.locus(size: 13, weight: .semibold))
                         .accessibilityIdentifier("agent.selectedRole")
                     Text(selectedTemplate?.category ?? "Your instructions and settings")
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.textTertiary)
                 }
                 Spacer()
                 if previousTemplateProfile != nil {
@@ -1805,15 +1825,15 @@ struct AgentProfileEditor: View {
                     .accessibilityIdentifier("agent.chooseRole")
             }
             if recommendationID != nil {
-                Text("Finding a suitable connected model…").font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+                Text("Finding a suitable connected model…").font(.locus(size: 10)).foregroundStyle(viewColors.textTertiary)
             } else if let recommendationMessage {
-                Text(recommendationMessage).font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
+                Text(recommendationMessage).font(.locus(size: 10)).foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agent.modelRecommendation")
             }
         }
         .padding(14)
-        .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
+        .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var selectedTemplate: AgentRoleTemplate? {
@@ -1895,7 +1915,7 @@ struct AgentProfileEditor: View {
                 modelPicker
                 Text(providerDetail)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Button(testingConnection ? "Testing…" : "Test Connection") { testConnection() }
@@ -1906,26 +1926,26 @@ struct AgentProfileEditor: View {
                 if let connectionResult {
                     Text(connectionResult)
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("agent.connectionResult")
                 }
                 if refreshingModels {
                     Text("Checking this provider’s model list…")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 } else if modelOptions.availability(of: draft.model) == .unverified,
                           !draft.model.isEmpty, connectionResult == nil {
                     Text("This provider’s model list has not been confirmed yet. Test the connection to check this model.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let message = modelValidationMessage {
                 Label(message, systemImage: "exclamationmark.circle")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.warningForeground)
+                    .foregroundStyle(viewColors.warningForeground)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agent.modelAvailability")
             }
@@ -1946,7 +1966,7 @@ struct AgentProfileEditor: View {
                 .accessibilityIdentifier("agent.accessCeiling")
                 Text(accessExplanation)
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 standardToolAccess
             }
@@ -1973,20 +1993,20 @@ struct AgentProfileEditor: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .frame(width: 20)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.locus(size: 11, weight: .semibold))
                     Text(detail)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.right")
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
                     .accessibilityHidden(true)
             }
@@ -2099,7 +2119,7 @@ struct AgentProfileEditor: View {
                 }
                 .font(.locus(size: 9))
                 .buttonStyle(.borderless)
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .accessibilityIdentifier("agent.useRoleTemplate")
                 if let previousInstructions {
                     Button("Undo") {
@@ -2113,23 +2133,23 @@ struct AgentProfileEditor: View {
                 }
             }
             TextEditor(text: $draft.instructions)
-                .foregroundStyle(LocusTheme.ink)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.ink)
+                .tint(viewColors.accentAction)
                 .font(.locus(size: 11))
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(height: 112)
-                .background(LocusTheme.surfaceCard)
+                .background(viewColors.surfaceCard)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                        .stroke(viewColors.lineStrong, lineWidth: 1)
                 }
                 .accessibilityLabel("Instructions")
                 .accessibilityIdentifier("agent.instructions")
             Text("Describe its purpose, how it should work, and what a good result looks like.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -2152,10 +2172,10 @@ struct AgentProfileEditor: View {
             Text("ALLOWED TOOLS")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text("Enable only the tools this specialist needs. These choices can restrict access; they cannot override the access level, chat permissions, or workspace boundaries.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("agent.standardToolAccessExplanation")
             toolAccessRow(
@@ -2207,7 +2227,7 @@ struct AgentProfileEditor: View {
         Toggle(isOn: binding) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.locus(size: 9, weight: .medium))
-                Text(detail).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                Text(detail).font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             }
         }
         .toggleStyle(.checkbox)
@@ -2270,7 +2290,7 @@ struct AgentProfileEditor: View {
                 .accessibilityIdentifier("agent.capabilityTags")
             Text("Tags help a team dispatcher choose the right specialist.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
             Divider()
             Text("Runtime limits")
                 .font(.locus(size: 11, weight: .medium))
@@ -2315,7 +2335,7 @@ struct AgentProfileEditor: View {
             .accessibilityIdentifier("agent.connections.all")
             Text("Includes enabled extensions and services you connect later. Turn off individual services below. Chat permissions still apply.")
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(connectedServices.filter { $0.kind == .gmail || $0.kind == .telegram }) { connection in
                 Toggle(connection.displayName, isOn: Binding(
@@ -2367,7 +2387,7 @@ struct AgentProfileEditor: View {
         HStack(spacing: 12) {
             Text(nameValidationMessage ?? (isNew ? "You can refine everything later." : "Changes apply to future runs."))
                 .font(.locus(size: 9))
-                .foregroundStyle(nameValidationMessage == nil ? LocusTheme.textTertiary : LocusTheme.warningForeground)
+                .foregroundStyle(nameValidationMessage == nil ? viewColors.textTertiary : viewColors.warningForeground)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("agent.saveHint")
             Spacer(minLength: 8)
@@ -2376,14 +2396,14 @@ struct AgentProfileEditor: View {
                 .accessibilityIdentifier("agent.cancel")
             Button(isNew ? "Create Agent" : "Save changes") { saveProfile() }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.accentAction)
+                .tint(viewColors.accentAction)
                 .keyboardShortcut(.defaultAction)
                 .disabled(nameValidationMessage != nil || modelValidationMessage != nil || recommendationID != nil)
                 .accessibilityIdentifier("agent.save")
         }
         .padding(.horizontal, 22)
         .frame(minHeight: 62)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
     }
 
     private var nameValidationMessage: String? {
@@ -2515,6 +2535,10 @@ struct AgentProfileEditor: View {
 }
 
 private struct AgentTeamEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -2543,13 +2567,13 @@ private struct AgentTeamEditor: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: "person.3.sequence.fill")
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Configure team").font(.locus(size: 17, weight: .semibold))
                     Text("Choose its specialists, execution environment, and limits.")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
                 Spacer()
             }
@@ -2597,7 +2621,7 @@ private struct AgentTeamEditor: View {
                     }
                     Text("The lead handles safe fallback and combined review fixes. Other write-capable members can own ordered coding jobs in the approved plan.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("teamEditor.multiWriterExplanation")
                     Toggle("Use isolated managed worktree for new Git tasks", isOn: $draft.useManagedWorktree)
@@ -2608,7 +2632,7 @@ private struct AgentTeamEditor: View {
                         .disabled(!draft.useManagedWorktree)
                     Text("Each independent writer gets a private checkout. Locus integrates completed patches in plan order and stops with a visible conflict instead of guessing.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     Section("Dispatch and routing") {
                         Label(
@@ -2618,7 +2642,7 @@ private struct AgentTeamEditor: View {
                         .font(.locus(size: 9, weight: .medium))
                         Text("Run Plan approves the complete plan. Locus will not ask again for each model, agent, job, or step; security-sensitive tool permissions remain separate.")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("teamEditor.oneTimeApproval")
                         Picker("Specialist routing", selection: Binding(
@@ -2641,7 +2665,7 @@ private struct AgentTeamEditor: View {
                             scoreWeight("Cost", \.cost)
                             Text("Weights are normalized to 100% when saved. Limited data is shown until five comparable evaluations exist.")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                     }
                     Section("Adaptive read-only delegation") {
@@ -2668,7 +2692,7 @@ private struct AgentTeamEditor: View {
                             ? "OpenAI-native orchestration is optional and uses the dispatcher's OpenAI API billing route."
                             : "OpenAI-native orchestration is available only with an OpenAI API dispatcher on GPT-5.6; ChatGPT plan accounts remain Locus-managed.")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("teamEditor.swarmEngineEligibility")
                         Stepper(
@@ -2697,7 +2721,7 @@ private struct AgentTeamEditor: View {
                         .accessibilityIdentifier("teamEditor.maxSwarmDepth")
                         Text("Children are always read-only and stay inside the approved goals, providers, and budgets. Writers can never delegate.")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("teamEditor.writerDelegationExplanation")
                     }
@@ -2722,14 +2746,14 @@ private struct AgentTeamEditor: View {
                         } else {
                             Text("Locus allocates calls in small slices and preserves enough capacity for later coding jobs, review, and the final handoff.")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         Stepper("Metered tokens: \(draft.budget.maxMeteredTokens.formatted())", value: $draft.budget.maxMeteredTokens, in: 1_000...2_000_000, step: 10_000)
                     }
                     if !errors.isEmpty {
                         ForEach(errors, id: \.self) { error in
                             Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(LocusTheme.coral)
+                                .foregroundStyle(viewColors.coral)
                                 .font(.locus(size: 9))
                         }
                     }
@@ -2745,7 +2769,7 @@ private struct AgentTeamEditor: View {
                 if let firstError = errors.first {
                     Text(firstError)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.warningForeground)
+                        .foregroundStyle(viewColors.warningForeground)
                         .lineLimit(2)
                 }
                 Spacer()
@@ -2758,17 +2782,17 @@ private struct AgentTeamEditor: View {
                     onSave(draft)
                 }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.accentAction)
+                    .tint(viewColors.accentAction)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!errors.isEmpty)
                     .accessibilityIdentifier("teamEditor.save")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .background(LocusTheme.paper)
+            .background(viewColors.paper)
         }
         .frame(width: 640, height: 580)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
     }
 
     private var memberProfiles: [AgentProfile] {
@@ -2814,6 +2838,10 @@ private struct AgentTeamEditor: View {
 }
 
 private struct EvaluationSuiteEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -2835,7 +2863,7 @@ private struct EvaluationSuiteEditor: View {
             Toggle("Allow explicitly read-only MCP evidence", isOn: $draft.readOnlyMCP)
             Text("Coding cases always run in disposable managed worktrees. Computer control and mutating MCP tools are disabled.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Section("Cases") {
                 ForEach(draft.cases.indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 7) {
@@ -2971,7 +2999,7 @@ private struct EvaluationSuiteEditor: View {
                     onSave(draft)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(
                     draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || draft.cases.contains { $0.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -3055,6 +3083,10 @@ private struct EvaluationSuiteEditor: View {
 }
 
 struct WorkspaceKnowledgeSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var knowledge: WorkspaceKnowledgeModel
@@ -3079,7 +3111,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                 }
                 Text("The agent can suggest preferences, decisions, and facts. Nothing is recalled until you approve it.")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
 
                 if let vault = knowledge.memoryVaultStatus {
                     Label {
@@ -3088,11 +3120,11 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .fontWeight(.semibold)
                             Text("\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                         }
                     } icon: {
                         Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
-                            .foregroundStyle(vault.encrypted ? LocusTheme.accentAction : LocusTheme.warning)
+                            .foregroundStyle(vault.encrypted ? viewColors.accentAction : viewColors.warning)
                     }
                 }
 
@@ -3104,7 +3136,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                             ? "No suggestions waiting for review"
                             : "\(knowledge.memoryCandidates.count) suggestion\(knowledge.memoryCandidates.count == 1 ? "" : "s") waiting")
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                     }
                     Spacer()
                     Button("Remember…") { memoryDraft = .new }
@@ -3116,13 +3148,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                         Text(memory.title).fontWeight(.semibold)
                         Text(memory.content)
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                             .lineLimit(3)
                         HStack {
                             if memory.hasConflicts {
                                 Label("Possible conflict", systemImage: "arrow.triangle.branch")
                                     .font(.caption)
-                                    .foregroundStyle(LocusTheme.warning)
+                                    .foregroundStyle(viewColors.warning)
                             }
                             Spacer()
                             Button("Reject", role: .destructive) {
@@ -3140,13 +3172,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                                     )
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .tint(LocusTheme.ink)
+                                .tint(viewColors.ink)
                             } else {
                                 Button("Approve") {
                                     knowledge.approveMemoryCandidate(memory, agentID: selectedMemoryAgentID)
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .tint(LocusTheme.ink)
+                                .tint(viewColors.ink)
                             }
                         }
                     }
@@ -3156,13 +3188,13 @@ struct WorkspaceKnowledgeSettingsView: View {
                 ForEach(knowledge.workspaceMemories) { memory in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
-                            .foregroundStyle(memory.stale ? LocusTheme.warning : LocusTheme.accentAction)
+                            .foregroundStyle(memory.stale ? viewColors.warning : viewColors.accentAction)
                             .frame(width: 22)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(memory.title).fontWeight(.semibold)
                             Text(memory.content)
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                                 .lineLimit(3)
                             Text("\(memory.resolvedScope.title) · \(memory.resolvedKind.title)")
                                 .font(.caption2)
@@ -3182,11 +3214,11 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .fontWeight(.semibold)
                         Text(knowledgeSummary)
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                     }
                 } icon: {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .foregroundStyle(LocusTheme.accentAction)
+                        .foregroundStyle(viewColors.accentAction)
                 }
 
                 HStack {
@@ -3195,11 +3227,11 @@ struct WorkspaceKnowledgeSettingsView: View {
                             .fontWeight(.semibold)
                         Text("Encrypted snapshots help work continue across development chats.")
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                     }
                     Spacer()
                     Text(knowledge.contextSnapshots.count.formatted())
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                     Button("Clear All", role: .destructive) { knowledge.clearContextSnapshots() }
                         .disabled(knowledge.contextSnapshots.isEmpty)
                 }
@@ -3208,7 +3240,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                 ForEach(knowledge.contextSnapshots.prefix(8)) { snapshot in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: snapshot.pinned ? "pin.fill" : "clock.arrow.circlepath")
-                            .foregroundStyle(snapshot.pinned ? LocusTheme.accentAction : LocusTheme.textTertiary)
+                            .foregroundStyle(snapshot.pinned ? viewColors.accentAction : viewColors.textTertiary)
                             .frame(width: 22)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(snapshot.goal.isEmpty ? "Development session" : snapshot.goal)
@@ -3216,7 +3248,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                                 .lineLimit(2)
                             Text(Date(timeIntervalSince1970: snapshot.updatedAt), style: .relative)
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                         }
                         Spacer()
                         Button(snapshot.pinned ? "Unpin" : "Pin") {
@@ -3244,14 +3276,14 @@ struct WorkspaceKnowledgeSettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .accessibilityIdentifier("settings.knowledge.root")
         .task(id: selectedMemoryAgentID) {
             await knowledge.refreshWorkspaceKnowledge(agentID: selectedMemoryAgentID)
             syncDraft()
         }
         .onChange(of: knowledge.knowledgeStatus) { _, _ in syncDraft() }
-        .sheet(item: $memoryDraft) { draft in
+        .locusSheet(item: $memoryDraft) { draft in
             WorkspaceMemoryEditor(draft: draft) { value in
                 saveMemoryDraft(value)
                 memoryDraft = nil
@@ -3293,7 +3325,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                         .fontWeight(.semibold)
                     Text("Leave the model empty to use fast text search only.")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
             }
             Toggle("Index this workspace", isOn: $enabled)
@@ -3318,18 +3350,18 @@ struct WorkspaceKnowledgeSettingsView: View {
                     )
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 Button("Rebuild Index") { knowledge.rebuildWorkspaceKnowledge() }
                     .disabled(!enabled || model.isBusy)
             }
             if let status = knowledge.knowledgeStatus {
                 Text("\(status.documentCount) indexed files · \(status.chunkCount) searchable chunks")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                 if let error = status.lastError, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                 }
             }
         }
@@ -3344,7 +3376,7 @@ struct WorkspaceKnowledgeSettingsView: View {
             if let vault = knowledge.memoryVaultStatus {
                 Text("\(vault.cipher) · memory text and optional vectors are encrypted together on this Mac.")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             Button("Delete Workspace Index and Memory…", role: .destructive) {
                 confirmDeleteAll = true
@@ -3359,7 +3391,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                 Text(knowledge.skillObservations.isEmpty
                     ? "No observations recorded"
                     : "\(knowledge.skillObservations.count) improvement note\(knowledge.skillObservations.count == 1 ? "" : "s")")
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                 Spacer()
                 Button("Export…") { knowledge.exportSkillObservations() }
                     .disabled(knowledge.skillObservations.isEmpty)
@@ -3368,12 +3400,12 @@ struct WorkspaceKnowledgeSettingsView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Text("#\(observation.number)")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(observation.title).fontWeight(.semibold)
                         Text("\(observation.skill) · \(observation.status.capitalized)")
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                     }
                     Spacer()
                     if observation.status == "OPEN" {
@@ -3404,16 +3436,16 @@ struct WorkspaceKnowledgeSettingsView: View {
             if let report = knowledge.memoryDiagnosticReport {
                 Text("\(report.approvedCount) approved · \(report.candidateCount) pending · \(report.staleCount ?? 0) stale")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                 if !report.embeddingError.isEmpty {
                     Label(report.embeddingError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                 }
             } else {
                 Text("Diagnostics load after memory refresh.")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
         }
         .id("settings.memory.health")
@@ -3519,6 +3551,10 @@ private struct WorkspaceMemoryDraft: Identifiable {
 }
 
 private struct WorkspaceMemoryEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @State private var value: WorkspaceMemoryDraft
     let onSave: (WorkspaceMemoryDraft) -> Void
@@ -3540,26 +3576,26 @@ private struct WorkspaceMemoryEditor: View {
             }
             Text(value.kind.explanation)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(scopeExplanation)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             LocusFormTextField("Title", text: $value.title)
             TextEditor(text: $value.content)
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.accentAction)
                 .scrollContentBackground(.hidden)
-                .background(LocusTheme.surfaceCard)
+                .background(viewColors.surfaceCard)
                 .font(.locus(size: 10))
                 .frame(minHeight: 180)
-                .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+                .overlay { RoundedRectangle(cornerRadius: 6).stroke(viewColors.line) }
             LocusFormTextField("Tags", text: $value.tags, prompt: Text("decision, convention, fact"))
             VStack(alignment: .leading, spacing: 4) {
                 Text("Confidence · \(value.confidence, format: .percent.precision(.fractionLength(0)))")
                     .font(.locus(size: 9, weight: .semibold))
                 Slider(value: $value.confidence, in: 0...1, step: 0.05)
                 Text("Lower confidence makes this less likely to be recalled automatically.")
-                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             }
             Toggle("This memory expires", isOn: $value.expires)
             if value.expires {
@@ -3570,7 +3606,7 @@ private struct WorkspaceMemoryEditor: View {
                 Button("Cancel") { dismiss() }
                 Button("Save") { onSave(value) }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(value.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

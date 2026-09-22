@@ -6,6 +6,10 @@ import SwiftUI
 /// preference — the accounts page has no Save bar — and the status row shows
 /// what the agent accepted after each push.
 struct ImageGenerationSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @ObservedObject var imageGeneration: ImageGenerationModel
@@ -31,7 +35,7 @@ struct ImageGenerationSettingsView: View {
             if imageControlsDisabled {
                 Text("The local agent has image generation switched off (image_generation_v1).")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("settings.imageGeneration.capabilityNote")
             }
@@ -49,7 +53,7 @@ struct ImageGenerationSettingsView: View {
                     HStack {
                         Text("Add a ChatGPT or OpenAI API account to generate images.")
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.warning)
+                            .foregroundStyle(viewColors.warning)
                             .accessibilityIdentifier("settings.imageGeneration.empty")
                         Spacer()
                         Button("Add Account…", action: onAddAccount)
@@ -62,7 +66,7 @@ struct ImageGenerationSettingsView: View {
                         .accessibilityIdentifier("settings.imageGeneration.chatGPTModel")
                     Text("Uses your ChatGPT plan through OpenAI’s managed runtime. Size and quality are chosen automatically; describe preferences in your request. Account availability and plan limits apply.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Picker("Model", selection: modelSelection) {
@@ -76,7 +80,7 @@ struct ImageGenerationSettingsView: View {
                     if ImageGenerationOptions.hasExtendedQuality(draft.imageGenerationModel) {
                         Text("Sunburst is best for precise edits. Flare is designed for fast everyday image generation.")
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -123,14 +127,14 @@ struct ImageGenerationSettingsView: View {
                         if let customSizeError {
                             Text(customSizeError)
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                                 .accessibilityIdentifier("settings.imageGeneration.customSizeError")
                         }
                     }
                     if ImageGenerationOptions.hasCustomSizes(draft.imageGenerationModel) {
                         Text(ImageGenerationOptions.sizeHelp)
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -147,7 +151,7 @@ struct ImageGenerationSettingsView: View {
             if interactiveToggleDisabled {
                 Text("The local agent has interactive answers switched off (interactive_answers_v1).")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("settings.imageGeneration.interactiveCapabilityNote")
             }
@@ -163,7 +167,7 @@ struct ImageGenerationSettingsView: View {
 
             Text("With an account chosen, the agent gains generate_image and edit_image. Each call is approved by you first; the prompt — and for edits, the source image — is sent to that account's provider, and results are saved under Locus Images in the workspace. ChatGPT sign-in stays inside OpenAI’s managed runtime. API accounts use their own key and billing.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("settings.imageGeneration.footer")
         }
@@ -301,7 +305,7 @@ struct ImageGenerationSettingsView: View {
                 .accessibilityHidden(true)
             Text(statusText)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if imageGeneration.isApplying {
                 ProgressView()
@@ -331,10 +335,10 @@ struct ImageGenerationSettingsView: View {
     }
 
     private var statusColor: Color {
-        if imageGeneration.lastError != nil { return LocusTheme.coral }
+        if imageGeneration.lastError != nil { return viewColors.coral }
         guard draft.imageGenerationAccountID != nil,
               imageGeneration.state?.configured == true
-        else { return LocusTheme.muted }
-        return LocusTheme.success
+        else { return viewColors.muted }
+        return viewColors.success
     }
 }

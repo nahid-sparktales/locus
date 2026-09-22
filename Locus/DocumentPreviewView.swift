@@ -4,14 +4,18 @@ import Quartz
 import SwiftUI
 
 struct DocumentPreviewSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     let request: DocumentPreviewRequest
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(request.title).font(.headline).foregroundStyle(LocusTheme.ink).lineLimit(1)
-                    if let location = request.reference?.location, location.kind != "pdf" { Text(location.label).font(.subheadline).foregroundStyle(LocusTheme.muted) }
+                    Text(request.title).font(.headline).foregroundStyle(viewColors.ink).lineLimit(1)
+                    if let location = request.reference?.location, location.kind != "pdf" { Text(location.label).font(.subheadline).foregroundStyle(viewColors.muted) }
                 }
                 Spacer()
                 Button("Open in Default App") { NSWorkspace.shared.open(request.url) }
@@ -20,20 +24,24 @@ struct DocumentPreviewSheet: View {
             }.padding()
             if let warning = request.warning {
                 Label(warning, systemImage: "exclamationmark.triangle").font(.body)
-                    .foregroundStyle(LocusTheme.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding().background(LocusTheme.warning.opacity(0.12))
+                    .foregroundStyle(viewColors.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding().background(viewColors.warning.opacity(0.12))
             }
             Divider()
             DocumentPreviewView(request: request)
         }
         .frame(minWidth: 620, idealWidth: 860, minHeight: 500, idealHeight: 680)
-        .foregroundStyle(LocusTheme.inkSoft)
-        .background(LocusTheme.panel)
+        .foregroundStyle(viewColors.inkSoft)
+        .background(viewColors.panel)
 
     }
 }
 
 struct DocumentPreviewView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var library: WorkspaceLibraryModel
     let request: DocumentPreviewRequest
     @State private var text: String?
@@ -62,7 +70,7 @@ struct DocumentPreviewView: View {
                         }.pickerStyle(.segmented).frame(width: 160)
                     }
                     Spacer()
-                }.padding(10).background(LocusTheme.panel)
+                }.padding(10).background(viewColors.panel)
                 Divider()
             }
         Group {
@@ -90,12 +98,12 @@ struct DocumentPreviewView: View {
                         LazyVStack(alignment: .leading, spacing: 3) {
                             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
                                 HStack(alignment: .top, spacing: 12) {
-                                    Text("\(index + 1)").foregroundStyle(LocusTheme.muted).frame(width: 46, alignment: .trailing)
-                                    Text(line.isEmpty ? " " : line).foregroundStyle(LocusTheme.inkSoft).frame(maxWidth: .infinity, alignment: .leading)
+                                    Text("\(index + 1)").foregroundStyle(viewColors.muted).frame(width: 46, alignment: .trailing)
+                                    Text(line.isEmpty ? " " : line).foregroundStyle(viewColors.inkSoft).frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                                 .padding(.horizontal).id(index + 1)
-                                .background(index + 1 == request.reference?.location?.lineStart ? LocusTheme.contentLink.opacity(0.12) : .clear)
+                                .background(index + 1 == request.reference?.location?.lineStart ? viewColors.contentLink.opacity(0.12) : .clear)
                             }
                         }.padding(.vertical)
                     }.onAppear { if let line = request.reference?.location?.lineStart { proxy.scrollTo(line, anchor: .center) } }
@@ -106,7 +114,7 @@ struct DocumentPreviewView: View {
             } else {
                 VStack(spacing: 0) {
                     if extracting { HStack { ProgressView().controlSize(.small); Text("Preparing searchable text…") }.padding() }
-                    if let extractionError { Text(extractionError).font(.subheadline).foregroundStyle(LocusTheme.muted).padding() }
+                    if let extractionError { Text(extractionError).font(.subheadline).foregroundStyle(viewColors.muted).padding() }
                     LibraryQuickLookPreview(url: request.url)
                 }
             }
@@ -145,13 +153,13 @@ struct DocumentPreviewView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
-                    if result.truncated { Label("Partial extraction — some content could not be included", systemImage: "exclamationmark.triangle").foregroundStyle(LocusTheme.warning) }
+                    if result.truncated { Label("Partial extraction — some content could not be included", systemImage: "exclamationmark.triangle").foregroundStyle(viewColors.warning) }
                     ForEach(Array(result.segments.enumerated()), id: \.offset) { index, segment in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(segment.locator.label).font(.headline).foregroundStyle(LocusTheme.muted)
-                            Text(segment.text).font(segment.locator.kind == "sheet" ? .system(.body, design: .monospaced) : .body).foregroundStyle(LocusTheme.inkSoft).textSelection(.enabled)
+                            Text(segment.locator.label).font(.headline).foregroundStyle(viewColors.muted)
+                            Text(segment.text).font(segment.locator.kind == "sheet" ? .system(.body, design: .monospaced) : .body).foregroundStyle(viewColors.inkSoft).textSelection(.enabled)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12).background(matches(segment.locator) ? LocusTheme.contentLink.opacity(0.10) : .clear)
+                            .padding(12).background(matches(segment.locator) ? viewColors.contentLink.opacity(0.10) : .clear)
                             .clipShape(RoundedRectangle(cornerRadius: 8)).id(index)
                     }
                 }.padding(20)
@@ -219,6 +227,10 @@ private enum ImageCanvasBackground: String, CaseIterable, Identifiable {
 }
 
 private struct ImageReader: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let image: NSImage
     @State private var zoom: CGFloat = 1
     @State private var fits = true
@@ -229,7 +241,7 @@ private struct ImageReader: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) { zoomControls; Spacer(minLength: 8); backgroundControl }
                 VStack(spacing: 8) { HStack { zoomControls; Spacer(minLength: 0) }; backgroundControl }
-            }.padding(10).background(LocusTheme.panel)
+            }.padding(10).background(viewColors.panel)
             Divider()
             ImageScrollCanvas(image: image, zoom: $zoom, fits: $fits, canvasBackground: background)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -239,7 +251,7 @@ private struct ImageReader: View {
                 HStack { dimensions; Spacer(); Text("Pinch to zoom · Drag to pan") }
                 dimensions
             }
-            .font(.caption).foregroundStyle(LocusTheme.textSecondary).padding(10)
+            .font(.caption).foregroundStyle(viewColors.textSecondary).padding(10)
         }
     }
 
@@ -409,6 +421,10 @@ private final class ImageReaderCanvas: NSView {
 }
 
 struct DocumentPDFReader: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     var url: URL? = nil
     var data: Data? = nil
     var location: DocumentLocation? = nil
@@ -421,7 +437,7 @@ struct DocumentPDFReader: View {
                 ViewThatFits(in: .horizontal) {
                     HStack { pageControls; Spacer(minLength: 12); zoomControls }
                     VStack(spacing: 8) { pageControls; zoomControls }
-                }.padding(10).background(LocusTheme.panel)
+                }.padding(10).background(viewColors.panel)
                 Divider()
                 PDFReaderSurface(reader: reader)
             } else {

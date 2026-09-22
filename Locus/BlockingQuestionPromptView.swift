@@ -8,6 +8,10 @@ import SwiftUI
 /// A question with no options is not a special case — it renders the same card
 /// with the entry field focused on appear.
 struct BlockingQuestionPromptView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let request: AgentQuestionRequest
     var onResolve: (([AgentQuestionAnswer], String) -> Void)? = nil
@@ -48,7 +52,7 @@ struct BlockingQuestionPromptView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.55), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.55), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .focusable()
@@ -111,28 +115,28 @@ struct BlockingQuestionPromptView: View {
             Text("QUESTION")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             HStack(spacing: 7) {
                 Image(systemName: "questionmark.circle")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .accessibilityHidden(true)
                 if !current.header.isEmpty {
                     Text(current.header)
                         .font(.locus(size: 9, weight: .bold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .frame(height: 18)
-                        .background(LocusTheme.paperDeep)
+                        .background(viewColors.paperDeep)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 }
                 Text(current.multiSelect ? "Choose any that apply" : "Choose one, or type your own")
                     .font(.locus(size: 12, weight: .bold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                 Spacer()
                 if request.questions.count > 1 {
                     Text("\(index + 1) / \(request.questions.count)")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("question.progress")
                 }
             }
@@ -142,12 +146,12 @@ struct BlockingQuestionPromptView: View {
     private var questionBody: some View {
         Text(current.question)
             .font(.locus(size: 11, weight: .medium))
-            .foregroundStyle(LocusTheme.ink)
+            .foregroundStyle(viewColors.ink)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(LocusTheme.paperDeep.opacity(0.65))
+            .background(viewColors.paperDeep.opacity(0.65))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .accessibilityIdentifier("question.body")
     }
@@ -174,19 +178,19 @@ struct BlockingQuestionPromptView: View {
             HStack(spacing: 8) {
                 Text(current.multiSelect ? (isChosen ? "✓" : " ") : (isSelected ? "❯" : " "))
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text("\(offset + 1).")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(option.label)
                         .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                     if !option.description.isEmpty {
                         Text(option.description)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                 }
                 .lineLimit(1)
@@ -194,12 +198,12 @@ struct BlockingQuestionPromptView: View {
                 if isSelected {
                     Text("↵")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(.horizontal, 8)
             .frame(height: 38)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -221,19 +225,19 @@ struct BlockingQuestionPromptView: View {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text(current.options.isEmpty ? " " : "o.")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(current.options.isEmpty ? "Type your answer" : "Something else…")
                     .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                 Spacer()
             }
             .padding(.horizontal, 8)
             .frame(height: 32)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -266,7 +270,7 @@ struct BlockingQuestionPromptView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(LocusTheme.paperDeep.opacity(0.65))
+        .background(viewColors.paperDeep.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 

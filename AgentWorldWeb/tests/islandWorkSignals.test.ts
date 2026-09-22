@@ -17,12 +17,13 @@ function worker(id = 'captain', harbor = 0): IslandWorker {
 test('only real working crew settled at its own shore lights an island', () => {
   const captain = worker();
   assert.equal(activeWorkIslands([captain], 12).get('captain'), 0);
+  assert.equal(activeWorkIslands([worker('new-world', 13)], 14).get('new-world'), 13, 'The newly available islands also light up');
   for (const status of AGENT_STATUSES.filter(status => status !== 'working')) assert.equal(activeWorkIslands([{ ...captain, status }], 12).size, 0);
   for (const change of [{ walking: true }, { x: 6 }, { heading: 0 }, { phase: 'returning' as const }, { intent: 'wander' as const }]) {
     assert.equal(activeWorkIslands([{ ...captain, motion: { ...captain.motion, ...change } }], 12).size, 0);
   }
   assert.equal(activeWorkIslands([{ ...captain, motion: { ...captain.motion, x: 9, z: 9, home: { x: 9, z: 9 } } }], 12).size, 0, 'An alliance visitor must not illuminate its empty home island');
-  for (const harbor of [undefined, -1, 0.5, 12, 200]) assert.equal(activeWorkIslands([{ ...captain, harbor }], 20).size, 0);
+  for (const harbor of [undefined, -1, 0.5, 14, 200]) assert.equal(activeWorkIslands([{ ...captain, harbor }], 20).size, 0);
 });
 
 test('island glow is bounded, turns off immediately, stays static for reduced motion and fully disposes', () => {

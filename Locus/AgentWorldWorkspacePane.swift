@@ -7,21 +7,20 @@ struct AgentWorldWorkspacePane: View {
     @ObservedObject var world: AgentWorldModel
     @ObservedObject var model: AppModel
     let title: String
-    @State private var showsTools = false
+    @State private var showsTools = true
     @State private var activityContext: AgentInspectorContext?
     private var ocean: Bool { world.theme == "grand-line" }
-    private var palette: AgentWorldPalette { .init(ocean: ocean) }
+    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
     private var placement: AgentWorldResidentPlacement? { world.selection.flatMap { world.residentPlacements[$0] } }
 
-    private enum Pane: String, CaseIterable { case chat = "Chat", details = "Agent details", tools = "Tools", crew = "Crew Chat" }
+    private enum Pane: String, CaseIterable { case details = "Overview", chat = "Chat", crew = "Crew Chat" }
     private var selectedPane: Binding<Pane> {
-        Binding(get: { world.sharedChatPresented ? .crew : world.profilePresented ? .details : showsTools ? .tools : .chat }, set: { pane in
-            showsTools = pane == .tools
+        Binding(get: { world.sharedChatPresented ? .crew : world.profilePresented ? .details : .chat }, set: { pane in
             switch pane {
             case .crew: world.openSharedChat()
             case .details: world.openAgentProfile()
-            case .chat, .tools:
+            case .chat:
                 if world.profilePresented || world.sharedChatPresented { world.showSelectedChat() }
                 else if !isSelectedConversationActive { world.activateSelectedConversation() }
             }
@@ -36,8 +35,9 @@ struct AgentWorldWorkspacePane: View {
         GeometryReader { proxy in
             let contentWidth = max(0, proxy.size.width - 24)
             VStack(spacing: 0) {
-                header
+                if !world.quartersPresented || !world.profilePresented { header }
                 workspaceTabs
+                    .padding(.top, world.quartersPresented && world.profilePresented ? 12 : 0)
                 paneContent(width: contentWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(palette.paper)
@@ -52,8 +52,9 @@ struct AgentWorldWorkspacePane: View {
         }
         .background(palette.panel)
         .foregroundStyle(palette.ink)
-        .onChange(of: world.selection) { _, _ in showsTools = false }
+        .onChange(of: world.selection) { _, _ in activityContext = nil }
         .onChange(of: model.currentSessionID) { _, _ in world.adoptForegroundConversation() }
+        .onChange(of: world.workspaceToolsRequest) { _, _ in showsTools = true }
         .onChange(of: model.inspectorTab) { _, _ in
             if model.agentWorldOwnsPresentations, isSelectedConversationActive,
                !world.activatingConversation, !world.sharedChatPresented, !world.profilePresented, !model.inspectorCollapsed {
@@ -65,31 +66,38 @@ struct AgentWorldWorkspacePane: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 13) {
-            ZStack {
+            if let profile = world.selectedProfile, !world.sharedChatPresented {
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: 40)
+            } else { ZStack {
                 Circle().stroke(palette.warning.opacity(0.2), lineWidth: 1)
                 Circle().stroke(palette.warning.opacity(0.3), lineWidth: 1).padding(5)
                 Image(systemName: ocean ? "safari" : "square.stack.3d.up")
                     .font(.locus(size: 24, weight: .ultraLight))
             }
             .foregroundStyle(ocean ? palette.warning : palette.signal)
-            .frame(width: 47, height: 47).padding(.top, 5)
+            .frame(width: 34, height: 34).padding(.top, 5)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text(title.uppercased()).font(.locus(size: 8, weight: .semibold)).tracking(2.1)
                     .foregroundStyle(palette.warning)
-                Text(world.sharedChatPresented ? "The crew’s table" : world.selectedProfile?.name ?? "Welcome aboard")
-                    .font(ocean ? .locus(size: 26, weight: .medium, design: .serif) : .locus(size: 22, weight: .semibold))
+                Text(world.sharedChatPresented ? "Crew Chat" : world.selectedProfile?.name ?? "Agent workspace")
+                    .font(.locus(size: 20, weight: .semibold))
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if !world.sharedChatPresented, let resident {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
                     }
-                    Text(world.sharedChatPresented ? "Shared plans. Bigger adventures." : placement.map { "\($0.ship) · \($0.home)" }
-                         ?? world.conversationContext ?? resident?.role.capitalized ?? "Choose a resident to chart your next course")
+                    Text(world.sharedChatPresented ? "Work with several agents in one conversation" : placement.map { "\($0.ship) · \($0.home)" }
+                         ?? world.conversationContext ?? resident?.role.capitalized ?? "Choose an agent to view chats, activity, and automations")
                         .font(.locus(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
-            if let profile = world.selectedProfile {
+            if let profile = world.selectedProfile, !world.sharedChatPresented {
+                Button("New chat", action: world.newConversation)
+                    .buttonStyle(AgentWorldChromeButtonStyle(selected: true))
+                    .disabled(!world.canStartConversation(for: profile.id.uuidString))
+                    .accessibilityIdentifier("agentWorld.workspace.header.newChat")
                 Menu {
                     Button("New chat", action: world.newConversation).disabled(!world.canStartConversation(for: profile.id.uuidString))
                     if ocean {
@@ -98,7 +106,7 @@ struct AgentWorldWorkspacePane: View {
                     }
                     Divider()
                     Button("Edit agent…") { model.presentSavedAgentEditor(profile) }
-                    Button("Manage agent…") { model.manageSavedAgent(profile) }
+                    Button("Manage agent…") { model.manageSavedAgent(profile, workspace: world.workspace) }
                 } label: {
                     Image(systemName: "ellipsis").font(.locus(size: 14, weight: .semibold))
                         .frame(width: 29, height: 28)
@@ -112,14 +120,14 @@ struct AgentWorldWorkspacePane: View {
             Button(action: world.dismissConversation) { Image(systemName: "xmark").font(.locus(size: 11)).frame(width: 29, height: 28) }
                 .buttonStyle(.locus(.icon))
                 .background(palette.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
-                .help("Return to the world").accessibilityLabel(ocean ? "Close Captain’s Quarters" : "Close agent workspace")
+                .help(world.quartersPresented ? "Clear agent selection" : "Return to the world").accessibilityLabel("Close agent workspace")
                 .accessibilityIdentifier("agentWorld.closeConversation")
-        }.padding(.horizontal, 21).padding(.top, 21).padding(.bottom, 18)
+        }.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
     }
 
     private var workspaceTabs: some View {
         HStack(spacing: 4) {
-            ForEach(Pane.allCases, id: \.self) { pane in
+            ForEach(world.sharedChatPresented ? [Pane.crew] : [.details, .chat], id: \.self) { pane in
                 Button { selectedPane.wrappedValue = pane } label: {
                     HStack(spacing: 7) {
                         Image(systemName: tabIcon(pane)).font(.locus(size: 11))
@@ -133,7 +141,19 @@ struct AgentWorldWorkspacePane: View {
                 .buttonStyle(.locus(.quiet))
                 .accessibilityLabel(tabTitle(pane))
                 .accessibilityAddTraits(selectedPane.wrappedValue == pane ? [.isSelected] : [])
-                .help(pane == .details && ocean ? "Vivre card · this resident’s profile and chats" : pane.rawValue)
+                .help(pane == .details ? "Agent settings, chats, automations, and recent results" : pane.rawValue)
+                .accessibilityIdentifier("agentWorld.workspace.tab.\(pane)")
+            }
+            if !world.sharedChatPresented && !world.profilePresented {
+                Button {
+                    showsTools.toggle()
+                    if showsTools && model.inspectorTab == .agent { model.selectInspectorTab(.preview) }
+                } label: {
+                    Label(showsTools ? "Hide tools" : "Show tools", systemImage: "sidebar.right")
+                        .font(.locus(size: 11, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 10)
+                }.buttonStyle(AgentWorldChromeButtonStyle(selected: showsTools))
+                    .help("Keep browser, files, calendar, and task board beside your chat")
+                    .accessibilityIdentifier("agentWorld.workspace.toggleTools")
             }
         }
         .padding(4).background(palette.paper, in: RoundedRectangle(cornerRadius: 11))
@@ -143,9 +163,8 @@ struct AgentWorldWorkspacePane: View {
 
     private func tabTitle(_ pane: Pane) -> String {
         switch pane {
-        case .chat: ocean ? "Captain’s log" : "Chat"
-        case .details: ocean ? "Vivre card" : "Agent details"
-        case .tools: "Tools"
+        case .chat: "Chat"
+        case .details: "Overview"
         case .crew: "Crew Chat"
         }
     }
@@ -154,7 +173,6 @@ struct AgentWorldWorkspacePane: View {
         switch pane {
         case .chat: "text.bubble"
         case .details: "person.text.rectangle"
-        case .tools: "sidebar.right"
         case .crew: "person.3"
         }
     }
@@ -179,39 +197,37 @@ struct AgentWorldWorkspacePane: View {
                                     })
                 .id(profile.id)
                 .accessibilityIdentifier("agentWorld.workspace.profile")
-        } else if showsTools {
-            if isSelectedConversationActive {
-                HStack(spacing: 0) {
-                    InspectorView(resizeWidth: max(300, width - InspectorRail.width))
-                    InspectorRail(suppressDuplicateAgentOverview: false)
-                }
-                .accessibilityIdentifier("agentWorld.workspace.inspector")
-            } else if let activityContext, activityContext == model.agentInspector.context {
-                // Read-only activity needs no active chat. General workspace
-                // tools must remain tied to an activated resident conversation.
-                InspectorAgentTab()
-            } else {
-                ContentUnavailableView {
-                    Label("Agent activity", systemImage: "clock.arrow.circlepath")
-                } description: {
-                    Text("Open this resident’s overview to choose saved activity, or open its chat to use workspace tools.")
-                } actions: {
-                    Button("Open overview") { world.openAgentProfile() }
-                }
-            }
+        } else if let activityContext, activityContext == model.agentInspector.context, !isSelectedConversationActive {
+            InspectorAgentTab()
         } else if world.activatingConversation || world.preparingConversation {
             VStack(spacing: 12) { ProgressView(); Text("Opening your conversation…").foregroundStyle(palette.muted) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isSelectedConversationActive {
-            WorkspaceView(sidebarVisible: true, showSidebar: {}, presentsAgentOverview: false,
-                          openAgentOverview: { world.openAgentProfile() })
-                .accessibilityIdentifier("agentWorld.workspace.chat")
+            HSplitView {
+                GeometryReader { geometry in
+                    WorkspaceView(sidebarVisible: true, showSidebar: {}, presentsAgentOverview: false,
+                                  openAgentOverview: { world.openAgentProfile() })
+                        .environment(\.locusWorkspaceGeometry, WorkspaceGeometrySnapshot(
+                            windowSize: geometry.size, workspaceWidth: geometry.size.width,
+                            workspaceHeight: geometry.size.height, composerWidth: geometry.size.width))
+                        .accessibilityIdentifier("agentWorld.workspace.chat")
+                }.frame(minWidth: 320, maxWidth: .infinity)
+                if showsTools {
+                    GeometryReader { geometry in
+                        HStack(spacing: 0) {
+                            InspectorView(resizeWidth: max(260, geometry.size.width - InspectorRail.width))
+                            InspectorRail(suppressDuplicateAgentOverview: false)
+                        }
+                    }.frame(minWidth: 300, idealWidth: max(320, width * 0.43), maxWidth: .infinity)
+                        .accessibilityIdentifier("agentWorld.workspace.inspector")
+                }
+            }
         } else {
             ContentUnavailableView {
                 Label(world.selectedProfile == nil ? "Meet an agent" : world.selectedSessionID == nil ? "Start a chat" : "Resume this conversation", systemImage: "bubble.left.and.bubble.right")
             } description: {
                 Text(world.error ?? (world.selectedProfile == nil
-                    ? "Select a resident to open their full Locus workspace. Crew Chat is available alongside every agent."
+                    ? "Select an agent to open their full Locus workspace. Crew Chat is available alongside every agent."
                     : "Another conversation is active in Locus. Resume \(world.selectedProfile?.name ?? "this agent") here to use its chat and controls."))
             } actions: {
                 if world.selectedProfile != nil {
@@ -219,7 +235,7 @@ struct AgentWorldWorkspacePane: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(!world.canStartConversation(for: world.selection ?? ""))
                         .accessibilityIdentifier("agentWorld.workspace.newChat")
-                    Button(ocean ? "Open Vivre card" : "Agent details") { world.openAgentProfile() }
+                    Button("Agent overview") { world.openAgentProfile() }
                         .accessibilityIdentifier("agentWorld.workspace.openProfile")
                     if world.selectedSessionID != nil {
                         Button("Try again") { world.showSelectedChat() }

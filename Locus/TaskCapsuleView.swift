@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct TaskCapsuleView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var model: TaskCapsuleModel
     var openTask: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -55,8 +59,8 @@ struct TaskCapsuleView: View {
             }
         }
         .frame(minWidth: 640, idealWidth: 960, minHeight: 560, idealHeight: 760)
-        .background(LocusTheme.surfaceCanvas)
-        .foregroundStyle(LocusTheme.textPrimary)
+        .background(viewColors.surfaceCanvas)
+        .foregroundStyle(viewColors.textPrimary)
         .task { await model.refresh() }
         .onChange(of: model.selectedID) { _, _ in expandedSteps = [] }
     }
@@ -65,14 +69,14 @@ struct TaskCapsuleView: View {
         HStack(spacing: 12) {
             Image(systemName: "shippingbox")
                 .font(.locus(size: 23))
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .frame(width: 42, height: 42)
-                .background(LocusTheme.accentFill.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                .background(viewColors.accentFill.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Task Capsules").font(.title2.weight(.semibold))
                 Text("Save a plan. Choose who builds it. Run when you’re ready.")
-                    .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.callout).foregroundStyle(viewColors.textSecondary)
             }
             Spacer(minLength: 12)
             Button("Done") { model.isPresented = false; dismiss() }
@@ -102,7 +106,7 @@ struct TaskCapsuleView: View {
                 refreshButton
             }
             Label(workspaceName, systemImage: "folder")
-                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                .font(.caption).foregroundStyle(viewColors.textSecondary)
                 .lineLimit(1).help(model.workspaceRoot)
             Button { model.newCapsule() } label: {
                 Label("New capsule", systemImage: "plus")
@@ -123,7 +127,7 @@ struct TaskCapsuleView: View {
                         Text(model.isRefreshing ? "Loading your capsules…" : model.capsules.isEmpty
                              ? "Your first capsule starts with a task. Once its plan is ready, it will appear here."
                              : "No capsules match your search.")
-                            .font(.callout).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.callout).foregroundStyle(viewColors.textTertiary)
                             .padding(.vertical, 12)
                     }
                     ForEach(filteredCapsules) { capsule in
@@ -131,12 +135,12 @@ struct TaskCapsuleView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(capsule.title).font(.callout.weight(.medium)).lineLimit(2)
                                 Text("\(stepSummary(capsule.plan)) · Revision \(capsule.revision)")
-                                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                                 Label(capsuleState(capsule), systemImage: capsule.runs.isEmpty ? "doc.text" : "clock")
-                                    .font(.caption2).foregroundStyle(LocusTheme.textTertiary)
+                                    .font(.caption2).foregroundStyle(viewColors.textTertiary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(11)
-                            .background(model.selectedID == capsule.id ? LocusTheme.accentFill.opacity(0.17) : Color.clear)
+                            .background(model.selectedID == capsule.id ? viewColors.accentFill.opacity(0.17) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(.locus(.card))
@@ -149,7 +153,7 @@ struct TaskCapsuleView: View {
                 .buttonStyle(.locus()).font(.caption)
         }
         .padding(16)
-        .background(LocusTheme.surfaceStructural.opacity(0.5))
+        .background(viewColors.surfaceStructural.opacity(0.5))
     }
 
     private var compactLibrary: some View {
@@ -188,7 +192,7 @@ struct TaskCapsuleView: View {
             VStack(alignment: .leading, spacing: 9) {
                 Text("Turn a task into a reusable plan").font(.title3.weight(.semibold))
                 Text("Your planner works out the steps. You review the plan before the implementation model makes changes.")
-                    .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.callout).foregroundStyle(viewColors.textSecondary)
                 HStack(spacing: 8) {
                     workflowStep("1", "Describe")
                     Image(systemName: "chevron.right").accessibilityHidden(true)
@@ -196,13 +200,13 @@ struct TaskCapsuleView: View {
                     Image(systemName: "chevron.right").accessibilityHidden(true)
                     workflowStep("3", "Review & run")
                 }
-                .font(.caption).foregroundStyle(LocusTheme.textTertiary).padding(.top, 3)
+                .font(.caption).foregroundStyle(viewColors.textTertiary).padding(.top, 3)
             }
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeading("1", "Describe your task", detail: "Include the result you want and anything that should stay the same.")
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $model.draftRequest)
-                        .foregroundStyle(LocusTheme.inkSoft).tint(LocusTheme.accentAction)
+                        .foregroundStyle(viewColors.inkSoft).tint(viewColors.accentAction)
                         .font(.body).scrollContentBackground(.hidden)
                         .padding(8).frame(minHeight: 120)
                         .focused($requestFocused)
@@ -210,7 +214,7 @@ struct TaskCapsuleView: View {
                         .accessibilityIdentifier("capsules.request")
                     if model.draftRequest.isEmpty {
                         Text("What would you like to accomplish?")
-                            .font(.body).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.body).foregroundStyle(viewColors.textTertiary)
                             .padding(.horizontal, 13).padding(.vertical, 16)
                             .allowsHitTesting(false).accessibilityHidden(true)
                     }
@@ -218,7 +222,7 @@ struct TaskCapsuleView: View {
                 .locusCard(radius: 9)
                 if model.draftRequest.isEmpty {
                     HStack(spacing: 8) {
-                        Text("Try:").font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        Text("Try:").font(.caption).foregroundStyle(viewColors.textTertiary)
                         exampleButton("Fix a bug", request: "Fix [describe the issue] in [area of the project]. First reproduce the problem, then plan the smallest change and checks that show it is fixed.")
                         exampleButton("Build a feature", request: "Add [describe the feature] for [who will use it]. Plan the user experience, implementation, and checks. Keep [existing behavior] working.")
                         exampleButton("Improve a workflow", request: "Improve [describe the workflow] so [desired result]. Inspect the current approach, explain the proposed changes, and include checks for success.")
@@ -229,7 +233,7 @@ struct TaskCapsuleView: View {
                     .accessibilityLabel("Capsule name, optional")
                     .accessibilityIdentifier("capsules.title")
                 Text("Leave the name blank to use the planner’s title.")
-                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
             }
             VStack(alignment: .leading, spacing: 12) {
                 sectionHeading("2", "Choose your models", detail: "An agent profile is a saved model, account, and set of permissions.")
@@ -241,17 +245,17 @@ struct TaskCapsuleView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Advanced · Usage limits").font(.callout.weight(.medium))
                     Text("\(model.draftRecipe.planningCallLimit) planning calls · \(model.draftRecipe.executionCallLimit) implementation calls")
-                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
                 }
             }
             .padding(14).locusCard(radius: 10)
             if model.hasActivePlan {
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "doc.badge.plus").foregroundStyle(LocusTheme.accentAction)
+                    Image(systemName: "doc.badge.plus").foregroundStyle(viewColors.accentAction)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Already planned this in your conversation?").font(.callout.weight(.medium))
                         Text("Save that plan with these model choices and review it here.")
-                            .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.caption).foregroundStyle(viewColors.textSecondary)
                         Button("Save current conversation plan") { model.captureActivePlan() }
                             .buttonStyle(.locus()).disabled(!model.canCapturePlan)
                             .accessibilityIdentifier("capsules.capture")
@@ -266,8 +270,8 @@ struct TaskCapsuleView: View {
         HStack(spacing: 5) {
             Text(number).font(.caption2.weight(.semibold))
                 .frame(width: 20, height: 20)
-                .background(LocusTheme.accentFill.opacity(0.14), in: Circle())
-            Text(title).foregroundStyle(LocusTheme.textSecondary)
+                .background(viewColors.accentFill.opacity(0.14), in: Circle())
+            Text(title).foregroundStyle(viewColors.textSecondary)
         }
         .accessibilityElement(children: .combine)
     }
@@ -275,7 +279,7 @@ struct TaskCapsuleView: View {
     private func sectionHeading(_ number: String, _ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("\(number). \(title)").font(.headline)
-            Text(detail).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+            Text(detail).font(.caption).foregroundStyle(viewColors.textSecondary)
         }
     }
 
@@ -295,25 +299,25 @@ struct TaskCapsuleView: View {
                 Label("Set up your first agent profile", systemImage: "person.crop.circle.badge.plus")
                     .font(.callout.weight(.semibold))
                 Text("One profile can do both jobs. In settings, choose Add Agent, select your account under Provider route and pick a model. Set Access ceiling to Workspace edits so it can implement your plan, then save.")
-                    .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.callout).foregroundStyle(viewColors.textSecondary)
                 Button("Set up agent profiles") { model.manageProfiles() }
                     .buttonStyle(.locus())
                     .accessibilityIdentifier("capsules.setupProfiles")
                 Text("Your task description stays here. Reopen Task Capsules after saving your profile to continue.")
-                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
             } else {
                 profilePicker("Plan with", hint: "Inspects your workspace and writes the plan. Planning is read-only.", selection: $model.draftRecipe.plannerProfileID, implementation: false)
                 Divider()
                 profilePicker("Implement with", hint: "Follows the saved steps and can make changes when you choose Run plan.", selection: $model.draftRecipe.executorProfileID, implementation: true)
                 if model.implementationProfiles.isEmpty {
                     Label("In Manage profiles, edit a profile and set Access ceiling to Workspace edits to enable implementation.", systemImage: "exclamationmark.circle")
-                        .font(.caption).foregroundStyle(LocusTheme.warning)
+                        .font(.caption).foregroundStyle(viewColors.warning)
                 }
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("Review with").font(.callout.weight(.medium))
-                        Text("Optional").font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        Text("Optional").font(.caption).foregroundStyle(viewColors.textTertiary)
                     }
                     Picker("Review with", selection: Binding(
                         get: { model.draftRecipe.reviewerProfileID ?? "" },
@@ -331,11 +335,11 @@ struct TaskCapsuleView: View {
                     .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("capsules.reviewer")
                     Text("Checks the implementation and can request fixes within your repair allowance.")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                 }
                 HStack {
                     Text("You can use the same profile for more than one role.")
-                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
                     Spacer(minLength: 8)
                     Button("Manage profiles") { model.manageProfiles() }
                         .buttonStyle(.locus()).font(.caption)
@@ -360,20 +364,20 @@ struct TaskCapsuleView: View {
             }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(implementation ? "capsules.executor" : "capsules.planner")
-            Text(hint).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+            Text(hint).font(.caption).foregroundStyle(viewColors.textSecondary)
         }
     }
 
     private var limits: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("A model call is one request to a model. These allowances stop a stage from continuing indefinitely.")
-                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                .font(.caption).foregroundStyle(viewColors.textSecondary)
             Stepper("Planning: up to \(model.draftRecipe.planningCallLimit) calls", value: $model.draftRecipe.planningCallLimit, in: 1...100)
             Stepper("Implementation: up to \(model.draftRecipe.executionCallLimit) calls", value: $model.draftRecipe.executionCallLimit, in: 1...100)
             Stepper("Review repair rounds: \(model.draftRecipe.maxRepairAttempts)", value: $model.draftRecipe.maxRepairAttempts, in: 0...7)
             Stepper("Planner help requests: \(model.draftRecipe.maxPlannerEscalations)", value: $model.draftRecipe.maxPlannerEscalations, in: 0...10)
             Text("Repair rounds and planner help are shared across this capsule’s runs and revisions. Without a reviewer, repair rounds are unused.")
-                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                .font(.caption).foregroundStyle(viewColors.textSecondary)
             Toggle("Set an estimated API cost limit", isOn: Binding(
                 get: { model.draftRecipe.maximumEstimatedCost != nil },
                 set: { model.draftRecipe.maximumEstimatedCost = $0 ? 5 : nil }
@@ -389,10 +393,10 @@ struct TaskCapsuleView: View {
                     .accessibilityLabel("Estimated API cost limit in US dollars")
                 }
                 Text("An estimate, not a billing cap. Covers implementation and its automatic review with configured API prices. Excludes planning, standalone review, tools, and image generation.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             }
             Text("Your provider manages subscription allowances. Locus does not convert subscription calls or tokens into a dollar charge. Profile response-token and runtime limits still apply.")
-                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                .font(.caption).foregroundStyle(viewColors.textTertiary)
         }
         .font(.callout)
     }
@@ -401,16 +405,16 @@ struct TaskCapsuleView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
                 Label(capsuleState(capsule), systemImage: "doc.text")
-                    .font(.caption.weight(.medium)).foregroundStyle(LocusTheme.accentAction)
+                    .font(.caption.weight(.medium)).foregroundStyle(viewColors.accentAction)
                 Text(capsule.title).font(.title2.weight(.semibold)).textSelection(.enabled)
                 if let run = capsule.runs.last, let openTask {
                     Button("Task details") { openTask(run.runID) }
                         .accessibilityIdentifier("capsules.taskDetails")
                 }
                 Text("Revision \(capsule.revision) · \(stepSummary(capsule.plan)) · \(workspaceName)")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                 if !capsule.request.isEmpty {
-                    Text(capsule.request).font(.callout).foregroundStyle(LocusTheme.textSecondary).textSelection(.enabled)
+                    Text(capsule.request).font(.callout).foregroundStyle(viewColors.textSecondary).textSelection(.enabled)
                 }
             }
             if model.isEditingRecipe {
@@ -430,19 +434,19 @@ struct TaskCapsuleView: View {
                     routeSummary("Implement", id: capsule.recipe.executorProfileID)
                     routeSummary("Review", id: capsule.recipe.reviewerProfileID)
                     Text("Up to \(capsule.recipe.planningCallLimit) planning calls · \(capsule.recipe.executionCallLimit) implementation calls")
-                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
                 }
                 .padding(16).locusCard(radius: 10)
             }
             if let issue = model.recipeError(capsule.recipe), !model.isEditingRecipe {
                 Label(issue, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(LocusTheme.warning)
+                    .font(.callout).foregroundStyle(viewColors.warning)
             }
             if let attempt = capsule.resumableAttempt, attempt.pendingUsage != nil {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Review interrupted usage").font(.headline)
                     Text("Recorded so far: \(attempt.usage?["model_calls"]?.string ?? "0") calls · \(attempt.usage?["metered_tokens"]?.string ?? "0") metered tokens · $\(attempt.usage?["estimated_cost"]?.string ?? "0")")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                     Text("Check the interrupted call's usage, then enter the total for this attempt. Previously recorded usage and repair counts remain in place.")
                         .font(.callout)
                     HStack {
@@ -507,7 +511,7 @@ struct TaskCapsuleView: View {
         } icon: {
             Image(systemName: fileCount > 0 ? "doc.text.magnifyingglass" : "info.circle")
         }
-        .font(.caption).foregroundStyle(fileCount > 0 ? LocusTheme.textSecondary : LocusTheme.warning)
+        .font(.caption).foregroundStyle(fileCount > 0 ? viewColors.textSecondary : viewColors.warning)
         .padding(14).frame(maxWidth: .infinity, alignment: .leading).locusCard(radius: 10)
     }
 
@@ -515,7 +519,7 @@ struct TaskCapsuleView: View {
         HStack(alignment: .top, spacing: 10) {
             Text(stage).font(.callout.weight(.medium)).frame(width: 74, alignment: .leading)
             Text(id == nil ? "No separate reviewer" : model.profileLabel(id: id))
-                .font(.callout).foregroundStyle(LocusTheme.textSecondary).textSelection(.enabled)
+                .font(.callout).foregroundStyle(viewColors.textSecondary).textSelection(.enabled)
         }
     }
 
@@ -525,10 +529,10 @@ struct TaskCapsuleView: View {
             modelChoices
             DisclosureGroup("Usage limits", isExpanded: $showLimits) { limits.padding(.top, 12) }
             Text("Save to create a new revision. Your plan, file checks, and run history are preserved.")
-                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                .font(.caption).foregroundStyle(viewColors.textSecondary)
             if let issue = model.recipeError(model.draftRecipe) {
                 Label(issue, systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(LocusTheme.warning)
+                    .font(.caption).foregroundStyle(viewColors.warning)
             }
         }
         .padding(16).locusCard(radius: 10)
@@ -539,9 +543,9 @@ struct TaskCapsuleView: View {
             VStack(alignment: .leading, spacing: 9) {
                 Label("Finish your plan", systemImage: "bubble.left.and.text.bubble.right")
                     .font(.callout.weight(.semibold))
-                Text(waiting.title).font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                Text(waiting.title).font(.callout).foregroundStyle(viewColors.textSecondary)
                 Text("Open the conversation to answer questions or continue planning. The finished plan will be saved here.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                 HStack(spacing: 14) {
                     Button("Continue planning") { model.openConversation(sessionID: waiting.id) }
                         .buttonStyle(.locus())
@@ -560,7 +564,7 @@ struct TaskCapsuleView: View {
             VStack(alignment: .leading, spacing: 10) {
                 if capsule.plannerHelpRequestsRemaining > 0 {
                     Text("Describe a blocker or change. Your planning model will inspect the workspace and save a revised plan for you to review.")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                     TextField("What should the planner change or investigate?", text: $model.plannerQuestion, axis: .vertical)
                         .lineLimit(3...6).textFieldStyle(.roundedBorder)
                         .accessibilityLabel("Question for the planner")
@@ -573,13 +577,13 @@ struct TaskCapsuleView: View {
                             .accessibilityIdentifier("capsules.askPlanner")
                         Spacer()
                         Text("\(capsule.plannerHelpRequestsRemaining) of \(capsule.recipe.maxPlannerEscalations) requests left")
-                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.caption).foregroundStyle(viewColors.textTertiary)
                     }
                 } else {
                     Text(capsule.recipe.maxPlannerEscalations == 0
                          ? "Planner help is turned off for this capsule. Edit its usage limits to allow a request."
                          : "You’ve used this capsule’s planner help allowance. Edit its usage limits to allow another request.")
-                        .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.callout).foregroundStyle(viewColors.textSecondary)
                     Button("Edit usage limits") {
                         model.beginEditingRecipe()
                         showLimits = true
@@ -614,7 +618,7 @@ struct TaskCapsuleView: View {
                 }
             }
             if !plan.summary.isEmpty {
-                Text(plan.summary).font(.callout).foregroundStyle(LocusTheme.textSecondary).textSelection(.enabled)
+                Text(plan.summary).font(.callout).foregroundStyle(viewColors.textSecondary).textSelection(.enabled)
             }
             if plan.stepDetails.isEmpty {
                 ForEach(Array(plan.steps.enumerated()), id: \.offset) { index, step in
@@ -641,13 +645,13 @@ struct TaskCapsuleView: View {
                                 Label(check, systemImage: "checkmark.circle").textSelection(.enabled)
                             }
                         }
-                        .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.callout).foregroundStyle(viewColors.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 10)
                     } label: {
                         HStack(alignment: .top, spacing: 10) {
                             Text("\(index + 1)").font(.caption.weight(.semibold))
                                 .frame(width: 24, height: 24)
-                                .background(LocusTheme.accentFill.opacity(0.13), in: RoundedRectangle(cornerRadius: 6))
+                                .background(viewColors.accentFill.opacity(0.13), in: RoundedRectangle(cornerRadius: 6))
                             Text(step.title).font(.callout.weight(.medium)).padding(.top, 3)
                         }
                     }
@@ -671,7 +675,7 @@ struct TaskCapsuleView: View {
                           systemImage: check["kind"]?.string == "human_review" ? "person.crop.circle" : "checkmark.shield")
                     .textSelection(.enabled)
                 }
-            }.font(.callout).foregroundStyle(LocusTheme.textSecondary)
+            }.font(.callout).foregroundStyle(viewColors.textSecondary)
         }
     }
 
@@ -682,7 +686,7 @@ struct TaskCapsuleView: View {
                 Text(title).font(.callout.weight(.semibold))
                 ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
                     Label(note, systemImage: icon).font(.callout)
-                        .foregroundStyle(LocusTheme.textSecondary).textSelection(.enabled)
+                        .foregroundStyle(viewColors.textSecondary).textSelection(.enabled)
                 }
             }
             .padding(.top, 4)
@@ -696,11 +700,11 @@ struct TaskCapsuleView: View {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(run.stageTitle).font(.callout.weight(.medium))
-                            Text(runStatus(run)).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                            Text(runStatus(run)).font(.caption).foregroundStyle(viewColors.textSecondary)
                             if run.modelCalls != nil || run.totalTokens != nil {
                                 Text([run.modelCalls.map { "\($0) calls" }, run.totalTokens.map { "\($0.formatted()) tokens" }]
                                     .compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                                .font(.caption).foregroundStyle(viewColors.textTertiary)
                             }
                         }
                         Spacer()
@@ -725,7 +729,7 @@ struct TaskCapsuleView: View {
                         Text("Save choices")
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
-                            .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                            .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 8))
                     }
                         .buttonStyle(.locus(.primary))
                         .disabled(model.isBusy || model.recipeError(model.draftRecipe) != nil)
@@ -734,7 +738,7 @@ struct TaskCapsuleView: View {
                         .buttonStyle(.locus()).disabled(model.isSaving)
                 }
                 Text("Save or cancel your changes before starting a stage.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             } else if let capsule = model.selectedCapsule {
                 HStack(spacing: 14) {
                     if let attempt = capsule.resumableAttempt {
@@ -742,7 +746,7 @@ struct TaskCapsuleView: View {
                             Label("Resume", systemImage: "play.fill")
                                 .padding(.horizontal, 10).padding(.vertical, 7)
                                 .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
-                                .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                                .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 8))
                         }
                         .buttonStyle(.locus(.primary)).disabled(model.isBusy || !attempt.canResume)
                         .accessibilityIdentifier("capsules.resume")
@@ -754,7 +758,7 @@ struct TaskCapsuleView: View {
                         Label(capsule.runs.contains(where: { $0.stage == "execute" }) ? "Run again" : "Run plan", systemImage: "play.fill")
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
-                            .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                            .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.locus(.primary))
                     .disabled(model.isBusy || model.recipeError(capsule.recipe) != nil)
@@ -788,45 +792,45 @@ struct TaskCapsuleView: View {
                 }
                 if let accounting = capsule.attempts.first?.accounting, accounting.invocations > 0 { UsageAccountingView(accounting: accounting) }
                 if let reason = capsule.attempts.first?.reason, !reason.isEmpty {
-                    Text(reason).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Text(reason).font(.caption).foregroundStyle(viewColors.textSecondary)
                 }
                 Text(model.isBusy ? "A task is in progress. Follow its conversation to see updates."
                      : capsule.runs.contains(where: { $0.stage == "execute" })
                      ? "Review previous changes before running again. A changed file may need a revised plan."
                      : "Starts in your conversation and may change files in \(workspaceName).")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             } else if model.profiles.isEmpty {
                 Button { model.manageProfiles() } label: {
                     Label("Set up models", systemImage: "person.crop.circle.badge.plus")
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
-                        .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                        .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.locus(.primary))
                 .accessibilityIdentifier("capsules.setupModels")
                 Text("One agent profile can plan and run your task. Your description is kept while you set it up.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             } else {
                 HStack(spacing: 12) {
                     Button { model.generatePlan() } label: {
                         Label("Generate plan", systemImage: "sparkles")
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .foregroundStyle(Color(nsColor: accent.brandInkNSColor()))
-                            .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 8))
+                            .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.locus(.primary)).disabled(!model.canGenerate)
                     .accessibilityIdentifier("capsules.generate")
                     Text("Next: review the saved plan")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                 }
                 Text(model.planningUnavailableReason ?? "Planning opens in your conversation. You decide when implementation starts.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                     .accessibilityIdentifier("capsules.nextStep")
             }
         }
         .padding(.horizontal, 24).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.surfaceStructural.opacity(0.45))
+        .background(viewColors.surfaceStructural.opacity(0.45))
     }
 
     private var statusBar: some View {
@@ -834,13 +838,13 @@ struct TaskCapsuleView: View {
             if model.isRefreshing || model.isSaving {
                 ProgressView().controlSize(.small)
             } else if model.error != nil {
-                Image(systemName: "exclamationmark.circle").foregroundStyle(LocusTheme.dangerForeground)
+                Image(systemName: "exclamationmark.circle").foregroundStyle(viewColors.dangerForeground)
             } else {
-                Image(systemName: "info.circle").foregroundStyle(LocusTheme.textSecondary)
+                Image(systemName: "info.circle").foregroundStyle(viewColors.textSecondary)
             }
             Text(model.error ?? model.status ?? (model.isSaving ? "Saving capsule…" : "Refreshing capsules…"))
                 .font(.caption)
-                .foregroundStyle(model.error == nil ? LocusTheme.textSecondary : LocusTheme.dangerForeground)
+                .foregroundStyle(model.error == nil ? viewColors.textSecondary : viewColors.dangerForeground)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("capsules.status")
             Spacer(minLength: 0)

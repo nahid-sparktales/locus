@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import WebKit
+import ImageIO
 import XCTest
 @testable import Locus
 
@@ -75,6 +76,139 @@ final class AgentWorldTests: XCTestCase {
         ] {
             XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "residentPlacements", "placements": [replacement]], screen: screen))
         }
+    }
+
+    func testWorldActivityBridgeRequiresReadAccessAndNoExtraPayload() {
+        let payload: [String: Any] = ["version": 1, "type": "openActivityCenter"]
+        XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .openActivityCenter)
+        let noRead = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
+                                          version: 1, capabilities: ["world.preferences"])
+        XCTAssertNil(PluginScreenMessage.decode(payload, screen: noRead))
+        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "openActivityCenter", "sessionID": "untrusted"], screen: screen))
+    }
+
+    func testWorldFindsWorkStartedInOtherSavedChatsWithoutCrossingAgentOrProject() {
+        let app = AppModel(startImmediately: false)
+        let profile = AgentProfile(name: "Worker", model: "fixture")
+        let other = AgentProfile(name: "Other", model: "fixture")
+        app.agentProfiles = [profile, other]
+        app.sessions = [
+            SessionSummary(id: "earlier-chat", name: "Earlier chat", preview: "", mtime: 1, size: 0,
+                           workspaceRoot: "/tmp/world", agentProfileID: profile.id.uuidString),
+            SessionSummary(id: "latest-chat", name: "Latest chat", preview: "", mtime: 2, size: 0,
+                           workspaceRoot: "/tmp/world", agentProfileID: profile.id.uuidString),
+        ]
+        app.taskConversationStates["earlier-chat"] = TaskConversationState(sessionID: "earlier-chat", taskID: nil, teamID: nil,
+            workerID: nil, runID: "queued-run", state: .queued, updatedAt: Date())
+        XCTAssertEqual(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world")?.status, "queued")
+        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: other.id, workspace: "/tmp/world"))
+        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/another-world"))
+        app.taskConversationStates["earlier-chat"] = nil
+        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world"))
+    }
+
+    func testWorldOverviewAndActivityUseNativeControlsWithoutStartingAChat() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let app = AppModel(startImmediately: false)
+        app.agentProfiles = fixture.profiles
+        app.currentSessionID = "unrelated-chat"
+        let world = app.agentWorld
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { _ in .init() },
+                        create: { _, _ in XCTFail("Opening the overview must not create a chat"); return "unexpected" },
+                        load: { _ in XCTFail("Opening the overview must not resume a chat") },
+                        dispatch: { _, _, _, _, _ in XCTFail("Inspection must not run an agent") },
+                        stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.openAgentControls()
+        XCTAssertTrue(world.quartersPresented)
+        XCTAssertNil(world.selection, "The fleet hub opens without choosing or running an agent")
+        world.openAgentControls(fixture.profiles[1].id.uuidString)
+        XCTAssertTrue(world.profilePresented)
+        XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
+        XCTAssertEqual(app.currentSessionID, "unrelated-chat")
+        world.requestActivityCenter()
+        XCTAssertTrue(app.activity.activityCenterPresented)
+        XCTAssertEqual(world.activityCenterRequest, 1)
+        XCTAssertEqual(app.currentSessionID, "unrelated-chat")
+        XCTAssertTrue(world.profilePresented, "Closing activity returns to the selected overview")
+        world.quartersPresented = false
+        XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
+    }
+
+    func testAgentPicturesAreBoundedSquareImagesAndRejectInvalidFiles() throws {
+        let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 600, pixelsHigh: 300,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let source = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+        let data = try AgentAvatarImage.normalized(source)
+        XCTAssertLessThanOrEqual(data.count, AgentAvatarImage.maximumStoredBytes)
+        let decoded = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let bitmap = try XCTUnwrap(CGImageSourceCreateImageAtIndex(decoded, 0, nil))
+        XCTAssertEqual(bitmap.width, 256)
+        XCTAssertEqual(bitmap.height, 256)
+        let properties = CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [CFString: Any]
+        XCTAssertNil(properties?[kCGImagePropertyGPSDictionary])
+        XCTAssertThrowsError(try AgentAvatarImage.normalized(Data("not an image".utf8)))
+        XCTAssertThrowsError(try AgentAvatarImage.normalized(Data(count: AgentAvatarImage.maximumSourceBytes + 1)))
+    }
+
+    func testAgentPicturesPersistSeparatelyAndAreRemovedWithAgent() throws {
+        let suite = "AgentWorldAvatarTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let profile = AgentProfile(name: "Portrait", model: "fixture")
+        let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let data = try AgentAvatarImage.normalized(XCTUnwrap(image.representation(using: .png, properties: [:])))
+        let model = AgentTeamsModel()
+        model.restore(persistenceEnabled: true, defaults: defaults)
+        model.saveAgentProfile(profile)
+        model.setAgentAvatar(data, profileID: profile.id)
+        model.setAgentAvatar(data, profileID: UUID())
+        XCTAssertEqual(model.agentAvatarData.count, 1)
+        XCTAssertEqual(model.agentProfiles.first, profile)
+        let restored = AgentTeamsModel()
+        restored.restore(persistenceEnabled: true, defaults: defaults)
+        XCTAssertEqual(restored.agentAvatarData[profile.id], data)
+        restored.setAgentAvatar(nil, profileID: profile.id)
+        XCTAssertTrue(restored.agentAvatarData.isEmpty)
+        restored.setAgentAvatar(data, profileID: profile.id)
+        XCTAssertTrue(restored.removeAgentProfile(profile))
+        let reopened = AgentTeamsModel()
+        reopened.restore(persistenceEnabled: true, defaults: defaults)
+        XCTAssertTrue(reopened.agentAvatarData.isEmpty)
+    }
+
+    func testWorldBoardHandoffRejectsCardsFromAnotherProjectWithoutChangingDraft() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let app = AppModel(startImmediately: false)
+        app.agentProfiles = fixture.profiles
+        app.currentSessionID = "existing-chat"
+        app.draftText = "Keep my draft"
+        let world = app.agentWorld
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { _ in .init() },
+                        create: { _, _ in XCTFail("A foreign board must not create a chat"); return "unexpected" },
+                        load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("A board draft must not send work") },
+                        stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.openAgentControls(fixture.profiles[0].id.uuidString)
+        let foreign = BoardStore.testingStore(workspacePath: fixture.root.appendingPathComponent("other-project").path,
+                                             applicationSupport: fixture.root.appendingPathComponent("board-fixture"))
+        let card = try foreign.createCard(title: "Another project’s card")
+        do {
+            try await world.openBoardCard(card, profileID: fixture.profiles[0].id.uuidString)
+            XCTFail("Should reject a card absent from this project")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("no longer on the project"))
+        }
+        XCTAssertEqual(app.currentSessionID, "existing-chat")
+        XCTAssertEqual(app.draftText, "Keep my draft")
+        XCTAssertTrue(world.profilePresented)
     }
 
     func testNativeWorldCatalogReadsOnlyBoundedConfinedMetadata() throws {
@@ -574,7 +708,12 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(world.boundProfileID(for: "missing-jinbei"), fixture.profiles[0].id)
         XCTAssertEqual(app.currentSessionID, "luffy-foreground")
 
+        let firstFocus = world.focusRequest
         world.openAgentProfile()
+        XCTAssertEqual(world.focusRequest, firstFocus + 1)
+        world.openAgentProfile()
+        XCTAssertEqual(world.focusRequest, firstFocus + 2, "Clicking the selected resident focuses it again")
+        XCTAssertEqual(world.snapshot["focusRequest"] as? Int, world.focusRequest)
         world.adoptForegroundConversation()
         XCTAssertTrue(world.profilePresented)
         XCTAssertEqual(world.selectedProfile?.name, "Jinbei")
@@ -687,4 +826,104 @@ final class AgentWorldTests: XCTestCase {
         return ConversationFixture(root: root, defaults: defaults, suiteName: suiteName, pluginID: pluginID, title: title, profiles: profiles, extensions: extensions)
     }
 
+}
+
+
+@MainActor
+final class LocusCalendarTests: XCTestCase {
+    private func makeStore() throws -> (LocusCalendarStore, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LocusCalendarTests-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return (LocusCalendarStore(applicationSupport: root, externalCalendarsEnabled: false), root)
+    }
+    private var createArguments: [String: Any] {
+        ["title": "Crew planning", "start": "2026-09-22T10:00:00-04:00", "end": "2026-09-22T11:00:00-04:00"]
+    }
+
+    func testBuiltInCalendarWorksWithoutExternalPermissionAndPersistsTags() throws {
+        let (store, root) = try makeStore()
+        XCTAssertFalse(store.accessState.canRead)
+        let agent = UUID()
+        var arguments = createArguments
+        arguments["agent_ids"] = [agent.uuidString, agent.uuidString]
+        let result = store.perform(tool: "calendar_create", arguments: arguments)
+        XCTAssertNil(result["error"])
+        let id = try XCTUnwrap(result["event_id"] as? String)
+        let restored = LocusCalendarStore(applicationSupport: root, externalCalendarsEnabled: false)
+        XCTAssertEqual(restored.localEvents.count, 1)
+        XCTAssertEqual(restored.localEvents[0].id, id)
+        XCTAssertEqual(restored.localEvents[0].agentIDs, [agent])
+        let list = restored.perform(tool: "calendar_list", arguments: ["start": "2026-09-22T00:00:00Z", "end": "2026-09-23T00:00:00Z"])
+        let events = try XCTUnwrap(list["events"] as? [[String: Any]])
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0]["calendar_id"] as? String, "locus")
+        XCTAssertEqual(events[0]["agent_ids"] as? [String], [agent.uuidString])
+    }
+
+    func testEditingClearingTagsAndDeletingLocalEvent() throws {
+        let (store, root) = try makeStore()
+        let id = try XCTUnwrap(store.perform(tool: "calendar_create", arguments: createArguments)["event_id"] as? String)
+        let agent = UUID()
+        XCTAssertNil(store.perform(tool: "calendar_update", arguments: ["event_id": id, "title": "Updated", "agent_ids": [agent.uuidString]])["error"])
+        XCTAssertEqual(store.localEvents.first?.title, "Updated")
+        XCTAssertEqual(store.localEvents.first?.agentIDs, [agent])
+        XCTAssertNil(store.perform(tool: "calendar_update", arguments: ["event_id": id, "agent_ids": [String]()])["error"])
+        XCTAssertEqual(store.localEvents.first?.agentIDs, [])
+        XCTAssertNil(store.perform(tool: "calendar_delete", arguments: ["event_id": id])["error"])
+        XCTAssertTrue(LocusCalendarStore(applicationSupport: root, externalCalendarsEnabled: false).localEvents.isEmpty)
+        XCTAssertNotNil(store.perform(tool: "calendar_update", arguments: ["event_id": id, "title": "Gone"])["error"])
+    }
+
+    func testInvalidUpdatesDoNotChangeSavedEventOrFallBackToLocal() throws {
+        let (store, _) = try makeStore()
+        let id = try XCTUnwrap(store.perform(tool: "calendar_create", arguments: createArguments)["event_id"] as? String)
+        let before = store.localEvents
+        for fields: [String: Any] in [
+            ["title": ""], ["end": "2026-09-21T10:00:00Z"], ["start": "not-a-date"],
+            ["agent_ids": ["not-an-agent"]], ["calendar_id": "external-account"],
+        ] {
+            var arguments = fields; arguments["event_id"] = id
+            XCTAssertNotNil(store.perform(tool: "calendar_update", arguments: arguments)["error"])
+            XCTAssertEqual(store.localEvents, before)
+        }
+        var external = createArguments; external["calendar_id"] = "external-account"
+        XCTAssertNotNil(store.perform(tool: "calendar_create", arguments: external)["error"])
+        XCTAssertEqual(store.localEvents, before)
+    }
+
+    func testAllDayAndMultiDayEventsRespectExclusiveEndAndVisibility() throws {
+        let (store, _) = try makeStore()
+        let start = Calendar.current.startOfDay(for: Date())
+        let end = Calendar.current.date(byAdding: .day, value: 2, to: start)!
+        try store.saveLocalEvent(LocusCalendarEntry(title: "Voyage", startDate: start, endDate: end, isAllDay: true))
+        XCTAssertEqual(store.events(on: start).count, 1)
+        XCTAssertEqual(store.events(on: start.addingTimeInterval(86400)).count, 1)
+        XCTAssertTrue(store.events(on: end).isEmpty)
+        store.showsLocalCalendar = false
+        XCTAssertTrue(store.events(on: start).isEmpty)
+        store.showsLocalCalendar = true
+        XCTAssertEqual(store.events(on: start).count, 1)
+    }
+
+    func testUnreadableCalendarIsNeverOverwritten() throws {
+        let (_, root) = try makeStore()
+        let file = root.appendingPathComponent(AppEdition.current.displayName).appendingPathComponent("Calendar/events.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let damaged = Data("preserve damaged calendar".utf8)
+        try damaged.write(to: file)
+        let store = LocusCalendarStore(applicationSupport: root, externalCalendarsEnabled: false)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertNotNil(store.perform(tool: "calendar_create", arguments: createArguments)["error"])
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+        XCTAssertTrue(store.localEvents.isEmpty)
+    }
+
+    func testFailedSaveDoesNotPublishAnUnsavedEvent() throws {
+        let (store, root) = try makeStore()
+        // A file where the directory belongs forces an ordinary filesystem failure.
+        try Data("blocked".utf8).write(to: root.appendingPathComponent(AppEdition.current.displayName))
+        XCTAssertNotNil(store.perform(tool: "calendar_create", arguments: createArguments)["error"])
+        XCTAssertTrue(store.localEvents.isEmpty)
+    }
 }

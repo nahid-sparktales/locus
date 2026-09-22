@@ -1016,6 +1016,10 @@ final class StreamingRenderCoordinator: ObservableObject {
 /// append-only native text view, so provider deltas never synchronously reparse
 /// the accumulated response.
 struct StreamingMarkdownBodyView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let text: String
     var workspacePath: String? = nil
     var density: MarkdownRenderDensity = .regular
@@ -1031,7 +1035,7 @@ struct StreamingMarkdownBodyView: View {
                 StreamingPlainTextView(
                     text: text,
                     font: .systemFont(ofSize: density.fontSize),
-                    color: NSColor(density == .compact ? LocusTheme.muted : LocusTheme.inkSoft),
+                    color: NSColor(density == .compact ? viewColors.muted : viewColors.inkSoft),
                     lineSpacing: density.lineSpacing
                 )
             } else {
@@ -1058,7 +1062,7 @@ struct StreamingMarkdownBodyView: View {
                             text: tail,
                             font: .systemFont(ofSize: density.fontSize),
                             color: NSColor(
-                                density == .compact ? LocusTheme.muted : LocusTheme.inkSoft
+                                density == .compact ? viewColors.muted : viewColors.inkSoft
                             ),
                             lineSpacing: density.lineSpacing
                         )
@@ -1097,6 +1101,10 @@ struct StreamingMarkdownBodyView: View {
 
 @MainActor
 private struct MarkdownBlocksView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.responseOutputContext) private var outputContext
     @Environment(\.locusAccent) private var accent
@@ -1133,7 +1141,7 @@ private struct MarkdownBlocksView: View {
     }
 
     private var proseColor: Color {
-        textColor ?? (density == .compact ? LocusTheme.muted : LocusTheme.inkSoft)
+        textColor ?? (density == .compact ? viewColors.muted : viewColors.inkSoft)
     }
 
     @ViewBuilder
@@ -1164,7 +1172,7 @@ private struct MarkdownBlocksView: View {
                 path: path,
                 fontSize: density.headingSize(level: level),
                 fontWeight: density.headingWeight(level: level),
-                color: LocusTheme.ink,
+                color: viewColors.ink,
                 lineSpacing: density.headingLineSpacing
             )
             .accessibilityAddTraits(.isHeader)
@@ -1187,7 +1195,7 @@ private struct MarkdownBlocksView: View {
         case .quote(let nested):
             HStack(alignment: .top, spacing: 10) {
                 Capsule()
-                    .fill(LocusTheme.lineStrong.opacity(0.75))
+                    .fill(viewColors.lineStrong.opacity(0.75))
                     .frame(width: 3)
                 MarkdownBlocksView(
                     blocks: nested,
@@ -1198,13 +1206,13 @@ private struct MarkdownBlocksView: View {
                     pathPrefix: path,
                     onOpenWorkspaceReference: onOpenWorkspaceReference,
                     nestingDepth: nestingDepth,
-                    textColor: LocusTheme.muted
+                    textColor: viewColors.muted
                 )
             }
 
         case .rule:
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(height: 1)
 
         case .table(let headers, let alignments, let rows):
@@ -1225,7 +1233,7 @@ private struct MarkdownBlocksView: View {
                 value,
                 path: path,
                 font: .monospacedSystemFont(ofSize: density.fontSize, weight: .regular),
-                color: NSColor(LocusTheme.inkSoft),
+                color: NSColor(viewColors.inkSoft),
                 lineSpacing: density.lineSpacing
             )
             .accessibilityLabel("Raw HTML shown as text")
@@ -1280,18 +1288,18 @@ private struct MarkdownBlocksView: View {
         if let checked = item.checked {
             SwiftUI.Image(systemName: checked ? "checkmark.circle.fill" : "circle")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(checked ? LocusTheme.success : LocusTheme.muted)
+                .foregroundStyle(checked ? viewColors.success : viewColors.muted)
                 .padding(.top, 2)
         } else if let number {
             // Set in the body face at body size: an ordered marker is part of
             // the sentence, not a caption sitting beside it.
             SwiftUI.Text("\(number).")
                 .font(.locusExact(size: density.fontSize))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(.top, 0)
         } else {
             Circle()
-                .fill(LocusTheme.muted)
+                .fill(viewColors.muted)
                 .frame(width: 4, height: 4)
                 .padding(.top, density == .compact ? 5 : 7)
         }
@@ -1780,6 +1788,10 @@ enum MarkdownLinkPolicy {
 }
 
 private struct MarkdownTableRenderer: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.locusAccent) private var accent
     let headers: [[MarkdownInlineRun]]
@@ -1874,13 +1886,13 @@ private struct MarkdownTableRenderer: View {
             HStack(spacing: 7) {
                     Image(systemName: "tablecells")
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text("Table")
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                     Text("\(rows.count) rows")
                         .font(.locus(size: 9, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Spacer()
                     Button {
                         NSPasteboard.general.clearContents()
@@ -1912,7 +1924,7 @@ private struct MarkdownTableRenderer: View {
                     } label: {
                         Image(systemName: collapsed ? "chevron.down" : "chevron.up")
                             .font(.locus(size: 8, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.locus())
@@ -1927,25 +1939,25 @@ private struct MarkdownTableRenderer: View {
                 }
                 .padding(.horizontal, 11)
                 .frame(height: 34)
-                .background(LocusTheme.paperDeep.opacity(0.78))
-                Rectangle().fill(LocusTheme.line.opacity(0.8)).frame(height: 1)
+                .background(viewColors.paperDeep.opacity(0.78))
+                Rectangle().fill(viewColors.line.opacity(0.8)).frame(height: 1)
 
             ScrollView(.horizontal, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     row(headers, rowIndex: 0, header: true)
-                    Rectangle().fill(LocusTheme.lineStrong.opacity(0.8)).frame(height: 1)
+                    Rectangle().fill(viewColors.lineStrong.opacity(0.8)).frame(height: 1)
                     ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, cells in
                         row(cells, rowIndex: index + 1, header: false)
-                            .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.28))
+                            .background(index.isMultiple(of: 2) ? Color.clear : viewColors.paperDeep.opacity(0.28))
                         if index < visibleRows.count - 1 {
-                            Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(height: 1)
+                            Rectangle().fill(viewColors.line.opacity(0.7)).frame(height: 1)
                         }
                     }
                 }
             }
 
             if collapsed, isLong {
-                Rectangle().fill(LocusTheme.line.opacity(0.8)).frame(height: 1)
+                Rectangle().fill(viewColors.line.opacity(0.8)).frame(height: 1)
                 Button("Show all \(rows.count) rows") {
                     collapsed = false
                 }
@@ -1958,11 +1970,11 @@ private struct MarkdownTableRenderer: View {
                 .accessibilityIdentifier("message.table.showAll")
             }
         }
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -2016,12 +2028,12 @@ private struct MarkdownTableRenderer: View {
                     .accessibilityAddTraits(header ? .isHeader : [])
                     .overlay(alignment: .trailing) {
                         if index != cells.indices.last {
-                            Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
+                            Rectangle().fill(viewColors.line.opacity(0.7)).frame(width: 1)
                         }
                     }
             }
         }
-        .background(header ? LocusTheme.paperDeep.opacity(0.75) : Color.clear)
+        .background(header ? viewColors.paperDeep.opacity(0.75) : Color.clear)
     }
 
     @ViewBuilder
@@ -2033,7 +2045,7 @@ private struct MarkdownTableRenderer: View {
     ) -> some View {
         let size = cellFontSize
         let weight: NSFont.Weight = header ? .semibold : .regular
-        let color = header ? LocusTheme.ink : LocusTheme.inkSoft
+        let color = header ? viewColors.ink : viewColors.inkSoft
         let key = path.map(String.init).joined(separator: ".")
         if let selectionStore, let span = selectionSpans[key] {
             ResponseSelectableText(

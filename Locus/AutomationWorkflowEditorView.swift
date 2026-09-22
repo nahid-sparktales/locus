@@ -77,6 +77,10 @@ extension AppModel {
 
 /// Shared vertical workflow editor used by both scheduled and event agents.
 struct AutomationWorkflowEditorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Binding var workflow: AutomationWorkflow
     var connectors: [WorkflowConnectorOption] = []
     @State private var repairedStepIDs: [String] = []
@@ -90,7 +94,7 @@ struct AutomationWorkflowEditorView: View {
                         .font(.locus(size: 11, weight: .bold))
                     Text("Runs from top to bottom. Branches may only point forward.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button("Simulate…") { simulationPresented = true }
@@ -109,7 +113,7 @@ struct AutomationWorkflowEditorView: View {
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.locus(size: 8, weight: .medium))
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
                 .accessibilityIdentifier("workflow.reorderWarning")
             }
             ForEach(Array(workflow.steps.indices), id: \.self) { index in
@@ -125,7 +129,7 @@ struct AutomationWorkflowEditorView: View {
                 )
             }
         }
-        .sheet(isPresented: $simulationPresented) {
+        .locusSheet(isPresented: $simulationPresented) {
             WorkflowSimulationSheet(
                 workflow: workflow,
                 allowedConnectionIDs: connectors.map(\.id)
@@ -184,6 +188,10 @@ struct AutomationWorkflowEditorView: View {
 }
 
 private struct WorkflowStepCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Binding var step: AutomationWorkflowStep
     let index: Int
     let total: Int
@@ -199,7 +207,7 @@ private struct WorkflowStepCard: View {
                 Text("\(index + 1)")
                     .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     .frame(width: 20, height: 20)
-                    .background(LocusTheme.signal.opacity(0.16))
+                    .background(viewColors.signal.opacity(0.16))
                     .clipShape(Circle())
                 Label(step.type.title, systemImage: symbol)
                     .font(.locus(size: 10, weight: .semibold))
@@ -226,9 +234,9 @@ private struct WorkflowStepCard: View {
             }
         }
         .padding(12)
-        .background(LocusTheme.white.opacity(0.72))
+        .background(viewColors.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(viewColors.line) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Step \(index + 1), \(step.type.title), \(step.title)")
     }
@@ -246,13 +254,13 @@ private struct WorkflowStepCard: View {
             get: { step.instructionTemplate ?? "" },
             set: { step.instructionTemplate = $0 }
         ))
-        .foregroundStyle(LocusTheme.inkSoft)
-        .tint(LocusTheme.accentAction)
+        .foregroundStyle(viewColors.inkSoft)
+        .tint(viewColors.accentAction)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCard)
+        .background(viewColors.surfaceCard)
         .font(.locus(size: 10))
         .frame(minHeight: 88)
-        .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 6).stroke(viewColors.line) }
         .accessibilityLabel("Agent instruction template")
         .accessibilityIdentifier("workflow.step.\(step.id).instruction")
         Picker("Work mode", selection: Binding(
@@ -301,7 +309,7 @@ private struct WorkflowStepCard: View {
                 }
             }
             Text("A step can narrow the automation's connectors, never add new access.")
-                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
         }
         targetPicker("Continue to", selection: Binding(
             get: { step.nextStepID }, set: { step.nextStepID = $0 }
@@ -353,19 +361,19 @@ private struct WorkflowStepCard: View {
             get: { step.explanationTemplate ?? "" },
             set: { step.explanationTemplate = $0 }
         ))
-        .foregroundStyle(LocusTheme.inkSoft)
-        .tint(LocusTheme.accentAction)
+        .foregroundStyle(viewColors.inkSoft)
+        .tint(viewColors.accentAction)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCard)
+        .background(viewColors.surfaceCard)
         .font(.locus(size: 10))
         .frame(minHeight: 64)
-        .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 6).stroke(viewColors.line) }
         .accessibilityLabel("Approval explanation")
         targetPicker("If approved", selection: Binding(
             get: { step.approveStepID }, set: { step.approveStepID = $0 }
         ))
         Text("Rejecting cancels this occurrence.")
-            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+            .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
     }
 
     private func targetPicker(_ title: String, selection: Binding<String?>) -> some View {
@@ -413,6 +421,10 @@ private struct WorkflowStepCard: View {
 }
 
 private struct WorkflowSimulationSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     let workflow: AutomationWorkflow
@@ -431,7 +443,7 @@ private struct WorkflowSimulationSheet: View {
                 Button("Done") { dismiss() }
             }
             Text("Preview only: no model, connector, tool, file, command, or chat history is created.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             HStack(alignment: .top) {
                 jsonEditor("Sample event", text: $eventJSON)
                 jsonEditor("Mock Agent outputs", text: $outputsJSON)
@@ -442,7 +454,7 @@ private struct WorkflowSimulationSheet: View {
                 .keyboardShortcut(.return, modifiers: [.command])
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
             }
             if let result {
                 List(result.trace) { item in
@@ -453,10 +465,10 @@ private struct WorkflowSimulationSheet: View {
                                 ?? item.outcome.map { $0 ? "Condition is true" : "Condition is false" }
                                 ?? ""
                         )
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.inkSoft)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.inkSoft)
                         if item.needsMockOutputs == true {
                             Text("Add mock outputs for this step to continue the preview.")
-                                .font(.locus(size: 8)).foregroundStyle(LocusTheme.warning)
+                                .font(.locus(size: 8)).foregroundStyle(viewColors.warning)
                         }
                     }
                     .accessibilityElement(children: .combine)
@@ -471,13 +483,13 @@ private struct WorkflowSimulationSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.locus(size: 9, weight: .semibold))
             TextEditor(text: text)
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.accentAction)
                 .scrollContentBackground(.hidden)
-                .background(LocusTheme.surfaceCard)
+                .background(viewColors.surfaceCard)
                 .font(.locus(size: 12, design: .monospaced))
                 .frame(minHeight: 160)
-                .overlay { RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.line) }
+                .overlay { RoundedRectangle(cornerRadius: 6).stroke(viewColors.line) }
         }
     }
 

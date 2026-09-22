@@ -21,6 +21,10 @@ struct OptionalQuestionPanel: View {
 }
 
 private struct OptionalQuestionCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var questions: OptionalQuestionModel
     let request: OptionalQuestionRequest
     let canResume: Bool
@@ -44,7 +48,7 @@ private struct OptionalQuestionCard: View {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(countdown(at: context.date))
                             .font(.locus(size: 11))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .accessibilityIdentifier("optionalQuestion.countdown")
                     }
                 }
@@ -54,7 +58,7 @@ private struct OptionalQuestionCard: View {
                      ? "Work continues while you answer. Skip uses the recommendations below for any unanswered questions."
                      : "This question is paused or finished. Your draft is still available for a follow-up.")
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
@@ -68,7 +72,7 @@ private struct OptionalQuestionCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             if let error = questions.errors[scope] {
-                Text(error).font(.locus(size: 11)).foregroundStyle(LocusTheme.warningForeground)
+                Text(error).font(.locus(size: 11)).foregroundStyle(viewColors.warningForeground)
                     .accessibilityIdentifier("optionalQuestion.error")
             }
             HStack(spacing: 10) {
@@ -82,7 +86,7 @@ private struct OptionalQuestionCard: View {
                 } else {
                     Text(deliveryText)
                         .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("optionalQuestion.delivery")
                     Spacer()
@@ -137,7 +141,7 @@ private struct OptionalQuestionCard: View {
             if let answer = question.answer {
                 Label(([answer.selected?.joined(separator: ", "), answer.text]
                     .compactMap { $0 }.filter { !$0.isEmpty }).joined(separator: "; "), systemImage: "checkmark.circle")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.inkSoft)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.inkSoft)
             }
             if question.answer == nil || draft(question).hasContent {
                 ForEach(question.options) { option in
@@ -155,7 +159,7 @@ private struct OptionalQuestionCard: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(option.label).font(.locus(size: 11, weight: .medium))
                                 if !option.description.isEmpty {
-                                    Text(option.description).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                                    Text(option.description).font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
                                 }
                             }
                             Spacer(minLength: 0)
@@ -185,7 +189,7 @@ private struct OptionalQuestionCard: View {
             }
             if question.answer == nil {
                 Text("Recommendation: \(question.recommendation)")
-                    .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                    .font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("optionalQuestion.recommendation.\(question.id)")
                 if request.isPending {

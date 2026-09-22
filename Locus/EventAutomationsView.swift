@@ -4,6 +4,10 @@ import SwiftUI
 /// Agents own their instructions, trigger and conversations. Connections are
 /// shared infrastructure; runtime limits apply across the whole application.
 struct ConfigureAgentView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -45,18 +49,18 @@ struct ConfigureAgentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .background(LocusTheme.surfaceCanvas)
+                .background(viewColors.surfaceCanvas)
             }
         }
         .frame(minWidth: 860, idealWidth: 1000, minHeight: 600, idealHeight: 740)
-        .background(LocusTheme.panel)
-        .tint(LocusTheme.accentAction)
+        .background(viewColors.panel)
+        .tint(viewColors.accentAction)
         .animation(reduceMotion ? nil : LocusMotion.content, value: app.configureAgentTab)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("configureAgent.sheet")
-        .sheet(isPresented: $app.configureAgentCreationPresented, onDismiss: openChosenEditor) { creationSheet }
-        .sheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
-        .sheet(isPresented: Binding(
+        .locusSheet(isPresented: $app.configureAgentCreationPresented, onDismiss: openChosenEditor) { creationSheet }
+        .locusSheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
+        .locusSheet(isPresented: Binding(
             get: { schedule.scheduleEditorDraft != nil },
             set: { if !$0 { schedule.scheduleEditorDraft = nil } }
         )) {
@@ -64,11 +68,11 @@ struct ConfigureAgentView: View {
                 ScheduleEditorView(draft: draft).environmentObject(app)
             }
         }
-        .sheet(item: $automation.editorDraft) { draft in
+        .locusSheet(item: $automation.editorDraft) { draft in
             EventTriggerEditorView(draft: draft, automation: automation,
                 sessions: sessionCatalog.snapshot.sessions, currentModel: app.agentRouteModel)
         }
-        .sheet(item: $automation.webhookSetup) { WebhookSecretView(setup: $0) }
+        .locusSheet(item: $automation.webhookSetup) { WebhookSecretView(setup: $0) }
         .alert("Remove \(pendingConnectionRemoval?.displayName ?? "connection")?",
             isPresented: Binding(get: { pendingConnectionRemoval != nil },
                                  set: { if !$0 { pendingConnectionRemoval = nil } })) {
@@ -125,13 +129,13 @@ struct ConfigureAgentView: View {
         HStack(spacing: 12) {
             Image(systemName: "sparkles")
                 .font(.locus(size: 17, weight: .semibold))
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .frame(width: 38, height: 38)
-                .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                .background(viewColors.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
             VStack(alignment: .leading, spacing: 3) {
                 Text(app.configuredSavedAgent.map { "Manage \($0.name)" } ?? "Manage Agents").font(.locus(size: 18, weight: .bold))
                 Text("Chats, events, schedules, and price alerts.")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             }
             Spacer()
             Button { Task { await refresh(); if app.configureAgentTab == .runHistory { await refreshActivity() } } } label: {
@@ -160,13 +164,13 @@ struct ConfigureAgentView: View {
                         Spacer(minLength: 0)
                         if tab == .agents {
                             Text("\(references.count)").font(.locus(size: 8)).monospacedDigit()
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                     }
                     .padding(.horizontal, 10).frame(height: 36)
-                    .background(app.configureAgentTab == tab ? LocusTheme.signal.opacity(0.10) : .clear,
+                    .background(app.configureAgentTab == tab ? viewColors.signal.opacity(0.10) : .clear,
                                 in: RoundedRectangle(cornerRadius: 8))
-                    .foregroundStyle(app.configureAgentTab == tab ? LocusTheme.ink : LocusTheme.inkSoft)
+                    .foregroundStyle(app.configureAgentTab == tab ? viewColors.ink : viewColors.inkSoft)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.locus(.quiet))
@@ -177,9 +181,9 @@ struct ConfigureAgentView: View {
             Spacer()
             Divider().padding(.vertical, 8)
             Label("Runs on this Mac", systemImage: "desktopcomputer")
-                .font(.locus(size: 8, weight: .medium)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8, weight: .medium)).foregroundStyle(viewColors.muted)
             Text("Keep Locus open for automatic work.")
-                .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12).frame(width: 170)
@@ -206,7 +210,7 @@ struct ConfigureAgentView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.name).font(.locus(size: 15, weight: .semibold))
                         Text("\(profile.specialtyTitle) · \(profile.model)")
-                            .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                         if !profile.instructions.isEmpty {
                             Text(profile.instructions).font(.locus(size: 10)).lineLimit(2)
                         }
@@ -232,7 +236,7 @@ struct ConfigureAgentView: View {
                     Spacer()
                     Button("Create from request") { app.configureAgentCreationPresented = true }
                 }
-                .padding(12).background(LocusTheme.signal.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+                .padding(12).background(viewColors.signal.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
                 .padding([.horizontal, .bottom], 20)
                 .accessibilityIdentifier("configureAgent.draftSuggestion")
             }
@@ -266,7 +270,7 @@ struct ConfigureAgentView: View {
     private var agentList: some View {
         VStack(spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
                 TextField("Search automations", text: $search).textFieldStyle(.plain)
                     .accessibilityLabel("Search automations")
                     .accessibilityIdentifier("configureAgent.search")
@@ -274,7 +278,7 @@ struct ConfigureAgentView: View {
                     Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.locus(.icon)).accessibilityLabel("Clear automation search")
                 }
-            }.padding(9).background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 7))
+            }.padding(9).background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 7))
             Picker("Filter automations", selection: $agentFilter) {
                 Text("All automations").tag("all")
                 Text("Enabled").tag("enabled")
@@ -289,7 +293,7 @@ struct ConfigureAgentView: View {
                         }
                     }
                     if filteredReferences.isEmpty {
-                        Text("No matching automations").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).padding(.vertical, 24)
+                        Text("No matching automations").font(.locus(size: 9)).foregroundStyle(viewColors.muted).padding(.vertical, 24)
                         Button("Clear filters") { search = ""; agentFilter = "all" }.buttonStyle(.bordered)
                     }
                 }
@@ -303,18 +307,18 @@ struct ConfigureAgentView: View {
         return Button { selectionID = reference.id } label: {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: reference.kind.symbol)
-                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 20, height: 24)
+                    .foregroundStyle(viewColors.signalDeep).frame(width: 20, height: 24)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(reference.title).font(.locus(size: 11, weight: .semibold)).lineLimit(2)
                     HStack(spacing: 5) {
                         Circle().fill(statusColor(value)).frame(width: 5, height: 5)
-                        Text(statusTitle(value)).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                        Text(statusTitle(value)).font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                     }
                 }
                 Spacer(minLength: 0)
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(selectionID == reference.id ? LocusTheme.signal.opacity(0.11) : .clear,
+            .background(selectionID == reference.id ? viewColors.signal.opacity(0.11) : .clear,
                         in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
@@ -341,7 +345,7 @@ struct ConfigureAgentView: View {
                         .font(.locus(size: 9, weight: .medium)).foregroundStyle(statusColor(value))
                         .accessibilityIdentifier("configureAgent.detail.status")
                     Text(value.status.detail(for: value.vocabulary))
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     detailActions(definition, overview: value)
                 }
                 if let error = value.lastError {
@@ -351,14 +355,14 @@ struct ConfigureAgentView: View {
                         Text(error).font(.locus(size: 9)).textSelection(.enabled)
                         Button("Inspect activity") { showHistory(definition) }.buttonStyle(.bordered)
                     }
-                    .foregroundStyle(LocusTheme.warning).padding(12)
+                    .foregroundStyle(viewColors.warning).padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(LocusTheme.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                    .background(viewColors.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
                 }
                 Divider()
                 detailSection("Instructions", symbol: "text.alignleft") {
                     Text(value.instruction.isEmpty ? "No instructions saved. Edit this Agent to add them." : value.instruction)
-                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.inkSoft)
+                        .font(.locus(size: 11)).foregroundStyle(viewColors.inkSoft)
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 Divider()
@@ -367,39 +371,39 @@ struct ConfigureAgentView: View {
                     if let trigger = definition.trigger {
                         let connection = automation.connections.first { $0.id == trigger.connectionID }
                         Text(connection.map { "Connection · \($0.enabled ? $0.health.capitalized : "Disabled")" } ?? "Source connection is missing. Edit this Agent to choose another.")
-                            .font(.locus(size: 9)).foregroundStyle(connectionNeedsAttention(value) ? LocusTheme.warning : LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(connectionNeedsAttention(value) ? viewColors.warning : viewColors.muted)
                     }
                     ForEach(value.filters, id: \.self) { filter in
-                        Text(filter).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        Text(filter).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     }
                     if let task = definition.schedule {
                         Text(task.enabled
                              ? (task.nextRunDate.map { "Next run · \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "No upcoming run")
                              : "Schedule paused — automatic runs are off")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     }
-                    if let price = value.priceState { Text(price).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted) }
+                    if let price = value.priceState { Text(price).font(.locus(size: 9)).foregroundStyle(viewColors.muted) }
                     if let date = value.lastEventAt {
                         Text("Last triggered · \(date.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     }
                 }
                 Divider()
                 detailSection("Access & environment", symbol: "lock.shield") {
                     ForEach(value.facts.filter { !["Created", "Next run", "Source", "Connection"].contains($0.label) }) { fact in
                         HStack(alignment: .top, spacing: 12) {
-                            Text(fact.label).foregroundStyle(LocusTheme.muted)
+                            Text(fact.label).foregroundStyle(viewColors.muted)
                             Spacer(minLength: 4)
                             Text(fact.value).multilineTextAlignment(.trailing)
-                                .foregroundStyle(fact.isWarning ? LocusTheme.warning : LocusTheme.inkSoft)
+                                .foregroundStyle(fact.isWarning ? viewColors.warning : viewColors.inkSoft)
                         }.font(.locus(size: 9))
                     }
                     Text(definition.isSchedule
                          ? "Uses the app’s permission policy when a run starts. Approvals pause the run and notify you."
                          : "File changes, commands and external actions follow Locus’s shared approval policy. Connected services above are the ones this trigger may act through.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     Text("Runs on this Mac while Locus is open.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
                 Divider()
                 detailSection("Recent activity", symbol: "clock.arrow.circlepath") {
@@ -408,10 +412,10 @@ struct ConfigureAgentView: View {
                         activityRow(record)
                     } else {
                         Text("No recorded runs yet. Activity appears when this Agent is triggered.")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     }
                     Button("View activity") { showHistory(definition) }
-                        .buttonStyle(.locus()).foregroundStyle(LocusTheme.signalDeep)
+                        .buttonStyle(.locus()).foregroundStyle(viewColors.signalDeep)
                         .accessibilityIdentifier("configureAgent.detail.activity")
                 }
             }.padding(22)
@@ -502,7 +506,7 @@ struct ConfigureAgentView: View {
                     }
                 }
                 Text("Showing recent loaded activity. Open a record to inspect its execution and retained Agent history.")
-                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
             }
         }
         .padding(20)
@@ -521,11 +525,11 @@ struct ConfigureAgentView: View {
                     Text(record.statusTitle).font(.locus(size: 9, weight: .medium))
                         .foregroundStyle(activityColor(record))
                 }
-                Text(record.title).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft).lineLimit(2)
+                Text(record.title).font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft).lineLimit(2)
                 Text("\(record.sourceTitle) · \(Date(timeIntervalSince1970: record.timestamp).formatted(date: .abbreviated, time: .shortened))")
-                    .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                 if let error = record.error, !error.isEmpty {
-                    Text(error).font(.locus(size: 9)).foregroundStyle(record.needsAttention ? LocusTheme.warning : LocusTheme.muted).lineLimit(2)
+                    Text(error).font(.locus(size: 9)).foregroundStyle(record.needsAttention ? viewColors.warning : viewColors.muted).lineLimit(2)
                 }
                 HStack(spacing: 12) {
                     Button("Inspect") {
@@ -538,7 +542,7 @@ struct ConfigureAgentView: View {
                             automation.retry(delivery)
                         }.disabled(automation.retryingDeliveryIDs.contains(delivery.id))
                     }
-                }.buttonStyle(.locus()).font(.locus(size: 9, weight: .semibold)).foregroundStyle(LocusTheme.signalDeep)
+                }.buttonStyle(.locus()).font(.locus(size: 9, weight: .semibold)).foregroundStyle(viewColors.signalDeep)
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("configureAgent.activity.\(record.id)")
     }
@@ -558,14 +562,14 @@ struct ConfigureAgentView: View {
                 }
                 if automation.connections.isEmpty {
                     Text("Choose a source to get started. Then use it in an Agent’s incoming event trigger.")
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                     ForEach(ConnectorKind.allCases) { kind in
                         Button { connectionSheet = kind } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: kind.symbol).foregroundStyle(LocusTheme.signalDeep).frame(width: 26)
+                                Image(systemName: kind.symbol).foregroundStyle(viewColors.signalDeep).frame(width: 26)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(kind.title).font(.locus(size: 11, weight: .semibold))
-                                    Text(connectionDescription(kind)).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                    Text(connectionDescription(kind)).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                                 }
                                 Spacer()
                                 Image(systemName: "plus")
@@ -580,7 +584,7 @@ struct ConfigureAgentView: View {
                     }
                 }
                 Label("Credentials are stored in your Mac’s Keychain and kept out of chats.", systemImage: "lock.shield")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             }.padding(20)
         }.accessibilityIdentifier("configureAgent.sources")
     }
@@ -589,29 +593,29 @@ struct ConfigureAgentView: View {
         let users = automation.triggers.filter { $0.connectionID == connection.id || $0.actionConnectionIDs.contains(connection.id) }
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: connection.kind.symbol).font(.locus(size: 16))
-                .foregroundStyle(LocusTheme.signalDeep).frame(width: 30, height: 32)
+                .foregroundStyle(viewColors.signalDeep).frame(width: 30, height: 32)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(connection.displayName).font(.locus(size: 12, weight: .semibold))
                     Text(connection.enabled ? connection.health.replacingOccurrences(of: "_", with: " ").capitalized : "Disabled")
-                        .font(.locus(size: 9)).foregroundStyle(connection.lastError == nil ? LocusTheme.muted : LocusTheme.warning)
+                        .font(.locus(size: 9)).foregroundStyle(connection.lastError == nil ? viewColors.muted : viewColors.warning)
                 }
                 Text("\(connection.kind.title) · \(users.count) \(users.count == 1 ? "Agent" : "Agents")")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 if !users.isEmpty {
                     Text(users.map(\.name).joined(separator: ", "))
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted).lineLimit(2)
                 }
                 if let date = connection.lastPolledAt {
                     Text("Last checked \(Date(timeIntervalSince1970: date).formatted(date: .abbreviated, time: .shortened))")
-                        .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                 }
                 if let error = connection.lastError, !error.isEmpty {
-                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning).textSelection(.enabled)
+                    Text(error).font(.locus(size: 9)).foregroundStyle(viewColors.warning).textSelection(.enabled)
                 }
                 if !users.isEmpty {
                     Text("To remove this connection, first update the Agents using it.")
-                        .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                 }
             }
             Spacer(minLength: 4)
@@ -627,7 +631,7 @@ struct ConfigureAgentView: View {
                 sectionHeading("Runtime", detail: "Shared controls for how chats and Agents work on this Mac.")
                 detailSection("Concurrent work", symbol: "arrow.triangle.branch") {
                     Text("Choose how many chats and Agent events can work at once.")
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                     Picker("Concurrent work", selection: Binding(get: { app.settings.maximumActiveChats }, set: { value in
                         var settings = app.settings
                         settings.maximumActiveChats = value
@@ -641,19 +645,19 @@ struct ConfigureAgentView: View {
                     }.labelsHidden().frame(maxWidth: 270)
                         .accessibilityIdentifier("configureAgent.maximumActiveChats")
                     Text("Events in the same chat run in arrival order. Chats that can change the same shared folder wait until it is free.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }.accessibilityIdentifier("configureAgent.eventProcessing")
                 Divider()
                 detailSection("Where Agents run", symbol: "desktopcomputer") {
                     Text("Locus coordinates automatic work on this Mac. Keep the app open and your model and connections available.")
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
                     Text("An Agent’s environment determines whether it works directly in a workspace or in an isolated worktree. Its selected model may be local or hosted.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
                 Divider()
                 detailSection("Behavior & teams", symbol: "person.3") {
                     Text("Reusable specialists and teams define how models collaborate. Manage them in Settings.")
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                     Button("Specialists & teams…") { app.dismissConfigureAgent(); app.presentSettings(.agents) }
                         .buttonStyle(.bordered)
                 }
@@ -667,7 +671,7 @@ struct ConfigureAgentView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(app.configuredSavedAgent.map { "Add to \($0.name)" } ?? "Add automatic work")
                         .font(.locus(size: 20, weight: .bold))
-                    Text("How would you like to work together?").font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    Text("How would you like to work together?").font(.locus(size: 11)).foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button { app.configureAgentCreationPresented = false } label: { Image(systemName: "xmark") }
@@ -675,11 +679,11 @@ struct ConfigureAgentView: View {
             }
             Text(app.configuredSavedAgent.map { "Add a conversation or automatic work to \($0.name)." }
                  ?? "Open an agent conversation or add automatic work.")
-                .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                .font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
             if !app.configureAgentDraftSuggestion.isEmpty {
                 Text(app.configureAgentDraftSuggestion).font(.locus(size: 10)).lineLimit(3)
                     .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(LocusTheme.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+                    .background(viewColors.signal.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
             }
             VStack(spacing: 8) {
                 Button {
@@ -691,20 +695,20 @@ struct ConfigureAgentView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("New chat").font(.locus(size: 12, weight: .semibold))
                             Text("A separate conversation with this agent, ready for your message.")
-                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                         }
                         Spacer()
                         Image(systemName: "chevron.right").font(.locus(size: 9))
                     }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
+                        .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
                 }.buttonStyle(.locus(.card)).accessibilityIdentifier("configureAgent.create.chat")
                 creationOption(.schedule, title: "On a schedule", detail: "A daily review, a weekly report, or a one-time task.")
                 creationOption(.event, title: "When an event arrives", detail: "React to Gmail, Telegram, or a signed webhook.")
                 creationOption(.price, title: "When a price changes", detail: "Watch a stock or crypto price and act at a threshold.")
             }
             Text("Automatic work runs while Locus is open. You stay in control of its access and can pause it at any time.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-        }.padding(26).frame(width: 560).background(LocusTheme.panel)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
+        }.padding(26).frame(width: 560).background(viewColors.panel)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("configureAgent.creation")
     }
@@ -716,15 +720,15 @@ struct ConfigureAgentView: View {
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: kind.symbol).font(.locus(size: 18, weight: .medium))
-                    .foregroundStyle(LocusTheme.signalDeep).frame(width: 32)
+                    .foregroundStyle(viewColors.signalDeep).frame(width: 32)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(LocusTheme.ink)
-                    Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(viewColors.ink)
+                    Text(detail).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.right").font(.locus(size: 9, weight: .semibold)).foregroundStyle(LocusTheme.muted)
+                Image(systemName: "chevron.right").font(.locus(size: 9, weight: .semibold)).foregroundStyle(viewColors.muted)
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 12)).contentShape(Rectangle())
+                .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 12)).contentShape(Rectangle())
         }.buttonStyle(.locus(.card)).accessibilityIdentifier("configureAgent.create.\(kind.rawValue)")
     }
 
@@ -799,9 +803,9 @@ struct ConfigureAgentView: View {
             isRunning: value.runningChatCount > 0, sourceNeedsAttention: connectionNeedsAttention(value))
     }
     private func statusColor(_ value: AgentOverview) -> Color {
-        if value.runningChatCount > 0 { return LocusTheme.signalDeep }
-        if value.lastError?.isEmpty == false || connectionNeedsAttention(value) { return LocusTheme.warning }
-        return value.status == .active ? LocusTheme.success : LocusTheme.muted
+        if value.runningChatCount > 0 { return viewColors.signalDeep }
+        if value.lastError?.isEmpty == false || connectionNeedsAttention(value) { return viewColors.warning }
+        return value.status == .active ? viewColors.success : viewColors.muted
     }
     private var activityRecords: [AgentActivityRecord] {
         let records = AgentActivityRecord.merged(deliveries: automation.deliveries,
@@ -819,9 +823,9 @@ struct ConfigureAgentView: View {
         }
     }
     private func activityColor(_ record: AgentActivityRecord) -> Color {
-        if record.needsAttention { return LocusTheme.warning }
-        if record.isInProgress { return LocusTheme.signalDeep }
-        return record.state == "completed" ? LocusTheme.success : LocusTheme.muted
+        if record.needsAttention { return viewColors.warning }
+        if record.isInProgress { return viewColors.signalDeep }
+        return record.state == "completed" ? viewColors.success : viewColors.muted
     }
     private func showHistory(_ definition: AgentDefinition) {
         historyAgentID = references.first { $0.configurationID == definition.id && ($0.kind == .schedule) == definition.isSchedule }?.id ?? ""
@@ -854,20 +858,20 @@ struct ConfigureAgentView: View {
     private func sectionHeading(_ title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.locus(size: 17, weight: .bold))
-            Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).fixedSize(horizontal: false, vertical: true)
+            Text(detail).font(.locus(size: 9)).foregroundStyle(viewColors.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
     private func loadingState(_ title: String) -> some View {
-        VStack(spacing: 12) { ProgressView(); Text(title).font(.locus(size: 10)).foregroundStyle(LocusTheme.muted) }
+        VStack(spacing: 12) { ProgressView(); Text(title).font(.locus(size: 10)).foregroundStyle(viewColors.muted) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func errorBanner(_ error: String) -> some View {
         HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(LocusTheme.warning)
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(viewColors.warning)
             Text(error).font(.locus(size: 9)).textSelection(.enabled)
             Spacer()
             Button("Retry") { Task { await refresh(); await refreshActivity() } }.buttonStyle(.bordered)
-        }.padding(12).background(LocusTheme.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+        }.padding(12).background(viewColors.warning.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
     }
     private func connectionDescription(_ kind: ConnectorKind) -> String {
         switch kind {
@@ -907,6 +911,10 @@ private struct AgentConfigurationReference: Identifiable, Hashable {
 }
 
 private struct ConnectorSetupView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     let kind: ConnectorKind
     @ObservedObject var automation: EventAutomationModel
@@ -993,19 +1001,19 @@ private struct ConnectorSetupView: View {
                     }
                     Text("The browser opens for Google sign-in. Tokens stay in your Mac Keychain and never enter a chat.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 } else if kind == .telegram {
                     LocusFormSecureField("Bot token", text: $token)
                     Text("The token stays in your Mac Keychain. Use trigger filters to allow only expected chats, senders, commands, and message types.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 } else if kind == .webhook {
                     LocusFormTextField("Listener port", value: $port, format: .number)
                     Toggle("Allow devices on the local network", isOn: $allowLAN)
                     LocusFormTextField("Optional tunnel URL", text: $tunnelURL)
                     Text("The listener binds to localhost by default. Locus does not operate a cloud relay; configure your own tunnel if the sender is remote.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("eventAutomations.webhookSecurityNote")
                 } else {
                     LocusFormTextField("HTTPS GET endpoint with {symbol}", text: $endpointTemplate)
@@ -1048,7 +1056,7 @@ private struct ConnectorSetupView: View {
                     .disabled(priceSecrets.count >= 4)
                     Text("Test & Connect must parse a finite positive decimal. Secret values stay in Keychain; only their field names are saved.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("configureAgent.priceSourceSecurityNote")
                 }
             }
@@ -1132,6 +1140,10 @@ private struct AutomationDisclosureGroupStyle: DisclosureGroupStyle {
 }
 
 private struct EventTriggerEditorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -1176,13 +1188,13 @@ private struct EventTriggerEditorView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: draft.triggerKind == .price ? "chart.line.uptrend.xyaxis" : "bolt")
-                    .font(.locus(size: 19)).foregroundStyle(LocusTheme.signalDeep)
+                    .font(.locus(size: 19)).foregroundStyle(viewColors.signalDeep)
                     .frame(width: 38, height: 38)
-                    .background(LocusTheme.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                    .background(viewColors.signal.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(editorTitle).font(.locus(size: 17, weight: .bold))
                     Text("Give it a purpose. Choose what wakes it up.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
                 Spacer()
             }.padding(20)
@@ -1194,20 +1206,20 @@ private struct EventTriggerEditorView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Instructions").font(.locus(size: 10, weight: .semibold))
                         TextEditor(text: instructionBinding)
-                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.inkSoft)
-                            .tint(LocusTheme.signalDeep).scrollContentBackground(.hidden)
+                            .font(.locus(size: 11)).foregroundStyle(viewColors.inkSoft)
+                            .tint(viewColors.signalDeep).scrollContentBackground(.hidden)
                             .frame(minHeight: 95).padding(7)
-                            .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+                            .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
                             .overlay(alignment: .topLeading) {
                                 if instructionBinding.wrappedValue.isEmpty {
                                     Text("When an event arrives, what should this Agent do?")
-                                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                                        .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                                         .padding(12).allowsHitTesting(false)
                                 }
                             }
                             .accessibilityLabel("Instructions").accessibilityIdentifier("eventTrigger.instruction")
                         Text("For example: Summarize the email, extract action items, and draft a reply for me to review.")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     }
                 }
                 Section("Working in") { workspaceFields }
@@ -1250,7 +1262,7 @@ private struct EventTriggerEditorView: View {
                         DisclosureGroup(isExpanded: $showFilters) { sourceFilters } label: {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Only matching events").font(.locus(size: 10, weight: .medium))
-                                Text(filterSummary).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                Text(filterSummary).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                             }
                         }.accessibilityIdentifier("eventTrigger.filters")
                     }
@@ -1265,57 +1277,57 @@ private struct EventTriggerEditorView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(connection.displayName)
                                     Text(connection.kind == .gmail ? "Allow email actions, including sending" : "Allow actions through this Telegram bot")
-                                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                                 }
                             }.accessibilityIdentifier("eventTrigger.action.\(connection.id)")
                         }
                         if actionConnections.isEmpty {
-                            Text("No services with external actions are connected.").foregroundStyle(LocusTheme.muted)
+                            Text("No services with external actions are connected.").foregroundStyle(viewColors.muted)
                         }
                         Text("Webhooks and price feeds only supply events. They cannot perform external actions.")
-                            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Connected-service actions").font(.locus(size: 10, weight: .medium))
-                            Text(actionSummary).font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                            Text(actionSummary).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                         }
                     }.accessibilityIdentifier("eventTrigger.actions")
                     Text("File edits, commands, network requests and external actions follow Locus’s shared approval policy. Approvals can pause a run until you respond.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
                 Section {
                     DisclosureGroup(isExpanded: $showEnvironment) { environmentFields } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Environment & conversation").font(.locus(size: 10, weight: .medium))
                             Text("\(draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat ? "Dedicated Agent chat" : "Existing chat") · \(existingAgentModel ?? currentModel)")
-                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).lineLimit(2)
+                                .font(.locus(size: 9)).foregroundStyle(viewColors.muted).lineLimit(2)
                         }
                     }.accessibilityIdentifier("eventTrigger.environment")
                     if app.automationWorkflowsEnabled {
                         DisclosureGroup("Advanced workflow", isExpanded: $showWorkflow) {
                             AutomationWorkflowEditorView(workflow: $draft.workflow, connectors: workflowConnectorOptions)
                             Text("The instructions above are the first Agent step. Additional steps run in the saved workflow order.")
-                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                         }.accessibilityIdentifier("eventTrigger.workflow")
                     }
                     Toggle(draft.id == nil ? "Enable after creation" : "Trigger enabled", isOn: $draft.enabled)
                         .accessibilityIdentifier("eventTrigger.enabled")
                     Text(draft.enabled ? "Starts automatically when a matching event arrives while Locus is open." : "Saved paused. You can review its setup before enabling automatic work.")
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 }
             }
             .disclosureGroupStyle(AutomationDisclosureGroupStyle())
-            .formStyle(.grouped).scrollContentBackground(.hidden).background(LocusTheme.surfaceCanvas)
+            .formStyle(.grouped).scrollContentBackground(.hidden).background(viewColors.surfaceCanvas)
             .disabled(isSaving)
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 if let saveError {
-                    Text(saveError).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                    Text(saveError).font(.locus(size: 9)).foregroundStyle(viewColors.warning)
                         .accessibilityIdentifier("eventTrigger.error")
                 }
                 HStack(alignment: .center, spacing: 16) {
                     Text(missingRequirement ?? (draft.enabled ? "Ready to start listening" : "Ready to create paused"))
-                        .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                        .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("eventTrigger.requirement")
                     Spacer(minLength: 4)
                     if isSaving { ProgressView().controlSize(.small) }
@@ -1327,14 +1339,14 @@ private struct EventTriggerEditorView: View {
                 }
             }.padding(18)
         }
-        .frame(width: 680, height: 620).background(LocusTheme.panel)
-        .tint(LocusTheme.accentAction)
+        .frame(width: 680, height: 620).background(viewColors.panel)
+        .tint(viewColors.accentAction)
         .interactiveDismissDisabled(draft != originalDraft || isSaving)
         .alert("Discard changes?", isPresented: $confirmsDiscard) {
             Button("Keep editing", role: .cancel) {}
             Button("Discard", role: .destructive) { dismiss() }
         } message: { Text("Your Agent settings haven’t been saved.") }
-        .sheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
+        .locusSheet(item: $connectionSheet) { ConnectorSetupView(kind: $0, automation: automation) }
         .onAppear { nameFocused = draft.name.isEmpty }
         .onChange(of: automation.connections.map(\.id)) { oldValue, newValue in
             guard draft.connectionID.isEmpty,
@@ -1401,12 +1413,12 @@ private struct EventTriggerEditorView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("eventTrigger.workspacePath")
                 Text("Saving creates a new receiving chat here. Previous conversations keep their files and history.")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             } else { receivingWorkspaceSummary }
         } else {
             receivingWorkspaceSummary
             Text("The receiving chat sets this rule’s folder. Choose another conversation below to change it.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
         }
     }
     @ViewBuilder private var receivingWorkspaceSummary: some View {
@@ -1417,11 +1429,11 @@ private struct EventTriggerEditorView: View {
                 .accessibilityIdentifier("eventTrigger.workspacePath")
             if let execution = chat.executionPath?.nilIfEmpty, execution != root {
                 Text("Files for this chat: \(execution)").font(.locus(size: 9)).textSelection(.enabled)
-                    .foregroundStyle(LocusTheme.muted).fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(viewColors.muted).fixedSize(horizontal: false, vertical: true)
             }
             Text("Future events continue this chat. Choosing another receiving chat applies when you save.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
-        } else { Text("Choose a receiving chat.").foregroundStyle(LocusTheme.muted) }
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
+        } else { Text("Choose a receiving chat.").foregroundStyle(viewColors.muted) }
     }
     private func chooseReceivingWorkspace() {
         guard let path = app.chooseSavedAgentProjectFolder() else { return }
@@ -1462,7 +1474,7 @@ private struct EventTriggerEditorView: View {
         }
         if draft.targetSessionID == EventTriggerEditorDraft.dedicatedAgentChat {
             Text("Matching events continue the same Agent chat. Side conversations stay separate. The Agent uses the selected workspace’s files and instructions.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             if draft.id != nil, let model = existingAgentModel {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(draft.adoptCurrentRoute ? "Will use \(currentModel) after saving." : "Model: \(model)")
@@ -1472,7 +1484,7 @@ private struct EventTriggerEditorView: View {
                     }
                 }.font(.locus(size: 9)).accessibilityIdentifier("eventTrigger.route")
             } else {
-                Text("Model: \(currentModel)").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Text("Model: \(currentModel)").font(.locus(size: 9)).foregroundStyle(viewColors.muted)
             }
         }
         Picker("Work mode", selection: $draft.mode) {
@@ -1494,7 +1506,7 @@ private struct EventTriggerEditorView: View {
             }
         }
         Text("Incoming message bodies are event data. They cannot change this Agent’s instructions or permissions.")
-            .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+            .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
     }
 
     @ViewBuilder
@@ -1534,7 +1546,7 @@ private struct EventTriggerEditorView: View {
             if kind == .webhook {
                 Text("Send a signed price.quote event through your own relay. TradingView cannot add Locus HMAC headers directly, so point TradingView at the relay instead.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(verbatim: #"{"event":"price.quote","subject":"Bitcoin price update","data":{"provider_symbol":"BTCUSDT","display_symbol":"Bitcoin","asset_class":"crypto","quote_currency":"USD","price":"100000","provider_timestamp":1700000000}}"#)
                     .font(.locus(size: 8, design: .monospaced))
                     .textSelection(.enabled)
@@ -1554,7 +1566,7 @@ private struct EventTriggerEditorView: View {
             }
             Text("Use any filter by itself, combine filters, or leave all blank to run for every incoming email.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         } else if kind == .telegram {
             CSVField("Chat IDs", values: $draft.filters.chatIDs)
             CSVField("Sender IDs", values: $draft.filters.senderIDs)
@@ -1583,7 +1595,7 @@ private struct EventTriggerEditorView: View {
             }
         } else {
             Text("Choose a source to set optional matching conditions.")
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
     }
 
@@ -1709,6 +1721,10 @@ private struct CSVField: View {
 }
 
 private struct WebhookSecretView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     let setup: WebhookSetup
 
@@ -1718,7 +1734,7 @@ private struct WebhookSecretView: View {
                 .font(.locus(size: 15, weight: .bold))
             Text("Copy these now. The signing secret is stored in Keychain and will not be shown again.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             LabeledContent("Endpoint") {
                 Text(setup.endpoint).font(.locus(size: 9, design: .monospaced)).textSelection(.enabled)
             }

@@ -803,6 +803,10 @@ private struct WorkspacePanelMotion: ViewModifier {
 }
 
 struct RootView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
@@ -1037,7 +1041,7 @@ struct RootView: View {
             inspectorZoomed: model.inspectorZoomed,
             inspectorTab: model.inspectorTab
         ))
-        .background(LocusTheme.paper)
+        .background(viewColors.paper)
         .overlay(alignment: .bottomTrailing) {
             if let toast = toastCenter.toast {
                 HStack(spacing: 12) {
@@ -1047,14 +1051,14 @@ struct RootView: View {
                         Button(actionTitle) { model.performToastAction() }
                             .buttonStyle(.locus())
                             .font(.locus(size: 11, weight: .bold))
-                            .foregroundStyle(LocusTheme.signal)
+                            .foregroundStyle(viewColors.signal)
                             .accessibilityIdentifier("toast.action")
                     }
                 }
-                .foregroundStyle(LocusTheme.paper)
+                .foregroundStyle(viewColors.paper)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(LocusTheme.ink)
+                .background(viewColors.ink)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                 .padding(18)
@@ -1085,6 +1089,10 @@ struct RootView: View {
 }
 
 struct RememberConfirmationView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var knowledge: WorkspaceKnowledgeModel
     @Environment(\.dismiss) private var dismiss
@@ -1104,20 +1112,20 @@ struct RememberConfirmationView: View {
                 .font(.locus(size: 16, weight: .bold))
             Text("Review or edit the memory before saving. Saving is explicit approval, so it can be recalled in future chats within its scope.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
             TextField("Title", text: $title)
                 .accessibilityIdentifier("remember.title")
             TextEditor(text: $content)
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.accentAction)
                 .font(.locus(size: 10))
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .frame(height: 120)
-                .background(LocusTheme.white)
+                .background(viewColors.white)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(viewColors.line) }
                 .accessibilityIdentifier("remember.content")
             Picker("Scope", selection: $scope) {
                 ForEach(AgentMemoryScope.allCases) { value in
@@ -1151,11 +1159,15 @@ struct RememberConfirmationView: View {
         }
         .padding(20)
         .frame(width: 520)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
     }
 }
 
 struct MCPInputRequestView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     let request: MCPInputRequest
@@ -1170,12 +1182,12 @@ struct MCPInputRequestView: View {
             .font(.locus(size: 14, weight: .bold))
             Text(request.message)
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
             if request.mode == "url" {
                 Text("Sensitive information stays on the extension's verified HTTPS page. Never paste credentials, payment details, or API keys into Locus.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Open Secure Page") {
                     if let value = request.url.flatMap(URL.init(string:)) {
@@ -1183,7 +1195,7 @@ struct MCPInputRequestView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -1191,10 +1203,10 @@ struct MCPInputRequestView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 formControl(field)
                                 if let description = field.specification["description"]?.string {
-                                    Text(description).font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                                    Text(description).font(.locus(size: 9)).foregroundStyle(viewColors.textSecondary)
                                 }
                                 if let error = validation.errors[field.name] {
-                                    Text(error).font(.locus(size: 9)).foregroundStyle(LocusTheme.coral)
+                                    Text(error).font(.locus(size: 9)).foregroundStyle(viewColors.coral)
                                         .accessibilityIdentifier("mcpInput.error.\(field.name)")
                                 }
                             }
@@ -1204,7 +1216,7 @@ struct MCPInputRequestView: View {
                 .frame(maxHeight: 430)
                 Text("Only the displayed non-sensitive fields are returned to the extension.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             HStack {
                 Button("Decline") { extensionsModel.answerMCPInput(action: "decline") }
@@ -1214,7 +1226,7 @@ struct MCPInputRequestView: View {
                     extensionsModel.answerMCPInput(action: "accept", content: validation.content)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(request.mode != "url" && !validation.errors.isEmpty)
             }
         }

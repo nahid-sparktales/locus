@@ -7,7 +7,7 @@ export const GRAND_LINE_LANDMARKS = [
   { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -23, z: -12, radius: 1.8, harborFacing: 'east' },
   { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -18.5, z: 7.5, radius: 2.0, harborFacing: 'south' },
   { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -13.8, z: -5.8, radius: 2.3, harborFacing: 'north' },
-  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -8.8, z: 18, radius: 3.2, harborFacing: 'east' },
+  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -13, z: 18, radius: 3.2, harborFacing: 'east' },
   { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -3, z: -6, radius: 3.1, harborFacing: 'south' },
   { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: 5, z: -14, radius: 1.7, harborFacing: 'east' },
   { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: 5.5, z: 8.5, radius: 2.8, harborFacing: 'south' },
@@ -19,6 +19,12 @@ export const GRAND_LINE_LANDMARKS = [
   { id: 'elbaf', name: 'Elbatch', subtitle: 'GIANT CONTEXT. GREATER ADVENTURES.', x: 0.5, z: 24, radius: 3.5, harborFacing: 'south' },
   { id: 'egghead', name: 'Egghead', subtitle: 'TOMORROW IS ALREADY RUNNING', x: 12, z: -22, radius: 3.0, harborFacing: 'north' },
 ] as const;
+
+/** These four near-bank landmarks face across the channel. Their docks,
+ * navigation obstacles and work plazas already face inward and stay fixed. */
+export function islandArtworkRotation(id: string): number {
+  return ['little-garden', 'alabasta', 'sabaody', 'elbaf'].includes(id) ? Math.PI : 0;
+}
 
 export const GRAND_LINE_ISLAND_MODELS: Record<typeof GRAND_LINE_LANDMARKS[number]['id'], SceneryAssetType> = {
   'twin-cape': 'island_twin_cape', 'little-garden': 'island_little_garden', drum: 'island_drum',

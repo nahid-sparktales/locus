@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct DuoComposerView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var duo: DuoModel
     @ObservedObject var capsules: TaskCapsuleModel
@@ -74,7 +78,7 @@ struct DuoComposerView: View {
                 if let error = task.error { Text(error).foregroundStyle(.red) }
             } else {
                 Text("Review the plan, then accept to start the builder.")
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             if let error = capsules.error { Text(error).foregroundStyle(.red) }
         }
@@ -89,13 +93,13 @@ struct DuoComposerView: View {
 
     @ViewBuilder private var choices: some View {
         choice(planner: true, profile: task?.planner ?? duo.saved.planner)
-        Image(systemName: "arrow.right").foregroundStyle(LocusTheme.muted).accessibilityHidden(true)
+        Image(systemName: "arrow.right").foregroundStyle(viewColors.muted).accessibilityHidden(true)
         choice(planner: false, profile: task?.executor ?? duo.saved.executor)
     }
 
     private func choice(planner: Bool, profile: AgentProfile?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(planner ? "Plan with" : "Build with").foregroundStyle(LocusTheme.muted)
+            Text(planner ? "Plan with" : "Build with").foregroundStyle(viewColors.muted)
             if locked {
                 Text(model.duoLabel(profile)).lineLimit(1).truncationMode(.middle)
                     .help(model.duoLabel(profile))

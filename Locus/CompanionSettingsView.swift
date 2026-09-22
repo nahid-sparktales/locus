@@ -4,6 +4,10 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 struct CompanionAccessSettingsSection: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Binding var enabled: Bool
     @State private var confirmation: Confirmation?
@@ -21,13 +25,13 @@ struct CompanionAccessSettingsSection: View {
 
             Text("Off by default. Connections stay private to your local or Tailscale network, use a pinned certificate, and never expose the local agent port.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             if enabled != model.settings.mobileAccessEnabled {
                 Label("Save Settings to apply this change", systemImage: "info.circle")
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
             } else if enabled {
                 LabeledContent("Status") {
                     Label(
@@ -37,7 +41,7 @@ struct CompanionAccessSettingsSection: View {
                     )
                     .foregroundStyle(
                         model.companionGatewayState.running
-                            ? LocusTheme.success : LocusTheme.warning
+                            ? viewColors.success : viewColors.warning
                     )
                     .accessibilityIdentifier("settings.mobileAccessStatus")
                 }
@@ -53,14 +57,14 @@ struct CompanionAccessSettingsSection: View {
                 if let error = model.companionPairingError {
                     Text(error)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.coral)
+                        .foregroundStyle(viewColors.coral)
                         .accessibilityIdentifier("settings.mobileAccessError")
                 }
 
                 if model.companionGatewayState.pairedDevices.isEmpty {
                     Text("No phones are paired.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 } else {
                     ForEach(model.companionGatewayState.pairedDevices) { device in
                         HStack {
@@ -70,7 +74,7 @@ struct CompanionAccessSettingsSection: View {
                                 Text(device.name)
                                 Text("Last connected \(Date(timeIntervalSince1970: device.lastSeenAt).formatted(.relative(presentation: .named)))")
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             }
                             Spacer()
                             Button("Revoke") { model.revokeCompanionDevice(device) }
@@ -120,6 +124,10 @@ struct CompanionAccessSettingsSection: View {
 }
 
 private struct CompanionPairingCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let payload: CompanionPairingPayload
 
@@ -138,7 +146,7 @@ private struct CompanionPairingCard: View {
                     .font(.locus(size: 11, weight: .bold))
                 Text("This code works once and expires in five minutes. Check that the certificate fingerprint shown by the phone matches before pairing.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(payload.certificateFingerprint)
                     .font(.locus(size: 8, design: .monospaced))
@@ -170,9 +178,9 @@ private struct CompanionPairingCard: View {
             }
         }
         .padding(12)
-        .background(LocusTheme.white.opacity(0.72))
+        .background(viewColors.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(viewColors.line) }
     }
 
     private static func qrImage(_ payload: CompanionPairingPayload) -> NSImage? {

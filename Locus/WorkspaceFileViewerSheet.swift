@@ -6,6 +6,10 @@ import SwiftUI
 /// actually read. View-only on purpose — editing belongs to the user's editor,
 /// reachable from the header.
 struct WorkspaceFileViewerSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let request: WorkspaceFileViewerRequest
@@ -21,14 +25,14 @@ struct WorkspaceFileViewerSheet: View {
         VStack(spacing: 0) {
             header
             HStack(spacing: 10) {
-                Text("Text size").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                Text("Text size").font(.subheadline).foregroundStyle(viewColors.textSecondary)
                 Button { textSize = max(11, textSize - 1) } label: { Image(systemName: "textformat.size.smaller") }
                     .disabled(textSize <= 11).accessibilityLabel("Decrease text size")
                 Text("\(Int(textSize))").monospacedDigit()
                 Button { textSize = min(22, textSize + 1) } label: { Image(systemName: "textformat.size.larger") }
                     .disabled(textSize >= 22).accessibilityLabel("Increase text size")
                 Spacer()
-                Text("Read only").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                Text("Read only").font(.subheadline).foregroundStyle(viewColors.textSecondary)
             }.padding(.horizontal, 16).padding(.vertical, 10)
             Divider()
             if let contents {
@@ -47,7 +51,7 @@ struct WorkspaceFileViewerSheet: View {
             }
         }
         .frame(minWidth: 700, idealWidth: 920, minHeight: 500, idealHeight: 680)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .onExitCommand { dismiss() }
         .task(id: request.id) {
             contents = await WorkspaceFileModel.previewText(
@@ -74,16 +78,16 @@ struct WorkspaceFileViewerSheet: View {
                                 ?? "Line \(location.line)"
                         )
                         .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.contentLink)
+                        .foregroundStyle(viewColors.contentLink)
                         .padding(.horizontal, 6)
                         .frame(height: 20)
-                        .background(LocusTheme.contentLink.opacity(0.12))
+                        .background(viewColors.contentLink.opacity(0.12))
                         .clipShape(Capsule())
                     }
                 }
                 Text(request.relativePath)
                     .font(.locus(size: 11, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.head)
                     .textSelection(.enabled)
@@ -113,7 +117,7 @@ struct WorkspaceFileViewerSheet: View {
         }
         .padding(16)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -126,7 +130,7 @@ struct WorkspaceFileViewerSheet: View {
             Label(title, systemImage: symbol).font(.subheadline)
         }
         .buttonStyle(.locus())
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(viewColors.muted)
         .help(title)
         .accessibilityLabel("\(title): \(request.relativePath)")
     }
@@ -137,6 +141,10 @@ struct WorkspaceFileViewerSheet: View {
 /// is laid out at least viewport-wide and pinned leading — a two-axis
 /// ScrollView otherwise centers a stack of short lines in a wide viewport.
 struct WorkspaceSourceTextView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let contents: String
     let location: WorkspacePreviewLocation?
     var textSize: CGFloat = 9
@@ -168,7 +176,7 @@ struct WorkspaceSourceTextView: View {
                     .padding(.vertical, 7)
                     .frame(minWidth: geometry.size.width, alignment: .leading)
                 }
-                .background(LocusTheme.paperDeep.opacity(0.34))
+                .background(viewColors.paperDeep.opacity(0.34))
                 .onAppear { scroll(to: location?.line, proxy: proxy) }
                 .onChange(of: location) { _, next in
                     scroll(to: next?.line, proxy: proxy)
@@ -187,6 +195,10 @@ struct WorkspaceSourceTextView: View {
 }
 
 private struct WorkspaceSourceTextRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let line: String
     let number: Int
     let isHighlighted: Bool
@@ -198,12 +210,12 @@ private struct WorkspaceSourceTextRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Text(String(number))
                 .font(.locus(size: numberSize, design: .monospaced))
-                .foregroundStyle(isHighlighted ? LocusTheme.contentLink : LocusTheme.muted)
+                .foregroundStyle(isHighlighted ? viewColors.contentLink : viewColors.muted)
                 .frame(width: numberColumnWidth, alignment: .trailing)
                 .textSelection(.disabled)
             Text(line.isEmpty ? " " : line)
                 .font(.locus(size: textSize, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)
                 // A whitespace placeholder renders only background, which the
@@ -213,7 +225,7 @@ private struct WorkspaceSourceTextRow: View {
         .padding(.horizontal, 8)
         .frame(minHeight: textSize * 2.2, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isHighlighted ? LocusTheme.contentLink.opacity(0.11) : Color.clear)
+        .background(isHighlighted ? viewColors.contentLink.opacity(0.11) : Color.clear)
         .accessibilityLabel(
             isHighlighted
                 ? "Highlighted line \(number): \(line)"

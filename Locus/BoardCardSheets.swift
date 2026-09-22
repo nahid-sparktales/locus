@@ -10,6 +10,10 @@ import SwiftUI
 /// reached. If the sheet goes away without Done or Cancel, edits are saved
 /// and a typed comment waits for the card's next opening.
 struct BoardCardDetailSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: BoardStore
     let cardID: UUID
     let onWorkInChat: (BoardCard) -> Void
@@ -96,11 +100,13 @@ struct BoardCardDetailSheet: View {
                     VStack(alignment: .leading, spacing: 18) {
                         titleSection(card, key: key)
                         properties(card)
+                        AgentMentionPicker(selectedIDs: $edits.draft.agentIDs)
+                            .onChange(of: edits.draft.agentIDs) { _, _ in save() }
                         descriptionSection
                         if let errorMessage {
                             Text(errorMessage)
                                 .font(.locus(size: 11))
-                                .foregroundStyle(LocusTheme.coral)
+                                .foregroundStyle(viewColors.coral)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("board.card.error")
                         }
@@ -133,7 +139,7 @@ struct BoardCardDetailSheet: View {
             HStack(spacing: 6) {
                 Text(key)
                     .font(.locus(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .textSelection(.enabled)
                 BoardPriorityBadge(priority: card.priority)
             }
@@ -147,7 +153,7 @@ struct BoardCardDetailSheet: View {
                 .accessibilityIdentifier("board.card.title")
             Text(createdLine(card))
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityIdentifier("board.card.created")
         }
     }
@@ -209,7 +215,7 @@ struct BoardCardDetailSheet: View {
                     .font(.locus(size: 13, weight: .semibold))
                 Text(timelineSummary(card))
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             TimelineView(.everyMinute) { context in
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -234,10 +240,10 @@ struct BoardCardDetailSheet: View {
                     .lineLimit(1...5)
                     .focused($focus, equals: .comment)
                     .padding(9)
-                    .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(focus == .comment ? LocusTheme.signalDeep : LocusTheme.separator, lineWidth: 1)
+                            .stroke(focus == .comment ? viewColors.signalDeep : viewColors.separator, lineWidth: 1)
                             .accessibilityHidden(true)
                     }
                     .accessibilityLabel("Comment")
@@ -246,7 +252,7 @@ struct BoardCardDetailSheet: View {
             HStack(spacing: 8) {
                 Text("Agents read comments when they check this card.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 Button {
@@ -265,7 +271,7 @@ struct BoardCardDetailSheet: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -300,9 +306,9 @@ struct BoardCardDetailSheet: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
-        .background(LocusTheme.paperDeep.opacity(0.5))
+        .background(viewColors.paperDeep.opacity(0.5))
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .alert(
             closeAlertTitle,
@@ -480,6 +486,10 @@ struct BoardCardDetailSheet: View {
 
 /// Creates a card with every field the board supports.
 struct BoardNewCardSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: BoardStore
     let initialColumnID: String?
 
@@ -490,6 +500,7 @@ struct BoardNewCardSheet: View {
     @State private var priority = BoardPriority.none
     @State private var labels = ""
     @State private var assignee = ""
+    @State private var taggedAgentIDs: [UUID] = []
     @State private var errorMessage: String?
     @FocusState private var titleFocused: Bool
 
@@ -504,7 +515,7 @@ struct BoardNewCardSheet: View {
                     .font(.locus(size: 18, weight: .semibold))
                 Text("Cards are shared with the agents working in this workspace.")
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             TextField("Title", text: $title)
                 .textFieldStyle(.roundedBorder)
@@ -549,10 +560,11 @@ struct BoardNewCardSheet: View {
                         .accessibilityIdentifier("board.card.labels")
                 }
             }
+            AgentMentionPicker(selectedIDs: $taggedAgentIDs)
             if let errorMessage {
                 Text(errorMessage)
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("board.card.error")
             }
@@ -594,7 +606,8 @@ struct BoardNewCardSheet: View {
                 columnID: columnID.nilIfEmpty,
                 priority: priority,
                 labels: BoardCardDraft.labels(from: labels),
-                assignee: assignee
+                assignee: assignee,
+                agentIDs: taggedAgentIDs
             )
             dismiss()
         } catch {
@@ -606,6 +619,10 @@ struct BoardNewCardSheet: View {
 // MARK: - Sheet components
 
 private struct BoardFieldLabel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
 
     init(_ title: String) {
@@ -615,7 +632,7 @@ private struct BoardFieldLabel: View {
     var body: some View {
         Text(title)
             .font(.locus(size: 11, weight: .medium))
-            .foregroundStyle(LocusTheme.textSecondary)
+            .foregroundStyle(viewColors.textSecondary)
             .gridColumnAlignment(.trailing)
     }
 }
@@ -642,6 +659,10 @@ private struct BoardPriorityPicker: View {
 /// Multi-line description input. A text editor keeps Return as a newline;
 /// the placeholder is drawn beneath it because `TextEditor` has none.
 private struct BoardDescriptionEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Binding var text: String
     let minHeight: CGFloat
 
@@ -657,20 +678,102 @@ private struct BoardDescriptionEditor: View {
                 if text.isEmpty {
                     Text("Add a description…")
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 6)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             }
-            .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(LocusTheme.separator, lineWidth: 1)
+                    .stroke(viewColors.separator, lineWidth: 1)
                     .accessibilityHidden(true)
             }
             .accessibilityLabel("Description")
             .accessibilityIdentifier("board.card.description")
+    }
+}
+
+/// The same agent picker is used on cards and events. IDs survive renames;
+/// names and photos always come from the current shared agent profiles.
+struct AgentMentionPicker: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
+    @EnvironmentObject private var teams: AgentTeamsModel
+    @Binding var selectedIDs: [UUID]
+    @State private var query = ""
+    @FocusState private var searching: Bool
+    private var matches: [AgentProfile] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        return teams.agentProfiles.filter {
+            !selectedIDs.contains($0.id) && (term.isEmpty || $0.name.localizedCaseInsensitiveContains(term))
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tagged agents").font(.locus(size: 12, weight: .semibold)).foregroundStyle(viewColors.inkSoft)
+            if !selectedIDs.isEmpty {
+                AgentFlowLayout(spacing: 6) {
+                    ForEach(selectedIDs, id: \.self) { id in
+                        HStack(spacing: 5) {
+                            Text("@" + (teams.agentProfiles.first { $0.id == id }?.name ?? "Unavailable agent"))
+                            Button { selectedIDs.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.system(size: 9)) }
+                                .buttonStyle(.plain).accessibilityLabel("Remove agent tag")
+                        }.font(.locus(size: 11, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 6)
+                            .background(viewColors.signalDeep.opacity(0.13), in: Capsule())
+                    }
+                }
+            }
+            TextField("@ Tag an agent…", text: $query).textFieldStyle(.roundedBorder)
+                .focused($searching).accessibilityIdentifier("agentMentions.search")
+                .onSubmit { if let profile = matches.first { choose(profile) } }
+                .onExitCommand { searching = false; query = "" }
+            if searching {
+                if matches.isEmpty {
+                    Text(teams.agentProfiles.isEmpty ? "Create an agent to tag it here." : "No matching agents")
+                        .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(matches) { profile in
+                                Button { choose(profile) } label: {
+                                    HStack(spacing: 8) {
+                                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 24)
+                                        Text("@" + profile.name).font(.locus(size: 12))
+                                        Spacer()
+                                        Image(systemName: "plus").font(.system(size: 11))
+                                    }.padding(6).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }.frame(height: min(CGFloat(matches.count) * 38, 152))
+                        .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+    }
+    private func choose(_ profile: AgentProfile) {
+        if !selectedIDs.contains(profile.id), selectedIDs.count < 64 { selectedIDs.append(profile.id) }
+        query = ""; searching = false
+    }
+}
+
+struct AgentTagLabels: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
+    @EnvironmentObject private var teams: AgentTeamsModel
+    let ids: [UUID]
+    var body: some View {
+        if !ids.isEmpty {
+            Text(ids.map { id in "@" + (teams.agentProfiles.first { $0.id == id }?.name ?? "Unavailable agent") }.joined(separator: " · "))
+                .font(.locus(size: 11, weight: .medium)).foregroundStyle(viewColors.signalDeep)
+                .lineLimit(2)
+        }
     }
 }

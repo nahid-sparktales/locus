@@ -3,6 +3,10 @@ import AppKit
 import SwiftUI
 
 struct NotebookSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var notebook: NotebookModel
     var availableSize: CGSize? = nil
     @Environment(\.dismiss) private var dismiss
@@ -26,15 +30,15 @@ struct NotebookSheet: View {
             HStack(spacing: 0) {
                 noteList
                     .frame(minWidth: 220, idealWidth: 268, maxWidth: 268)
-                    .background(LocusTheme.surfaceStructural)
-                Rectangle().fill(LocusTheme.separator).frame(width: 1)
+                    .background(viewColors.surfaceStructural)
+                Rectangle().fill(viewColors.separator).frame(width: 1)
                 detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         // Native sheets otherwise choose the flexible minimum even when the
         // window has room. Shrink only to the presenting window's actual size.
         .frame(width: presentationSize.width, height: presentationSize.height)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .focusedSceneValue(\.notebookModel, notebook)
         .focusedSceneValue(\.notebookCreateNote, createNote)
         .onChange(of: notebook.selection?.documentID, initial: true) { _, _ in
@@ -89,7 +93,7 @@ struct NotebookSheet: View {
                 Text("Notebook").font(.locus(size: 15, weight: .bold))
                 Text("Personal, workspace, chat, and shared notes.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -97,8 +101,8 @@ struct NotebookSheet: View {
                 Label("New Note", systemImage: "square.and.pencil")
                     .font(.locus(size: 11, weight: .semibold))
                     .padding(.horizontal, 11).padding(.vertical, 8)
-                    .foregroundStyle(LocusTheme.brandInk)
-                    .background(LocusTheme.accentFill, in: RoundedRectangle(cornerRadius: 7))
+                    .foregroundStyle(viewColors.brandInk)
+                    .background(viewColors.accentFill, in: RoundedRectangle(cornerRadius: 7))
             }
             .buttonStyle(.locus(.primary))
             .fixedSize()
@@ -110,7 +114,7 @@ struct NotebookSheet: View {
                 .accessibilityIdentifier("notebook.close")
         }
         .padding(16)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private func errorBanner(_ error: String) -> some View {
@@ -124,8 +128,8 @@ struct NotebookSheet: View {
                 .buttonStyle(.locus(.icon)).accessibilityLabel("Dismiss error")
         }
         .padding(12)
-        .foregroundStyle(LocusTheme.textPrimary)
-        .background(LocusTheme.accentAction.opacity(0.08))
+        .foregroundStyle(viewColors.textPrimary)
+        .background(viewColors.accentAction.opacity(0.08))
         .accessibilityIdentifier("notebook.error")
     }
 
@@ -150,7 +154,7 @@ struct NotebookSheet: View {
             .padding(.horizontal, 10).padding(.bottom, 9)
             HStack {
                 Text(notebook.showingTrash ? "Recently Deleted" : "Notes")
-                    .font(.locus(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 8, weight: .semibold)).foregroundStyle(viewColors.textSecondary)
                 Spacer()
                 Menu {
                     Picker("Sort notes", selection: $notebook.sortOrder) {
@@ -165,7 +169,7 @@ struct NotebookSheet: View {
             .padding(.horizontal, 12).padding(.bottom, 8)
             if notebook.namingIsIncomplete && !notebook.showingTrash {
                 Text("Reconnect the agent to name chat notes.")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12).padding(.bottom, 8)
                     .accessibilityIdentifier("notebook.namingNotice")
@@ -190,11 +194,11 @@ struct NotebookSheet: View {
                 Image(systemName: symbol).frame(width: 15)
                 Text(title)
                 Spacer(minLength: 3)
-                Text(count.formatted()).monospacedDigit().foregroundStyle(LocusTheme.textSecondary)
+                Text(count.formatted()).monospacedDigit().foregroundStyle(viewColors.textSecondary)
             }
             .font(.locus(size: 11, weight: notebook.showingTrash == trash ? .semibold : .regular))
             .padding(.horizontal, 9).padding(.vertical, 7)
-            .background(notebook.showingTrash == trash ? LocusTheme.accentAction.opacity(0.10) : .clear,
+            .background(notebook.showingTrash == trash ? viewColors.accentAction.opacity(0.10) : .clear,
                         in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
@@ -225,7 +229,7 @@ struct NotebookSheet: View {
                     ForEach(notebook.sections) { section in
                         if !notebook.showingTrash {
                             Text(section.title)
-                                .font(.locus(size: 8, weight: .semibold)).foregroundStyle(LocusTheme.textSecondary)
+                                .font(.locus(size: 8, weight: .semibold)).foregroundStyle(viewColors.textSecondary)
                                 .padding(.horizontal, 9).padding(.top, 10).padding(.bottom, 3)
                                 .accessibilityAddTraits(.isHeader)
                         }
@@ -255,11 +259,11 @@ struct NotebookSheet: View {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: entry.isPinned ? "pin.fill" : entry.isStandalone ? "note.text" : entry.scope.symbol)
                     .font(.locus(size: 11, weight: .semibold))
-                    .foregroundStyle(isSelected ? LocusTheme.accentAction : LocusTheme.muted).frame(width: 16)
+                    .foregroundStyle(isSelected ? viewColors.accentAction : viewColors.muted).frame(width: 16)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.title).font(.locus(size: 10, weight: .semibold)).foregroundStyle(LocusTheme.textPrimary).lineLimit(1)
+                    Text(entry.title).font(.locus(size: 10, weight: .semibold)).foregroundStyle(viewColors.textPrimary).lineLimit(1)
                     Text(entry.isPurgePending ? "Deletion incomplete · Retry to finish" : entry.characterCount == 0 ? "Empty note" : entry.preview)
-                        .font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 10)).foregroundStyle(viewColors.textSecondary)
                         .lineLimit(entry.isPurgePending ? 2 : 1).multilineTextAlignment(.leading)
                     HStack(spacing: 8) {
                         Text(entry.subtitle).lineLimit(1).truncationMode(.middle)
@@ -269,17 +273,17 @@ struct NotebookSheet: View {
                                 .fixedSize()
                         }
                     }
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.textSecondary)
                 }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(isSelected ? LocusTheme.accentAction.opacity(0.12) : .clear,
+            .background(isSelected ? viewColors.accentAction.opacity(0.12) : .clear,
                         in: RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .leading) {
                 if isSelected {
-                    Capsule().fill(LocusTheme.accentAction).frame(width: 3, height: 22)
+                    Capsule().fill(viewColors.accentAction).frame(width: 3, height: 22)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
@@ -312,12 +316,12 @@ struct NotebookSheet: View {
                     if entry.isTrashed {
                         HStack(spacing: 8) {
                             Label("Recently Deleted · Read only", systemImage: "trash")
-                                .font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
+                                .font(.locus(size: 10)).foregroundStyle(viewColors.textSecondary)
                             Spacer(minLength: 0)
                             Button("Restore") { notebook.restore(entry) }
                                 .disabled(!entry.canRestore).accessibilityIdentifier("notebook.restore")
                         }
-                        .padding(12).background(LocusTheme.surfaceStructural)
+                        .padding(12).background(viewColors.surfaceStructural)
                     }
                     NotesDocumentEditor(
                         store: store,
@@ -354,7 +358,7 @@ struct NotebookSheet: View {
                 .accessibilityLabel("Note actions").accessibilityIdentifier("notebook.noteActions")
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.separator).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.separator).frame(height: 1) }
     }
 
     @ViewBuilder private func noteActions(_ entry: NotebookEntry) -> some View {
@@ -442,9 +446,9 @@ struct NotebookSheet: View {
 
     private func emptyState(symbol: String, title: String, message: String, create: Bool = false) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: symbol).font(.locus(size: 27)).foregroundStyle(LocusTheme.muted).accessibilityHidden(true)
-            Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(LocusTheme.textPrimary)
-            Text(message).font(.locus(size: 10)).foregroundStyle(LocusTheme.textSecondary)
+            Image(systemName: symbol).font(.locus(size: 27)).foregroundStyle(viewColors.muted).accessibilityHidden(true)
+            Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(viewColors.textPrimary)
+            Text(message).font(.locus(size: 10)).foregroundStyle(viewColors.textSecondary)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             if create {
                 Button("Create a Note", action: createNote).padding(.top, 4)

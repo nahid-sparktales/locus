@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 
 struct OnboardingView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var onboarding: OnboardingModel
     @EnvironmentObject private var providers: ProviderAccountsModel
@@ -22,7 +26,7 @@ struct OnboardingView: View {
                     }
                     if let error = onboarding.error {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(LocusTheme.warning)
+                            .foregroundStyle(viewColors.warning)
                             .accessibilityIdentifier("onboarding.error")
                     }
                 }
@@ -33,14 +37,14 @@ struct OnboardingView: View {
             footer
         }
         .font(.locus(size: 13))
-        .foregroundStyle(LocusTheme.ink)
-        .background(LocusTheme.paper)
+        .foregroundStyle(viewColors.ink)
+        .background(viewColors.paper)
         .frame(minWidth: 520, idealWidth: 630, maxWidth: 760, minHeight: 490, idealHeight: 570)
-        .sheet(item: $editingAccount) { account in
+        .locusSheet(item: $editingAccount) { account in
             AccountEditorView(account: account, isNew: !providers.providerAccounts.contains { $0.id == account.id })
                 .appFeatureEnvironment(from: model)
         }
-        .sheet(isPresented: $modelLibraryPresented) {
+        .locusSheet(isPresented: $modelLibraryPresented) {
             ModelLibraryView().appFeatureEnvironment(from: model)
         }
         .task {
@@ -59,7 +63,7 @@ struct OnboardingView: View {
                     .font(.locus(size: 14, weight: .semibold))
                 Spacer()
                 Text("Step \(onboarding.stepNumber) of \(onboarding.steps.count)")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             Text(onboarding.stepTitle)
                 .font(.locus(size: 23, weight: .semibold))
@@ -68,7 +72,7 @@ struct OnboardingView: View {
                 ForEach(onboarding.steps, id: \.rawValue) { step in
                     Capsule()
                         .fill(step.rawValue <= onboarding.progress.step.rawValue
-                              ? LocusTheme.signalDeep : LocusTheme.line)
+                              ? viewColors.signalDeep : viewColors.line)
                         .frame(height: 3)
                 }
             }
@@ -80,29 +84,29 @@ struct OnboardingView: View {
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Pick something to try. We’ll help you take the first step.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             ForEach(OnboardingStartingPoint.allCases) { point in
                 Button { onboarding.select(point) } label: {
                     HStack(alignment: .top, spacing: 14) {
                         Image(systemName: point.symbol)
                             .font(.locus(size: 23))
-                            .foregroundStyle(LocusTheme.signalDeep)
+                            .foregroundStyle(viewColors.signalDeep)
                             .frame(width: 30)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(point.title).font(.locus(size: 15, weight: .semibold))
                             Text(point.summary)
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .multilineTextAlignment(.leading)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: onboarding.progress.startingPoint == point ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(onboarding.progress.startingPoint == point ? LocusTheme.signalDeep : LocusTheme.textSecondary)
+                            .foregroundStyle(onboarding.progress.startingPoint == point ? viewColors.signalDeep : viewColors.textSecondary)
                     }
                     .padding(16)
-                    .background(LocusTheme.white)
+                    .background(viewColors.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12)
-                        .stroke(onboarding.progress.startingPoint == point ? LocusTheme.signalDeep : LocusTheme.line, lineWidth: 1))
+                        .stroke(onboarding.progress.startingPoint == point ? viewColors.signalDeep : viewColors.line, lineWidth: 1))
                 }
                 .buttonStyle(.locus())
                 .disabled(onboarding.isStarting || onboarding.isRunning)
@@ -116,21 +120,21 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Label(onboarding.readiness.ready ? "You’re connected" : "Connect the AI you want to use", systemImage: onboarding.readiness.ready ? "checkmark.circle.fill" : "circle.dotted")
                 .font(.locus(size: 15, weight: .semibold))
-                .foregroundStyle(onboarding.readiness.ready ? LocusTheme.success : LocusTheme.ink)
+                .foregroundStyle(onboarding.readiness.ready ? viewColors.success : viewColors.ink)
                 .accessibilityIdentifier("onboarding.readiness")
             if onboarding.readiness.ready {
                 Text("\(onboarding.readiness.modelName) is ready. Continue when you’re ready to try it.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 DisclosureGroup("Change AI connection") {
                     connectionOptions.padding(.top, 12)
                 }
             } else {
                 Text("Use an account you already have, or run AI on your Mac with Ollama.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 connectionOptions
                 DisclosureGroup("Connection details") {
                     Text(onboarding.readiness.detail)
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .padding(.top, 8)
                 }
             }
@@ -142,7 +146,7 @@ struct OnboardingView: View {
             GroupBox("Run on your Mac") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Use Ollama for local AI without API charges. Install Ollama, then download a model.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                     HStack {
                         Menu("Choose a model") {
                             ForEach(providers.localModels, id: \.name) { local in
@@ -160,7 +164,7 @@ struct OnboardingView: View {
             GroupBox("Use an account") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Connect ChatGPT or another AI provider. Content is sent to that service; API usage may cost extra.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                     HStack {
                         Menu("Choose account") {
                             ForEach(providers.providerAccounts) { account in
@@ -189,13 +193,13 @@ struct OnboardingView: View {
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Locus uses a folder, called a workspace, to keep your files and results together.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Button { model.chooseOnboardingSample() } label: {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("Try a sample", systemImage: "sparkles.rectangle.stack")
                         .font(.locus(size: 14, weight: .semibold))
                     Text("Ready-made files to explore. A good place to start.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
             }
             .disabled(onboarding.isRunning)
@@ -213,7 +217,7 @@ struct OnboardingView: View {
             }
             if onboarding.progress.startingPoint == .documents {
                 Text("Locus will make the documents in this folder searchable when you start. You can find them in Library → Documents.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
         }
     }
@@ -224,7 +228,7 @@ struct OnboardingView: View {
                 agentSetup
             } else if onboarding.progress.firstTaskCompleted {
                 Label("Your first task is complete", systemImage: "checkmark.circle.fill")
-                    .font(.locus(size: 18, weight: .semibold)).foregroundStyle(LocusTheme.success)
+                    .font(.locus(size: 18, weight: .semibold)).foregroundStyle(viewColors.success)
                 Text("Your result is ready in Library → Outputs.")
                 Button("View my result") { onboarding.requestOutputs() }
                     .buttonStyle(.borderedProminent)
@@ -240,7 +244,7 @@ struct OnboardingView: View {
                     LabeledContent("Saved as", value: outputPath)
                 }
                 Text("Follow along in the chat. Locus will ask if it needs your help.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 if onboarding.isRunning {
                     Label(onboarding.isWaitingForOutput ? "Saving your result…" : "Your task is running", systemImage: "clock")
                     Button("Return to chat") { onboarding.dismiss() }
@@ -255,7 +259,7 @@ struct OnboardingView: View {
                         Text(!onboarding.readiness.ready
                              ? "Go back to connect your AI before starting."
                              : "Go back to choose a sample or your own folder.")
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                     }
                 }
             }
@@ -273,14 +277,14 @@ struct OnboardingView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(LocusTheme.white, in: RoundedRectangle(cornerRadius: 12))
+            .background(viewColors.white, in: RoundedRectangle(cornerRadius: 12))
             Text("Give your agent instructions, then choose a schedule or an event to start it. You can review everything before saving.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Button("Create an agent") { onboarding.requestAgentSetup() }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding.createAgent")
             Text("Keep Locus open on your Mac for automatic tasks. Find and manage them in Agents.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
         }
     }
 
@@ -288,18 +292,18 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let duration = onboarding.progress.durationMilliseconds {
                 Text("Task time: \(Double(duration) / 1_000, specifier: "%.1f") seconds")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             if let firstResponse = onboarding.progress.firstResponseMilliseconds {
                 Text("First response: \(Double(firstResponse) / 1_000, specifier: "%.1f") seconds")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             if let throughput = onboarding.progress.outputTokensPerSecond {
                 Text("Output throughput over the whole task: \(throughput, specifier: "%.1f") tokens/second")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             Text("These timings describe this task, including tool work; they do not measure model quality.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
         }
     }
 

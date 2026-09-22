@@ -30,8 +30,10 @@ import { createShipEncounterVisuals } from './shipEncounterVisuals';
 import { createIslandWorkSignals } from './islandWorkSignals';
 import { RESIDENT_ASSET_TYPES, HUMANOID_ASSET_TYPES, SHIP_ASSET_TYPES, DEFAULT_SHIP_ASSET_TYPES, SHIP_NAMES, DEFAULT_STATIONS } from './theme';
 import { SCENERY_ASSET_TYPES, type SceneryAssetType } from './theme';
-import { buildGrandLineScenery, GRAND_LINE_HOME_NAMES, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_LANDMARKS } from './grandLineScenery';
-import { assignHarbors } from './harborAssignments';
+import { buildGrandLineScenery, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_LANDMARKS } from './grandLineScenery';
+import { assignHarbors, reserveNearestHarbors, reservesWorkHarbor } from './harborAssignments';
+import { GRAND_LINE_HARBORS } from './grandLineGeography';
+import { createShipWorkGlow } from './shipWorkGlow';
 import { createShipFallback, replaceShipFallback, createShipWake, fitShipModel } from './ships';
 import { createPanda } from './pandas';
 import { createPerson } from './people';
@@ -45,7 +47,7 @@ import { createNavigation, findResidentArrival, findResidentPath, pointIsWalkabl
 import type { NavigationMap, ResidentMotion } from './residentMotion';
 
 type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; kind: ResidentKind | 'ship'; panda?: ReturnType<typeof createPanda>; person?: ReturnType<typeof createPerson>; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
-type Resident = { crew?: ReturnType<typeof createIslandCrew>; agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; wake?: TransformNode; home: Placement; motion: ResidentMotion; id: string; phase: number };
+type Resident = { workGlow?: ReturnType<typeof createShipWorkGlow>; crew?: ReturnType<typeof createIslandCrew>; agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; wake?: TransformNode; home: Placement; motion: ResidentMotion; id: string; phase: number };
 type Courier = { event: AgentTransfer; boat: ReturnType<typeof createCourierBoat>; route: Point[]; wake: TransformNode; started: number; duration: number; arrivedAt?: number; label: HTMLDivElement };
 type Callbacks = { onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
@@ -62,6 +64,8 @@ export class OutpostWorld {
   private shipStyles = new Map<string, ShipAssetType>();
   private crewAssignments = new Map<string, ResidentKind>();
   private harborAssignments = new Map<string, number>();
+  private workHarbors = new Map<string, number>();
+  private get harbors(): readonly Placement[] { return this.theme.id === 'grand-line' ? GRAND_LINE_HARBORS : this.theme.layout.stations; }
   private navigation: NavigationMap;
   private visible = true;
   private disposed = false;
@@ -617,7 +621,9 @@ export class OutpostWorld {
     const sameResidents = agents.length === this.residents.length && agents.every(agent => existingByID.has(agent.id));
     if (sameResidents) {
       // Reordering profiles must not interrupt their walk or change their desks.
-      for (const agent of agents) { const resident = existingByID.get(agent.id)!; resident.agent = agent; this.syncIslandCrew(resident); this.updateLabel(resident); }
+      for (const agent of agents) existingByID.get(agent.id)!.agent = agent;
+      this.assignWorkHarbors();
+      for (const resident of this.residents) { this.syncIslandCrew(resident); this.updateLabel(resident); }
       this.updateSeaAlerts();
       return;
     }
@@ -625,7 +631,7 @@ export class OutpostWorld {
     this.encounters.clear();
     for (const snail of this.snails.values()) snail.dispose();
     this.snails.clear();
-    for (const resident of this.residents) { resident.crew?.dispose(); resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.wake?.dispose(); resident.label.remove(); }
+    for (const resident of this.residents) { resident.workGlow?.dispose(); resident.crew?.dispose(); resident.actor.model?.dispose(); resident.actor.root.dispose(); resident.ring.dispose(); resident.wake?.dispose(); resident.label.remove(); }
     if (this.theme.environment !== 'ocean') {
       for (const [id, kind] of assignCrewKinds(agents.map(agent => agent.id), this.crewAssignments)) this.crewAssignments.set(id, kind);
     }
@@ -643,10 +649,10 @@ export class OutpostWorld {
       this.appearanceAssignments.set(id, appearance);
       counts.set(appearance, counts.get(appearance)! + 1);
     }
-    if (this.theme.environment === 'ocean') this.harborAssignments = assignHarbors(agents.map(agent => agent.id), this.harborAssignments, this.theme.layout.stations.length);
+    if (this.theme.environment === 'ocean') this.harborAssignments = assignHarbors(agents.map(agent => agent.id), this.harborAssignments, this.harbors.length);
     const placements = agents.map((agent, index) => {
       const homeIndex = this.theme.environment === 'ocean' ? this.harborAssignments.get(agent.id) ?? index : index;
-      return this.theme.layout.stations[homeIndex] || DEFAULT_STATIONS[index];
+      return (this.theme.environment === 'ocean' ? this.harbors : this.theme.layout.stations)[homeIndex] || DEFAULT_STATIONS[index];
     });
     // Reserve surviving ships before placing newcomers, regardless of roster
     // order. An idle ship may be passing another island's berth.
@@ -688,14 +694,43 @@ export class OutpostWorld {
       const ring = this.ring(`resident-pad-${agent.id}`, this.theme.environment === 'ocean' ? 3.6 : 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
       ring.position.x = placement.x; ring.position.z = placement.z;
       const wake = this.theme.environment === 'ocean' ? createShipWake(this.scene, this.mapRoot, agent.id) : undefined;
-      const resident = { agent, actor, label, ring, wake, home: placement, motion, id: agent.id, phase: index * 1.5 };
+      const workGlow = this.theme.environment === 'ocean' ? createShipWorkGlow(this.scene, this.mapRoot, agent.id) : undefined;
+      const resident = { agent, actor, label, ring, wake, workGlow, home: placement, motion, id: agent.id, phase: index * 1.5 };
       this.labels.append(label);
       this.updateLabel(resident);
       return [resident];
     });
     this.rebuildStations();
+    this.assignWorkHarbors();
+    for (const resident of this.residents) this.updateLabel(resident);
     this.updateSeaAlerts();
     this.setHovered(undefined);
+  }
+
+  private assignWorkHarbors(): void {
+    if (this.theme.environment !== 'ocean') return;
+    this.workHarbors = reserveNearestHarbors(this.residents.map(resident => ({ id: resident.id, status: resident.agent.status, position: resident.motion })),
+      this.workHarbors, this.harbors, (from, to) => {
+        const route = findResidentPath(from, to, this.navigation);
+        if (!route) return Infinity;
+        let length = 0, previous = from;
+        for (const point of route) { length += Math.hypot(point.x - previous.x, point.z - previous.z); previous = point; }
+        return length;
+      }, this.navigation.bodyRadius * 2 + 0.08);
+    // Give unreserved ships the remaining homes, preserving their current
+    // positions and letting normal navigation handle any changed destination.
+    const preferred = new Map(this.workHarbors);
+    const used = new Set(preferred.values());
+    for (const resident of this.residents) {
+      const old = this.harborAssignments.get(resident.id);
+      if (!preferred.has(resident.id) && old !== undefined && !used.has(old)) { preferred.set(resident.id, old); used.add(old); }
+    }
+    this.harborAssignments = assignHarbors(this.residents.map(resident => resident.id), preferred, this.harbors.length);
+    for (const resident of this.residents) {
+      const home = this.harbors[this.harborAssignments.get(resident.id)!];
+      if (home !== resident.home) { resident.crew?.dispose(); resident.crew = undefined; resident.home = home; }
+      resident.label.dataset.homeIsland = this.getAgentHome(resident.id) ?? '';
+    }
   }
 
   private updateLabel(resident: Resident): void {
@@ -852,7 +887,8 @@ export class OutpostWorld {
         const parkedHeading = shipBerthHeading(resident.home);
         const aligned = Math.abs(Math.atan2(Math.sin(resident.motion.heading - parkedHeading), Math.cos(resident.motion.heading - parkedHeading))) < 0.06;
         const docked = atBerth && aligned;
-        const berthState = docked ? 'Docked' : atBerth ? 'Mooring' : resident.motion.intent === 'station' ? 'Returning to port' : 'Sailing';
+        resident.label.dataset.workGlow = String(resident.workGlow?.update(resident.agent.status, docked, resident.motion, resident.motion.heading, this.elapsed, this.reducedMotion) ?? false);
+        const berthState = docked ? resident.agent.status === 'working' ? 'Working ashore' : 'Docked' : atBerth ? 'Docking' : resident.motion.intent === 'station' ? 'Heading to' : 'Sailing near';
         const home = this.getAgentHome(resident.id) ?? 'Home island';
         const portText = `${berthState} · ${home}${resident.crew ? ` · ${resident.crew.count} crew ashore` : ''}`;
         const port = resident.label.querySelector('.agent-label-port');
@@ -999,7 +1035,7 @@ export class OutpostWorld {
   }
 
   private encounterHeldIDs(): Set<string> {
-    const held = this.residents.filter(resident => statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID)).map(resident => resident.id);
+    const held = this.residents.filter(resident => reservesWorkHarbor(resident.agent.status) || (statusCanWander(resident.agent.status) && (resident.id === this.selectedID || resident.id === this.hoveredID))).map(resident => resident.id);
     return new Set([...held, ...this.attentionRequests.map(request => request.agentID)].map(id => id.toLowerCase()));
   }
 
@@ -1119,7 +1155,7 @@ export class OutpostWorld {
 
   getAgentHome(id: string): string | undefined {
     const index = this.harborAssignments.get(id);
-    return this.theme.environment === 'ocean' && index !== undefined ? GRAND_LINE_HOME_NAMES[index] : undefined;
+    return this.theme.environment === 'ocean' && index !== undefined ? GRAND_LINE_HARBORS[index]?.name : undefined;
   }
 
   setNavigationMode(mode: 'orbit' | 'pan'): void {
@@ -1171,7 +1207,7 @@ export class OutpostWorld {
     this.encounterVisuals?.dispose();
     this.islandWorkSignals?.dispose();
     this.newsCoo?.dispose();
-    for (const resident of this.residents) resident.crew?.dispose();
+    for (const resident of this.residents) { resident.workGlow?.dispose(); resident.crew?.dispose(); }
     for (const snail of this.snails.values()) snail.dispose();
     this.snails.clear();
     this.labels.replaceChildren();

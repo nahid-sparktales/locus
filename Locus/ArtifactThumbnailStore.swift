@@ -114,6 +114,10 @@ struct WorkspaceImageAction: Identifiable {
 }
 
 struct AsyncWorkspaceImageArtifactView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.displayScale) private var displayScale
     let reference: WorkspaceArtifactReference
     let caption: String
@@ -137,10 +141,10 @@ struct AsyncWorkspaceImageArtifactView: View {
                         .scaledToFit()
                 } else {
                     ZStack {
-                        LocusTheme.paperDeep
+                        viewColors.paperDeep
                         if imageLoaded {
                             Label("Open image preview", systemImage: "photo")
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                         } else { ProgressView().controlSize(.small) }
                     }
                     .frame(height: 160)
@@ -150,7 +154,7 @@ struct AsyncWorkspaceImageArtifactView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
+                    .stroke(viewColors.line.opacity(0.8), lineWidth: 1)
             }
             }.buttonStyle(.locus())
                 .help("Open a larger image with zoom controls")
@@ -163,7 +167,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                         attributedText: MarkdownNativeText.plain(
                             caption,
                             font: .systemFont(ofSize: 11, weight: .medium),
-                            color: NSColor(LocusTheme.muted),
+                            color: NSColor(viewColors.muted),
                             lineSpacing: 0
                         ),
                         span: selectionSpan,
@@ -173,7 +177,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                 } else if !caption.isEmpty {
                     Text(caption)
                         .font(.locus(size: 11, weight: .medium))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .textSelection(.enabled)
                 }
                 Spacer(minLength: 8)
@@ -189,7 +193,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                                 .font(.locus(size: 11, weight: .semibold))
                         }
                         .menuStyle(.borderlessButton).fixedSize()
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityLabel("\(entry.title) \(reference.relativePath)")
                         .accessibilityIdentifier(identifier(entry.id))
                     } else {
@@ -228,7 +232,7 @@ struct AsyncWorkspaceImageArtifactView: View {
                 .font(.locus(size: 11, weight: .semibold))
         }
         .buttonStyle(.locus())
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(viewColors.muted)
         .accessibilityLabel("\(title) \(reference.relativePath)")
         .accessibilityIdentifier(identifier(id))
     }

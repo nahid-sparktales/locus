@@ -91,6 +91,10 @@ enum ResponseSelectionProjection {
 }
 
 struct ResponsePartsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let document: ResponseDocument
     let block: ChatBlock
     let workspacePath: String
@@ -174,7 +178,7 @@ struct ResponsePartsView: View {
                 onShowFiles: sameWorkspace ? { context.showFiles(workspacePath, part.showHidden ?? false) } : nil, initiallyCollapsed: part.collapsed == true)
             if part.complete != true {
                 Text(part.totalCount.map { "Showing \(entries.count) of \($0) files" } ?? "Partial listing · \(entries.count) files shown")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
             }
         }
     }
@@ -184,7 +188,7 @@ struct ResponsePartsView: View {
         return Group {
             if !text.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("Sources").font(.locus(size: 11, weight: .semibold)).foregroundStyle(LocusTheme.muted)
+                    Text("Sources").font(.locus(size: 11, weight: .semibold)).foregroundStyle(viewColors.muted)
                         .accessibilityAddTraits(.isHeader)
                     MarkdownBodyView(text: text, workspacePath: workspacePath,
                         selectionStore: selectionStore, selectionRootPath: [0, index], selectionRowID: selectionRowID,
@@ -203,6 +207,10 @@ struct ResponsePartsView: View {
 }
 
 private struct ResponseArtifactView<Original: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let part: ResponsePart
     let block: ChatBlock
     let workspacePath: String
@@ -230,7 +238,7 @@ private struct ResponseArtifactView<Original: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             original()
             Text([part.path, status].compactMap { $0 }.joined(separator: " · "))
-                .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
                 .textSelection(.enabled)
             HStack {
                 Button("Open saved version") {

@@ -16,6 +16,9 @@ final class AgentTeamsModel: ObservableObject {
     var profilesChanged: () -> Void = {}
     @Published var agentTeams: [AgentTeam] = []
     @Published private(set) var teamRoutingConsentAccountIDs: Set<UUID> = []
+    /// Native display preferences, deliberately separate from execution profiles.
+    @Published private(set) var agentAvatarData: [UUID: Data] = [:]
+    static let avatarsKey = "Locus.AgentProfiles.avatars.v1"
 
     @Published var globalAgentConcurrency = 3 {
         didSet {
@@ -95,6 +98,13 @@ final class AgentTeamsModel: ObservableObject {
         let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
             .flatMap(UUID.init(uuidString:))
         agentProfiles = loadedProfiles
+        let profileIDs = Set(loadedProfiles.map(\.id))
+        agentAvatarData = Dictionary(uniqueKeysWithValues:
+            (defaults.dictionary(forKey: Self.avatarsKey) ?? [:]).compactMap { key, value in
+                guard let id = UUID(uuidString: key), profileIDs.contains(id),
+                      let data = value as? Data, data.count <= AgentAvatarImage.maximumStoredBytes else { return nil }
+                return (id, data)
+            })
         agentTeams = loadedTeams
         if approvalMigration.changed || budgetMigration.changed {
             AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
@@ -236,6 +246,19 @@ final class AgentTeamsModel: ObservableObject {
         toastHandler("Primary agent settings saved — they apply on the next turn")
     }
 
+    func setAgentAvatar(_ data: Data?, profileID: UUID) {
+        guard agentProfiles.contains(where: { $0.id == profileID }),
+              data.map({ $0.count <= AgentAvatarImage.maximumStoredBytes }) ?? true else { return }
+        agentAvatarData[profileID] = data
+        persistAgentAvatars()
+    }
+
+    private func persistAgentAvatars() {
+        guard persistenceEnabled else { return }
+        defaults.set(Dictionary(uniqueKeysWithValues: agentAvatarData.map { ($0.key.uuidString, $0.value) }),
+                     forKey: Self.avatarsKey)
+    }
+
     func saveAgentProfile(_ profile: AgentProfile) {
         var updated = profile
         updated.clamp()
@@ -267,6 +290,8 @@ final class AgentTeamsModel: ObservableObject {
             return false
         }
         agentProfiles.removeAll { $0.id == profile.id }
+        agentAvatarData[profile.id] = nil
+        persistAgentAvatars()
         agentTeams = agentTeams.compactMap { team in
             var updated = team
             updated.memberIDs.removeAll { $0 == profile.id }

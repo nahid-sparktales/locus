@@ -1,5 +1,48 @@
 # Agent World renderer
 
+## Current agent workflow
+
+Select an agent or ship to open **Overview**, the same agent page used in the main
+workspace. It includes settings, chats, automations, connections, and recent results.
+**Chat** opens its conversation with the native tools alongside it. Use **Show tools**
+or **Hide tools** to control the split view without leaving the chat.
+**New chat**, **Crew Chat**, and agent editing remain available inside Agent World.
+**Captain’s Quarters** opens a large, themed management deck over the ocean
+(**Agent workspace** in Outpost). It keeps the searchable crew list beside the
+shared agent overview, chat, and workspace tools. Calendar and Task board have
+direct navigation and stay beside chat when a conversation is active. The crew
+overview lists all agents as cards, even before one is selected. Accounts, Plugins, Connections, automations, Library, and
+Identity Vault use the existing native controls. The task board is Locus’s shared
+project board; it is not an Atlassian Jira connection. Board cards can open a new,
+profile-bound chat in the world with an editable draft, without sending it.
+
+Captain’s Quarters has a full ship-deck backdrop and defaults to warm wood,
+cream, and brass. **Settings → Captain’s Quarters appearance** keeps **Ocean blue**
+available; the choice persists between launches. Native sheets, editors, chat,
+and tools inherit the chosen palette. The ocean map keeps its blue appearance.
+
+Calendar always includes **Locus Calendar**, stored locally and usable without an
+external account. Connected macOS calendars overlay it with separate visibility
+controls. Both event and board editors include an **@ Tag an agent** picker;
+tags store stable agent IDs and show current profile names. Tags identify agents;
+they do not automatically dispatch work or send calendar invitations.
+
+Click the camera on an agent’s Overview to choose a profile picture. Right-click
+the picture to remove it. Pictures appear in the regular sidebar, agent picker,
+overview, and world crew list. They are cropped locally to 256px thumbnails,
+persisted separately from execution profiles, and excluded from plugin snapshots.
+
+The native **Activity Center** shows live tasks, approvals, results, refresh errors,
+and recovery actions. The snail communicator opens that same Activity Center.
+
+When work starts, ships reserve the nearest free island by navigable sailing
+distance. Existing reservations survive queued and attention states, and release
+on completion. All fourteen Local Line islands can host work. A mint glow follows
+working ships until docking, then the island shoreline and beacon light up.
+Decorative rendezvous never divert working ships. Reduced motion keeps signals
+static. The four near-bank island models face across the channel; Alabatcha sits
+farther left, with more water separating it from Elbatch.
+
 The local TypeScript/Babylon.js renderer for the Agent World Locus plugin. Its
 native window, conversations, permissions, and task execution belong to Locus.
 The catalog includes **Orbital Locus Outpost** (a campus with humanoid residents) and
@@ -60,9 +103,9 @@ Available and completed residents stroll along the commons promenade and pause
 between destinations. Working, queued, and attention states return residents to
 their assigned workstations. Selecting or hovering an available resident pauses
 its stroll for easy interaction; assigning work resumes its return to the desk.
-In The Local Line, each visible agent has its own named island berth. Idle ships
+In The Local Line, agents reserve a free named island berth when work begins. Idle ships
 roam freely between destinations across the sea, with brief pauses. Working agents
-return and settle broadside at their island pier. The original inward approach
+choose the nearest reachable free berth and settle broadside at its pier. The original inward approach
 bearing stays unchanged, so departures still turn and sail bow-first. Adding or removing a profile preserves the
 other ships' homes and current routes. **New Agent** opens the native setup form
 directly from the roster and adds the saved profile to the world.
@@ -81,11 +124,11 @@ Ping Ping appears only for concrete approval or input requests. Its top-right
 card uses a separately prepared Meshy snail, with accessible controls for every
 pending request. Collapse and hide controls preserve your preference, and a small
 **Show alerts** control restores the card. Clicking the card or a ship’s snail opens the exact request in
-**Captain’s quarters**. The widget releases its graphics resources when requests
+**Agent workspace**. The widget releases its graphics resources when requests
 clear and respects page visibility and reduced motion. Courier skiffs visualize recent
 agent handoffs and artifacts without changing the agents’ own navigation. Repeated
-snapshots never replay a delivery. **Crew Chat**, **Captain’s quarters**, and the
-keyboard-accessible **Ship signals** list open their native counterparts. Standalone
+snapshots never replay a delivery. **Crew Chat**, **Agent workspace**, and the
+keyboard-accessible **Activity Center** open their native counterparts. Standalone
 previews label their sample events and send no native actions.
 
 A small One Piece-inspired crew comes ashore only when a busy ship has reached

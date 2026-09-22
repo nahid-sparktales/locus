@@ -48,6 +48,10 @@ private struct AgentInspectorSelectionView: View {
 }
 
 private struct AgentInspectorPanel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var automation: EventAutomationModel
     @ObservedObject var schedule: ScheduleModel
@@ -77,8 +81,8 @@ private struct AgentInspectorPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LocusTheme.paperDeep)
-        .foregroundStyle(LocusTheme.ink)
+        .background(viewColors.paperDeep)
+        .foregroundStyle(viewColors.ink)
         .font(.locus(size: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent overview")
@@ -147,6 +151,10 @@ private struct AgentInspectorPanel: View {
 // MARK: - Detail
 
 private struct AgentDetailView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let overview: AgentOverview
@@ -261,7 +269,7 @@ private struct AgentDetailView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(overview.name)
                             .font(.locus(size: 17, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(2)
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel(overview.name)
@@ -275,13 +283,13 @@ private struct AgentDetailView: View {
                     .accessibilityElement(children: .contain)
                     Text(overview.summary)
                         .font(.locus(size: 11, weight: .medium))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(2)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(overview.summary)
                     Text(overview.purpose)
                         .font(.locus(size: 13))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(3)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(overview.purpose)
@@ -396,13 +404,13 @@ private struct AgentDetailView: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(width: 30, height: 30)
-                .background(LocusTheme.white.opacity(0.82))
+                .background(viewColors.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
@@ -420,18 +428,18 @@ private struct AgentDetailView: View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(sourceNeedsAttention ? "Connection needs attention" : overview.status.isWarning
                     ? overview.status.detail(for: overview.vocabulary)
                     : "Last error")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(error)
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
                 if sourceNeedsAttention, let trigger = overview.trigger {
@@ -455,7 +463,7 @@ private struct AgentDetailView: View {
                 if overview.hasLostEventChat {
                     Text("Its chat cannot be restored. Delete this agent and configure a new one.")
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -463,11 +471,11 @@ private struct AgentDetailView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.warning.opacity(0.10))
+        .background(viewColors.warning.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.warning.opacity(0.35), lineWidth: 1)
+                .stroke(viewColors.warning.opacity(0.35), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agentOverview.attention")
@@ -494,7 +502,7 @@ private struct AgentDetailView: View {
         if overview.status != .active && overview.lastError == nil {
             Text(overview.status.detail(for: overview.vocabulary))
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 8)
         }
@@ -515,7 +523,7 @@ private struct AgentDetailView: View {
             }
             if let history = inspector.snapshot.history {
                 Text("\(history.completedCount) completed · \(history.activeCount) in progress · \(history.attentionCount) need attention")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -527,7 +535,7 @@ private struct AgentDetailView: View {
     private func activityFact(_ title: String, value: String, identifier: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(value).font(.locus(size: 14, weight: .semibold)).lineLimit(2)
-            Text(title).font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+            Text(title).font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -558,15 +566,15 @@ private struct AgentDetailView: View {
                 AgentFactRow(fact: .init(label: "Environment", value: task.executionEnvironment.title))
                 AgentFactRow(fact: .init(label: "Workspace", value: URL(fileURLWithPath: task.workspaceRoot).lastPathComponent))
                 Text("The receiving chat is unavailable. Review this agent’s settings before its next run.")
-                    .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
             } else {
                 Text("Environment information is unavailable because this agent has no receiving chat.")
-                    .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
             }
             AgentFactRow(fact: .init(label: "Approval policy", value: model.permissionMode.title,
                                     isWarning: model.permissionMode.isRisky))
             Text(model.permissionMode.detail)
-                .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Shared policy · Manage permissions…") { model.presentSettings(.permissions) }
                 .buttonStyle(.locus())
@@ -581,7 +589,7 @@ private struct AgentDetailView: View {
                 AgentFactRow(fact: .init(label: "Connected actions", value: names.isEmpty ? "None allowed" : names.joined(separator: ", ")))
                 if !names.isEmpty {
                     Text("Only the selected connections are available for service actions.")
-                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                 }
             }
         }
@@ -599,21 +607,21 @@ private struct AgentDetailView: View {
                 HStack(spacing: 9) {
                     Image(systemName: "calendar.badge.clock")
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .frame(width: 28, height: 28)
-                        .background(LocusTheme.signal.opacity(0.12))
+                        .background(viewColors.signal.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(AgentOverviewFormatting.rule(task.rule))
                             .font(.locus(size: 12, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         Text(task.nextRunDate.map {
                             "Next run \(AgentOverviewFormatting.absolute($0))"
                         } ?? (task.enabled ? "No next run" : "Paused"))
                             .font(.locus(size: 12))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -629,19 +637,19 @@ private struct AgentDetailView: View {
                     Image(systemName: overview.connection?.kind.symbol
                         ?? (trigger.triggerKind == .price ? "chart.line.uptrend.xyaxis" : "bolt"))
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(overview.connection == nil ? LocusTheme.warning : LocusTheme.signalDeep)
+                        .foregroundStyle(overview.connection == nil ? viewColors.warning : viewColors.signalDeep)
                         .frame(width: 28, height: 28)
-                        .background((overview.connection == nil ? LocusTheme.warning : LocusTheme.signal).opacity(0.12))
+                        .background((overview.connection == nil ? viewColors.warning : viewColors.signal).opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(overview.connection?.displayName.nilIfEmpty ?? "Missing connection")
                             .font(.locus(size: 12, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         Text(triggerSourceDetail(trigger))
                             .font(.locus(size: 12))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -656,11 +664,11 @@ private struct AgentDetailView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "waveform.path.ecg")
                             .font(.locus(size: 12, weight: .semibold))
-                            .foregroundStyle(LocusTheme.signalDeep)
+                            .foregroundStyle(viewColors.signalDeep)
                             .accessibilityHidden(true)
                         Text(priceState)
                             .font(.locus(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .lineLimit(2)
                     }
                     .accessibilityIdentifier("agentOverview.priceState")
@@ -668,7 +676,7 @@ private struct AgentDetailView: View {
             } else {
                 Text(overview.status.detail(for: overview.vocabulary))
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -700,13 +708,13 @@ private struct AgentDetailView: View {
                     ? "No instruction is stored without a trigger."
                     : "No instruction yet — the agent receives each event as is.")
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(overview.instruction)
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineSpacing(2)
                         .lineLimit(instructionExpanded ? nil : 5)
                         .fixedSize(horizontal: false, vertical: true)
@@ -718,13 +726,13 @@ private struct AgentDetailView: View {
                         }
                         .buttonStyle(.locus())
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .accessibilityIdentifier("agentOverview.instruction.toggle")
                     }
                 }
             }
             if !overview.facts.isEmpty {
-                Rectangle().fill(LocusTheme.line).frame(height: 1).accessibilityHidden(true)
+                Rectangle().fill(viewColors.line).frame(height: 1).accessibilityHidden(true)
                 VStack(spacing: 7) {
                     ForEach(overview.facts.filter { !["Source", "Connection", "May act through", "Environment", "Workspace", "Next run"].contains($0.label) }) { fact in
                         AgentFactRow(fact: fact)
@@ -751,7 +759,7 @@ private struct AgentDetailView: View {
                     } label: {
                         Label("New", systemImage: "plus")
                             .font(.locus(size: 12, weight: .semibold))
-                            .foregroundStyle(LocusTheme.signalDeep)
+                            .foregroundStyle(viewColors.signalDeep)
                             .padding(.horizontal, 6)
                             .frame(minHeight: 22)
                             .contentShape(Rectangle())
@@ -767,7 +775,7 @@ private struct AgentDetailView: View {
                 Text("\(overview.vocabulary.arrivals.capitalized) arrive in"
                     + " \(eventChat.session.displayTitle). Other chats are side conversations.")
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agentOverview.chats.explainer")
             }
@@ -778,7 +786,7 @@ private struct AgentDetailView: View {
                         + " \(overview.vocabulary.arrival) chat; New chat starts a side conversation"
                         + " that does not receive \(overview.vocabulary.arrivals).")
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 2) {
@@ -828,7 +836,7 @@ private struct AgentDetailView: View {
                 ProgressView("Loading activity…").controlSize(.small)
             } else if inspector.error != nil && historyEvents.isEmpty {
                 Text("Activity could not be loaded. Use Try again above to refresh it.")
-                    .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
             } else if historyEvents.isEmpty {
                 Text(overview.schedule != nil
                     ? "No runs yet. Each run continues this agent's chat and appears here with its outcome."
@@ -836,13 +844,13 @@ private struct AgentDetailView: View {
                         ? "Automatic starts are paused. New events won’t start runs until you resume."
                         : "Nothing has reached this agent yet. Matching events will appear here with their outcome."))
                     .font(.locus(size: 12))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 6) {
                     if visibleHistoryEvents.isEmpty {
                         Text("No items need attention in the loaded activity.")
-                            .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                     }
                     ForEach(visibleHistoryEvents) { event in
@@ -894,6 +902,10 @@ private struct AgentDetailView: View {
 // MARK: - Fleet
 
 private struct AgentFleetView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let entries: [AgentFleetEntry]
     @ObservedObject var automation: EventAutomationModel
@@ -932,7 +944,7 @@ private struct AgentFleetView: View {
                 if let error = automation.lastError, !error.isEmpty, entries.isEmpty {
                     Text(error)
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .agentCard()
                 }
@@ -945,7 +957,7 @@ private struct AgentFleetView: View {
                         Label("Agents unavailable", systemImage: "wifi.exclamationmark")
                             .font(.locus(size: 13, weight: .semibold))
                         Text("The agent list could not be loaded. Retry to check your saved agents.")
-                            .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                         Button("Try again") {
                             Task {
                                 async let events: Void = automation.refresh()
@@ -961,7 +973,7 @@ private struct AgentFleetView: View {
                     emptyState
                 } else {
                     HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                        Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
                         TextField("Find an agent", text: $searchText)
                             .textFieldStyle(.plain)
                             .accessibilityIdentifier("agentOverview.fleet.search")
@@ -972,7 +984,7 @@ private struct AgentFleetView: View {
                         }
                     }
                     .padding(9)
-                    .background(LocusTheme.paper)
+                    .background(viewColors.paper)
                     .clipShape(RoundedRectangle(cornerRadius: 9))
                     Picker("Agent filter", selection: $attentionOnly) {
                         Text("All agents").tag(false)
@@ -983,7 +995,7 @@ private struct AgentFleetView: View {
                     LazyVStack(spacing: 3) {
                         if filteredEntries.isEmpty {
                             Text(searchText.isEmpty ? "No agents need attention." : "No agents match this search.")
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .frame(maxWidth: .infinity).padding(.vertical, 24)
                         }
                         ForEach(filteredEntries, id: \.inspectorID) { entry in
@@ -1005,10 +1017,10 @@ private struct AgentFleetView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Agents")
                         .font(.locus(size: 13, weight: .bold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                     Text(fleetSummary)
                         .font(.locus(size: 12, weight: .medium))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(2)
                         .accessibilityIdentifier("agentOverview.fleet.summary")
                 }
@@ -1056,14 +1068,14 @@ private struct AgentFleetView: View {
         VStack(spacing: 8) {
             Image(locusSymbol: LocusSymbol.robot)
                 .font(.locus(size: 22))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityHidden(true)
             Text("No agents yet")
                 .font(.locus(size: 13, weight: .semibold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
             Text("An agent is a reusable assistant with instructions and a trigger. Give it a job, choose what starts it, and follow its work here.")
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1082,15 +1094,19 @@ private struct AgentFleetView: View {
 // MARK: - Pieces
 
 private struct AgentGlyph: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let size: CGFloat
     let symbolSize: CGFloat
     let status: AgentOverview.Status
 
     private var tint: Color {
         switch status {
-        case .active, .fired: LocusTheme.signalDeep
-        case .paused: LocusTheme.muted
-        case .stopped, .failing, .missingTrigger: LocusTheme.warning
+        case .active, .fired: viewColors.signalDeep
+        case .paused: viewColors.muted
+        case .stopped, .failing, .missingTrigger: viewColors.warning
         }
     }
 
@@ -1106,6 +1122,10 @@ private struct AgentGlyph: View {
 }
 
 private struct AgentStatusPill: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let status: AgentOverview.Status
     var vocabulary: Vocabulary = .events
     var isRunning = false
@@ -1117,14 +1137,14 @@ private struct AgentStatusPill: View {
     }
 
     private var color: Color {
-        if isRunning { return LocusTheme.signalDeep }
-        if sourceNeedsAttention { return LocusTheme.warning }
+        if isRunning { return viewColors.signalDeep }
+        if sourceNeedsAttention { return viewColors.warning }
         return switch status {
-        case .active: LocusTheme.success
-        case .paused: LocusTheme.muted
-        case .stopped, .missingTrigger: LocusTheme.warning
-        case .failing: LocusTheme.coral
-        case .fired: LocusTheme.blue
+        case .active: viewColors.success
+        case .paused: viewColors.muted
+        case .stopped, .missingTrigger: viewColors.warning
+        case .failing: viewColors.coral
+        case .fired: viewColors.blue
         }
     }
 
@@ -1135,7 +1155,7 @@ private struct AgentStatusPill: View {
                 .frame(width: 6, height: 6)
             Text(title)
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
@@ -1151,6 +1171,10 @@ private struct AgentStatusPill: View {
 }
 
 private struct AgentActionButton: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     let symbol: String
     var prominent = false
@@ -1168,15 +1192,15 @@ private struct AgentActionButton: View {
                     .lineLimit(1)
             }
             .font(.locus(size: 12, weight: .semibold))
-            .foregroundStyle(prominent ? LocusTheme.paper : LocusTheme.textSecondary)
+            .foregroundStyle(prominent ? viewColors.paper : viewColors.textSecondary)
             .padding(.horizontal, 9)
             .frame(height: 30)
-            .background(prominent ? LocusTheme.ink : LocusTheme.white.opacity(0.82))
+            .background(prominent ? viewColors.ink : viewColors.white.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
                 if !prominent {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -1189,6 +1213,10 @@ private struct AgentActionButton: View {
 }
 
 private struct AgentEyebrow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     var count: Int? = nil
 
@@ -1196,24 +1224,28 @@ private struct AgentEyebrow: View {
         Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())
             .font(.locus(size: 10, weight: .bold))
             .tracking(0.5)
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .lineLimit(1)
     }
 }
 
 private struct AgentFactRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let fact: AgentOverview.Fact
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(fact.label)
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 4)
             Text(fact.value)
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(fact.isWarning ? LocusTheme.warning : LocusTheme.textSecondary)
+                .foregroundStyle(fact.isWarning ? viewColors.warning : viewColors.textSecondary)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(2)
                 .help(fact.value)
@@ -1226,6 +1258,10 @@ private struct AgentFactRow: View {
 }
 
 private struct AgentChatRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let chat: AgentOverview.Chat
     var vocabulary: Vocabulary = .events
     let action: () -> Void
@@ -1234,23 +1270,23 @@ private struct AgentChatRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(chat.isRunning ? LocusTheme.success : LocusTheme.line)
+                    .fill(chat.isRunning ? viewColors.success : viewColors.line)
                     .frame(width: 6, height: 6)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(chat.session.displayTitle)
                             .font(.locus(size: 12, weight: chat.isCurrent ? .semibold : .medium))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         if chat.isEventTarget {
                             Text("Automation")
                                 .font(.locus(size: 10, weight: .bold))
                                 .tracking(0.4)
-                                .foregroundStyle(LocusTheme.signalDeep)
+                                .foregroundStyle(viewColors.signalDeep)
                                 .padding(.horizontal, 5)
                                 .frame(height: 15)
-                                .background(LocusTheme.signal.opacity(0.16))
+                                .background(viewColors.signal.opacity(0.16))
                                 .clipShape(Capsule())
                                 .accessibilityHidden(true)
                         }
@@ -1271,19 +1307,19 @@ private struct AgentChatRow: View {
                     }
                     .lineLimit(1)
                     .font(.locus(size: 12))
-                    .foregroundStyle(chat.isRunning ? LocusTheme.success : LocusTheme.textSecondary)
+                    .foregroundStyle(chat.isRunning ? viewColors.success : viewColors.textSecondary)
                 }
                 Spacer(minLength: 4)
                 if !chat.isCurrent {
                     Image(systemName: "chevron.right")
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(chat.isCurrent ? LocusTheme.signal.opacity(0.12) : Color.clear)
+            .background(chat.isCurrent ? viewColors.signal.opacity(0.12) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
@@ -1300,6 +1336,10 @@ private struct AgentChatRow: View {
 }
 
 private struct AgentEventRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let event: AgentOverview.Event
     let retrying: Bool
     var allowsRetry = true
@@ -1323,7 +1363,7 @@ private struct AgentEventRow: View {
                         Button(action: onInspect) {
                             Text(event.title)
                                 .font(.locus(size: 12, weight: .medium))
-                                .foregroundStyle(LocusTheme.ink)
+                                .foregroundStyle(viewColors.ink)
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -1341,13 +1381,13 @@ private struct AgentEventRow: View {
                             .help(AgentOverviewFormatting.absolute(event.receivedAt))
                         if event.attempt > 1 { Text("· attempt \(event.attempt)") }
                     }
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                     if let price = event.observedPrice {
                         Text(price).font(.locus(size: 11, weight: .medium, design: .monospaced))
                     }
                     if event.matchedTriggerCount > 1 {
                         Text("Matched \(event.matchedTriggerCount) agents")
-                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                     }
                 }
             }
@@ -1371,13 +1411,13 @@ private struct AgentEventRow: View {
                 Spacer(minLength: 0)
             }
             .font(.locus(size: 11, weight: .medium))
-            .foregroundStyle(LocusTheme.signalDeep)
+            .foregroundStyle(viewColors.signalDeep)
             .frame(minHeight: 26)
             .padding(.leading, 24)
             if let error = event.error?.nilIfEmpty {
                 Text(error)
                     .font(.locus(size: 12))
-                    .foregroundStyle(event.isSkipped ? LocusTheme.textSecondary : LocusTheme.warning)
+                    .foregroundStyle(event.isSkipped ? viewColors.textSecondary : viewColors.warning)
                     .lineLimit(2)
                     .padding(.leading, 21)
             }
@@ -1385,7 +1425,7 @@ private struct AgentEventRow: View {
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(activityState == .attention ? LocusTheme.warning.opacity(0.06) : LocusTheme.paper.opacity(0.65))
+        .background(activityState == .attention ? viewColors.warning.opacity(0.06) : viewColors.paper.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(event.title), \(event.stateTitle)")
@@ -1394,6 +1434,10 @@ private struct AgentEventRow: View {
 }
 
 private struct AgentFleetRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let entry: AgentFleetEntry
     let action: () -> Void
 
@@ -1422,18 +1466,18 @@ private struct AgentFleetRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name)
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineLimit(1)
                     Text(entry.summary)
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(1)
                     HStack(spacing: 8) {
                         AgentStatusPill(status: entry.status, vocabulary: entry.definition.vocabulary,
                                         isRunning: entry.runningChatCount > 0,
                                         sourceNeedsAttention: AgentInspectorCopy.sourceNeedsAttention(definition: entry.definition, connection: entry.connection))
                         Text(AgentOverviewFormatting.chatCount(entry.chatCount))
-                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                             .lineLimit(1)
                     }
                     .padding(.top, 3)
@@ -1442,11 +1486,11 @@ private struct AgentFleetRow: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(LocusTheme.white.opacity(0.72))
+            .background(viewColors.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
@@ -1461,6 +1505,10 @@ private struct AgentFleetRow: View {
 
 /// Filter chips wrap like tags rather than truncating into one line.
 private struct AgentChipFlow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let chips: [String]
 
     var body: some View {
@@ -1468,15 +1516,15 @@ private struct AgentChipFlow: View {
             ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                 Text(chip)
                     .font(.locus(size: 12, weight: .medium))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(1)
                     .help(chip)
                     .padding(.horizontal, 7)
                     .frame(height: 20)
-                    .background(LocusTheme.paperDeep)
+                    .background(viewColors.paperDeep)
                     .clipShape(Capsule())
                     .overlay {
-                        Capsule().stroke(LocusTheme.line, lineWidth: 1)
+                        Capsule().stroke(viewColors.line, lineWidth: 1)
                     }
             }
         }
@@ -1533,12 +1581,16 @@ struct AgentFlowLayout: Layout {
 }
 
 private struct AgentCardModifier: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     func body(content: Content) -> some View {
         content
             .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(alignment: .top) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
     }
 }

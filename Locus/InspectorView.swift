@@ -5,6 +5,10 @@ import SwiftUI
 /// run state, files, instructions, terminal and checkpoints, with a drag
 /// handle on its leading edge.
 struct InspectorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let resizeWidth: CGFloat
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -85,7 +89,7 @@ struct InspectorView: View {
         .overlay {
             if model.inspectorZoomed {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         .overlay(alignment: .leading) {
@@ -96,13 +100,17 @@ struct InspectorView: View {
         // The outer surface reaches into the hidden title-bar area. Match it
         // to the inspector when docked; only expanded mode needs the paper
         // color as a contrasting margin around its rounded panel.
-        .background(model.inspectorZoomed ? LocusTheme.paper : Color.clear)
+        .background(model.inspectorZoomed ? viewColors.paper : Color.clear)
     }
 }
 
 // MARK: - Model router
 
 struct InspectorRouterTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -132,7 +140,7 @@ struct InspectorRouterTab: View {
     private var inspectorHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: InspectorTab.router.symbol)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             Text("Model Router")
                 .font(.locus(size: 12, weight: .bold))
             Spacer()
@@ -149,7 +157,7 @@ struct InspectorRouterTab: View {
         .padding(.horizontal, 12)
         .frame(height: 38)
         .locusSurface(.toolbar)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var controls: some View {
@@ -190,7 +198,7 @@ struct InspectorRouterTab: View {
 
             Text("Hosted models are ineligible until separately allowed. Teams and automatic Solo delegation keep their own routing rules. Prompt text is never sent to the scorecard endpoint.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
@@ -201,12 +209,12 @@ struct InspectorRouterTab: View {
         HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(model.settings.automaticModelRoutingEnabled
-                    ? LocusTheme.success : LocusTheme.muted)
+                    ? viewColors.success : viewColors.muted)
                 .frame(width: 7, height: 7)
                 .padding(.top, 3)
             Text(model.modelRouterMessage)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -224,20 +232,20 @@ struct InspectorRouterTab: View {
             if decision.limitedData {
                 Label("Learning", systemImage: "chart.dots.scatter")
                     .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
             }
         }
         if !decision.tags.isEmpty {
             Text("Task: \(decision.tags.joined(separator: " · "))")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
         ForEach(decision.candidates) { card in
             scorecard(card)
         }
         Text("Efficiency uses local model download size as a footprint proxy. It is not a measured energy reading; hosted efficiency stays neutral without provider telemetry.")
             .font(.locus(size: 8))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -250,17 +258,17 @@ struct InspectorRouterTab: View {
                         .lineLimit(2)
                     Text("\(card.sampleCount) samples · \(card.evaluationCount) evaluations")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer(minLength: 6)
                 if card.selected {
                     Text("Selected")
                         .font(.locus(size: 8, weight: .bold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                 } else if card.current {
                     Text("Current")
                         .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Text(String(format: "%.0f", card.score))
                     .font(.locus(size: 15, weight: .bold))
@@ -270,10 +278,10 @@ struct InspectorRouterTab: View {
                 HStack(spacing: 6) {
                     Text(componentTitle(component))
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(width: 57, alignment: .leading)
                     ProgressView(value: value, total: 100)
-                        .tint(card.selected ? LocusTheme.signalDeep : LocusTheme.muted)
+                        .tint(card.selected ? viewColors.signalDeep : viewColors.muted)
                     Text(String(format: "%.0f", value))
                         .font(.locus(size: 8, weight: .semibold))
                         .monospacedDigit()
@@ -286,7 +294,7 @@ struct InspectorRouterTab: View {
         .overlay {
             if card.selected {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(LocusTheme.signalDeep.opacity(0.45), lineWidth: 1)
+                    .stroke(viewColors.signalDeep.opacity(0.45), lineWidth: 1)
             }
         }
         .accessibilityIdentifier("router.scorecard.\(card.routeID)")
@@ -295,7 +303,7 @@ struct InspectorRouterTab: View {
     private var emptyScorecard: some View {
         Text("Scorecards appear here when the local agent is ready.")
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
             .locusCard(radius: 9)
@@ -316,6 +324,10 @@ struct InspectorRouterTab: View {
 /// health are visible while a chat is open. The Settings sheet still edits
 /// the backward-compatible Default profile.
 struct InspectorProxiesTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @State private var modeRaw = ProxyMode.off.rawValue
     @State private var profiles: [ProxyProfile] = []
@@ -370,21 +382,21 @@ struct InspectorProxiesTab: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: InspectorTab.proxies.symbol)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             Text("Proxy Manager")
                 .font(.locus(size: 12, weight: .bold))
             Spacer()
             Circle()
-                .fill(mode == .off ? LocusTheme.muted : LocusTheme.success)
+                .fill(mode == .off ? viewColors.muted : viewColors.success)
                 .frame(width: 7, height: 7)
             Text(headerStatus)
                 .font(.locus(size: 8, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
         .padding(.horizontal, 12)
         .frame(height: 38)
         .locusSurface(.toolbar)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var connectionCard: some View {
@@ -402,7 +414,7 @@ struct InspectorProxiesTab: View {
 
             Text(modeDetail)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             if mode == .system, ProxyConfigurator.systemProxyUsesPAC() {
@@ -411,7 +423,7 @@ struct InspectorProxiesTab: View {
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -502,7 +514,7 @@ struct InspectorProxiesTab: View {
             if let error = draftError {
                 Text(error)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("proxies.error")
             }
@@ -519,13 +531,13 @@ struct InspectorProxiesTab: View {
                 .accessibilityIdentifier("proxies.strict")
             Text("Only loopback, the local agent, and Ollama stay direct. Custom bypass hosts are ignored while strict mode is on.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Health-ranked automatic failover", isOn: $autoFailover)
                 .accessibilityIdentifier("proxies.failover")
             Text("Locus checks enabled profiles every minute, keeps the assigned route when healthy, and otherwise selects the fastest healthy proxy. If none are healthy, traffic is blocked.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
@@ -538,7 +550,7 @@ struct InspectorProxiesTab: View {
                 .font(.locus(size: 10, weight: .bold))
             Text("An assignment overrides the default route. Provider overrides workspace; traffic class is strongest.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(ProxyTrafficScope.allCases.filter { $0 != .app }) { scope in
@@ -555,13 +567,13 @@ struct InspectorProxiesTab: View {
             )
             Text(URL(fileURLWithPath: workspaceKey).lastPathComponent)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .lineLimit(1)
 
             routeRow(providerTitle, selection: providerRouteBinding)
             Text("The provider route applies when this account is active.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
         .padding(11)
         .locusCard(radius: 10)
@@ -581,12 +593,12 @@ struct InspectorProxiesTab: View {
             }
             Text(model.proxyHealthMessage)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(model.proxyHealthRecords) { record in
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: record.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(record.ok ? LocusTheme.success : LocusTheme.coral)
+                        .foregroundStyle(record.ok ? viewColors.success : viewColors.coral)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(record.profileName)
@@ -600,12 +612,12 @@ struct InspectorProxiesTab: View {
                         }
                         Text(record.message)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                         if let location = record.location, !location.isEmpty {
                             Text("Location: \(location)")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                     }
                 }
@@ -625,11 +637,11 @@ struct InspectorProxiesTab: View {
             Label("Local agent and Ollama stay direct", systemImage: "arrow.triangle.turn.up.right.circle")
             Text("This controls Locus traffic, not other Mac apps. SOCKS5 uses remote DNS. Health checks show the external exit address and never use a direct fallback.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(.locus(size: 9))
-        .foregroundStyle(LocusTheme.ink)
+        .foregroundStyle(viewColors.ink)
         .padding(11)
         .locusCard(radius: 10)
     }
@@ -642,13 +654,13 @@ struct InspectorProxiesTab: View {
             if let outcome = testOutcome {
                 Text(outcome.message)
                     .font(.locus(size: 8))
-                    .foregroundStyle(outcome.ok ? LocusTheme.success : LocusTheme.coral)
+                    .foregroundStyle(outcome.ok ? viewColors.success : viewColors.coral)
                     .lineLimit(2)
             }
             Spacer(minLength: 6)
             Button("Apply") { apply() }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(draftError != nil || model.isBusy)
                 .accessibilityIdentifier("proxies.apply")
         }
@@ -961,6 +973,10 @@ struct InspectorProxiesTab: View {
 /// launchers; this bar is the durable, ordered workspace for switching and
 /// closing panels without the permanent icon row competing for space.
 private struct InspectorOpenTabBar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -998,7 +1014,7 @@ private struct InspectorOpenTabBar: View {
         .clipped()
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("inspector.tabBar")
@@ -1030,6 +1046,10 @@ private struct InspectorOpenTabBar: View {
 /// Kept as its own identity-bearing view so rebuilding the selected panel can
 /// never leave another tab's click closure attached to this tab's label.
 private struct InspectorOpenTabItem: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let tab: InspectorTab
     let width: CGFloat
@@ -1071,13 +1091,13 @@ private struct InspectorOpenTabItem: View {
         .padding(.trailing, 4)
         .frame(width: width, height: 36)
         .background(
-            selected ? LocusTheme.signal.opacity(0.08) : isHovering ? LocusTheme.white.opacity(0.38) : Color.clear
+            selected ? viewColors.signal.opacity(0.08) : isHovering ? viewColors.white.opacity(0.38) : Color.clear
         )
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if selected {
                 Capsule()
-                    .fill(LocusTheme.signalDeep)
+                    .fill(viewColors.signalDeep)
                     .frame(height: 2)
                     .frame(width: min(labelWidth + 2, width - 30))
                     .padding(.leading, 8)
@@ -1097,6 +1117,10 @@ private struct InspectorOpenTabItem: View {
 /// its hit target never changes size. Tabs therefore remain calm and do not
 /// shift as the pointer moves across the bar.
 private struct InspectorTabCloseButton: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let tab: InspectorTab
     let emphasized: Bool
@@ -1108,9 +1132,9 @@ private struct InspectorTabCloseButton: View {
         } label: {
             Image(systemName: "xmark")
                 .font(.locus(size: 6.5, weight: .bold))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .frame(width: 24, height: 28)
-                .background(isHovering ? LocusTheme.ink.opacity(0.08) : Color.clear)
+                .background(isHovering ? viewColors.ink.opacity(0.08) : Color.clear)
                 .clipShape(Circle())
                 .contentShape(Rectangle())
         }
@@ -1217,6 +1241,10 @@ enum InspectorTabAppearance {
 /// Compact attention state for text tabs. Destination symbols stay on the
 /// vertical rail; the top bar uses only labels, badges, and close controls.
 private struct InspectorTextTabBadge: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     let tab: InspectorTab
@@ -1226,15 +1254,15 @@ private struct InspectorTextTabBadge: View {
         if tab == .changes, gitWorkspace.changedFileCount > 0 {
             Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
-                .foregroundStyle(gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted)
+                .foregroundStyle(gitWorkspace.changesHaveUnseenUpdate ? viewColors.coral : viewColors.muted)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background((gitWorkspace.changesHaveUnseenUpdate ? LocusTheme.coral : LocusTheme.muted).opacity(0.12))
+                .background((gitWorkspace.changesHaveUnseenUpdate ? viewColors.coral : viewColors.muted).opacity(0.12))
                 .clipShape(Capsule())
                 .accessibilityHidden(true)
         } else if tab == .plan, model.planHasUnseenUpdate {
             Circle()
-                .fill(LocusTheme.coral)
+                .fill(viewColors.coral)
                 .frame(width: 5, height: 5)
                 .accessibilityHidden(true)
         }
@@ -1243,6 +1271,10 @@ private struct InspectorTextTabBadge: View {
 
 /// Shared empty state for inspector tabs.
 struct InspectorPlaceholder: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let symbol: String
     let title: String
     let message: String
@@ -1252,12 +1284,12 @@ struct InspectorPlaceholder: View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.locus(size: 23))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(title)
                 .font(.locus(size: 11, weight: .bold))
             Text(message)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1270,6 +1302,10 @@ struct InspectorPlaceholder: View {
 /// Attention badge on the rail's icons, so a collapsed inspector keeps
 /// asking for eyes exactly the way an open panel does.
 struct InspectorTabBadge: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     let tab: InspectorTab
@@ -1281,10 +1317,10 @@ struct InspectorTabBadge: View {
             let unseen = gitWorkspace.changesHaveUnseenUpdate
             Text(gitWorkspace.changedFileCount > 99 ? "99+" : "\(gitWorkspace.changedFileCount)")
                 .font(.locus(size: 7, weight: .bold))
-                .foregroundStyle(unseen ? LocusTheme.coral : LocusTheme.muted)
+                .foregroundStyle(unseen ? viewColors.coral : viewColors.muted)
                 .padding(.horizontal, 3)
                 .frame(minHeight: 16)
-                .background((unseen ? LocusTheme.coral : LocusTheme.muted).opacity(0.12))
+                .background((unseen ? viewColors.coral : viewColors.muted).opacity(0.12))
                 .clipShape(Capsule())
                 .offset(x: 9, y: -5)
                 .accessibilityElement()
@@ -1296,7 +1332,7 @@ struct InspectorTabBadge: View {
                 .accessibilityIdentifier("inspector.tab.changes.badge")
         } else if tab == .plan, model.planHasUnseenUpdate {
             Circle()
-                .fill(LocusTheme.coral)
+                .fill(viewColors.coral)
                 .frame(width: 5, height: 5)
                 .offset(x: 5, y: -3)
                 .accessibilityElement()
@@ -1308,6 +1344,10 @@ struct InspectorTabBadge: View {
 
 /// Drag target on the inspector's leading divider.
 private struct InspectorResizeHandle: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let renderedWidth: CGFloat
     @EnvironmentObject private var model: AppModel
     @State private var drag = InspectorResizeDrag()
@@ -1318,7 +1358,7 @@ private struct InspectorResizeHandle: View {
 
     var body: some View {
         Rectangle()
-            .fill(LocusTheme.line)
+            .fill(viewColors.line)
             .frame(width: 1)
             .overlay {
                 ZStack {
@@ -1328,7 +1368,7 @@ private struct InspectorResizeHandle: View {
                     if model.inspectorZoomed {
                         Capsule()
                             .fill(
-                                LocusTheme.ink.opacity(isHovering ? 0.52 : 0.28)
+                                viewColors.ink.opacity(isHovering ? 0.52 : 0.28)
                             )
                             .frame(width: 3, height: 44)
                     }
@@ -1494,6 +1534,10 @@ private struct MCPTaskImagePreview: View {
 }
 
 struct InspectorRunsTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -1593,7 +1637,7 @@ struct InspectorRunsTab: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: InspectorTab.runs.symbol)
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     // Decoration beside the panel's own title: unhidden, it is
                     // exposed with its raw SF Symbol name as its label.
                     .accessibilityHidden(true)
@@ -1610,7 +1654,7 @@ struct InspectorRunsTab: View {
             }
             Text("Executions in this chat. Inspect a run to see its result, actions, and any requests for attention.")
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Picker("Run type", selection: Binding(
                 get: { scope },
@@ -1657,7 +1701,7 @@ struct InspectorRunsTab: View {
             }
         }
         .padding(13)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var runPickerRuns: [OrchestrationRun] {
@@ -1695,11 +1739,11 @@ struct InspectorRunsTab: View {
 
     private func runStateColor(_ run: OrchestrationRun) -> Color {
         switch TeamRunState(rawValue: run.state) {
-        case .completed: LocusTheme.success
-        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
+        case .completed: viewColors.success
+        case .failed, .interrupted, .cancelled, .discarded: viewColors.coral
         case .paused, .waitingComputer, .waitingPermission, .waitingDispatchApproval:
-            LocusTheme.warning
-        default: LocusTheme.signalDeep
+            viewColors.warning
+        default: viewColors.signalDeep
         }
     }
 
@@ -1733,17 +1777,17 @@ struct InspectorRunsTab: View {
                 // `muted` measures ~4.3:1 against this tinted card once the
                 // text is actually drawn, and fails outright on a 1x display
                 // where there is no subpixel coverage to help it.
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityIdentifier("runs.solo.adaptiveDelegation")
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.signal.opacity(0.08))
+        .background(viewColors.signal.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.24), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.24), lineWidth: 1)
         }
     }
 
@@ -1758,7 +1802,7 @@ struct InspectorRunsTab: View {
                     Image(systemName: scope == .soloSwarm
                         ? "circle.hexagongrid" : "clock.arrow.circlepath")
                         .font(.locus(size: 24))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(scope == .soloSwarm ? "No Solo runs yet" : runPickerRuns.isEmpty ? "No runs yet" : "No matching runs")
                         .font(.locus(size: 11, weight: .bold))
                     Text(scope == .soloSwarm
@@ -1766,7 +1810,7 @@ struct InspectorRunsTab: View {
                         : runPickerRuns.isEmpty ? "When this chat starts work, its executions and outcomes appear here."
                         : "Try another run type, status, or search term.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1810,12 +1854,12 @@ struct InspectorRunsTab: View {
                             if run.pinned {
                                 Image(systemName: "pin.fill")
                                     .font(.locus(size: 7))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             }
                         }
                         Text(run.request.isEmpty ? "No request was recorded." : run.request)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 4)
@@ -1835,13 +1879,13 @@ struct InspectorRunsTab: View {
                     Image(systemName: "chevron.right")
                 }
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(LocusTheme.white.opacity(0.58))
+            .background(viewColors.white.opacity(0.58))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.line) }
+            .overlay { RoundedRectangle(cornerRadius: 9).stroke(viewColors.line) }
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
@@ -1864,11 +1908,11 @@ struct InspectorRunsTab: View {
                 Text(runCategoryTitle(run).uppercased())
                     .font(.locus(size: 7, weight: .bold))
                     .tracking(0.5)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             .padding(.horizontal, 12)
             .frame(height: 31)
-            .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
             runSummary(run)
             Button("Open task") { model.showTaskDetail(runID: run.id) }
                 .accessibilityIdentifier("runs.openTask")
@@ -1917,7 +1961,7 @@ struct InspectorRunsTab: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text("Saved status. Check a task to contact its server.")
-                                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textSecondary)
+                                .font(.locus(size: 9)).foregroundStyle(viewColors.textSecondary)
                             Spacer()
                             Button("Refresh list") { Task { await runs.refreshMCPTasks(runID: run.id) } }
                                 .disabled(runs.loadingMCPTaskRuns.contains(run.id))
@@ -1929,7 +1973,7 @@ struct InspectorRunsTab: View {
                                     Spacer()
                                     Text(task.stateTitle).font(.locus(size: 9))
                                 }
-                                Text(task.serverID).font(.locus(size: 8)).foregroundStyle(LocusTheme.textSecondary)
+                                Text(task.serverID).font(.locus(size: 8)).foregroundStyle(viewColors.textSecondary)
                                 if let message = task.statusMessage, !message.isEmpty {
                                     Text(message).font(.locus(size: 10)).textSelection(.enabled)
                                 }
@@ -1958,7 +2002,7 @@ struct InspectorRunsTab: View {
                                         Text(result).font(.locus(size: 10)).textSelection(.enabled)
                                     }
                                     if let warning = response.mediaWarning {
-                                        Text(warning).font(.locus(size: 9)).foregroundStyle(LocusTheme.warning)
+                                        Text(warning).font(.locus(size: 9)).foregroundStyle(viewColors.warning)
                                     }
                                     if let sessionID = response.sessionID {
                                         ForEach(response.attachments ?? []) { reference in
@@ -1988,10 +2032,10 @@ struct InspectorRunsTab: View {
     private func extensionTaskError(_ message: String) -> some View {
         Label {
             Text(message)
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
         } icon: {
             Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(LocusTheme.dangerForeground)
+                .foregroundStyle(viewColors.dangerForeground)
                 .accessibilityHidden(true)
         }
         .font(.locus(size: 11))
@@ -2011,7 +2055,7 @@ struct InspectorRunsTab: View {
                         // audit's 4.5:1 floor. Same class as the delegation
                         // card fixed for #46, so every small text run on this
                         // surface uses the secondary role instead.
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .accessibilityIdentifier("runs.state")
                 }
                 Spacer()
@@ -2022,7 +2066,7 @@ struct InspectorRunsTab: View {
             if let reason = run.recoveryReason, presentation.canRecover {
                 Label(reason, systemImage: "arrow.clockwise.circle.fill")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let task = model.activeTaskRecord, task.id == run.taskID {
@@ -2043,7 +2087,7 @@ struct InspectorRunsTab: View {
             }
         }
         .padding(12)
-        .background(LocusTheme.paperDeep.opacity(0.5))
+        .background(viewColors.paperDeep.opacity(0.5))
     }
 
     @ViewBuilder
@@ -2053,7 +2097,7 @@ struct InspectorRunsTab: View {
             Button("Stop") { model.cancelOrchestration(run.id) }
                 .buttonStyle(.locus())
                 .font(.locus(size: 8, weight: .semibold))
-                .foregroundStyle(LocusTheme.coral)
+                .foregroundStyle(viewColors.coral)
                 .accessibilityIdentifier("runs.stop")
         } else if run.runKind == "solo",
                   ["failed", "interrupted", "cancelled", "paused"].contains(run.state) {
@@ -2166,7 +2210,7 @@ struct InspectorRunsTab: View {
                 overviewCard("REQUEST", symbol: "text.bubble") {
                     Text(run.request.isEmpty ? "No request was recorded." : run.request)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                         .lineLimit(8)
                 }
 
@@ -2178,8 +2222,8 @@ struct InspectorRunsTab: View {
                                     ? "checkmark.circle.fill"
                                     : phase.active ? "circle.inset.filled" : "circle")
                                     .foregroundStyle(phase.done
-                                        ? LocusTheme.success
-                                        : phase.active ? LocusTheme.signalDeep : LocusTheme.lineStrong)
+                                        ? viewColors.success
+                                        : phase.active ? viewColors.signalDeep : viewColors.lineStrong)
                                     .frame(width: 13)
                                 Text(phase.title)
                                     .font(.locus(size: 9, weight: phase.active ? .bold : .regular))
@@ -2187,11 +2231,11 @@ struct InspectorRunsTab: View {
                                 if phase.active {
                                     Text("Current")
                                         .font(.locus(size: 7, weight: .semibold))
-                                        .foregroundStyle(LocusTheme.signalDeep)
+                                        .foregroundStyle(viewColors.signalDeep)
                                 }
                             }
                             if index < runPhases(run).count - 1 {
-                                Rectangle().fill(phase.done ? LocusTheme.success.opacity(0.4) : LocusTheme.line)
+                                Rectangle().fill(phase.done ? viewColors.success.opacity(0.4) : viewColors.line)
                                     .frame(width: 1, height: 7)
                                     .padding(.leading, 6)
                             }
@@ -2212,7 +2256,7 @@ struct InspectorRunsTab: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Changed files")
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.textSecondary)
+                                    .foregroundStyle(viewColors.textSecondary)
                                 ForEach(gitWorkspace.gitChanges.prefix(8)) { change in
                                     Text("\(change.status.marker)  \(change.path)")
                                         .font(.locus(size: 7, design: .monospaced))
@@ -2221,7 +2265,7 @@ struct InspectorRunsTab: View {
                                 if gitWorkspace.gitChanges.count > 8 {
                                     Text("+ \(gitWorkspace.gitChanges.count - 8) more")
                                         .font(.locus(size: 7))
-                                        .foregroundStyle(LocusTheme.textSecondary)
+                                        .foregroundStyle(viewColors.textSecondary)
                                 }
                             }
                         }
@@ -2234,7 +2278,7 @@ struct InspectorRunsTab: View {
                                 ? "arrow.clockwise.circle.fill" : "exclamationmark.circle.fill")
                                 .font(.locus(size: 8))
                                 .foregroundStyle(presentation.canRecover
-                                    ? LocusTheme.warning : LocusTheme.coral)
+                                    ? viewColors.warning : viewColors.coral)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -2249,7 +2293,7 @@ struct InspectorRunsTab: View {
                         }
                     }
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .padding(.top, 6)
                 }
                 .font(.locus(size: 8, weight: .semibold))
@@ -2273,7 +2317,7 @@ struct InspectorRunsTab: View {
                 if attempts.isEmpty && waitingJobs.isEmpty {
                     Text("No jobs were assigned for this run.")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 } else {
                     ForEach(attempts) { attempt in
                         agentTreeRow(attempt, run: run)
@@ -2282,21 +2326,21 @@ struct InspectorRunsTab: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 5) {
                                 Image(systemName: "circle")
-                                    .foregroundStyle(LocusTheme.lineStrong)
+                                    .foregroundStyle(viewColors.lineStrong)
                                 Text(job.agentID.isEmpty ? friendlyJobKind(job.kind) : job.agentID)
                                     .font(.locus(size: 8, weight: .bold))
                                 Text("· waiting")
                                     .font(.locus(size: 7, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.textSecondary)
+                                    .foregroundStyle(viewColors.textSecondary)
                             }
                             Text(job.goal)
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .foregroundStyle(viewColors.inkSoft)
                                 .lineLimit(3)
                             if !job.dependencies.isEmpty {
                                 Text("Runs after: \(job.dependencies.joined(separator: ", "))")
                                     .font(.locus(size: 7))
-                                    .foregroundStyle(LocusTheme.textSecondary)
+                                    .foregroundStyle(viewColors.textSecondary)
                             }
                         }
                         .padding(.leading, 3)
@@ -2417,13 +2461,13 @@ struct InspectorRunsTab: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value)
                 .font(.locus(size: 15, weight: .semibold))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(label.uppercased())
                 .font(.locus(size: 7, weight: .bold))
                 .tracking(0.5)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(help ?? "")
@@ -2447,7 +2491,7 @@ struct InspectorRunsTab: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(text.isEmpty ? "No request was recorded." : text)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(requestExpanded ? nil : 3)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -2474,7 +2518,7 @@ struct InspectorRunsTab: View {
                     ? "Nothing recorded yet."
                     : "This run wrote no files and ran no commands.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("runs.work.empty")
             } else {
@@ -2507,7 +2551,7 @@ struct InspectorRunsTab: View {
                                 icon: .process,
                                 label: command.summary,
                                 meta: command.ok ? nil : "failed",
-                                metaColor: LocusTheme.dangerForeground,
+                                metaColor: viewColors.dangerForeground,
                                 identifier: "runs.work.command.\(command.id)",
                                 help: command.summary,
                                 // A command reads from the left; keeping its
@@ -2530,7 +2574,7 @@ struct InspectorRunsTab: View {
             Text(count.formatted())
                 .font(.locus(size: 7, design: .monospaced))
         }
-        .foregroundStyle(LocusTheme.textSecondary)
+        .foregroundStyle(viewColors.textSecondary)
     }
 
     /// Only offered where activating it is safe and meaningful: the run has to
@@ -2573,10 +2617,10 @@ struct InspectorRunsTab: View {
                     ? "exclamationmark.triangle" : "person.slash")
                     .font(.locus(size: 8))
                     .foregroundStyle(work.delegationUnavailable
-                        ? LocusTheme.warningForeground : LocusTheme.textTertiary)
+                        ? viewColors.warningForeground : viewColors.textTertiary)
                 Text(workersEmptyText(run, work: work))
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2632,7 +2676,7 @@ struct InspectorRunsTab: View {
                 }
             }
             .font(.locus(size: 7, design: .monospaced))
-            .foregroundStyle(LocusTheme.textTertiary)
+            .foregroundStyle(viewColors.textTertiary)
             .textSelection(.enabled)
             .padding(.top, 6)
         }
@@ -2669,34 +2713,34 @@ struct InspectorRunsTab: View {
                 Image(systemName: activity.state == .completed
                     ? "checkmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(activity.state == .completed
-                        ? LocusTheme.success : LocusTheme.signalDeep)
+                        ? viewColors.success : viewColors.signalDeep)
                 Text(activity.agentName)
                     .font(.locus(size: 9, weight: .semibold))
                 Spacer()
                 Text(activity.state.title)
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             Text(activity.goal)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .lineLimit(3)
             Text([activity.provider, activity.model,
                   activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
                 .filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .lineLimit(1)
             if !activity.output.isEmpty, activity.output != "Branch started" {
                 Text(activity.output)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .lineLimit(5)
                     .textSelection(.enabled)
             }
         }
         .padding(8)
-        .background(LocusTheme.white.opacity(0.55))
+        .background(viewColors.white.opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
@@ -2717,50 +2761,50 @@ struct InspectorRunsTab: View {
                     ? "checkmark.circle.fill"
                     : attempt.state == "failed" ? "exclamationmark.circle.fill" : "circle.dotted")
                     .foregroundStyle(attempt.state == "completed"
-                        ? LocusTheme.success
-                        : attempt.state == "failed" ? LocusTheme.coral : LocusTheme.signalDeep)
+                        ? viewColors.success
+                        : attempt.state == "failed" ? viewColors.coral : viewColors.signalDeep)
                 Text(attempt.agentName ?? attempt.agentID ?? "Worker")
                     .font(.locus(size: 9, weight: .semibold))
                 Spacer()
                 Text(attempt.state.replacingOccurrences(of: "_", with: " "))
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             Text(attempt.goal)
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .lineLimit(3)
             Text([attempt.provider, attempt.model,
                   attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " ")]
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .lineLimit(1)
             if let output = attempt.output, !output.isEmpty {
                 Text(output)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .lineLimit(6)
                     .textSelection(.enabled)
             }
             if !attempt.evidence.isEmpty {
                 Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(4)
             }
             if !attempt.uncertainties.isEmpty {
                 Text("Uncertainties · \(attempt.uncertainties.joined(separator: ", "))")
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .lineLimit(4)
             }
             Text("\(attempt.modelCalls) calls · \((attempt.promptTokens + attempt.completionTokens).formatted()) tokens")
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
         }
         .padding(8)
-        .background(LocusTheme.white.opacity(0.55))
+        .background(viewColors.white.opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityValue(accessibleDetails)
         .accessibilityIdentifier("runs.soloSwarm.worker.\(attempt.resolvedNodeID)")
@@ -2832,14 +2876,14 @@ struct InspectorRunsTab: View {
                         VStack(spacing: 8) {
                             Image(systemName: "clock")
                                 .font(.locus(size: 20))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                             Text(filter.isEmpty ? "No activity recorded" : "No matching activity")
                                 .font(.locus(size: 9, weight: .semibold))
                             Text(filter.isEmpty
                                 ? "Events will appear here as this run progresses."
                                 : "Try a different search term, or switch on Raw events.")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(24)
@@ -2850,7 +2894,7 @@ struct InspectorRunsTab: View {
                                 Text(group.title.uppercased())
                                     .font(.locus(size: 7, weight: .bold))
                                     .tracking(0.6)
-                                    .foregroundStyle(LocusTheme.textSecondary)
+                                    .foregroundStyle(viewColors.textSecondary)
                                     .padding(.horizontal, 12)
                                     .padding(.top, 10)
                                     .padding(.bottom, 4)
@@ -2864,7 +2908,7 @@ struct InspectorRunsTab: View {
                                                 .font(.locus(size: 9, weight: .semibold))
                                             Text(friendlyEventDetail(event))
                                                 .font(.locus(size: 8))
-                                                .foregroundStyle(LocusTheme.textSecondary)
+                                                .foregroundStyle(viewColors.textSecondary)
                                                 .lineLimit(4)
                                         }
                                         Spacer(minLength: 6)
@@ -2874,7 +2918,7 @@ struct InspectorRunsTab: View {
                                         if let offset = eventOffset(event, in: run) {
                                             Text(offset)
                                                 .font(.locus(size: 7, design: .monospaced))
-                                                .foregroundStyle(LocusTheme.textTertiary)
+                                                .foregroundStyle(viewColors.textTertiary)
                                                 .accessibilityLabel("at \(offset)")
                                         }
                                     }
@@ -2907,7 +2951,7 @@ struct InspectorRunsTab: View {
             Label(title, systemImage: symbol)
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.5)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             content()
         }
         .padding(10)
@@ -2919,7 +2963,7 @@ struct InspectorRunsTab: View {
 
     private func metricRow(_ title: String, _ value: String) -> some View {
         HStack {
-            Text(title).foregroundStyle(LocusTheme.textSecondary)
+            Text(title).foregroundStyle(viewColors.textSecondary)
             Spacer()
             Text(value).fontWeight(.semibold)
         }
@@ -2952,11 +2996,11 @@ struct InspectorRunsTab: View {
             HStack(spacing: 3) {
                 if attempt.resolvedDepth > 0 {
                     Rectangle()
-                        .fill(LocusTheme.lineStrong)
+                        .fill(viewColors.lineStrong)
                         .frame(width: 1, height: 20)
                     Image(systemName: "arrow.turn.down.right")
                         .font(.locus(size: 7))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Image(systemName: attempt.state == "completed"
                     ? "checkmark.circle.fill"
@@ -2964,9 +3008,9 @@ struct InspectorRunsTab: View {
                     : attempt.state == "failed" ? "exclamationmark.circle.fill"
                     : "circle.dotted")
                     .foregroundStyle(attempt.state == "completed"
-                        ? LocusTheme.success
+                        ? viewColors.success
                         : ["failed", "stopped"].contains(attempt.state)
-                            ? LocusTheme.coral : LocusTheme.signalDeep)
+                            ? viewColors.coral : viewColors.signalDeep)
             }
             .frame(width: CGFloat(attempt.resolvedDepth * 14 + 17), alignment: .trailing)
 
@@ -2976,31 +3020,31 @@ struct InspectorRunsTab: View {
                         .font(.locus(size: 8, weight: .bold))
                     Text("· \(attempt.state.replacingOccurrences(of: "_", with: " "))")
                         .font(.locus(size: 7, design: .monospaced))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 Text("\(attempt.provider ?? "Unknown provider") · \(attempt.model ?? "Unknown model") · \(attempt.resolvedExecutionEngine.replacingOccurrences(of: "_", with: " "))")
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(1)
                 Text(attempt.goal)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .lineLimit(3)
                 if let branchError, !branchError.isEmpty {
                     Text(branchError)
                         .font(.locus(size: 7))
-                        .foregroundStyle(LocusTheme.coral)
+                        .foregroundStyle(viewColors.coral)
                         .lineLimit(3)
                 }
                 if !attempt.evidence.isEmpty {
                     Text("Evidence · \(attempt.evidence.joined(separator: ", "))")
                         .font(.locus(size: 7))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(3)
                 }
                 Text("\(attempt.modelCalls) calls · \(attempt.promptTokens + attempt.completionTokens) tokens · \(attempt.elapsedMilliseconds) ms")
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             Spacer(minLength: 0)
             if !run.isSoloSwarm,
@@ -3008,7 +3052,7 @@ struct InspectorRunsTab: View {
                 Button("Stop") { model.stopOrchestrationBranch(attempt, in: run) }
                     .buttonStyle(.locus())
                     .font(.locus(size: 7, weight: .semibold))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .accessibilityIdentifier("runs.agentTree.stop.\(attempt.resolvedNodeID)")
             } else if !run.isSoloSwarm,
                       presentation.canRecover,
@@ -3039,7 +3083,7 @@ struct InspectorRunsTab: View {
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(event.sequence)")
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .frame(width: 30, alignment: .trailing)
                             Circle().fill(color(for: event.type)).frame(width: 6, height: 6).padding(.top, 3)
                             VStack(alignment: .leading, spacing: 2) {
@@ -3047,19 +3091,19 @@ struct InspectorRunsTab: View {
                                     .font(.locus(size: 8, weight: .bold))
                                 Text(event.title)
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.inkSoft)
+                                    .foregroundStyle(viewColors.inkSoft)
                                     .lineLimit(4)
                                 if let detail = event.detail, detail != event.title {
                                     Text(detail)
                                         .font(.locus(size: 7, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.textSecondary)
+                                        .foregroundStyle(viewColors.textSecondary)
                                         .lineLimit(12)
                                         .textSelection(.enabled)
                                 }
                                 if let job = event.jobID {
                                     Text("job \(job)\(event.attemptID.map { " · \($0)" } ?? "")")
                                         .font(.locus(size: 7, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.textSecondary)
+                                        .foregroundStyle(viewColors.textSecondary)
                                 }
                             }
                             Spacer(minLength: 0)
@@ -3081,7 +3125,7 @@ struct InspectorRunsTab: View {
                     .font(.locus(size: 11, weight: .bold))
                 Text("Edit goals, assignments, and dependencies. Coding jobs must form an explicit order; Locus runs them one at a time in the shared checkout.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .padding(12)
             ScrollView {
@@ -3092,7 +3136,7 @@ struct InspectorRunsTab: View {
                             Text("RUN BUDGET")
                                 .font(.locus(size: 7, weight: .bold))
                                 .tracking(0.6)
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                             Stepper(
                                 "Jobs · \(draftPlan?.budget?.maxJobs ?? 0)",
                                 value: budgetBinding(\.maxJobs), in: 1...16
@@ -3130,7 +3174,7 @@ struct InspectorRunsTab: View {
                         }
                         .font(.locus(size: 8))
                         .padding(9)
-                        .background(LocusTheme.white.opacity(0.6))
+                        .background(viewColors.white.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
                     ForEach(Array(plan.jobs.enumerated()), id: \.element.id) { index, job in
@@ -3153,7 +3197,7 @@ struct InspectorRunsTab: View {
                             TextField("Dependencies", text: dependencyBinding(index), prompt: Text("job ids, comma separated"))
                         }
                         .padding(9)
-                        .background(LocusTheme.white.opacity(0.6))
+                        .background(viewColors.white.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
                     HStack {
@@ -3174,7 +3218,7 @@ struct InspectorRunsTab: View {
                 if let error = validationErrors.first {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.coral)
+                        .foregroundStyle(viewColors.coral)
                         .lineLimit(2)
                 }
                 Button("Cancel") { model.decideDispatch("cancel") }
@@ -3182,11 +3226,11 @@ struct InspectorRunsTab: View {
                 Spacer()
                 Button("Run Plan") { model.decideDispatch("run", editedPlan: draftPlan) }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(!validationErrors.isEmpty)
             }
             .padding(12)
-            .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+            .overlay(alignment: .top) { Rectangle().fill(viewColors.line).frame(height: 1) }
         }
     }
 
@@ -3574,18 +3618,18 @@ struct InspectorRunsTab: View {
     /// successful one.
     private func eventColor(_ event: OrchestrationEvent) -> Color {
         if event.type == "tool_result" {
-            if event.values["denied"]?.boolean == true { return LocusTheme.warning }
+            if event.values["denied"]?.boolean == true { return viewColors.warning }
             return event.values["ok"]?.boolean == false
-                ? LocusTheme.coral : LocusTheme.success
+                ? viewColors.coral : viewColors.success
         }
-        if event.type == "tool_call_proposed" { return LocusTheme.muted }
+        if event.type == "tool_call_proposed" { return viewColors.muted }
         return color(for: event.type)
     }
 
     private func color(for type: String) -> Color {
-        if type.contains("error") || type.contains("failed") { return LocusTheme.coral }
-        if type.contains("completed") { return LocusTheme.success }
-        if type.contains("waiting") || type.contains("permission") { return LocusTheme.warning }
-        return LocusTheme.signalDeep
+        if type.contains("error") || type.contains("failed") { return viewColors.coral }
+        if type.contains("completed") { return viewColors.success }
+        if type.contains("waiting") || type.contains("permission") { return viewColors.warning }
+        return viewColors.signalDeep
     }
 }

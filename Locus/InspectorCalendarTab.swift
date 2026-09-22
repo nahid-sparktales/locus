@@ -11,7 +11,29 @@ enum CalendarAccessState: Equatable {
     var canRead: Bool { self == .fullAccess }
 }
 
-/// The single EventKit owner used by both the inspector and the agent bridge.
+struct LocusCalendarEntry: Codable, Identifiable, Equatable {
+    var id: String = "locus-event:" + UUID().uuidString
+    var title: String
+    var startDate: Date
+    var endDate: Date
+    var isAllDay: Bool = false
+    var location: String = ""
+    var notes: String = ""
+    var agentIDs: [UUID] = []
+    var calendarID: String = "locus"
+    var calendarTitle: String = "Locus Calendar"
+    var account: String = "Built in"
+    var writable: Bool = true
+    var isLocal: Bool { calendarID == "locus" }
+}
+
+private struct LocusCalendarDocument: Codable {
+    var version = 1
+    var events: [LocusCalendarEntry] = []
+    var externalAgentIDs: [String: [UUID]] = [:]
+}
+
+/// The built-in calendar and external overlays shared by the inspector and agent bridge.
 /// Google and Microsoft accounts connected to macOS appear here automatically;
 /// Locus never receives or stores their OAuth credentials.
 @MainActor
@@ -28,12 +50,27 @@ final class LocusCalendarStore: ObservableObject {
     @Published var visibleCalendarIDs: Set<String> = []
     @Published var errorMessage: String?
 
+    @Published private(set) var localEvents: [LocusCalendarEntry] = []
+    @Published var showsLocalCalendar = true
+    private var document = LocusCalendarDocument()
+    private var localLoadError: Error?
+    private let localFileURL: URL
+    private let externalCalendarsEnabled: Bool
     private let eventStore: EKEventStore
     private var storeChangedObserver: NSObjectProtocol?
     private var hasInitializedVisibleCalendars = false
 
-    init(eventStore: EKEventStore = EKEventStore()) {
+    init(eventStore: EKEventStore = EKEventStore(), applicationSupport: URL = NotesStore.applicationSupportDirectory, externalCalendarsEnabled: Bool = true) {
+        self.externalCalendarsEnabled = externalCalendarsEnabled
         self.eventStore = eventStore
+        localFileURL = applicationSupport.appendingPathComponent(AppEdition.current.displayName).appendingPathComponent("Calendar/events.json")
+        if FileManager.default.fileExists(atPath: localFileURL.path) {
+            do {
+                document = try JSONDecoder().decode(LocusCalendarDocument.self, from: Data(contentsOf: localFileURL))
+                guard document.version == 1 else { throw CalendarStoreError.unsupportedVersion }
+                localEvents = document.events
+            } catch { localLoadError = error; errorMessage = "Couldn’t load Locus Calendar: \(error.localizedDescription)" }
+        }
         updateAccessState()
         storeChangedObserver = NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged,
@@ -54,6 +91,7 @@ final class LocusCalendarStore: ObservableObject {
     }
 
     func requestAccess() async {
+        guard externalCalendarsEnabled else { return }
         do {
             let granted = try await eventStore.requestFullAccessToEvents()
             updateAccessState()
@@ -71,6 +109,7 @@ final class LocusCalendarStore: ObservableObject {
     }
 
     func updateAccessState() {
+        guard externalCalendarsEnabled else { accessState = .denied; return }
         switch EKEventStore.authorizationStatus(for: .event) {
         case .notDetermined:
             accessState = .notDetermined
@@ -114,11 +153,11 @@ final class LocusCalendarStore: ObservableObject {
             end: interval.end,
             calendars: selectedCalendars
         )
-        events = eventStore.events(matching: predicate).sorted {
+        events = (selectedCalendars.isEmpty ? [] : eventStore.events(matching: predicate)).sorted {
             if $0.startDate != $1.startDate { return $0.startDate < $1.startDate }
             return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
-        errorMessage = nil
+        if localLoadError == nil { errorMessage = nil }
     }
 
     func moveMonth(by value: Int) {
@@ -145,11 +184,61 @@ final class LocusCalendarStore: ObservableObject {
         refresh()
     }
 
-    func events(on date: Date) -> [EKEvent] {
+    func events(on date: Date) -> [LocusCalendarEntry] {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        return events.filter { $0.startDate < end && $0.endDate > start }
+        let local = showsLocalCalendar ? localEvents : []
+        return (local + events.map(entry)).filter { $0.startDate < end && $0.endDate > start }
+            .sorted { $0.startDate == $1.startDate ? $0.title < $1.title : $0.startDate < $1.startDate }
+    }
+
+    private func saveDocument(_ next: LocusCalendarDocument) throws {
+        // Never overwrite a file we could not read or a newer schema.
+        if let localLoadError { throw localLoadError }
+        try FileManager.default.createDirectory(at: localFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(next)
+        try data.write(to: localFileURL, options: .atomic)
+        document = next
+        localEvents = next.events
+    }
+
+    @discardableResult
+    func saveLocalEvent(_ event: LocusCalendarEntry) throws -> LocusCalendarEntry {
+        var event = event
+        event.title = event.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !event.title.isEmpty else { throw CalendarStoreError.titleRequired }
+        guard event.endDate > event.startDate else { throw CalendarStoreError.invalidRange }
+        guard event.isLocal, event.id.hasPrefix("locus-event:") else { throw CalendarStoreError.calendarNotFound }
+        event.agentIDs = Array(Set(event.agentIDs)).sorted { $0.uuidString < $1.uuidString }
+        var next = document
+        if let index = next.events.firstIndex(where: { $0.id == event.id }) { next.events[index] = event }
+        else { next.events.append(event) }
+        try saveDocument(next)
+        return event
+    }
+
+    func removeLocalEvent(_ id: String) throws {
+        guard document.events.contains(where: { $0.id == id }) else { throw CalendarStoreError.eventNotFound }
+        var next = document
+        next.events.removeAll { $0.id == id }
+        try saveDocument(next)
+    }
+
+    func setExternalAgentIDs(_ ids: [UUID], eventID: String) throws {
+        var next = document
+        next.externalAgentIDs[eventID] = Array(Set(ids))
+        try saveDocument(next)
+        objectWillChange.send()
+    }
+
+    private func entry(_ event: EKEvent) -> LocusCalendarEntry {
+        LocusCalendarEntry(id: event.eventIdentifier ?? event.calendarItemIdentifier,
+            title: event.title ?? "Untitled event", startDate: event.startDate, endDate: event.endDate,
+            isAllDay: event.isAllDay, location: event.location ?? "", notes: event.notes ?? "",
+            agentIDs: document.externalAgentIDs[event.eventIdentifier ?? ""] ?? [],
+            calendarID: event.calendar.calendarIdentifier, calendarTitle: event.calendar.title,
+            account: event.calendar.source.title, writable: event.calendar.allowsContentModifications)
     }
 
     func createEvent(
@@ -184,10 +273,8 @@ final class LocusCalendarStore: ObservableObject {
     /// prior list/create call. Provider credentials never cross this boundary.
     func perform(tool: String, arguments: [String: Any]) -> [String: Any] {
         updateAccessState()
-        guard accessState.canRead else {
-            return ["error": "Calendar access is not enabled. Open the Calendar panel and choose Allow Calendar Access."]
-        }
         do {
+            let requestedAgentIDs = arguments["agent_ids"] == nil ? nil : try agentIDs(arguments["agent_ids"])
             switch tool {
             case "calendar_list":
                 return try listEvents(arguments: arguments)
@@ -196,6 +283,13 @@ final class LocusCalendarStore: ObservableObject {
                 let end = try requiredDate(arguments["end"], name: "end")
                 guard let title = arguments["title"] as? String else {
                     throw CalendarStoreError.titleRequired
+                }
+                if arguments["calendar_id"] == nil || arguments["calendar_id"] as? String == "locus" {
+                    let event = try saveLocalEvent(LocusCalendarEntry(title: title, startDate: start, endDate: end,
+                        isAllDay: arguments["all_day"] as? Bool ?? false,
+                        location: arguments["location"] as? String ?? "", notes: arguments["notes"] as? String ?? "",
+                        agentIDs: try agentIDs(arguments["agent_ids"])))
+                    return ["text": "Created \(event.title) on Locus Calendar.", "event_id": event.id]
                 }
                 let event = try createEvent(
                     title: title,
@@ -206,6 +300,10 @@ final class LocusCalendarStore: ObservableObject {
                     notes: arguments["notes"] as? String ?? "",
                     calendarID: arguments["calendar_id"] as? String
                 )
+                if let requestedAgentIDs {
+                    do { try setExternalAgentIDs(requestedAgentIDs, eventID: event.eventIdentifier ?? "") }
+                    catch { errorMessage = "Event saved, but agent tags could not be saved: \(error.localizedDescription)" }
+                }
                 return [
                     "text": "Created \(event.title ?? "event") on \(event.calendar.title).",
                     "event_id": event.eventIdentifier ?? "",
@@ -253,23 +351,21 @@ final class LocusCalendarStore: ObservableObject {
         guard proposedEnd > start else { throw CalendarStoreError.invalidRange }
         let maximumEnd = Calendar.current.date(byAdding: .day, value: 90, to: start)!
         let end = min(proposedEnd, maximumEnd)
-        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
-        let matches = eventStore.events(matching: predicate).prefix(200)
+        let external: [LocusCalendarEntry]
+        if accessState.canRead {
+            let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
+            external = eventStore.events(matching: predicate).map(entry)
+        } else { external = [] }
+        let all = (localEvents + external).filter { $0.startDate < end && $0.endDate > start }
+            .sorted { $0.startDate == $1.startDate ? $0.id < $1.id : $0.startDate < $1.startDate }
+        let matches = all.prefix(200)
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
         let payload: [[String: Any]] = matches.map { event in
-            [
-                "id": event.eventIdentifier ?? "",
-                "title": event.title ?? "Untitled event",
-                "start": formatter.string(from: event.startDate),
-                "end": formatter.string(from: event.endDate),
-                "all_day": event.isAllDay,
-                "calendar_id": event.calendar.calendarIdentifier,
-                "calendar": event.calendar.title,
-                "account": event.calendar.source.title,
-                "location": event.location ?? "",
-                "notes": event.notes ?? "",
-            ]
+            ["id": event.id, "title": event.title,
+             "start": formatter.string(from: event.startDate), "end": formatter.string(from: event.endDate),
+             "all_day": event.isAllDay, "calendar_id": event.calendarID, "calendar": event.calendarTitle,
+             "account": event.account, "location": event.location, "notes": event.notes,
+             "agent_ids": event.agentIDs.map(\.uuidString)]
         }
         let calendarLines = calendars.map { calendar in
             let access = calendar.allowsContentModifications ? "writable" : "read-only"
@@ -288,14 +384,28 @@ final class LocusCalendarStore: ObservableObject {
         }
         let eventText = lines.isEmpty ? "No events in this range." : lines.joined(separator: "\n")
         return [
-            "text": (calendarLines.isEmpty ? "No connected calendars." : calendarLines.joined(separator: "\n"))
+            "text": ("Calendar [locus] Locus Calendar (built in, writable)\n" + calendarLines.joined(separator: "\n"))
                 + "\n\n" + eventText,
             "events": payload,
-            "truncated": matches.count == 200,
+            "truncated": all.count > 200,
         ]
     }
 
     private func updateEvent(arguments: [String: Any]) throws -> [String: Any] {
+        if let id = arguments["event_id"] as? String, id.hasPrefix("locus-event:") {
+            guard var event = localEvents.first(where: { $0.id == id }) else { throw CalendarStoreError.eventNotFound }
+            if let calendar = arguments["calendar_id"] as? String, calendar != "locus" { throw CalendarStoreError.cannotMoveCalendar }
+            if let title = arguments["title"] as? String { event.title = title }
+            if arguments["start"] != nil { event.startDate = try requiredDate(arguments["start"], name: "start") }
+            if arguments["end"] != nil { event.endDate = try requiredDate(arguments["end"], name: "end") }
+            if let allDay = arguments["all_day"] as? Bool { event.isAllDay = allDay }
+            if let location = arguments["location"] as? String { event.location = location }
+            if let notes = arguments["notes"] as? String { event.notes = notes }
+            if arguments["agent_ids"] != nil { event.agentIDs = try agentIDs(arguments["agent_ids"]) }
+            try saveLocalEvent(event)
+            return ["text": "Updated \(event.title).", "event_id": id]
+        }
+        guard accessState.canRead else { throw CalendarStoreError.accessRequired }
         guard let identifier = arguments["event_id"] as? String,
               let event = eventStore.event(withIdentifier: identifier)
         else { throw CalendarStoreError.eventNotFound }
@@ -316,10 +426,19 @@ final class LocusCalendarStore: ObservableObject {
         }
         try eventStore.save(event, span: .thisEvent, commit: true)
         refresh()
+        if arguments["agent_ids"] != nil {
+            do { try setExternalAgentIDs(agentIDs(arguments["agent_ids"]), eventID: identifier) }
+            catch { errorMessage = "Event saved, but agent tags could not be saved: \(error.localizedDescription)" }
+        }
         return ["text": "Updated \(event.title ?? "event").", "event_id": identifier]
     }
 
     private func deleteEvent(arguments: [String: Any]) throws -> [String: Any] {
+        if let id = arguments["event_id"] as? String, id.hasPrefix("locus-event:") {
+            try removeLocalEvent(id)
+            return ["text": "Deleted event."]
+        }
+        guard accessState.canRead else { throw CalendarStoreError.accessRequired }
         guard let identifier = arguments["event_id"] as? String,
               let event = eventStore.event(withIdentifier: identifier)
         else { throw CalendarStoreError.eventNotFound }
@@ -328,6 +447,13 @@ final class LocusCalendarStore: ObservableObject {
         try eventStore.remove(event, span: .thisEvent, commit: true)
         refresh()
         return ["text": "Deleted \(title)."]
+    }
+
+    private func agentIDs(_ value: Any?) throws -> [UUID] {
+        guard let value else { return [] }
+        guard let values = value as? [String], values.count <= 64,
+              values.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw CalendarStoreError.invalidAgentIDs }
+        return values.compactMap(UUID.init(uuidString:))
     }
 
     private func requiredDate(_ value: Any?, name: String) throws -> Date {
@@ -354,6 +480,7 @@ final class LocusCalendarStore: ObservableObject {
 
 enum CalendarStoreError: LocalizedError {
     case accessRequired
+    case unsupportedVersion, cannotMoveCalendar, invalidAgentIDs
     case titleRequired
     case invalidRange
     case invalidDate(String)
@@ -364,7 +491,10 @@ enum CalendarStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accessRequired: "Calendar access is required."
+        case .unsupportedVersion: "This calendar was saved by a newer version of Locus. Update Locus to edit it."
+        case .cannotMoveCalendar: "Create a new event to move between Locus Calendar and an external account."
+        case .invalidAgentIDs: "Use at most 64 valid agent IDs."
+        case .accessRequired: "Enable Calendar access to use external calendars. Locus Calendar is available now."
         case .titleRequired: "An event title is required."
         case .invalidRange: "The event end must be after its start."
         case .invalidDate(let value): "Invalid ISO 8601 date: \(value)."
@@ -377,8 +507,13 @@ enum CalendarStoreError: LocalizedError {
 }
 
 struct InspectorCalendarTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject private var store = LocusCalendarStore.shared
     @State private var showingNewEvent = false
+    @State private var editingEvent: LocusCalendarEntry?
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
     private var weekdaySymbols: [String] {
@@ -392,31 +527,30 @@ struct InspectorCalendarTab: View {
         VStack(spacing: 0) {
             header
             Divider()
-            switch store.accessState {
-            case .fullAccess:
-                calendarContent
-            case .notDetermined:
-                permissionState(
-                    symbol: "calendar.badge.plus",
-                    title: "Bring your calendars into Locus",
-                    detail: "See events from Calendar, Google, and Microsoft, and let agents schedule with your approval.",
-                    action: "Allow Calendar Access",
-                    handler: { Task { await store.requestAccess() } },
-                    settingsAction: "Open Privacy Settings"
-                )
-            case .denied, .writeOnly:
-                permissionState(
-                    symbol: "calendar.badge.exclamationmark",
-                    title: "Calendar access is off",
-                    detail: "Enable full Calendar access for Locus in System Settings to show and manage events.",
-                    action: "Open Privacy Settings",
-                    handler: openCalendarPrivacy
-                )
+            if !store.accessState.canRead {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Locus Calendar is ready").font(.locus(size: 12, weight: .semibold))
+                        Text("Add an account to overlay your other calendars.").font(.locus(size: 11)).foregroundStyle(viewColors.muted)
+                    }
+                    Spacer()
+                    Button("Connect calendars") {
+                        if store.accessState == .notDetermined { Task { await store.requestAccess() } }
+                        else { openCalendarPrivacy() }
+                    }.buttonStyle(.locus())
+                }.padding(12).background(viewColors.surfaceCard)
             }
+            if let error = store.errorMessage {
+                Text(error).font(.locus(size: 11)).foregroundStyle(viewColors.coral).padding(8)
+            }
+            calendarContent
         }
         .onAppear { store.refresh() }
-        .sheet(isPresented: $showingNewEvent) {
-            CalendarEventComposer(store: store)
+        .locusSheet(isPresented: $showingNewEvent) {
+            CalendarEventComposer(store: store).modifier(LocusWorldSheetTheme())
+        }
+        .locusSheet(item: $editingEvent) { event in
+            CalendarEventComposer(store: store, event: event).modifier(LocusWorldSheetTheme())
         }
         .accessibilityIdentifier("calendar.content")
     }
@@ -424,12 +558,15 @@ struct InspectorCalendarTab: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "calendar")
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             Text("Calendar")
                 .font(.locus(size: 13, weight: .semibold))
             Spacer(minLength: 4)
-            if store.accessState.canRead {
+            Group {
                 Menu {
+                    Button { store.showsLocalCalendar.toggle() } label: {
+                        Label("Locus Calendar · Built in", systemImage: store.showsLocalCalendar ? "checkmark.circle.fill" : "circle")
+                    }
                     ForEach(store.calendars, id: \.calendarIdentifier) { calendar in
                         Button {
                             store.toggleCalendar(calendar.calendarIdentifier)
@@ -454,7 +591,6 @@ struct InspectorCalendarTab: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.locus())
-                .disabled(store.writableCalendars.isEmpty)
                 .help("New event")
                 .accessibilityLabel("New event")
                 .accessibilityIdentifier("calendar.newEvent")
@@ -465,11 +601,27 @@ struct InspectorCalendarTab: View {
     }
 
     private var calendarContent: some View {
-        VStack(spacing: 0) {
-            monthToolbar
-            monthGrid
-            Divider().padding(.top, 8)
-            agenda
+        GeometryReader { geometry in
+            if geometry.size.width >= 720 && geometry.size.height >= 340 {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 0) {
+                        monthToolbar
+                        monthGrid(expanded: true, dayHeight: max(34, min(58, (geometry.size.height - 124) / 6)))
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity)
+                    .background(viewColors.surfaceCard.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+                    agenda.frame(width: max(270, geometry.size.width * 0.36))
+                        .background(viewColors.surfaceCard.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                }.padding(16)
+            } else {
+                VStack(spacing: 0) {
+                    monthToolbar
+                    monthGrid(expanded: false)
+                    Divider().padding(.top, 8)
+                    agenda
+                }
+            }
         }
     }
 
@@ -489,27 +641,28 @@ struct InspectorCalendarTab: View {
         .padding(.vertical, 8)
     }
 
-    private var monthGrid: some View {
+    private func monthGrid(expanded: Bool, dayHeight: CGFloat = 29) -> some View {
         LazyVGrid(columns: columns, spacing: 3) {
             ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                 Text(symbol.uppercased())
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .frame(maxWidth: .infinity)
             }
             ForEach(monthDates, id: \.self) { date in
-                dayCell(date)
+                dayCell(date, expanded: expanded, dayHeight: dayHeight)
             }
         }
         .padding(.horizontal, 9)
     }
 
-    private func dayCell(_ date: Date) -> some View {
+    private func dayCell(_ date: Date, expanded: Bool, dayHeight: CGFloat) -> some View {
         let calendar = Calendar.current
         let isSelected = calendar.isDate(date, inSameDayAs: store.selectedDate)
         let isToday = calendar.isDateInToday(date)
         let isCurrentMonth = calendar.isDate(date, equalTo: store.displayedMonth, toGranularity: .month)
-        let hasEvents = !store.events(on: date).isEmpty
+        let dayEvents = store.events(on: date)
+        let hasEvents = !dayEvents.isEmpty
         return Button {
             store.selectedDate = date
         } label: {
@@ -517,14 +670,18 @@ struct InspectorCalendarTab: View {
                 Text(String(calendar.component(.day, from: date)))
                     .font(.locus(size: 11, weight: isToday ? .semibold : .regular))
                 Circle()
-                    .fill(hasEvents ? (isSelected ? Color.white : LocusTheme.signalDeep) : .clear)
+                    .fill(hasEvents ? (isSelected ? viewColors.brandInk : viewColors.signalDeep) : .clear)
                     .frame(width: 3, height: 3)
+                if expanded {
+                    Text(dayEvents.first?.title ?? " ").font(.locus(size: 9)).lineLimit(1)
+                        .padding(.horizontal, 3)
+                }
             }
-            .foregroundStyle(isSelected ? Color.white : isCurrentMonth ? LocusTheme.ink : LocusTheme.muted)
-            .frame(maxWidth: .infinity, minHeight: 29)
+            .foregroundStyle(isSelected ? viewColors.brandInk : isCurrentMonth ? viewColors.ink : viewColors.muted)
+            .frame(maxWidth: .infinity, minHeight: dayHeight)
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected ? LocusTheme.signalDeep : isToday ? LocusTheme.signalDeep.opacity(0.10) : .clear)
+                    .fill(isSelected ? viewColors.signalDeep : isToday ? viewColors.signalDeep.opacity(0.10) : .clear)
             }
         }
         .buttonStyle(.locus())
@@ -541,7 +698,7 @@ struct InspectorCalendarTab: View {
                 Spacer()
                 Text("\(dayEvents.count) event\(dayEvents.count == 1 ? "" : "s")")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -550,20 +707,22 @@ struct InspectorCalendarTab: View {
                 VStack(spacing: 8) {
                     Image(systemName: "calendar.day.timeline.left")
                         .font(.locus(size: 20))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text("Nothing scheduled")
                         .font(.locus(size: 12, weight: .semibold))
                     Text("A clear day across your visible calendars.")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(20)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        ForEach(dayEvents, id: \.eventIdentifier) { event in
-                            CalendarEventRow(event: event)
+                        ForEach(dayEvents) { event in
+                            Button { editingEvent = event } label: { CalendarEventRow(event: event) }
+                                .buttonStyle(.plain)
+                                .help(event.writable ? "Edit event" : "View event")
                         }
                     }
                     .padding(.horizontal, 9)
@@ -572,47 +731,6 @@ struct InspectorCalendarTab: View {
             }
         }
         .frame(maxHeight: .infinity)
-    }
-
-    private func permissionState(
-        symbol: String,
-        title: String,
-        detail: String,
-        action: String,
-        handler: @escaping () -> Void,
-        settingsAction: String? = nil
-    ) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.locus(size: 30))
-                .foregroundStyle(LocusTheme.signalDeep)
-            Text(title)
-                .font(.locus(size: 14, weight: .semibold))
-            Text(detail)
-                .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action, action: handler)
-                .buttonStyle(.locus(.primary))
-            if let settingsAction {
-                Button(settingsAction, action: openCalendarPrivacy)
-                    .buttonStyle(.locus())
-            }
-            Button("Connect Google or Microsoft", action: openInternetAccounts)
-                .buttonStyle(.locus())
-            if let message = store.errorMessage {
-                Text(message)
-                    .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("calendar.permission.error")
-            }
-        }
-        .padding(28)
-        .frame(maxWidth: 360, maxHeight: .infinity)
-        .frame(maxWidth: .infinity)
     }
 
     private var monthDates: [Date] {
@@ -647,7 +765,11 @@ struct InspectorCalendarTab: View {
 }
 
 private struct CalendarEventRow: View {
-    let event: EKEvent
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
+    let event: LocusCalendarEntry
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -658,17 +780,18 @@ private struct CalendarEventRow: View {
                 Text(event.title.nilIfEmpty ?? "Untitled event")
                     .font(.locus(size: 12, weight: .semibold))
                     .lineLimit(2)
+                AgentTagLabels(ids: event.agentIDs)
                 Text(timeText)
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
-                Text("\(event.calendar.title) · \(event.calendar.source.title)")
+                    .foregroundStyle(viewColors.textSecondary)
+                Text("\(event.calendarTitle) · \(event.account)")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(1)
-                if let location = (event.location ?? "").nilIfEmpty {
+                if let location = event.location.nilIfEmpty {
                     Label(location, systemImage: "mappin.and.ellipse")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -676,13 +799,12 @@ private struct CalendarEventRow: View {
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(viewColors.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
     private var calendarColor: Color {
-        guard let color = NSColor(cgColor: event.calendar.cgColor) else { return LocusTheme.signalDeep }
-        return Color(nsColor: color)
+        event.isLocal ? viewColors.signalDeep : viewColors.blue
     }
 
     private var timeText: String {
@@ -692,7 +814,12 @@ private struct CalendarEventRow: View {
 }
 
 private struct CalendarEventComposer: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: LocusCalendarStore
+    var event: LocusCalendarEntry? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var start = Date().addingTimeInterval(3600)
@@ -700,25 +827,30 @@ private struct CalendarEventComposer: View {
     @State private var allDay = false
     @State private var location = ""
     @State private var notes = ""
-    @State private var calendarID = ""
+    @State private var calendarID = "locus"
+    @State private var taggedAgentIDs: [UUID] = []
+    @State private var confirmingDelete = false
     @State private var errorMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Event")
+            Text(event == nil ? "New Event" : "Event details")
                 .font(.locus(size: 18, weight: .semibold))
             TextField("Title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("calendar.event.title")
+            AgentMentionPicker(selectedIDs: $taggedAgentIDs)
             Toggle("All day", isOn: $allDay)
             DatePicker("Starts", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
             DatePicker("Ends", selection: $end, in: start..., displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
             Picker("Calendar", selection: $calendarID) {
-                ForEach(store.writableCalendars, id: \.calendarIdentifier) { calendar in
+                Text("Locus Calendar · Built in").tag("locus")
+                ForEach(store.calendars.filter { $0.allowsContentModifications || $0.calendarIdentifier == event?.calendarID }, id: \.calendarIdentifier) { calendar in
                     Text("\(calendar.title) · \(calendar.source.title)")
                         .tag(calendar.calendarIdentifier)
                 }
             }
+            .disabled(event != nil)
             TextField("Location", text: $location)
                 .textFieldStyle(.roundedBorder)
             TextField("Notes", text: $notes, axis: .vertical)
@@ -727,46 +859,61 @@ private struct CalendarEventComposer: View {
             if let errorMessage {
                 Text(errorMessage)
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
             }
             HStack {
+                if let event, event.writable {
+                    Button("Delete event", role: .destructive) { confirmingDelete = true }
+                }
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button(event?.writable == false ? "Close" : "Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add Event", action: save)
+                Button(event == nil ? "Add Event" : "Save changes", action: save)
                     .buttonStyle(.locus(.primary))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || end <= start)
+                    .disabled(event?.writable == false || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (allDay ? Calendar.current.startOfDay(for: end) < Calendar.current.startOfDay(for: start) : end <= start))
             }
         }
         .padding(22)
         .frame(width: 430)
         .onAppear {
-            if calendarID.isEmpty {
-                calendarID = store.writableCalendars.first?.calendarIdentifier ?? ""
+            if let event {
+                title = event.title; start = event.startDate; end = event.endDate
+                allDay = event.isAllDay; location = event.location; notes = event.notes
+                if allDay { end = Calendar.current.date(byAdding: .day, value: -1, to: event.endDate) ?? event.endDate }
+                calendarID = event.calendarID; taggedAgentIDs = event.agentIDs
+            } else {
+                start = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: store.selectedDate) ?? store.selectedDate
+                end = start.addingTimeInterval(3600)
             }
         }
+        .alert("Delete this event?", isPresented: $confirmingDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                guard let event else { return }
+                let result = store.perform(tool: "calendar_delete", arguments: ["event_id": event.id])
+                if let error = result["error"] as? String { errorMessage = error } else { dismiss() }
+            }
+        } message: { Text("This removes the event from its calendar.") }
     }
 
     private func save() {
-        do {
-            _ = try store.createEvent(
-                title: title,
-                start: start,
-                end: end,
-                isAllDay: allDay,
-                location: location,
-                notes: notes,
-                calendarID: calendarID.nilIfEmpty
-            )
-            store.selectedDate = start
-            store.displayedMonth = Calendar.current.date(
-                from: Calendar.current.dateComponents([.year, .month], from: start)
-            ) ?? start
-            store.refresh()
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        let formatter = ISO8601DateFormatter()
+        let calendar = Calendar.current
+        let eventStart = allDay ? calendar.startOfDay(for: start) : start
+        // The end date shown for all-day events is inclusive in the editor.
+        let eventEnd = allDay ? calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end))! : end
+        var arguments: [String: Any] = ["title": title, "start": formatter.string(from: eventStart),
+            "end": formatter.string(from: eventEnd), "all_day": allDay, "location": location,
+            "notes": notes, "calendar_id": calendarID, "agent_ids": taggedAgentIDs.map(\.uuidString)]
+        if let event { arguments["event_id"] = event.id }
+        let result = store.perform(tool: event == nil ? "calendar_create" : "calendar_update", arguments: arguments)
+        if let error = result["error"] as? String { errorMessage = error; return }
+        store.selectedDate = start
+        store.displayedMonth = Calendar.current.date(
+            from: Calendar.current.dateComponents([.year, .month], from: start)
+        ) ?? start
+        store.refresh()
+        dismiss()
     }
 }

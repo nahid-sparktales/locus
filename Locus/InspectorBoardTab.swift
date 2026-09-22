@@ -7,8 +7,13 @@ import SwiftUI
 /// side by side. Every change goes through `BoardStore`, which saves before
 /// it publishes, so this view only renders and reports errors.
 struct InspectorBoardTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: BoardStore
     var isDetached = false
+    var workInChatOverride: ((BoardCard) -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -58,10 +63,10 @@ struct InspectorBoardTab: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .sheet(item: $openCard) { selection in
+        .locusSheet(item: $openCard) { selection in
             BoardCardDetailSheet(store: store, cardID: selection.id, onWorkInChat: workInChat)
         }
-        .sheet(item: $newCard) { request in
+        .locusSheet(item: $newCard) { request in
             BoardNewCardSheet(store: store, initialColumnID: request.columnID)
         }
         .alert(
@@ -101,7 +106,7 @@ struct InspectorBoardTab: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "rectangle.split.3x1")
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .accessibilityHidden(true)
             Text("Board")
                 .font(.locus(size: 13, weight: .semibold))
@@ -109,10 +114,10 @@ struct InspectorBoardTab: View {
             if store.isAvailable {
                 Text(store.keyPrefix)
                     .font(.locus(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .padding(.horizontal, 5)
                     .frame(minHeight: 18)
-                    .background(LocusTheme.textPrimary.opacity(0.06), in: Capsule())
+                    .background(viewColors.textPrimary.opacity(0.06), in: Capsule())
                     .fixedSize()
                     .help("Cards in this workspace are numbered \(store.keyPrefix)-1, \(store.keyPrefix)-2, and so on")
                     .accessibilityLabel("Card key prefix \(store.keyPrefix)")
@@ -127,7 +132,7 @@ struct InspectorBoardTab: View {
                     .accessibilityLabel("Opening a new chat for this card")
             }
             if !isDetached {
-                Button { model.boardWindows.open(store: store, model: model) } label: {
+                Button { model.boardWindows.open(store: store, model: model, ocean: usesWorldTheme, deck: usesDeckTheme) } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.locus(size: 12, weight: .medium))
                         .frame(width: 26, height: 26)
@@ -159,7 +164,7 @@ struct InspectorBoardTab: View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
                 .imageScale(.small)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityHidden(true)
             TextField("Search cards", text: $query)
                 .textFieldStyle(.plain)
@@ -171,7 +176,7 @@ struct InspectorBoardTab: View {
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                         .imageScale(.small)
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
@@ -184,10 +189,10 @@ struct InspectorBoardTab: View {
         .padding(.leading, 8)
         .padding(.trailing, query.isEmpty ? 8 : 1)
         .frame(height: 26)
-        .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(LocusTheme.separator, lineWidth: 1)
+                .stroke(viewColors.separator, lineWidth: 1)
                 .accessibilityHidden(true)
         }
         .frame(minWidth: 90, maxWidth: 240)
@@ -199,11 +204,11 @@ struct InspectorBoardTab: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .imageScale(.small)
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .accessibilityHidden(true)
                 Text(message)
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
@@ -212,7 +217,7 @@ struct InspectorBoardTab: View {
                 } label: {
                     Image(systemName: "xmark")
                         .imageScale(.small)
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
@@ -224,9 +229,9 @@ struct InspectorBoardTab: View {
             .padding(.leading, 12)
             .padding(.trailing, 6)
             .padding(.vertical, 3)
-            .background(LocusTheme.coral.opacity(0.08))
+            .background(viewColors.coral.opacity(0.08))
             .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
             .transition(.opacity)
             .accessibilityElement(children: .contain)
@@ -256,7 +261,7 @@ struct InspectorBoardTab: View {
             HStack(spacing: 6) {
                 Text(column.title)
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textPrimary)
+                    .foregroundStyle(viewColors.textPrimary)
                     .lineLimit(1)
                 BoardCountBadge(count: visible.count, total: all.count)
                 Spacer(minLength: 4)
@@ -279,11 +284,11 @@ struct InspectorBoardTab: View {
                         if visible.isEmpty, !searchNeedle.isEmpty {
                             Text("No matches")
                                 .font(.locus(size: 10))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .frame(maxWidth: .infinity, minHeight: 56)
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .stroke(LocusTheme.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                        .stroke(viewColors.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                                         .accessibilityHidden(true)
                                 }
                         }
@@ -308,7 +313,7 @@ struct InspectorBoardTab: View {
         }
         .frame(width: Self.columnWidth)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(LocusTheme.textPrimary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(viewColors.textPrimary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .modifier(BoardDropTarget(indicator: .outline(radius: 12)) { drop($0, into: column.id, before: nil) })
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(column.title) column")
@@ -319,11 +324,11 @@ struct InspectorBoardTab: View {
         Button(action: beginAddColumn) {
             Label("Add Column", systemImage: "plus")
                 .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(width: 150, height: 38)
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(LocusTheme.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .stroke(viewColors.separator, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .accessibilityHidden(true)
                 }
         }
@@ -353,7 +358,7 @@ struct InspectorBoardTab: View {
             }
             .frame(height: 40)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
 
             if let column {
@@ -374,7 +379,7 @@ struct InspectorBoardTab: View {
                     BoardQuickAddField(column: column, onAdd: quickAdd)
                         .padding(10)
                         .overlay(alignment: .top) {
-                            Rectangle().fill(LocusTheme.line).frame(height: 1)
+                            Rectangle().fill(viewColors.line).frame(height: 1)
                         }
                 }
                 .modifier(BoardDropTarget(indicator: .outline(radius: 0)) { drop($0, into: column.id, before: nil) })
@@ -433,18 +438,18 @@ struct InspectorBoardTab: View {
                     .padding(.horizontal, 5)
                     .frame(minWidth: 18, minHeight: 16)
                     .background(
-                        selected ? LocusTheme.surfaceCanvas.opacity(0.22) : LocusTheme.textPrimary.opacity(0.07),
+                        selected ? viewColors.surfaceCanvas.opacity(0.22) : viewColors.textPrimary.opacity(0.07),
                         in: Capsule()
                     )
             }
-            .foregroundStyle(selected ? LocusTheme.surfaceCanvas : LocusTheme.textSecondary)
+            .foregroundStyle(selected ? viewColors.surfaceCanvas : viewColors.textSecondary)
             .padding(.leading, 10)
             .padding(.trailing, 5)
             .frame(height: 26)
-            .background(selected ? LocusTheme.textPrimary : Color.clear, in: Capsule())
+            .background(selected ? viewColors.textPrimary : Color.clear, in: Capsule())
             .overlay {
                 Capsule()
-                    .stroke(selected ? Color.clear : LocusTheme.separator, lineWidth: 1)
+                    .stroke(selected ? Color.clear : viewColors.separator, lineWidth: 1)
                     .accessibilityHidden(true)
             }
             .contentShape(Capsule())
@@ -532,7 +537,7 @@ struct InspectorBoardTab: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
@@ -636,6 +641,7 @@ struct InspectorBoardTab: View {
 
     private func workInChat(_ card: BoardCard) {
         openCard = nil
+        if let workInChatOverride { workInChatOverride(card); return }
         guard isDetached else {
             model.prefillComposerFromBoard(store.chatPrompt(for: card))
             return

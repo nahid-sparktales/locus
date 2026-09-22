@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct AgentRolePickerView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var category = "All roles"
@@ -25,7 +29,7 @@ struct AgentRolePickerView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Choose a role").font(.locus(size: 22, weight: .semibold))
                     Text("Start with a specialist. Make every setting your own.")
-                        .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                 }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -57,15 +61,15 @@ struct AgentRolePickerView: View {
                     }
                 }.padding(22)
                 if let error {
-                    Text(error).foregroundStyle(LocusTheme.warningForeground).padding(.horizontal, 22)
+                    Text(error).foregroundStyle(viewColors.warningForeground).padding(.horizontal, 22)
                 } else if filtered.isEmpty, !showsCustom, !search.isEmpty {
                     Text("No matching roles. Try another search.")
-                        .foregroundStyle(LocusTheme.textSecondary).padding()
+                        .foregroundStyle(viewColors.textSecondary).padding()
                 }
             }.accessibilityIdentifier("agent.rolePicker.scroll")
         }
         .frame(width: 760, height: 620)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .onExitCommand { dismiss() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.rolePicker")
@@ -82,23 +86,23 @@ struct AgentRolePickerView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: id == "custom" ? "square.and.pencil" : "person.crop.square")
-                        .foregroundStyle(LocusTheme.accentAction)
+                        .foregroundStyle(viewColors.accentAction)
                     Spacer()
-                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(LocusTheme.accentAction) }
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(viewColors.accentAction) }
                 }.accessibilityHidden(true)
-                Text(name).font(.locus(size: 13, weight: .semibold)).foregroundStyle(LocusTheme.textPrimary)
+                Text(name).font(.locus(size: 13, weight: .semibold)).foregroundStyle(viewColors.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(summary).font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                Text(summary).font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
-                Text(category).font(.locus(size: 9, weight: .medium)).foregroundStyle(LocusTheme.textTertiary)
+                Text(category).font(.locus(size: 9, weight: .medium)).foregroundStyle(viewColors.textTertiary)
             }
             .padding(16).frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
-            .background(selected ? LocusTheme.accentAction.opacity(0.08) : LocusTheme.surfaceCard,
+            .background(selected ? viewColors.accentAction.opacity(0.08) : viewColors.surfaceCard,
                         in: RoundedRectangle(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(selected ? LocusTheme.accentAction : LocusTheme.separator, lineWidth: 1)
+                    .stroke(selected ? viewColors.accentAction : viewColors.separator, lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }

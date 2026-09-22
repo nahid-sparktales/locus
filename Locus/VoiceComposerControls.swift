@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct VoiceComposerButtons: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var voice: VoiceControlModel
 
@@ -11,7 +15,7 @@ struct VoiceComposerButtons: View {
             } label: {
                 Image(systemName: voice.isDictating ? "mic.fill" : "mic")
                     .font(.locus(size: 11, weight: .semibold))
-                    .foregroundStyle(voice.isDictating ? model.accentActionColor : LocusTheme.muted)
+                    .foregroundStyle(voice.isDictating ? model.accentActionColor : viewColors.muted)
                     .frame(width: 30, height: 30)
                     .background(voice.isDictating ? model.accentActionColor.opacity(0.1) : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -28,7 +32,7 @@ struct VoiceComposerButtons: View {
                 Image(systemName: voice.isVoiceModeActive ? "waveform.circle.fill" : "waveform.circle")
                     .font(.locus(size: 12, weight: .semibold))
                     .foregroundStyle(
-                        voice.isVoiceModeActive ? model.accentActionColor : LocusTheme.muted
+                        voice.isVoiceModeActive ? model.accentActionColor : viewColors.muted
                     )
                     .frame(width: 30, height: 30)
                     .background(voice.isVoiceModeActive ? model.accentActionColor.opacity(0.1) : Color.clear)
@@ -43,6 +47,10 @@ struct VoiceComposerButtons: View {
 }
 
 struct VoiceComposerStrip: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var voice: VoiceControlModel
 
@@ -56,10 +64,10 @@ struct VoiceComposerStrip: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(voice.state.title)
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                 Text(detail)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(2)
                     .accessibilityIdentifier("composer.voice.transcript")
             }
@@ -100,9 +108,9 @@ struct VoiceComposerStrip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(LocusTheme.paperDeep.opacity(0.62))
+        .background(viewColors.paperDeep.opacity(0.62))
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("composer.voice.strip")
@@ -142,14 +150,18 @@ struct VoiceComposerStrip: View {
 
     private var statusColor: Color {
         switch voice.state {
-        case .attention, .error: LocusTheme.warning
+        case .attention, .error: viewColors.warning
         case .listening, .speaking: model.accentActionColor
-        default: LocusTheme.muted
+        default: viewColors.muted
         }
     }
 }
 
 private struct VoicePushToTalkButton: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var voice: VoiceControlModel
     @State private var pointerStartedAt: Date?
     @State private var wasListeningAtPointerDown = false
@@ -157,9 +169,9 @@ private struct VoicePushToTalkButton: View {
     var body: some View {
         Image(systemName: voice.isListening ? "stop.fill" : "mic.fill")
             .font(.locus(size: 11, weight: .bold))
-            .foregroundStyle(voice.isListening ? LocusTheme.coral : LocusTheme.surfaceCanvas)
+            .foregroundStyle(voice.isListening ? viewColors.coral : viewColors.surfaceCanvas)
             .frame(width: 32, height: 28)
-            .background(voice.isListening ? LocusTheme.coral.opacity(0.12) : LocusTheme.ink)
+            .background(voice.isListening ? viewColors.coral.opacity(0.12) : viewColors.ink)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
             .gesture(pointerGesture)

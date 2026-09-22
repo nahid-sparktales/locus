@@ -3,6 +3,10 @@ import SwiftUI
 /// Keep editable values in the same leading, full-width layout as instructions.
 /// A hidden native label avoids the trailing value column used by macOS Form.
 struct LocusFormField<Content: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     @ViewBuilder var content: Content
 
@@ -16,11 +20,11 @@ struct LocusFormField<Content: View>: View {
                 .textFieldStyle(.plain)
                 .multilineTextAlignment(.leading)
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.signalDeep)
                 .padding(11)
                 .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-                .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+                .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityLabel(title)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

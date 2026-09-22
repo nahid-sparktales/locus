@@ -49,14 +49,14 @@ private struct LocusPresentationAnchor: View {
         Color.clear
         .modifier(IdentityVaultPresentation(vault: model.identityVault, enabled: ownsPresentations))
         .modifier(TaskCapsulePresentation(capsules: model.taskCapsules, enabled: ownsPresentations, openTask: { model.showTaskDetail(runID: $0) }, onDismiss: { if ownsPresentations { model.completeCapsuleTaskDismissal() } }))
-        .sheet(isPresented: owned($library.isPresented)) {
+        .locusSheet(isPresented: owned($library.isPresented)) {
             if model.isUITesting, ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_LIBRARY_CONTENT"] == "1" {
                 LibraryUITestFixtureView().appFeatureEnvironment(from: model)
             } else {
                 LibraryWorkspaceView().appFeatureEnvironment(from: model)
             }
         }
-        .sheet(isPresented: owned($onboarding.isPresented), onDismiss: {
+        .locusSheet(isPresented: owned($onboarding.isPresented), onDismiss: {
             guard ownsPresentations else { return }
             onboarding.dismiss()
             // Wait for the setup sheet to close before presenting its sibling.
@@ -70,18 +70,18 @@ private struct LocusPresentationAnchor: View {
         }) {
             OnboardingView().appFeatureEnvironment(from: model)
         }
-        .sheet(isPresented: owned($model.commandPalettePresented)) {
+        .locusSheet(isPresented: owned($model.commandPalettePresented)) {
             CommandPaletteView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned($model.checkpointPresented)) {
+        .locusSheet(isPresented: owned($model.checkpointPresented)) {
             CheckpointSheet()
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned($model.taskDetailPresented), onDismiss: { if ownsPresentations { model.completeTaskDetailDismissal() } }) {
+        .locusSheet(isPresented: owned($model.taskDetailPresented), onDismiss: { if ownsPresentations { model.completeTaskDetailDismissal() } }) {
             TaskDetailView(sessionID: model.taskDetailSessionID).environmentObject(model)
         }
-        .sheet(isPresented: owned($model.notebookPresented)) {
+        .locusSheet(isPresented: owned($model.notebookPresented)) {
             NotebookSheet(notebook: model.notebook, availableSize: presentationSize)
                 .onAppear {
                     model.notebook.refresh(
@@ -90,18 +90,18 @@ private struct LocusPresentationAnchor: View {
                     )
                 }
         }
-        .sheet(item: owned($model.fileViewerRequest)) { request in
+        .locusSheet(item: owned($model.fileViewerRequest)) { request in
             WorkspaceFileViewerSheet(request: request)
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned(Binding(
+        .locusSheet(isPresented: owned(Binding(
             get: { landingFlow.reviewAndLandPresented },
             set: { landingFlow.reviewAndLandPresented = $0 }
         ))) {
             ReviewAndLandView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned(Binding(
+        .locusSheet(isPresented: owned(Binding(
             get: { model.rememberConfirmationText != nil },
             set: { if !$0 { model.rememberConfirmationText = nil } }
         ))) {
@@ -110,7 +110,7 @@ private struct LocusPresentationAnchor: View {
                     .environmentObject(model)
             }
         }
-        .sheet(isPresented: owned($model.settingsPresented), onDismiss: {
+        .locusSheet(isPresented: owned($model.settingsPresented), onDismiss: {
             if ownsPresentations { model.completeSettingsDismissal() }
         }) {
             if let updates {
@@ -119,18 +119,18 @@ private struct LocusPresentationAnchor: View {
                     .environmentObject(updates)
             }
         }
-        .sheet(isPresented: owned($model.usageDashboardPresented)) {
+        .locusSheet(isPresented: owned($model.usageDashboardPresented)) {
             UsageDashboardView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned($model.modelLibraryPresented)) {
+        .locusSheet(isPresented: owned($model.modelLibraryPresented)) {
             ModelLibraryView()
                 .environmentObject(model)
         }
-        .sheet(isPresented: owned($model.shortcutsPresented)) {
+        .locusSheet(isPresented: owned($model.shortcutsPresented)) {
             ShortcutsSheet()
         }
-        .sheet(item: owned($model.savedAgentEditor)) { profile in
+        .locusSheet(item: owned($model.savedAgentEditor)) { profile in
             AgentProfileEditor(profile: profile,
                 isNew: !agentTeams.agentProfiles.contains(where: { $0.id == profile.id }),
                 existingProfiles: agentTeams.agentProfiles,
@@ -138,7 +138,7 @@ private struct LocusPresentationAnchor: View {
                 .environmentObject(model)
                 .environmentObject(providerAccounts)
         }
-        .sheet(isPresented: owned($model.configureAgentPresented), onDismiss: {
+        .locusSheet(isPresented: owned($model.configureAgentPresented), onDismiss: {
             if ownsPresentations { model.dismissConfigureAgent() }
         }) {
             ConfigureAgentView(
@@ -147,7 +147,7 @@ private struct LocusPresentationAnchor: View {
             )
             .environmentObject(model)
         }
-        .sheet(item: owned(Binding(
+        .locusSheet(item: owned(Binding(
             get: { extensionsModel.mcpInputRequest },
             set: { value in
                 if value == nil, extensionsModel.mcpInputRequest != nil {

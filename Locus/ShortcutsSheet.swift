@@ -52,6 +52,10 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
 ]
 
 private struct KeyboardShortcutsReference: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             ForEach(shortcutReferenceGroups) { group in
@@ -59,7 +63,7 @@ private struct KeyboardShortcutsReference: View {
                     Text(group.name.uppercased())
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.9)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     VStack(spacing: 0) {
                         ForEach(Array(group.shortcuts.enumerated()), id: \.element.id) { index, shortcut in
                             HStack {
@@ -68,16 +72,16 @@ private struct KeyboardShortcutsReference: View {
                                 Spacer()
                                 Text(shortcut.keys)
                                     .font(.locus(size: 9, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                                     .padding(.horizontal, 7)
                                     .frame(height: 20)
-                                    .background(LocusTheme.paperDeep)
+                                    .background(viewColors.paperDeep)
                                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                             }
                             .padding(.horizontal, 11)
                             .frame(minHeight: 34)
                             if index < group.shortcuts.count - 1 {
-                                Divider().overlay(LocusTheme.line.opacity(0.6))
+                                Divider().overlay(viewColors.line.opacity(0.6))
                             }
                         }
                     }
@@ -91,6 +95,10 @@ private struct KeyboardShortcutsReference: View {
 
 /// The persistent reference requested in Settings, directly below Extensions.
 struct KeyboardShortcutsSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
@@ -98,19 +106,23 @@ struct KeyboardShortcutsSettingsView: View {
                     .font(.locus(size: 15, weight: .bold))
                 Text("Everything in Locus remains reachable from the keyboard, including the command palette with ⌘K.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .padding(.bottom, 14)
                 KeyboardShortcutsReference()
             }
             .padding(20)
         }
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .accessibilityIdentifier("settings.shortcuts")
     }
 }
 
 /// Keyboard shortcut reference, still presented with ⌘/ and `/shortcuts`.
 struct ShortcutsSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -121,7 +133,7 @@ struct ShortcutsSheet: View {
                         .font(.locus(size: 15, weight: .bold))
                     Text("Everything in Locus is reachable from the keyboard.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button {
@@ -135,7 +147,7 @@ struct ShortcutsSheet: View {
             }
             .padding(16)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
 
             ScrollView {
@@ -144,6 +156,6 @@ struct ShortcutsSheet: View {
             }
         }
         .frame(width: 430, height: 520)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
     }
 }

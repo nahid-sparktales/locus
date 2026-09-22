@@ -91,11 +91,13 @@ struct BoardCard: Codable, Identifiable, Hashable {
     /// Comments and activity, oldest first.
     var timeline: [BoardTimelineEntry]
 
+    var agentIDs: [UUID]? = nil
+
     var commentCount: Int { timeline.lazy.filter { $0.kind == .comment }.count }
 
     private enum CodingKeys: String, CodingKey {
         case id, number, title, columnID, priority, labels, assignee
-        case createdAt, updatedAt, createdBy, timeline
+        case createdAt, updatedAt, createdBy, timeline, agentIDs
         case details = "description"
     }
 }

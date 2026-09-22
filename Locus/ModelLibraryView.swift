@@ -171,6 +171,10 @@ private extension Error {
 }
 
 struct ModelLibraryView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var library = ModelLibraryViewModel()
@@ -179,18 +183,18 @@ struct ModelLibraryView: View {
         VStack(spacing: 0) {
             header
             searchBar
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
 
             HStack(spacing: 0) {
                 resultList
                     .frame(width: 300)
-                Rectangle().fill(LocusTheme.line).frame(width: 1)
+                Rectangle().fill(viewColors.line).frame(width: 1)
                 detail
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(width: 900, height: 620)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .task { await library.loadInitial() }
         .onDisappear { library.cancelDownload() }
         .onExitCommand {
@@ -203,10 +207,10 @@ struct ModelLibraryView: View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(LocusTheme.signal.opacity(0.15))
+                    .fill(viewColors.signal.opacity(0.15))
                 Image(systemName: "shippingbox.and.arrow.backward.fill")
                     .font(.locus(size: 17, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
             }
             .frame(width: 38, height: 38)
             .accessibilityHidden(true)
@@ -216,7 +220,7 @@ struct ModelLibraryView: View {
                     .font(.locus(size: 18, weight: .bold))
                 Text("Discover GGUF models on Hugging Face and install them through Ollama.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
 
             Spacer()
@@ -224,11 +228,11 @@ struct ModelLibraryView: View {
             if model.isModelOnline {
                 Label("Ollama ready", systemImage: "checkmark.circle.fill")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.success)
+                    .foregroundStyle(viewColors.success)
             } else {
                 Label("Ollama unavailable", systemImage: "exclamationmark.triangle.fill")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
             }
 
             Button {
@@ -248,7 +252,7 @@ struct ModelLibraryView: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityHidden(true)
             TextField(
                 "Search models or paste a huggingface.co model URL",
@@ -270,7 +274,7 @@ struct ModelLibraryView: View {
 
             Button("Search") { library.search() }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .accessibilityIdentifier("modelLibrary.searchButton")
         }
         .padding(.horizontal, 18)
@@ -283,22 +287,22 @@ struct ModelLibraryView: View {
             HStack {
                 Text(library.query.isEmpty ? "POPULAR GGUF MODELS" : "SEARCH RESULTS")
                     .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 Spacer()
                 if library.isSearching {
                     Text("SEARCHING…")
                         .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .accessibilityIdentifier("modelLibrary.searching")
                 } else {
                     Text("\(library.results.count)")
                         .font(.locus(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(LocusTheme.surfaceCard)
+                        .foregroundStyle(viewColors.surfaceCard)
                         .frame(minWidth: 24)
                         .padding(.vertical, 3)
                         .background {
                             Capsule(style: .continuous)
-                                .fill(LocusTheme.ink)
+                                .fill(viewColors.ink)
                         }
                         .accessibilityLabel("\(library.results.count) models")
                         .accessibilityIdentifier("modelLibrary.resultCount")
@@ -326,7 +330,7 @@ struct ModelLibraryView: View {
                 library.query.isEmpty ? "Popular GGUF models" : "Model search results"
             )
         }
-        .background(LocusTheme.surfaceCard)
+        .background(viewColors.surfaceCard)
     }
 
     private func modelRow(_ item: HuggingFaceModel) -> some View {
@@ -334,7 +338,7 @@ struct ModelLibraryView: View {
         return VStack(alignment: .leading, spacing: 5) {
             Text(item.displayName)
                 .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .lineLimit(2)
             HStack(spacing: 8) {
                 Text(item.owner)
@@ -346,15 +350,15 @@ struct ModelLibraryView: View {
                 }
             }
             .font(.locus(size: 8))
-            .foregroundStyle(LocusTheme.textSecondary)
+            .foregroundStyle(viewColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(selected ? LocusTheme.signal.opacity(0.12) : Color.clear)
+        .background(selected ? viewColors.signal.opacity(0.12) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(selected ? LocusTheme.signalDeep.opacity(0.25) : Color.clear, lineWidth: 1)
+                .stroke(selected ? viewColors.signalDeep.opacity(0.25) : Color.clear, lineWidth: 1)
         }
     }
 
@@ -369,7 +373,7 @@ struct ModelLibraryView: View {
                             .textSelection(.enabled)
                         Text(selected.id)
                             .font(.locus(size: 9, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .textSelection(.enabled)
                     }
 
@@ -379,7 +383,7 @@ struct ModelLibraryView: View {
                             Text("Scanning GGUF files…")
                         }
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                     } else {
                         variants
                     }
@@ -387,10 +391,10 @@ struct ModelLibraryView: View {
                     if let error = library.errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
                             .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.coral)
+                            .foregroundStyle(viewColors.coral)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(LocusTheme.coral.opacity(0.08))
+                            .background(viewColors.coral.opacity(0.08))
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     }
 
@@ -412,11 +416,11 @@ struct ModelLibraryView: View {
             HStack {
                 Text("CHOOSE A QUANTIZATION")
                     .font(.locus(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 Spacer()
                 Text("This Mac has \(Self.memoryLabel) of unified memory")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .accessibilityIdentifier("modelLibrary.machineMemory")
             }
 
@@ -432,15 +436,15 @@ struct ModelLibraryView: View {
                             }
                             Text(variant.sizeLabel)
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                             Text(variant.fileName)
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .lineLimit(2)
                             if variant.quantization == library.recommendedQuant {
                                 Text("Fits comfortably while leaving room for the runtime and context window.")
                                     .font(LocusType.caption)
-                                    .foregroundStyle(LocusTheme.textTertiary)
+                                    .foregroundStyle(viewColors.textTertiary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -448,16 +452,16 @@ struct ModelLibraryView: View {
                         .padding(10)
                         .background(
                             library.selectedVariant == variant
-                                ? LocusTheme.signal.opacity(0.13)
-                                : LocusTheme.white
+                                ? viewColors.signal.opacity(0.13)
+                                : viewColors.white
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .stroke(
                                     library.selectedVariant == variant
-                                        ? LocusTheme.signalDeep.opacity(0.5)
-                                        : LocusTheme.line,
+                                        ? viewColors.signalDeep.opacity(0.5)
+                                        : viewColors.line,
                                     lineWidth: 1
                                 )
                         }
@@ -484,21 +488,21 @@ struct ModelLibraryView: View {
         if fit == .fits, variant.quantization == library.recommendedQuant {
             Text("Recommended")
                 .font(LocusType.badge)
-                .foregroundStyle(LocusTheme.brandInk)
+                .foregroundStyle(viewColors.brandInk)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(LocusTheme.accentFill)
+                .background(viewColors.accentFill)
                 .clipShape(Capsule())
                 .accessibilityLabel("Recommended for this Mac")
         } else if fit == .tight {
             Text("Tight fit")
                 .font(LocusType.badge)
-                .foregroundStyle(LocusTheme.warningForeground)
+                .foregroundStyle(viewColors.warningForeground)
                 .accessibilityLabel("Tight fit for this Mac's memory")
         } else if fit == .exceeds {
             Text("Too large")
                 .font(LocusType.badge)
-                .foregroundStyle(LocusTheme.dangerForeground)
+                .foregroundStyle(viewColors.dangerForeground)
                 .accessibilityLabel("Too large for this Mac's memory")
         }
     }
@@ -513,12 +517,12 @@ struct ModelLibraryView: View {
                     if let fraction = progress.fraction {
                         Text(fraction, format: .percent.precision(.fractionLength(0)))
                             .font(.locus(size: 9, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                     }
                 }
                 if let fraction = progress.fraction {
                     ProgressView(value: fraction)
-                        .tint(LocusTheme.signalDeep)
+                        .tint(viewColors.signalDeep)
                         .accessibilityIdentifier("modelLibrary.downloadProgress")
                 } else if library.isDownloading {
                     ProgressView()
@@ -533,7 +537,7 @@ struct ModelLibraryView: View {
                         .foregroundStyle(downloadTitleColor)
                     Text(downloadCaption)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -548,7 +552,7 @@ struct ModelLibraryView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(
                         library.selectedVariant == nil
                             || !model.isModelOnline
@@ -579,9 +583,9 @@ struct ModelLibraryView: View {
 
     private var downloadTitleColor: Color {
         switch selectedFit {
-        case .exceeds: LocusTheme.coral
-        case .tight: LocusTheme.warning
-        default: LocusTheme.ink
+        case .exceeds: viewColors.coral
+        case .tight: viewColors.warning
+        default: viewColors.ink
         }
     }
 

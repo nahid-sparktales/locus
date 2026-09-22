@@ -1,4 +1,81 @@
 import SwiftUI
+import ImageIO
+import UniformTypeIdentifiers
+
+/// Downsample before decoding, center-crop, and re-encode only the pixels. This
+/// bounds preference storage and leaves source EXIF/location metadata behind.
+enum AgentAvatarImage {
+    static let maximumStoredBytes = 256 * 1024
+    static let maximumSourceBytes = 20 * 1024 * 1024
+
+    static func normalized(_ data: Data) throws -> Data {
+        guard data.count <= maximumSourceBytes else { throw AvatarError.tooLarge }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 512,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: 256, height: 256,
+                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw AvatarError.invalidImage }
+        context.setFillColor(CGColor(gray: 0.12, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+        context.interpolationQuality = .high
+        let scale = 256 / CGFloat(min(image.width, image.height))
+        let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
+        context.draw(image, in: CGRect(x: (256 - width) / 2, y: (256 - height) / 2, width: width, height: height))
+        let output = NSMutableData()
+        guard let thumbnail = context.makeImage(),
+              let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)
+        else { throw AvatarError.invalidImage }
+        CGImageDestinationAddImage(destination, thumbnail, [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), output.length <= maximumStoredBytes else { throw AvatarError.invalidImage }
+        return output as Data
+    }
+
+    enum AvatarError: LocalizedError {
+        case tooLarge, invalidImage
+        var errorDescription: String? {
+            switch self {
+            case .tooLarge: "Choose an image smaller than 20 MB."
+            case .invalidImage: "This image couldn’t be opened. Try a JPEG, PNG, or HEIC picture."
+            }
+        }
+    }
+}
+
+struct AgentAvatarView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @Environment(\.locusOceanTheme) private var ocean
+    let profileID: UUID
+    let name: String
+    var size: CGFloat = 40
+
+    var body: some View {
+        let accent = AgentWorldPalette(ocean: ocean).warning
+        Group {
+            if let data = agentTeams.agentAvatarData[profileID], let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.locus(size: size * 0.44, weight: .semibold))
+                    .foregroundStyle(ocean ? accent : viewColors.accentAction)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background((ocean ? accent : viewColors.accentAction).opacity(0.12))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.27))
+        .accessibilityHidden(true)
+    }
+}
 
 /// Native disclosure arrows have a small hit target on macOS. Keep the header
 /// as a keyboard-accessible button whose entire row opens the section.
@@ -40,6 +117,10 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
 /// Shared editing controls for the overview and the unsaved profile draft.
 /// Linking a project stores its location; it does not move or copy that project.
 struct AgentWorkspacePreferencesEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.locusOceanTheme) private var ocean
     @Binding var profile: AgentProfile
@@ -52,7 +133,7 @@ struct AgentWorkspacePreferencesEditor: View {
     }
 
     private var detailColor: Color {
-        ocean ? Color(nsColor: LocusTheme.oceanPalette.inkSoft) : LocusTheme.textSecondary
+        viewColors.textSecondary
     }
 
     var body: some View {
@@ -176,6 +257,10 @@ struct SavedAgentInspectorView: View {
 }
 
 private struct SavedAgentOverviewContent: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -204,6 +289,8 @@ private struct SavedAgentOverviewContent: View {
     @State private var resultLoading = false
     @State private var resultError: String?
     @State private var activeResultRequest: ResultRequest?
+    @State private var choosingPicture = false
+    @State private var pictureError: String?
 
     private var profile: AgentProfile {
         agentTeams.agentProfiles.first { $0.id == initialProfile.id } ?? initialProfile
@@ -241,11 +328,11 @@ private struct SavedAgentOverviewContent: View {
         }
         return ResultRequest(profileID: profile.id, sessionID: id, modifiedAt: modified, runID: overview.latestResult?.runID)
     }
-    private var ink: Color { ocean ? Color(nsColor: LocusTheme.oceanPalette.ink) : LocusTheme.ink }
-    private var secondary: Color { ocean ? Color(nsColor: LocusTheme.oceanPalette.inkSoft) : LocusTheme.inkSoft }
-    private var muted: Color { ocean ? Color(nsColor: LocusTheme.oceanPalette.muted) : LocusTheme.muted }
-    private var accent: Color { ocean ? Color(nsColor: LocusTheme.oceanPalette.signalDeep) : LocusTheme.accentAction }
-    private var canvas: Color { ocean ? Color(nsColor: LocusTheme.oceanPalette.paper) : LocusTheme.surfaceCanvas }
+    private var ink: Color { viewColors.ink }
+    private var secondary: Color { viewColors.inkSoft }
+    private var muted: Color { viewColors.muted }
+    private var accent: Color { viewColors.accentAction }
+    private var canvas: Color { viewColors.surfaceCanvas }
     private var newChatIsDisabled: Bool {
         newChatDisabled ?? (model.chatNavigationDisabled || model.creatingSavedAgentChatIDs.contains(profile.id))
     }
@@ -260,7 +347,7 @@ private struct SavedAgentOverviewContent: View {
                     if showsReadiness(snapshot) { readiness(snapshot) }
                     if let error = automation.lastError ?? schedule.lastLoadError {
                         Label("Some information couldn’t be refreshed. \(error)", systemImage: "arrow.clockwise.circle")
-                            .font(.locus(size: 12)).foregroundStyle(LocusTheme.warning).textSelection(.enabled)
+                            .font(.locus(size: 12)).foregroundStyle(viewColors.warning).textSelection(.enabled)
                     }
                     if wide {
                         HStack(alignment: .top, spacing: 16) {
@@ -282,6 +369,20 @@ private struct SavedAgentOverviewContent: View {
         }
         .foregroundStyle(ink)
         .accessibilityIdentifier("savedAgent.overview")
+        .fileImporter(isPresented: $choosingPicture, allowedContentTypes: [.image]) { result in
+            do {
+                let url = try result.get()
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size <= AgentAvatarImage.maximumSourceBytes else { throw AgentAvatarImage.AvatarError.tooLarge }
+                let data = try AgentAvatarImage.normalized(Data(contentsOf: url, options: .mappedIfSafe))
+                agentTeams.setAgentAvatar(data, profileID: profile.id)
+            } catch { pictureError = error.localizedDescription }
+        }
+        .alert("Couldn’t change the picture", isPresented: Binding(
+            get: { pictureError != nil }, set: { if !$0 { pictureError = nil } }
+        )) { Button("OK") { pictureError = nil } } message: { Text(pictureError ?? "") }
         .task(id: profile.id) {
             guard model.persistenceEnabled, !model.isUITesting else { return }
             await refresh()
@@ -290,11 +391,11 @@ private struct SavedAgentOverviewContent: View {
                 await refresh()
             }
         }
-        .sheet(item: $accountToReview) { account in
+        .locusSheet(item: $accountToReview) { account in
             AccountEditorView(account: account, isNew: false)
                 .appFeatureEnvironment(from: model)
         }
-        .sheet(isPresented: $recoveryPresented) {
+        .locusSheet(isPresented: $recoveryPresented) {
             ActivityCenterView()
                 .appFeatureEnvironment(from: model)
                 .frame(width: 500, height: 650)
@@ -318,11 +419,23 @@ private struct SavedAgentOverviewContent: View {
     private func header(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 14) {
-                Text(String(profile.name.prefix(1)).uppercased())
-                    .font(.locus(size: 23, weight: .semibold)).foregroundStyle(accent)
-                    .frame(width: 48, height: 48)
-                    .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
-                    .accessibilityHidden(true)
+                Button { choosingPicture = true } label: {
+                    AgentAvatarView(profileID: profile.id, name: profile.name, size: 56)
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "camera.fill").font(.locus(size: 10))
+                                .foregroundStyle(ink).padding(5).background(canvas, in: Circle())
+                        }
+                }
+                .buttonStyle(.plain).fixedSize()
+                .contextMenu {
+                    Button("Choose picture…") { choosingPicture = true }
+                    if agentTeams.agentAvatarData[profile.id] != nil {
+                        Button("Remove picture") { agentTeams.setAgentAvatar(nil, profileID: profile.id) }
+                    }
+                }
+                .help("Change \(profile.name)’s profile picture")
+                .accessibilityLabel("Change profile picture for \(profile.name)")
+                .accessibilityIdentifier("savedAgent.avatar")
                 VStack(alignment: .leading, spacing: 5) {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .center, spacing: 10) { nameText; statusChip(snapshot) }
@@ -367,7 +480,7 @@ private struct SavedAgentOverviewContent: View {
         let color = readinessColor(snapshot)
         return HStack(spacing: 5) {
             Image(systemName: readinessSymbol(snapshot)).foregroundStyle(color).accessibilityHidden(true)
-            Text(snapshot.statusTitle).foregroundStyle(snapshot.needsAttention ? LocusTheme.warning : secondary)
+            Text(snapshot.statusTitle).foregroundStyle(snapshot.needsAttention ? viewColors.warning : secondary)
                 .lineLimit(1)
         }
         .font(.locus(size: 12, weight: .semibold))
@@ -399,8 +512,8 @@ private struct SavedAgentOverviewContent: View {
         let healthy = route.issue == nil && route.isVerified
         return factChip(title,
             symbol: route.issue != nil ? "exclamationmark.triangle.fill" : healthy ? "checkmark.circle.fill" : "cpu",
-            tint: route.issue == nil ? nil : LocusTheme.warning,
-            symbolTint: healthy ? LocusTheme.success : nil,
+            tint: route.issue == nil ? nil : viewColors.warning,
+            symbolTint: healthy ? viewColors.success : nil,
             marker: route.issue == nil && !route.isVerified ? "not checked" : nil)
             .help(route.issue ?? route.detail)
             .accessibilityLabel("Model: \(title)")
@@ -419,7 +532,7 @@ private struct SavedAgentOverviewContent: View {
         .font(.locus(size: 12, weight: .medium))
         .padding(.horizontal, 9).frame(height: 24)
         .background((tint ?? secondary).opacity(0.07), in: Capsule())
-        .overlay(Capsule().stroke(tint.map { $0.opacity(0.30) } ?? LocusTheme.line.opacity(0.8), lineWidth: 1)
+        .overlay(Capsule().stroke(tint.map { $0.opacity(0.30) } ?? viewColors.line.opacity(0.8), lineWidth: 1)
             .allowsHitTesting(false).accessibilityHidden(true))
         .accessibilityElement(children: .combine)
     }
@@ -637,10 +750,10 @@ private struct SavedAgentOverviewContent: View {
             }
         }
         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-        .background((snapshot.needsAttention ? LocusTheme.warning : accent).opacity(0.055),
+        .background((snapshot.needsAttention ? viewColors.warning : accent).opacity(0.055),
                     in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke((snapshot.needsAttention ? LocusTheme.warning : accent).opacity(0.22), lineWidth: 1))
+            .stroke((snapshot.needsAttention ? viewColors.warning : accent).opacity(0.22), lineWidth: 1))
         .accessibilityIdentifier("savedAgent.readiness")
     }
 
@@ -653,13 +766,13 @@ private struct SavedAgentOverviewContent: View {
                     Spacer(minLength: 8)
                     Image(systemName: snapshot.route.issue != nil ? "exclamationmark.circle.fill" :
                             snapshot.route.isVerified ? "checkmark.circle.fill" : "questionmark.circle")
-                        .foregroundStyle(snapshot.route.issue != nil ? LocusTheme.warning :
-                                            snapshot.route.isVerified ? LocusTheme.success : muted)
+                        .foregroundStyle(snapshot.route.issue != nil ? viewColors.warning :
+                                            snapshot.route.isVerified ? viewColors.success : muted)
                         .accessibilityHidden(true)
                 }
                 Text(snapshot.route.model).font(.locus(size: 12)).foregroundStyle(secondary).textSelection(.enabled)
                 Text(snapshot.route.issue ?? snapshot.route.detail)
-                    .font(.locus(size: 12)).foregroundStyle(snapshot.route.issue == nil ? secondary : LocusTheme.warning)
+                    .font(.locus(size: 12)).foregroundStyle(snapshot.route.issue == nil ? secondary : viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(snapshot.route.accountID == nil ? "Review local model" : "Review account") {
                     reviewAccount(snapshot.route.accountID)
@@ -671,7 +784,7 @@ private struct SavedAgentOverviewContent: View {
                 ForEach(snapshot.connections) { connection in
                     HStack(alignment: .top, spacing: 9) {
                         Image(systemName: connection.isHealthy ? "checkmark.circle" : "exclamationmark.circle")
-                            .foregroundStyle(connection.isHealthy ? LocusTheme.success : LocusTheme.warning)
+                            .foregroundStyle(connection.isHealthy ? viewColors.success : viewColors.warning)
                             .frame(width: 18).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(connection.title).font(.locus(size: 13, weight: .medium))
@@ -713,7 +826,7 @@ private struct SavedAgentOverviewContent: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let resultError {
-                Text(resultError).font(.locus(size: 12)).foregroundStyle(LocusTheme.warning)
+                Text(resultError).font(.locus(size: 12)).foregroundStyle(viewColors.warning)
                     .fixedSize(horizontal: false, vertical: true)
                 if let request = resultRequest {
                     Button("Try again") { Task { await loadResult(request) } }
@@ -776,7 +889,7 @@ private struct SavedAgentOverviewContent: View {
             if let latest = item.latestActivity {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("Last · \(latest.statusTitle)").font(.locus(size: 12, weight: .medium))
-                        .foregroundStyle(latest.needsAttention ? LocusTheme.warning : secondary)
+                        .foregroundStyle(latest.needsAttention ? viewColors.warning : secondary)
                     Text(Date(timeIntervalSince1970: latest.timestamp), style: .relative)
                         .font(.locus(size: 12)).foregroundStyle(secondary)
                 }
@@ -861,14 +974,14 @@ private struct SavedAgentOverviewContent: View {
         VStack(alignment: .leading, spacing: 14, content: content)
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .locusSurface(.floating, radius: 14)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(viewColors.line.opacity(0.7), lineWidth: 1)
                 .allowsHitTesting(false).accessibilityHidden(true))
     }
     private func stateBadge(_ title: String, warning: Bool, busy: Bool) -> some View {
         Text(title).font(.locus(size: 11, weight: .medium))
-            .foregroundStyle(warning ? LocusTheme.warning : busy ? accent : secondary)
+            .foregroundStyle(warning ? viewColors.warning : busy ? accent : secondary)
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background((warning ? LocusTheme.warning : busy ? accent : muted).opacity(0.08), in: Capsule())
+            .background((warning ? viewColors.warning : busy ? accent : muted).opacity(0.08), in: Capsule())
             .fixedSize(horizontal: false, vertical: true)
     }
     private func readinessSymbol(_ snapshot: SavedAgentOverviewSnapshot) -> String {
@@ -879,10 +992,10 @@ private struct SavedAgentOverviewContent: View {
         return "checkmark.circle.fill"
     }
     private func readinessColor(_ snapshot: SavedAgentOverviewSnapshot) -> Color {
-        if snapshot.needsAttention { return LocusTheme.warning }
+        if snapshot.needsAttention { return viewColors.warning }
         if snapshot.isBusy { return accent }
         if snapshot.status == .unverified || snapshot.status == .paused { return muted }
-        return LocusTheme.success
+        return viewColors.success
     }
     private func startChat() { if let newChat { newChat() } else { model.newSavedAgentChat(profile) } }
     private func open(_ session: SessionSummary) {

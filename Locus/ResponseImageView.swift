@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 /// image. The file is re-contained at render time and must belong to the
 /// current workspace; anything else degrades to the caption and a notice.
 struct ResponseImageView<Original: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let part: ResponsePart
     let workspacePath: String
     var onOpenWorkspaceReference: ((WorkspaceArtifactReference) -> Void)? = nil
@@ -60,21 +64,21 @@ struct ResponseImageView<Original: View>: View {
             } else {
                 Label(unavailableMessage, systemImage: "photo")
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .padding(12)
                     .frame(maxWidth: 620, alignment: .leading)
-                    .background(LocusTheme.paperDeep)
+                    .background(viewColors.paperDeep)
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .accessibilityIdentifier("message.generatedImage.unavailable")
             }
             Text(metadata)
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .textSelection(.enabled)
             if let saveError {
                 Text(saveError)
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("message.generatedImage.error")
             }

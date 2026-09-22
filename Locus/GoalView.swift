@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct GoalCardView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var model: GoalModel
     let sessionID: String
     var openTask: (() -> Void)? = nil
@@ -10,7 +14,7 @@ struct GoalCardView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: goal.status == .completed ? "checkmark.circle" : "scope")
-                        .foregroundStyle(LocusTheme.accentAction)
+                        .foregroundStyle(viewColors.accentAction)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(goal.verificationStatus == "checking" ? "Checking" : goal.status.title).font(.callout.weight(.semibold))
                             .accessibilityIdentifier("goal.status")
@@ -21,15 +25,15 @@ struct GoalCardView: View {
                     if let openTask { Button("Task details", action: openTask).accessibilityIdentifier("goal.taskDetails") }
                 }
                 if let detail = goal.reason?.nilIfEmpty ?? goal.summary, !detail.isEmpty {
-                    Text(detail).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Text(detail).font(.caption).foregroundStyle(viewColors.textSecondary)
                         .lineLimit(4).textSelection(.enabled)
                 }
                 if let next = goal.nextStep, !next.isEmpty, !goal.status.isTerminal {
-                    Text("Next: \(next)").font(.caption).foregroundStyle(LocusTheme.textSecondary).lineLimit(2)
+                    Text("Next: \(next)").font(.caption).foregroundStyle(viewColors.textSecondary).lineLimit(2)
                 }
                 if goal.status == .completed, goal.verificationStatus != "passed" {
                     Text(goal.verificationStatus == "accepted" ? "Accepted by you · Not machine verified" : "Historical result · Verification unavailable")
-                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
                         .accessibilityIdentifier("goal.verificationLabel")
                 }
                 if !goal.acceptanceChecks.isEmpty {
@@ -48,14 +52,14 @@ struct GoalCardView: View {
                         }
                         .padding(.top, 4)
                     }
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                     .accessibilityIdentifier("goal.evidence")
                 }
                 if let accounting = goal.accounting, accounting.invocations > 0 {
                     UsageAccountingView(accounting: accounting)
                 }
                 HStack(spacing: 12) {
-                    Text(usage(goal)).font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    Text(usage(goal)).font(.caption).foregroundStyle(viewColors.textTertiary)
                         .accessibilityIdentifier("goal.usage")
                     Spacer(minLength: 2)
                     if goal.status == .active {
@@ -82,13 +86,13 @@ struct GoalCardView: View {
                 }
                 .buttonStyle(.locus())
                 if let error = model.error {
-                    Text(error).font(.caption).foregroundStyle(LocusTheme.danger).lineLimit(3)
+                    Text(error).font(.caption).foregroundStyle(viewColors.danger).lineLimit(3)
                 }
             }
             .padding(12)
-            .background(LocusTheme.surfaceStructural.opacity(0.5))
+            .background(viewColors.surfaceStructural.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(viewColors.line, lineWidth: 1))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("goal.card")
         }
@@ -107,6 +111,10 @@ struct GoalCardView: View {
 }
 
 struct GoalEditorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var model: GoalModel
     @Environment(\.dismiss) private var dismiss
 
@@ -122,7 +130,7 @@ struct GoalEditorView: View {
                     .accessibilityIdentifier("goal.editor.cancel")
             }
             Text("Locus keeps working in this chat until the goal is complete, needs your help, or reaches an allowance. You can pause it at any time.")
-                .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                .font(.callout).foregroundStyle(viewColors.textSecondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("What should this task accomplish?").font(.callout.weight(.medium))
                 TextEditor(text: $model.draftObjective)
@@ -134,20 +142,20 @@ struct GoalEditorView: View {
             }
             if !model.draftRouteLabel.isEmpty {
                 Label(model.draftRouteLabel, systemImage: "cpu")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             }
             HStack(alignment: .top, spacing: 16) {
                 budgetField("Model calls", placeholder: "No goal limit", value: $model.draftModelCallBudget, id: "goal.editor.calls")
                 budgetField("Tokens", placeholder: "No goal limit", value: $model.draftTokenBudget, id: "goal.editor.tokens")
             }
             Text("Allowances count usage across all turns of this goal. Provider limits still apply. Leave an allowance empty for no goal-specific limit.")
-                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                .font(.caption).foregroundStyle(viewColors.textTertiary)
             if model.isEditing {
                 Text("Saving changes pauses the goal and stops its current work. Resume when you are ready to continue.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             }
             if let error = model.error ?? visibleValidationError {
-                Text(error).font(.callout).foregroundStyle(LocusTheme.danger)
+                Text(error).font(.callout).foregroundStyle(viewColors.danger)
                     .accessibilityIdentifier("goal.editor.error")
             }
             HStack {
@@ -162,8 +170,8 @@ struct GoalEditorView: View {
             }
         }
         .padding(24).frame(width: 550)
-        .background(LocusTheme.surfaceCanvas)
-        .foregroundStyle(LocusTheme.textPrimary)
+        .background(viewColors.surfaceCanvas)
+        .foregroundStyle(viewColors.textPrimary)
         .buttonStyle(.locus())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("goal.editor")

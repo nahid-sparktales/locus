@@ -26,6 +26,7 @@ const seenTransfers = new Set<string>();
 const activityButtons = new Map<string, HTMLButtonElement>();
 const rosterCards = new Map<string, { element: HTMLDivElement; button: HTMLButtonElement; picker: HTMLSelectElement }>();
 const SHIP_STYLE_PREFERENCE = 'locus.agentWorld.demoShipStyles.v1';
+let pendingFocusAgentID: string | undefined;
 let snapshot: Snapshot = { version: 1, type: 'snapshot', agents: [], theme: 'outpost', projectName: '' };
 let world: OutpostWorld | undefined;
 let sector = 0;
@@ -68,7 +69,7 @@ function applyActivity(): void {
 function openAttention(requestID: string): void {
   const request = snapshot.attentionRequests?.find(item => item.id === requestID);
   if (!request) return;
-  if (demo) { showNote(`Demo request. In Locus, this opens the exact approval or input request in the ${ocean ? 'captain’s quarters' : 'agent workspace'}. No request was sent.`); return; }
+  if (demo) { showNote(`Demo request. In Locus, this opens the exact approval or input request in the agent workspace. No request was sent.`); return; }
   send({ version: 1, type: 'openAttention', requestID });
 }
 function openTransfer(transferID: string): void {
@@ -78,6 +79,7 @@ function openTransfer(transferID: string): void {
   send({ version: 1, type: 'openTransfer', transferID });
 }
 function setActivityCenterOpen(open: boolean, focus = true): void {
+  if (open && snapshot.nativeChrome) { send({ version: 1, type: 'openActivityCenter' }); return; }
   if (open && ocean && standaloneResidentsOpen) {
     standaloneResidentsOpen = false;
     el('resident-preview-panel').hidden = true;
@@ -111,7 +113,7 @@ function renderActivity(): void {
   el<HTMLButtonElement>('new-agent').disabled = !demo && snapshot.canCreateAgent !== true;
   el('new-agent').title = demo ? 'Agent creation is available in Locus' : snapshot.canCreateAgent ? 'Create an agent in this world' : 'Agent creation is unavailable in this world';
   el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
-  el('agent-controls-title').textContent = ocean ? 'Captain’s quarters' : 'Agent controls';
+  el('agent-controls-title').textContent = ocean ? 'Captain’s Quarters' : 'Agent workspace';
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
   el('agent-controls-name').textContent = selected?.name ?? (ocean ? 'Choose a captain or manage your fleet' : 'Manage your agents');
   el('attention-count').textContent = String(attention.length);
@@ -172,7 +174,7 @@ function renderActivity(): void {
       time.textContent = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       time.title = date.toLocaleString();
     }
-    button.setAttribute('aria-label', `${entry.label}. ${entry.title}. ${entry.detail}. Open ${entry.target.kind === 'agent' ? ocean ? 'captain’s quarters' : 'agent workspace' : entry.target.kind === 'request' ? 'request' : 'delivery'}.`);
+    button.setAttribute('aria-label', `${entry.label}. ${entry.title}. ${entry.detail}. Open ${entry.target.kind === 'agent' ? 'agent workspace' : entry.target.kind === 'request' ? 'request' : 'delivery'}.`);
     if (list.children[index] !== button) list.insertBefore(button, list.children[index] ?? null);
   });
   el('activity-empty').hidden = entries.length > 0;
@@ -211,7 +213,7 @@ function selectAgent(id: string): void {
   renderRoster();
   send({ version: 1, type: 'selectAgent', agentID: id });
   announce(`${agent.name} selected. ${STATUS_META[agent.status].label}.`);
-  if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. In Locus, this opens their real conversation beside the world.`);
+  if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. In Locus, this opens their overview, chats, and automations beside the world.`);
 }
 
 function updateWorldAgents(): void {
@@ -461,7 +463,14 @@ async function loadTheme(id: string): Promise<void> {
     } else if (!world) fallback();
     else showNote('That theme could not be loaded. Your current world is still open.');
   } finally {
-    if (generation === themeGeneration) loadingTheme = undefined;
+    if (generation === themeGeneration) { loadingTheme = undefined; applyPendingFocus(); }
+  }
+}
+
+function applyPendingFocus(): void {
+  if (pendingFocusAgentID && world && !loadingTheme && loadedTheme === snapshot.theme) {
+    if (snapshot.selectedAgentID === pendingFocusAgentID) world.focusResident(pendingFocusAgentID);
+    pendingFocusAgentID = undefined;
   }
 }
 
@@ -471,20 +480,22 @@ function receive(message: unknown): void {
   if (parsed.type === 'visibility') { nativeVisible = parsed.visible; world?.setVisible(nativeVisible && !document.hidden); snailAlert.setVisible(nativeVisible && !document.hidden); return; }
   const projectChanged = parsed.projectName !== snapshot.projectName;
   const selectionChanged = parsed.selectedAgentID !== snapshot.selectedAgentID;
+  const focusRequested = selectionChanged || parsed.focusRequest !== snapshot.focusRequest;
   const activityRequested = (parsed.activityCenterRequest ?? 0) > 0 && parsed.activityCenterRequest !== snapshot.activityCenterRequest;
   snapshot = parsed;
   if (projectChanged) { setActivityCenterOpen(false, false); knownPlacements.clear(); lastPlacements = ''; }
-  if (activityRequested) toggleActivityCenter();
+  if (activityRequested && !parsed.nativeChrome) toggleActivityCenter();
   if (parsed.residentStyle && residentStyle !== parsed.residentStyle) {
     residentStyle = parsed.residentStyle;
     world?.setResidentStyle(residentStyle);
     renderResidentStyle();
   }
-  sector = selectionChanged && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
+  sector = focusRequested && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
   updateWorldAgents();
   applyActivity();
   renderRoster();
-  void loadTheme(snapshot.theme);
+  if (focusRequested) pendingFocusAgentID = parsed.selectedAgentID;
+  void loadTheme(snapshot.theme).then(applyPendingFocus);
 }
 window.locusAgentWorld = { receive, toggleActivityCenter };
 
@@ -497,7 +508,7 @@ el('shared-chat').addEventListener('click', () => {
   else send({ version: 1, type: 'openSharedChat' });
 });
 el('agent-controls').addEventListener('click', () => {
-  if (demo) showNote(`In Locus, the ${ocean ? 'captain’s quarters' : 'agent workspace'} contains the selected agent’s conversation, tools and controls.`);
+  if (demo) showNote(`In Locus, the agent workspace contains the selected agent’s conversation, tools and controls.`);
   else send({ version: 1, type: 'openAgentControls', ...(snapshot.selectedAgentID ? { agentID: snapshot.selectedAgentID } : {}) });
 });
 el('activity-close').addEventListener('click', () => setActivityCenterOpen(false));

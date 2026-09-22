@@ -16,6 +16,15 @@ enum BoardToolArguments {
         return string
     }
 
+    static func agentIDs(_ arguments: [String: Any]) throws -> [UUID]? {
+        guard let raw = value(arguments, "agent_ids") else { return nil }
+        guard let values = raw as? [String], values.count <= 64,
+              values.allSatisfy({ UUID(uuidString: $0) != nil }) else {
+            throw BoardStoreError.invalidArgument("agent_ids must contain at most 64 agent UUIDs.")
+        }
+        return values.compactMap(UUID.init(uuidString:))
+    }
+
     /// A blank string counts as not supplied.
     static func nonBlankString(_ arguments: [String: Any], _ key: String) throws -> String? {
         try string(arguments, key).flatMap {
@@ -301,11 +310,12 @@ extension BoardSnapshot {
             "Priority: \(card.priority.rawValue)",
             "Labels: \(card.labels.isEmpty ? "none" : Self.labelList(card.labels))",
             "Assignee: \(card.assignee.map { Self.field($0, Clip.assignee) } ?? "unassigned")",
+            (card.agentIDs ?? []).isEmpty ? nil : "Tagged agent IDs: \((card.agentIDs ?? []).map(\.uuidString).joined(separator: ", "))",
             "Created: \(Self.time(card.createdAt)) by \(Self.label(card.createdBy))",
             "Updated: \(Self.time(card.updatedAt)) by \(Self.label(lastAuthor))",
             "",
             "Description:",
-        ].joined(separator: "\n")
+        ].compactMap { $0 }.joined(separator: "\n")
 
         let entries = card.timeline.map { Self.entryText($0, limit: nil) }
         let timelineSize = entries.reduce(0) { $0 + Self.size($1) + 1 }
@@ -505,6 +515,7 @@ extension BoardSnapshot {
             "priority": card.priority.rawValue,
             "labels": card.labels,
             "assignee": card.assignee ?? "",
+            "agent_ids": (card.agentIDs ?? []).map(\.uuidString),
             "comment_count": card.commentCount,
             "created_at": Self.time(card.createdAt),
             "updated_at": Self.time(card.updatedAt),

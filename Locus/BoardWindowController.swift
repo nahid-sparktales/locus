@@ -6,15 +6,19 @@ import SwiftUI
 @MainActor
 final class BoardWindowController: NSObject, NSWindowDelegate {
     private var windows: [String: NSWindow] = [:]
+    private var appearances: [String: BoardWindowAppearance] = [:]
 
     func window(for workspacePath: String) -> NSWindow? {
         windows[BoardStore.storageIdentity(workspacePath: workspacePath)]
     }
 
-    func open(store: BoardStore, model: AppModel) {
+    func open(store: BoardStore, model: AppModel, ocean: Bool = false, deck: Bool = false) {
         guard store.isAvailable else { return }
         let identity = BoardStore.storageIdentity(workspacePath: store.workspacePath)
         if let window = windows[identity] {
+            appearances[identity]?.ocean = ocean
+            appearances[identity]?.deck = deck
+            window.appearance = ocean ? NSAppearance(named: .darkAqua) : nil
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -31,7 +35,10 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: 620, height: 440)
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.contentView = NSHostingView(rootView: BoardWindowContent(store: store, model: model))
+        if ocean { window.appearance = NSAppearance(named: .darkAqua) }
+        let appearance = BoardWindowAppearance(ocean: ocean, deck: deck)
+        appearances[identity] = appearance
+        window.contentView = NSHostingView(rootView: BoardWindowContent(appearance: appearance, store: store, model: model))
         windows[identity] = window
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -50,11 +57,21 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         guard let window = notification.object as? NSWindow,
               let identity = windows.first(where: { $0.value === window })?.key else { return }
         windows.removeValue(forKey: identity)
+        appearances.removeValue(forKey: identity)
         window.contentView = nil
     }
 }
 
+private final class BoardWindowAppearance: ObservableObject {
+    @Published var ocean: Bool
+    @Published var deck: Bool
+    init(ocean: Bool, deck: Bool) { self.ocean = ocean; self.deck = deck }
+}
+
 private struct BoardWindowContent: View {
+    @ObservedObject var appearance: BoardWindowAppearance
+    private var viewColors: LocusViewColors { .init(ocean: appearance.ocean, deck: appearance.deck) }
+
     @ObservedObject var store: BoardStore
     @ObservedObject var model: AppModel
 
@@ -62,9 +79,11 @@ private struct BoardWindowContent: View {
         InspectorBoardTab(store: store, isDetached: true)
             .environmentObject(model)
             .appFeatureEnvironment(from: model)
-            .preferredColorScheme(model.effectiveAppearance.colorScheme)
-            .tint(model.accentActionColor)
-            .background(LocusTheme.surfaceCanvas)
+            .preferredColorScheme(appearance.ocean ? .dark : model.effectiveAppearance.colorScheme)
+            .tint(appearance.ocean ? viewColors.signalDeep : model.accentActionColor)
+            .background(viewColors.surfaceCanvas)
+            .environment(\.locusOceanTheme, appearance.ocean)
+            .environment(\.locusCaptainDeckTheme, appearance.deck)
             .accessibilityIdentifier("board.window")
     }
 }

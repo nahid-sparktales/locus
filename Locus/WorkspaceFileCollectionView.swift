@@ -12,6 +12,10 @@ struct WorkspaceFileCollectionEntry: Identifiable {
 /// A file inventory owns one container. Text remains selectable and the
 /// original Markdown selection spans keep their original order and content.
 struct WorkspaceFileCollectionView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let entries: [WorkspaceFileCollectionEntry]
     var title: String? = nil
     var workspacePath: String? = nil
@@ -61,22 +65,22 @@ struct WorkspaceFileCollectionView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(LocusTheme.paperDeep.opacity(0.45))
+            .background(viewColors.paperDeep.opacity(0.45))
             if !isCollapsed {
             ForEach(Array(visibleEntries.enumerated()), id: \.element.id) { index, entry in
                 let group = WorkspaceFileCollectionCategory.category(for: entry.path)
                 if index == 0 || WorkspaceFileCollectionCategory.category(for: visibleEntries[index - 1].path) != group {
                     Text(group.rawValue)
                         .font(.locusExact(size: 11, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.horizontal, 12)
                         .padding(.top, 10)
                         .padding(.bottom, 5)
                         .accessibilityAddTraits(.isHeader)
                 }
-                Rectangle().fill(LocusTheme.line.opacity(0.65)).frame(height: 1)
+                Rectangle().fill(viewColors.line.opacity(0.65)).frame(height: 1)
                 row(entry)
-                    .background(index.isMultiple(of: 2) ? Color.clear : LocusTheme.paperDeep.opacity(0.12))
+                    .background(index.isMultiple(of: 2) ? Color.clear : viewColors.paperDeep.opacity(0.12))
             }
             if entries.count > 20 {
                 Button(isExpanded ? "Show fewer files" : "Show all \(entries.count) files") { isExpanded.toggle() }
@@ -90,9 +94,9 @@ struct WorkspaceFileCollectionView: View {
             }
         }
         }
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.line, lineWidth: 1) }
+        .overlay { RoundedRectangle(cornerRadius: 9).stroke(viewColors.line, lineWidth: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title ?? "File collection, \(entries.count) files")
         .accessibilityIdentifier("message.fileCollection")
@@ -127,7 +131,7 @@ struct WorkspaceFileCollectionView: View {
         return HStack(alignment: .top, spacing: 9) {
             Image(systemName: reference?.kind.symbol ?? "doc")
                 .font(.locusExact(size: 13))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 18, height: 20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
@@ -135,7 +139,7 @@ struct WorkspaceFileCollectionView: View {
                 if showsSizes {
                     Text(metadata(for: reference))
                         .font(.locusExact(size: 11))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -167,7 +171,7 @@ struct WorkspaceFileCollectionView: View {
         // pill without changing any characters or their selection offsets.
         let runs = WorkspaceFileCollectionText.runs(for: entry, showsDescriptions: showsDescriptions)
         let attributed = MarkdownNativeText.attributed(
-            runs, size: density.fontSize, weight: .regular, color: LocusTheme.inkSoft,
+            runs, size: density.fontSize, weight: .regular, color: viewColors.inkSoft,
             lineSpacing: density.lineSpacing, inlineCodeSize: density.inlineCodeFontSize,
             workspacePath: workspacePath
         )

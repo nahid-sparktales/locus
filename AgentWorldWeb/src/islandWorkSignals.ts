@@ -8,7 +8,7 @@ import type { AgentStatus, Point } from './state.ts';
 import type { Placement } from './theme.ts';
 import type { ResidentMotion } from './residentMotion.ts';
 
-export const MAX_WORK_ISLANDS = 12;
+export const MAX_WORK_ISLANDS = 14;
 export type WorkIsland = Point & { radius: number; marker?: Point & { y: number } };
 export type IslandWorker = { id: string; status: AgentStatus; motion: ResidentMotion; home: Placement; harbor?: number };
 
@@ -31,11 +31,11 @@ export function createIslandWorkSignals(scene: Scene, parent: TransformNode, isl
     const value = new StandardMaterial(name, scene); value.diffuseColor = Color3.FromHexString(color);
     value.emissiveColor = value.diffuseColor; value.disableLighting = true; value.alpha = alpha; value.specularColor.setAll(0); return value;
   };
-  const mint = material('work-shore-mint', '#8FEBCE', 0.14), gold = material('work-shore-gold', '#F1CE83', 0.72);
+  const mint = material('work-shore-mint', '#8FEBCE', 0.32), gold = material('work-shore-gold', '#F1CE83', 0.95);
   const beacon = material('work-beacon-gold', '#F4D18B', 0.92);
   const signals = islands.slice(0, MAX_WORK_ISLANDS).map((island, index) => {
     const owner = new TransformNode(`island-work-${index}`, scene); owner.parent = root; owner.setEnabled(false);
-    const halo = MeshBuilder.CreateTorus('working-shore-halo', { diameter: island.radius * 2.2, thickness: 0.30, tessellation: 72 }, scene);
+    const halo = MeshBuilder.CreateTorus('working-shore-halo', { diameter: island.radius * 2.2, thickness: 0.52, tessellation: 72 }, scene);
     halo.parent = owner; halo.position.set(island.x, 0.015, island.z); halo.scaling.z = 0.81; halo.scaling.y = 0.2; halo.material = mint;
     const shore = MeshBuilder.CreateTorus('working-shore-trim', { diameter: island.radius * 2.13, thickness: 0.085, tessellation: 72 }, scene);
     shore.parent = owner; shore.position.set(island.x, 0.047, island.z); shore.scaling.z = 0.81; shore.material = gold;

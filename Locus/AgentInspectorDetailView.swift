@@ -3,6 +3,10 @@ import SwiftUI
 /// Exact event/task/run detail. Opening this inspector does not change the
 /// transcript; Open chat is a separate, explicit action.
 struct AgentInspectorDetailView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var activity: ActivityCenterModel
     @ObservedObject var inspector: AgentInspectorModel
@@ -49,7 +53,7 @@ struct AgentInspectorDetailView: View {
         }
         .scrollPosition(id: scrollAnchor, anchor: .top)
         .font(.locus(size: 13))
-        .foregroundStyle(LocusTheme.ink)
+        .foregroundStyle(viewColors.ink)
         .accessibilityIdentifier("agentInspector.detail")
     }
 
@@ -94,7 +98,7 @@ struct AgentInspectorDetailView: View {
         }
         section("Recent work") {
             if inspector.snapshot.runs.isEmpty && !inspector.isLoading && inspector.error == nil {
-                Text("No saved work in this chat yet.").foregroundStyle(LocusTheme.textSecondary)
+                Text("No saved work in this chat yet.").foregroundStyle(viewColors.textSecondary)
             }
             ForEach(inspector.snapshot.runs) { run in
                 Button {
@@ -106,11 +110,11 @@ struct AgentInspectorDetailView: View {
                             AgentRunStateLabel(rawState: run.state)
                             Spacer(minLength: 0)
                             if let duration = AgentInspectorCopy.duration(run) {
-                                Text(duration).font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                                Text(duration).font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                             }
                         }
                         Text(Date(timeIntervalSince1970: run.createdAt), format: .dateTime)
-                            .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
                 }
                 .buttonStyle(.locus())
@@ -134,10 +138,10 @@ struct AgentInspectorDetailView: View {
                     Text(delivery.source.title)
                     if let sender = delivery.event.actor["email"]?.string
                         ?? delivery.event.actor["name"]?.string {
-                        Text("From \(sender)").foregroundStyle(LocusTheme.textSecondary)
+                        Text("From \(sender)").foregroundStyle(viewColors.textSecondary)
                     }
                     Text(Date(timeIntervalSince1970: delivery.receivedAt), format: .dateTime)
-                        .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                     if !delivery.event.text.isEmpty {
                         DisclosureGroup("Incoming content · untrusted source", isExpanded: expandedIncomingContent) {
                             Text(delivery.event.text)
@@ -185,7 +189,7 @@ struct AgentInspectorDetailView: View {
                     Text(Date(timeIntervalSince1970: occurrence.scheduledFor), format: .dateTime)
                     if occurrence.state == "skipped" {
                         Text("This time slot passed while the earlier work was still running.")
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                     }
                 }
                 if let error = occurrence.error?.nilIfEmpty, occurrence.state != "skipped" { issue(error) }
@@ -202,7 +206,7 @@ struct AgentInspectorDetailView: View {
             section("Executions") {
                 if item.executions.isEmpty {
                     Text("No execution has been recorded. A run appears here once this item starts work.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 ForEach(item.executions) { execution in
                     Button {
@@ -214,13 +218,13 @@ struct AgentInspectorDetailView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.executions.count == 1 ? "Inspect run" : "Attempt \(execution.attempt)")
                                 Text(execution.state.map(AgentInspectorCopy.state) ?? "History no longer available")
-                                    .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                                    .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                                 if let created = execution.createdAt {
                                     Text(Date(timeIntervalSince1970: created), format: .dateTime)
-                                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                                        .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                                 }
                                 if execution.retryParentID != nil {
-                                    Text("Retry").font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                                    Text("Retry").font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                                 }
                             }
                             Spacer(minLength: 4)
@@ -266,13 +270,13 @@ struct AgentInspectorDetailView: View {
                     Text(run.state == "completed"
                         ? "The work completed. Open the chat to read the response."
                         : "The latest saved state is shown above. Open the chat for the full conversation.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 if !work.files.isEmpty {
                     Text("Files in recent activity").font(.locus(size: 12, weight: .semibold))
                     ForEach(work.files.prefix(10)) { file in
                         Text("\(URL(fileURLWithPath: file.path).lastPathComponent) · \(file.effect)")
-                            .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                             .help(file.path)
                     }
                 }
@@ -311,7 +315,7 @@ struct AgentInspectorDetailView: View {
                     if let workspace = run.workspaceRoot { Text("Workspace: \(workspace)") }
                     Text("Run: \(run.id)").textSelection(.enabled)
                     if let parent = run.retryParentID { Text("Retry of: \(parent)").textSelection(.enabled) }
-                }.padding(.top, 8).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                }.padding(.top, 8).font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
             }
             .id("run-details")
             .accessibilityIdentifier("agentInspector.runDetails")
@@ -329,7 +333,7 @@ struct AgentInspectorDetailView: View {
             } else if let start = run.admittedAt, run.completedAt == nil,
                       AgentActivityState(rawState: run.state) == .running {
                 HStack {
-                    Text("Elapsed").foregroundStyle(LocusTheme.textSecondary)
+                    Text("Elapsed").foregroundStyle(viewColors.textSecondary)
                     Spacer()
                     Text(Date(timeIntervalSince1970: start), style: .timer).monospacedDigit()
                 }
@@ -348,7 +352,7 @@ struct AgentInspectorDetailView: View {
                 detailFact("Tool calls", value: "\(work.toolSteps)")
                 if !tools.isEmpty {
                     Text(tools.joined(separator: " · "))
-                        .font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                         .textSelection(.enabled)
                 }
                 if !work.commands.isEmpty {
@@ -356,7 +360,7 @@ struct AgentInspectorDetailView: View {
                     ForEach(work.commands.suffix(5)) { command in
                         HStack(alignment: .top, spacing: 7) {
                             Image(systemName: command.ok ? "checkmark" : "exclamationmark.circle")
-                                .foregroundStyle(command.ok ? LocusTheme.textSecondary : LocusTheme.warning)
+                                .foregroundStyle(command.ok ? viewColors.textSecondary : viewColors.warning)
                             Text(command.summary).lineLimit(3).textSelection(.enabled)
                         }
                         .font(.locus(size: 12))
@@ -371,7 +375,7 @@ struct AgentInspectorDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: "clock.badge.questionmark")
                 .font(.locus(size: 14, weight: .semibold))
-            Text(detail).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+            Text(detail).font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
         .accessibilityIdentifier("agentInspector.unavailable")
@@ -403,10 +407,10 @@ struct AgentInspectorDetailView: View {
             if let rawState { AgentRunStateLabel(rawState: rawState) }
             if let status {
                 Text(status).font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .accessibilityIdentifier("agentInspector.chat.state")
             }
-            Text(subtitle).foregroundStyle(LocusTheme.textSecondary)
+            Text(subtitle).foregroundStyle(viewColors.textSecondary)
                 .accessibilityIdentifier("agentInspector.status")
         }
         .id("heading")
@@ -419,13 +423,13 @@ struct AgentInspectorDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 14)
-        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(viewColors.line).frame(height: 1) }
         .id(title)
     }
 
     private func detailFact(_ title: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title).foregroundStyle(LocusTheme.textSecondary)
+            Text(title).foregroundStyle(viewColors.textSecondary)
             Spacer(minLength: 4)
             Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
         }
@@ -440,14 +444,18 @@ struct AgentInspectorDetailView: View {
             Text(AgentOverview.humanizedError(raw))
                 .font(.locus(size: 12)).textSelection(.enabled)
         }
-        .foregroundStyle(LocusTheme.warning)
+        .foregroundStyle(viewColors.warning)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).background(LocusTheme.warning.opacity(0.08))
+        .padding(12).background(viewColors.warning.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
 struct AgentInspectorLoadStatus: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var inspector: AgentInspectorModel
 
@@ -459,17 +467,17 @@ struct AgentInspectorLoadStatus: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(inspector.loadedAt == nil ? "Couldn’t load activity" : "Activity may be out of date", systemImage: "arrow.clockwise.circle")
                     .font(.locus(size: 12, weight: .semibold))
-                Text(error).foregroundStyle(LocusTheme.textSecondary)
+                Text(error).foregroundStyle(viewColors.textSecondary)
                 if let loadedAt = inspector.loadedAt {
                     Text("Last updated \(loadedAt.formatted(date: .omitted, time: .shortened))")
-                        .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
                 }
                 Button(inspector.isLoading ? "Retrying…" : "Try again") { Task { await inspector.refresh(backend: model.backend) } }
                     .buttonStyle(.locus()).disabled(inspector.isLoading)
             }
             .font(.locus(size: 12))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10).background(LocusTheme.warning.opacity(0.07))
+            .padding(10).background(viewColors.warning.opacity(0.07))
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .accessibilityIdentifier("agentInspector.loadError")
         }
@@ -595,6 +603,10 @@ extension AgentInspectorCopy {
 /// Each row resolves a saved version from the selected run's provenance. The
 /// workspace library may contain newer versions from unrelated conversations.
 private struct AgentInspectorRunOutputs: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let run: OrchestrationRun
     let workspace: String
@@ -615,10 +627,10 @@ private struct AgentInspectorRunOutputs: View {
                 ProgressView("Finding outputs…").controlSize(.small)
             } else if failed {
                 Text("Saved outputs could not be loaded.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             } else if rows.isEmpty {
                 Text("No saved outputs are linked to this run.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             ForEach(rows) { row in
                 Button {
@@ -627,9 +639,9 @@ private struct AgentInspectorRunOutputs: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(row.item.title).lineLimit(2)
                         Text(row.version.label).font(.locus(size: 12))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                         if let reason = row.version.unavailableReason {
-                            Text(reason).font(.locus(size: 12)).foregroundStyle(LocusTheme.textSecondary)
+                            Text(reason).font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }

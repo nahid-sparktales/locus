@@ -1,5 +1,48 @@
 # Agent World
 
+## Current agent workflow
+
+Select an agent or ship to open **Overview**, the same agent page used in the main
+workspace. It includes settings, chats, automations, connections, and recent results.
+**Chat** opens its conversation with the native tools alongside it. Use **Show tools**
+or **Hide tools** to control the split view without leaving the chat.
+**New chat**, **Crew Chat**, and agent editing remain available inside Agent World.
+**Captain’s Quarters** opens a large, themed management deck over the ocean
+(**Agent workspace** in Outpost). It keeps the searchable crew list beside the
+shared agent overview, chat, and workspace tools. Calendar and Task board have
+direct navigation and stay beside chat when a conversation is active. The crew
+overview lists all agents as cards, even before one is selected. Accounts, Plugins, Connections, automations, Library, and
+Identity Vault use the existing native controls. The task board is Locus’s shared
+project board; it is not an Atlassian Jira connection. Board cards can open a new,
+profile-bound chat in the world with an editable draft, without sending it.
+
+Captain’s Quarters has a full ship-deck backdrop and defaults to warm wood,
+cream, and brass. **Settings → Captain’s Quarters appearance** keeps **Ocean blue**
+available; the choice persists between launches. Native sheets, editors, chat,
+and tools inherit the chosen palette. The ocean map keeps its blue appearance.
+
+Calendar always includes **Locus Calendar**, stored locally and usable without an
+external account. Connected macOS calendars overlay it with separate visibility
+controls. Both event and board editors include an **@ Tag an agent** picker;
+tags store stable agent IDs and show current profile names. Tags identify agents;
+they do not automatically dispatch work or send calendar invitations.
+
+Click the camera on an agent’s Overview to choose a profile picture. Right-click
+the picture to remove it. Pictures appear in the regular sidebar, agent picker,
+overview, and world crew list. They are cropped locally to 256px thumbnails,
+persisted separately from execution profiles, and excluded from plugin snapshots.
+
+The native **Activity Center** shows live tasks, approvals, results, refresh errors,
+and recovery actions. The snail communicator opens that same Activity Center.
+
+When work starts, ships reserve the nearest free island by navigable sailing
+distance. Existing reservations survive queued and attention states, and release
+on completion. All fourteen Local Line islands can host work. A mint glow follows
+working ships until docking, then the island shoreline and beacon light up.
+Decorative rendezvous never divert working ships. Reduced motion keeps signals
+static. The four near-bank island models face across the channel; Alabatcha sits
+farther left, with more water separating it from Elbatch.
+
 Agent World is an optional Locus plugin. It opens a separate 3D window populated
 by the user's saved agent profiles. Choose **Orbital Locus Outpost** for a planted
 space campus or **The Local Line** for a One Piece-inspired ocean where each
@@ -49,12 +92,12 @@ screen extension.
   Locus remembers this appearance independently of the world selection. Switching
   preserves the agents' locations, routes, identities, and work.
 - Click an agent, ship, or its label to interact. The searchable native
-  **Residents** sidebar provides keyboard access to every agent. Compact captain cards
+  **Agents** sidebar provides keyboard access to every agent. Compact captain cards
   use detailed ship portraits and show the assigned ship, home island, and current status.
   Each row has a visible **New chat** action; the sidebar starts at 206 points wide. Fleet management,
-  Crew Chat, Captain’s Quarters, and attention shortcuts live here.
+  Crew Chat, Captain’s Quarters, and Activity Center shortcuts live here.
 - Choose **Ship style** on a resident card, or from the agent actions menu in
-  Captain’s Quarters, to assign any of the fifteen boats. **Automatic** restores
+  Agent workspace, to assign any of the fifteen boats. **Automatic** restores
   that profile’s original automatic boat assignment; the original twelve styles
   remain the automatic pool. Locus saves explicit choices per profile and screen.
   Changing a boat preserves the agent, conversation, home island, location, and
@@ -70,13 +113,12 @@ screen extension.
 - The system's reduced-motion preference stops ambient wandering, ship rocking,
   wakes, moving water, and drifting scenery. Ships can still return to their
   berths when their work state changes. Camera inertia is also disabled.
-- Open **Captain’s Quarters** in The Local Line, or **Agent workspace** in
-  Outpost, for the full native Locus conversation and composer. It reuses the
+- Open **Captain’s Quarters** (**Agent workspace** in Outpost) for the full native Locus conversation and composer. It reuses the
   main page’s attachments, voice, models, tools, skills, work modes, task controls,
   approvals, questions, and inspector. The agent menu provides editing,
-  management, ship style, and a new conversation. The ocean workspace uses the
-  map’s navy, teal, ivory, and brass palette, with **Captain’s log**, **Vivre card**
-  (agent details), **Tools**, and **Crew Chat** tabs. The Vivre card belongs to the
+  management, ship style, and a new conversation. **Overview** shows agent details;
+  **Chat** keeps the conversation and tools side by side. Captain’s Quarters uses
+  wood by default, with Ocean blue available in its Settings menu. **Crew Chat** has its own top-bar action. The overview belongs to the
   selected agent and remains available when its old conversation is missing. Missing
   conversations offer an explicit new-chat recovery action; a connection failure
   remains retryable and does not silently replace the conversation. Outpost retains its charcoal and lime
@@ -94,29 +136,17 @@ screen extension.
   can be stopped or opened in the native conversation. Restoring history never
   reruns unfinished tasks. A world pinned to another project does not show that
   project’s messages by accident.
-- In The Local Line, the persistent 3D **Den Den Dispatch** button opens and closes
-  **Activity Center**. In Outpost, a separate packaged Meshy **Comms beacon** opens
-  **Mission Control**, using Outpost’s charcoal and lime theme. Outpost does not
-  load the Den Den model. Switching themes replaces the communicator artwork
-  while retaining the center’s open state and selected tab. The Outpost beacon
-  reuses existing artwork and adds no generation credits.
-- The center’s **Attention** tab contains actual approval and input requests,
-  plus status-only entries for agents needing review when no explicit request
-  already represents them. A failed status is not presented as an approval.
-  **Activity** shows current working and queued agents, completed states, and
-  recorded handoffs and artifacts, with deliveries ordered newest first. This is
-  a view of native state and recorded transfers, not a synthetic task history.
-  Request actions open the exact conversation containing that request; delivery
-  actions open the real transfer details; agent status entries open that agent’s
-  conversation.
-  Complete messages and sensitive details remain in the native workspace.
-- Both communicators remain available with zero requests. The Den Den rings only
-  when attention exists. Counts, empty states, keyboard-operated tabs, visible
-  focus, and Escape make the center usable without navigating the 3D scene.
-  Residents has a matching shortcut. The standalone preview labels its sample
-  activity as Demo and cannot send it as real agent work.
+- Both communicators open the native **Activity Center**, shared with the regular
+  agent page. Its **Inbox**, **In progress**, and **Read** tabs show real requests,
+  running tasks, saved results, recovery actions, and refresh failures. Opening an
+  agent result returns to that agent's conversation inside the world. The native
+  window owns transcripts and task controls. Standalone previews retain a clearly
+  labeled demo activity panel and cannot run tasks.
+- The communicator remains available with zero requests. It rings only when real
+  attention exists. The **Activity Center** sidebar action offers the same controls
+  without navigating the scene.
 - Real recent handoffs or artifact transfers can trigger an **Alliance
-  rendezvous** when both ships are visible, free of pending attention, and a
+  rendezvous** when both ships are visible, available, free of pending attention, and a
   reachable berth is available. The visitor sails alongside its partner; a
   gangplank and mooring lines appear once both ships settle. Afterwards normal
   movement resumes. At most two rendezvous run together, and recorded transfers

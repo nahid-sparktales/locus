@@ -11,6 +11,10 @@ struct InspectorTerminalTab: View {
 }
 
 private struct TerminalPanel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var backgroundServices: BackgroundServicesModel
     @ObservedObject var terminal: TerminalSession
@@ -28,11 +32,11 @@ private struct TerminalPanel: View {
                             systemImage: "terminal",
                             description: Text(message)
                         )
-                        .background(LocusTheme.paperDeep)
+                        .background(viewColors.paperDeep)
                     }
                 }
         }
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .onAppear {
             configure()
             terminal.ensureStarted()
@@ -75,7 +79,7 @@ private struct TerminalPanel: View {
             ForEach(backgroundServices.backgroundServices) { service in
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(service.running ? LocusTheme.success : LocusTheme.warning)
+                        .fill(service.running ? viewColors.success : viewColors.warning)
                         .frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(service.name)
@@ -83,7 +87,7 @@ private struct TerminalPanel: View {
                         Text(service.port.map { "localhost:\($0) · pid \(service.pid ?? 0)" }
                             ?? "pid \(service.pid ?? 0)")
                             .font(.locus(size: 7, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Spacer()
                     if service.running {
@@ -96,7 +100,7 @@ private struct TerminalPanel: View {
                         HStack(spacing: 6) {
                             Text("Exited \(service.exitCode ?? 0)")
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                             Button("Dismiss") {
                                 backgroundServices.stopBackgroundService(service)
                             }
@@ -109,14 +113,14 @@ private struct TerminalPanel: View {
             if backgroundServices.backgroundServices.isEmpty {
                 Text("No managed services. Agents use these for servers and watchers that should survive Stop.")
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityIdentifier("terminal.managedServices")
     }
@@ -124,7 +128,7 @@ private struct TerminalPanel: View {
     private var header: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(terminal.isRunning ? LocusTheme.success : LocusTheme.muted)
+                .fill(terminal.isRunning ? viewColors.success : viewColors.muted)
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
                 Text(terminal.title)
@@ -132,7 +136,7 @@ private struct TerminalPanel: View {
                     .lineLimit(1)
                 Text(terminal.currentDirectory.isEmpty ? model.workspacePath : terminal.currentDirectory)
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -148,9 +152,9 @@ private struct TerminalPanel: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 38)
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityIdentifier("terminal.header")
     }
@@ -164,7 +168,7 @@ private struct TerminalPanel: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(destructive ? LocusTheme.coral : LocusTheme.muted)
+                .foregroundStyle(destructive ? viewColors.coral : viewColors.muted)
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.locus())

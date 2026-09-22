@@ -55,6 +55,25 @@ final class BoardStoreTests: XCTestCase {
         }
     }
 
+    func testAgentTagsPersistAndPartialEditsPreserveOtherChanges() throws {
+        let (store, _, root) = try makeStore()
+        let first = UUID(), second = UUID()
+        let card = try store.createCard(title: "Tagged card", agentIDs: [first, first])
+        XCTAssertEqual(reopened(store, root: root).cards.first?.agentIDs, [first])
+        var edits = BoardCardEdits(); edits.load(card)
+        edits.draft.agentIDs = [second]
+        try store.updateCard(card.id, title: "Agent updated the title")
+        try edits.saveFields(of: card.id, in: store)
+        XCTAssertEqual(store.cards.first?.title, "Agent updated the title")
+        XCTAssertEqual(store.cards.first?.agentIDs, [second])
+        let response = store.perform(tool: "board_update_card", arguments: ["card_id": store.key(for: card), "agent_ids": [String]()], author: atlas)
+        XCTAssertNil(response["error"])
+        XCTAssertEqual(reopened(store, root: root).cards.first?.agentIDs, [])
+        let invalid = store.perform(tool: "board_update_card", arguments: ["card_id": store.key(for: card), "agent_ids": ["invalid"]], author: atlas)
+        XCTAssertNotNil(invalid["error"])
+        XCTAssertEqual(store.cards.first?.agentIDs, [])
+    }
+
     // MARK: - Persistence
 
     func testBoardPersistsAsOneJSONFilePerWorkspaceAndReloads() throws {
@@ -500,7 +519,7 @@ final class BoardStoreTests: XCTestCase {
             ("board_create_card", ["title": "x", "position": "first"], "position must be a whole number."),
             ("board_update_card", ["title": "x"], "board_update_card requires card_id."),
             ("board_update_card", ["card_id": "LOC-1"],
-             "board_update_card needs at least one of title, description, column, position, priority, labels, or assignee."),
+             "board_update_card needs at least one of title, description, column, position, priority, labels, assignee, or agent_ids."),
             ("board_comment", ["card_id": "LOC-1"], "board_comment requires text."),
             ("board_comment", ["card_id": "LOC-1", "text": " "], "A comment needs text."),
             ("board_delete_card", [:], "board_delete_card requires card_id."),

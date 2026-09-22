@@ -9,10 +9,10 @@ struct IdentityVaultPresentation: ViewModifier {
     @EnvironmentObject private var model: AppModel
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: Binding(get: { enabled && vault.isPresented }, set: { if enabled { vault.isPresented = $0 } })) {
+            .locusSheet(isPresented: Binding(get: { enabled && vault.isPresented }, set: { if enabled { vault.isPresented = $0 } })) {
                 IdentityVaultView(vault: vault).environmentObject(model)
             }
-            .sheet(item: Binding(get: { enabled ? vault.pendingReview : nil }, set: { value in
+            .locusSheet(item: Binding(get: { enabled ? vault.pendingReview : nil }, set: { value in
                 if enabled, value == nil, let request = vault.pendingReview { vault.answerReview(id: request.id, selected: nil) }
             })) { request in
                 IdentityVaultApprovalView(request: request) { selected in
@@ -30,6 +30,10 @@ private struct IdentityPrivateSurface: ViewModifier {
 }
 
 struct IdentityVaultApprovalView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let request: IdentityVaultReview
     let answer: (Set<UUID>?) -> Void
     @State private var selection: Set<UUID>
@@ -42,8 +46,8 @@ struct IdentityVaultApprovalView: View {
         VStack(alignment: .leading, spacing: 16) {
             Label(request.title, systemImage: "lock.shield").font(.title2.bold())
             Text(request.destination).font(.headline).textSelection(.enabled)
-            Text("Task \(request.sessionID.prefix(12))").font(.caption).foregroundStyle(LocusTheme.textTertiary)
-            Text(request.explanation).foregroundStyle(LocusTheme.textTertiary)
+            Text("Task \(request.sessionID.prefix(12))").font(.caption).foregroundStyle(viewColors.textTertiary)
+            Text(request.explanation).foregroundStyle(viewColors.textTertiary)
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
@@ -62,9 +66,9 @@ struct IdentityVaultApprovalView: View {
             HStack {
                 Button("Cancel", role: .cancel) { answer(nil) }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Text("\(selection.count) selected").foregroundStyle(LocusTheme.textTertiary)
+                Text("\(selection.count) selected").foregroundStyle(viewColors.textTertiary)
                 Button(request.confirmation) { answer(selection) }
-                    .buttonStyle(.borderedProminent).tint(LocusTheme.ink)
+                    .buttonStyle(.borderedProminent).tint(viewColors.ink)
                     .disabled(selection.isEmpty)
                     .accessibilityIdentifier("identity.review.approve")
             }
@@ -75,6 +79,10 @@ struct IdentityVaultApprovalView: View {
 }
 
 struct IdentityVaultView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var vault: IdentityVaultModel
     @ObservedObject private var store: IdentityVaultStore
     @EnvironmentObject private var model: AppModel
@@ -90,11 +98,11 @@ struct IdentityVaultView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("Identity Vault", systemImage: "person.text.rectangle").font(.title2.bold())
-                    Text("Keep your details ready. Choose what to share, each time.").foregroundStyle(LocusTheme.textSecondary)
+                    Text("Keep your details ready. Choose what to share, each time.").foregroundStyle(viewColors.textSecondary)
                 }
                 Spacer()
                 Label("Encrypted on this Mac", systemImage: "lock.shield")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(22)
             Picker("Identity Vault", selection: $vault.tab) {
@@ -116,7 +124,7 @@ struct IdentityVaultView: View {
                         Text(notice).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
                         Button { vault.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.locus(.icon))
                             .accessibilityLabel("Dismiss notice")
-                    }.padding(12).background(LocusTheme.warningForeground.opacity(0.10)).padding(.horizontal)
+                    }.padding(12).background(viewColors.warningForeground.opacity(0.10)).padding(.horizontal)
                 }
                 if vault.isWorking { ProgressView("Processing locally…").padding(12) }
                 switch vault.tab {
@@ -127,14 +135,14 @@ struct IdentityVaultView: View {
             }
         }
         .frame(minWidth: 760, idealWidth: 940, minHeight: 560, idealHeight: 700)
-        .background(LocusTheme.paper).foregroundStyle(LocusTheme.ink)
+        .background(viewColors.paper).foregroundStyle(viewColors.ink)
         .modifier(IdentityPrivateSurface())
         .task { _ = await vault.ready() }
         .onChange(of: vault.lifecycleGeneration) { _, _ in
             importReview = nil
             deleteDocument = nil
         }
-        .sheet(item: $vault.profileEditor) { profile in
+        .locusSheet(item: $vault.profileEditor) { profile in
             IdentityProfileEditor(profile: profile, isNew: !store.profiles.contains(where: { $0.id == profile.id })) { edited in
                 _ = try store.saveProfile(edited)
                 vault.profileEditor = nil
@@ -143,7 +151,7 @@ struct IdentityVaultView: View {
                 vault.profileEditor = nil
             }
         }
-        .sheet(item: $importReview) { request in
+        .locusSheet(item: $importReview) { request in
             IdentityDocumentImportView(request: request, profiles: store.profiles) { kind, profileID in
                 do {
                     _ = try store.addDocument(name: request.document.name, kind: kind,
@@ -155,10 +163,10 @@ struct IdentityVaultView: View {
                 } catch { vault.notice = error.localizedDescription }
             }
         }
-        .sheet(item: $vault.previewDocument) { document in
+        .locusSheet(item: $vault.previewDocument) { document in
             IdentityDocumentPreview(document: document, data: (try? store.documentData(id: document.id)) ?? Data())
         }
-        .sheet(item: $vault.draftEditor) { draft in
+        .locusSheet(item: $vault.draftEditor) { draft in
             IdentityDraftEditor(draft: draft, profiles: store.profiles, vault: vault) { edited, createFiles, includeContact in
                 vault.localWork = Task { await saveDraft(edited, createFiles: createFiles, includeContact: includeContact) }
             }
@@ -197,7 +205,7 @@ struct IdentityVaultView: View {
             }
         }.padding(16)
             HStack {
-                Text(tabDescription).font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                Text(tabDescription).font(.subheadline).foregroundStyle(viewColors.textSecondary)
                 Spacer(minLength: 8)
                 if vault.tab == .documents || vault.tab == .signatures {
                     Toggle("Show all versions", isOn: $showAllVersions).toggleStyle(.checkbox)
@@ -247,17 +255,17 @@ struct IdentityVaultView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Image(systemName: profile.kind.symbol).font(.title2)
-                                .frame(width: 40, height: 40).background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 9))
+                                .frame(width: 40, height: 40).background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 9))
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(profile.name).font(.headline)
-                                Text(profile.kind.title).font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                                Text(profile.kind.title).font(.subheadline).foregroundStyle(viewColors.textSecondary)
                             }
                             Spacer()
                             Button("Edit") { vault.profileEditor = profile }
                                 .accessibilityLabel("Edit \(profile.name)")
                         }
                         Text("\(profile.fields.filter { !$0.value.isEmpty }.count) saved fields · Updated \(profile.updatedAt.formatted(date: .abbreviated, time: .omitted))")
-                            .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.subheadline).foregroundStyle(viewColors.textSecondary)
                         HStack {
                             Button("Start Private Task", systemImage: "lock.shield") { model.startIdentityTask(profileID: profile.id) }
                                 .help("Start a task with this profile. You choose which details to share.")
@@ -304,17 +312,17 @@ struct IdentityVaultView: View {
             ForEach(items) { document in
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: document.kind == .signature ? "signature" : document.mimeType.hasPrefix("image/") ? "photo" : "doc.text")
-                        .font(.title2).foregroundStyle(LocusTheme.textSecondary).frame(width: 38, height: 42)
+                        .font(.title2).foregroundStyle(viewColors.textSecondary).frame(width: 38, height: 42)
                     VStack(alignment: .leading, spacing: 5) {
                         Button(document.name) { vault.previewDocument = document }.buttonStyle(.locus()).font(.headline)
                         Text("\(document.kind.title) · Version \(document.version) · \(ByteCountFormatter.string(fromByteCount: Int64(document.byteCount), countStyle: .file))")
-                            .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                            .font(.subheadline).foregroundStyle(viewColors.textSecondary)
                         HStack(spacing: 8) {
                             if let profile = store.profiles.first(where: { $0.id == document.profileID }) {
                                 Label(profile.name, systemImage: "person.crop.circle")
                             }
                             Text(document.createdAt.formatted(date: .abbreviated, time: .omitted))
-                        }.font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        }.font(.caption).foregroundStyle(viewColors.textSecondary)
                     }
                     Spacer()
                     Button("Preview") { vault.previewDocument = document }
@@ -362,11 +370,11 @@ struct IdentityVaultView: View {
                     HStack {
                         Text(disclosure.recipientLabel).font(.headline)
                         Spacer()
-                        Text(disclosure.createdAt, style: .date).foregroundStyle(LocusTheme.textTertiary)
+                        Text(disclosure.createdAt, style: .date).foregroundStyle(viewColors.textTertiary)
                     }
                     Text(disclosure.summary)
                     Text("\(disclosure.outcome ?? "Completed") · \(disclosure.createdAt.formatted(date: .omitted, time: .shortened))")
-                        .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
                     if disclosure.kind == .provider && disclosure.snapshotID != nil {
                         Button("Revoke future access") { vault.revoke(disclosure) }.font(.callout)
                     }
@@ -478,6 +486,10 @@ struct IdentityVaultView: View {
 }
 
 private struct IdentityProfileEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @State var profile: IdentityVaultProfile
     let isNew: Bool
     let save: (IdentityVaultProfile) throws -> Void
@@ -489,12 +501,12 @@ private struct IdentityProfileEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("\(profile.kind.title) profile").font(.title2.bold())
-            Text("Fields stay private. You review exactly what is sent to a website or AI provider.").foregroundStyle(LocusTheme.textTertiary)
-            Text("All fields are optional. Add what is useful now; you can come back later.").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+            Text("Fields stay private. You review exactly what is sent to a website or AI provider.").foregroundStyle(viewColors.textTertiary)
+            Text("All fields are optional. Add what is useful now; you can come back later.").font(.subheadline).foregroundStyle(viewColors.textSecondary)
             TextField("Profile name", text: $profile.name).textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("identity.profile.name")
             LibrarySearchField(prompt: "Find a field, such as email or education", text: $fieldQuery, identifier: "identity.profile.fieldSearch")
-            if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(LocusTheme.dangerForeground) }
+            if let error { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(viewColors.dangerForeground) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach($profile.fields) { $field in
@@ -511,11 +523,11 @@ private struct IdentityProfileEditor: View {
                             }
                             if field.kind == .multiline {
                                 TextEditor(text: $field.value)
-                                    .foregroundStyle(LocusTheme.inkSoft)
-                                    .tint(LocusTheme.accentAction)
+                                    .foregroundStyle(viewColors.inkSoft)
+                                    .tint(viewColors.accentAction)
                                     .scrollContentBackground(.hidden)
-                                    .background(LocusTheme.surfaceCard)
-                                    .frame(minHeight: 70).border(LocusTheme.separator)
+                                    .background(viewColors.surfaceCard)
+                                    .frame(minHeight: 70).border(viewColors.separator)
                             } else { TextField(field.label, text: $field.value).textFieldStyle(.roundedBorder) }
                         }
                         }
@@ -538,7 +550,7 @@ private struct IdentityProfileEditor: View {
                 Spacer()
                 Button("Save Profile") {
                     do { try save(profile) } catch { self.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).tint(LocusTheme.ink).disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.buttonStyle(.borderedProminent).tint(viewColors.ink).disabled(profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("identity.profile.save")
             }
         }.padding(22).frame(width: 670, height: 650).modifier(IdentityPrivateSurface())
@@ -560,6 +572,10 @@ private struct IdentityImportRequest: Identifiable {
 }
 
 private struct IdentityDocumentImportView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let request: IdentityImportRequest
     let profiles: [IdentityVaultProfile]
     let save: (IdentityVaultDocumentKind, UUID?) -> Void
@@ -582,17 +598,21 @@ private struct IdentityDocumentImportView: View {
             Text("Locally extracted text · review for OCR mistakes").font(.headline)
             ScrollView { Text(request.document.extractedText.isEmpty ? "No text was detected. The original file will still be saved." : String(request.document.extractedText.prefix(60_000)))
                     .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(minHeight: 180, maxHeight: 320)
-            Text("Nothing here is sent to AI. You can create a profile from this text after import and review every proposed field.").foregroundStyle(LocusTheme.textTertiary)
+            Text("Nothing here is sent to AI. You can create a profile from this text after import and review every proposed field.").foregroundStyle(viewColors.textTertiary)
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Save in Vault") { save(kind, profileID) }.buttonStyle(.borderedProminent).tint(LocusTheme.ink)
+                Button("Save in Vault") { save(kind, profileID) }.buttonStyle(.borderedProminent).tint(viewColors.ink)
             }
         }.padding(22).frame(width: 660).modifier(IdentityPrivateSurface())
     }
 }
 
 private struct IdentityDocumentPreview: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let document: IdentityVaultDocument
     let data: Data
     @Environment(\.dismiss) private var dismiss
@@ -603,7 +623,7 @@ private struct IdentityDocumentPreview: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Label(document.name, systemImage: "lock.doc").font(.headline).lineLimit(1)
                     Text("\(document.kind.title) · Version \(document.version) · Private preview")
-                        .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.subheadline).foregroundStyle(viewColors.textSecondary)
                 }
                 Spacer()
                 if !document.extractedText.isEmpty && (document.mimeType == "application/pdf" || document.mimeType.hasPrefix("image/")) {
@@ -629,11 +649,15 @@ private struct IdentityDocumentPreview: View {
                     description: Text("The original is saved in your vault. Export this version from the document’s menu to open it in another app."))
             }
         }.frame(minWidth: 700, idealWidth: 880, minHeight: 520, idealHeight: 700)
-            .background(LocusTheme.paper).foregroundStyle(LocusTheme.ink).modifier(IdentityPrivateSurface())
+            .background(viewColors.paper).foregroundStyle(viewColors.ink).modifier(IdentityPrivateSurface())
     }
 }
 
 private struct IdentityDraftEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @State var draft: IdentityVaultDraft
     let profiles: [IdentityVaultProfile]
     @ObservedObject var vault: IdentityVaultModel
@@ -649,7 +673,7 @@ private struct IdentityDraftEditor: View {
                 ForEach(profiles) { Text($0.name).tag(Optional($0.id)) }
             }
             Toggle("Insert this profile's contact details locally", isOn: $includeContact).disabled(draft.profileID == nil)
-            Text("Check every qualification and date. Editing this draft does not change your saved profile.").font(.callout).foregroundStyle(LocusTheme.textTertiary)
+            Text("Check every qualification and date. Editing this draft does not change your saved profile.").font(.callout).foregroundStyle(viewColors.textTertiary)
             if vault.isWorking { ProgressView("Creating documents locally…") }
             ScrollView {
                 VStack(spacing: 12) {
@@ -660,11 +684,11 @@ private struct IdentityDraftEditor: View {
                                 Button { draft.sections.removeAll { $0.id == section.id } } label: { Image(systemName: "minus.circle") }
                             }
                             TextEditor(text: $section.text)
-                                .foregroundStyle(LocusTheme.inkSoft)
-                                .tint(LocusTheme.accentAction)
+                                .foregroundStyle(viewColors.inkSoft)
+                                .tint(viewColors.accentAction)
                                 .scrollContentBackground(.hidden)
-                                .background(LocusTheme.surfaceCard)
-                                .frame(minHeight: 110).border(LocusTheme.separator)
+                                .background(viewColors.surfaceCard)
+                                .frame(minHeight: 110).border(viewColors.separator)
                         }
                     }
                     Button("Add Section") { draft.sections.append(.init(heading: "", text: "")) }
@@ -674,7 +698,7 @@ private struct IdentityDraftEditor: View {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save Draft") { save(draft, false, includeContact) }.disabled(vault.isWorking)
-                Button("Create PDF & Word") { save(draft, true, includeContact) }.buttonStyle(.borderedProminent).tint(LocusTheme.ink)
+                Button("Create PDF & Word") { save(draft, true, includeContact) }.buttonStyle(.borderedProminent).tint(viewColors.ink)
                     .disabled(vault.isWorking || draft.sections.isEmpty || draft.title.isEmpty)
             }
         }.padding(22).frame(width: 700, height: 650).modifier(IdentityPrivateSurface())

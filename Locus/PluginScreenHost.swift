@@ -35,6 +35,7 @@ enum PluginScreenMessage: Equatable {
     case openAttention(String)
     case openTransfer(String)
     case openSharedChat
+    case openActivityCenter
     case openAgentControls(String?)
     case createAgent
     case residentPlacements([AgentWorldResidentPlacement])
@@ -59,6 +60,9 @@ enum PluginScreenMessage: Equatable {
             guard keys == ["version", "type", field], screen.capabilities.contains("agents.interact"),
                   let id = value[field] as? String, let uuid = UUID(uuidString: id) else { return nil }
             return type == "openAttention" ? .openAttention(uuid.uuidString) : .openTransfer(uuid.uuidString)
+        case "openActivityCenter":
+            guard keys == ["version", "type"], screen.capabilities.contains("agents.read") else { return nil }
+            return .openActivityCenter
         case "openSharedChat":
             guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
             return .openSharedChat
@@ -234,12 +238,13 @@ struct PluginScreenHost: NSViewRepresentable {
                   let action = PluginScreenMessage.decode(message.body, screen: screen.screen) else { return }
             switch action {
             case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
-            case .selectAgent(let id): model?.select(id)
+            case .selectAgent(let id): model?.openAgentProfile(id)
             case .preferences(let theme): model?.setTheme(theme)
             case .residentStyle(let style): model?.setResidentStyle(style)
             case .openAttention(let id): model?.openAttention(id)
             case .openTransfer(let id): model?.openTransfer(id)
             case .openSharedChat: model?.openSharedChat()
+            case .openActivityCenter: model?.requestActivityCenter()
             case .openAgentControls(let id): model?.openAgentControls(id)
             case .createAgent: model?.createAgent()
             case .residentPlacements(let placements): model?.receiveResidentPlacements(placements)

@@ -150,8 +150,8 @@ struct RemoteRuntimesView: View {
         }
         .disabled(busy)
         .task { await refresh() }
-        .sheet(item: $statusTarget) { target in RemoteRuntimeStatusView(runtime: target).environmentObject(model) }
-        .sheet(item: $deployTarget) { target in DeployAgentView(target: target, completed: { Task { await refresh() } }).environmentObject(model) }
+        .locusSheet(item: $statusTarget) { target in RemoteRuntimeStatusView(runtime: target).environmentObject(model) }
+        .locusSheet(item: $deployTarget) { target in DeployAgentView(target: target, completed: { Task { await refresh() } }).environmentObject(model) }
     }
 
     private func refresh() async {

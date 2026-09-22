@@ -10,10 +10,10 @@ export const isResidentStyle = (value: unknown): value is ResidentStyle => RESID
 export type AttentionRequest = { id: string; agentID: string; kind: 'approval' | 'input'; title: string };
 export type AgentTransfer = { id: string; fromAgentID: string; toAgentID: string; kind: 'handoff' | 'artifact'; title: string; occurredAt: number };
 export type ShipStyles = Record<string, ShipAssetType>;
-export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; shipStyles?: ShipStyles; canCreateAgent?: boolean; activityCenterRequest?: number; nativeChrome?: boolean; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
+export type Snapshot = { version: 1; type: 'snapshot'; agents: Agent[]; selectedAgentID?: string; theme: string; projectName: string; residentStyle?: ResidentStyle; shipStyles?: ShipStyles; canCreateAgent?: boolean; activityCenterRequest?: number; focusRequest?: number; nativeChrome?: boolean; attentionRequests?: AttentionRequest[]; transfers?: AgentTransfer[] };
 export type Visibility = { version: 1; type: 'visibility'; visible: boolean };
 export type HostMessage = Snapshot | Visibility;
-export type WorldMessage = { version: 1; type: 'setShipStyle'; agentID: string; shipStyle: ShipAssetType | null } | { version: 1; type: 'residentPlacements'; placements: { agentID: string; ship: string; home: string }[] } | { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'createAgent' } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
+export type WorldMessage = { version: 1; type: 'openActivityCenter' } | { version: 1; type: 'setShipStyle'; agentID: string; shipStyle: ShipAssetType | null } | { version: 1; type: 'residentPlacements'; placements: { agentID: string; ship: string; home: string }[] } | { version: 1; type: 'openAttention'; requestID: string } | { version: 1; type: 'openTransfer'; transferID: string } | { version: 1; type: 'openSharedChat' } | { version: 1; type: 'openAgentControls'; agentID?: string } | { version: 1; type: 'createAgent' } | { version: 1; type: 'ready' } | { version: 1; type: 'selectAgent'; agentID: string } | { version: 1; type: 'preferences'; preferences: { theme: string } | { residentStyle: ResidentStyle } };
 export type Point = { x: number; z: number };
 export type ScreenPoint = { x: number; y: number };
 export type ScreenRect = { left: number; top: number; right: number; bottom: number };
@@ -63,6 +63,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     ids.add(item.id.toLowerCase());
   }
   if (value.selectedAgentID !== undefined && (typeof value.selectedAgentID !== 'string' || !ids.has(value.selectedAgentID.toLowerCase()))) return null;
+  if (value.focusRequest !== undefined && (typeof value.focusRequest !== 'number' || !Number.isSafeInteger(value.focusRequest) || value.focusRequest < 0)) return null;
   const shipStyles = value.shipStyles === undefined ? undefined : parseShipStyles(value.shipStyles, (value.agents as Agent[]).map(agent => agent.id));
   if (shipStyles === null) return null;
   const activityIDs = new Set<string>();

@@ -117,3 +117,12 @@ test('a catalog can add another packaged theme without accepting unsafe IDs or d
   const invalid = parseTheme({ version: 1, id: 'outpost', layout: { radius: NaN, stations: [{ x: 0, z: Infinity }], props: [{ asset: 'untrusted', x: 0, z: 0 }] } });
   assert.deepEqual(invalid.layout, DEFAULT_THEME.layout);
 });
+
+test('native ship focusing supports repeat selection without accepting invalid nonces', () => {
+  const parsed = parseHostMessage({ ...snapshot, selectedAgentID: agents[0].id, focusRequest: 2 });
+  assert.ok(parsed?.type === 'snapshot');
+  assert.equal(parsed.focusRequest, 2);
+  for (const focusRequest of [-1, 1.5, Infinity, null, '2', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(parseHostMessage({ ...snapshot, focusRequest }), null);
+  }
+});

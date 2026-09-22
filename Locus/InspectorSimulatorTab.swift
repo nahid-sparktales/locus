@@ -5,6 +5,10 @@ import UniformTypeIdentifiers
 /// A task-scoped Simulator surface. Pointer gestures are mapped to device
 /// points and injected through the bridge, so the Mac pointer never moves.
 struct InspectorSimulatorTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var service: SimulatorControlService
@@ -32,7 +36,7 @@ struct InspectorSimulatorTab: View {
                 devicePicker
             }
         }
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("inspector.simulator")
         .confirmationDialog("Shut down this simulator?", isPresented: $confirmShutdown) {
@@ -76,18 +80,18 @@ struct InspectorSimulatorTab: View {
             } else {
                 Image(systemName: "ipad.and.iphone")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .frame(width: 30, height: 30)
-                    .background(LocusTheme.accentFill.opacity(0.13))
+                    .background(viewColors.accentFill.opacity(0.13))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("iOS Simulator")
                         .font(LocusType.caption.weight(.semibold))
-                        .foregroundStyle(LocusTheme.textPrimary)
+                        .foregroundStyle(viewColors.textPrimary)
                     Text("Choose a device for this task")
                         .font(LocusType.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .lineLimit(1)
                 }
             }
@@ -118,7 +122,7 @@ struct InspectorSimulatorTab: View {
         .frame(height: 50)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.separator).frame(height: 1)
+            Rectangle().fill(viewColors.separator).frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("simulator.header")
@@ -145,31 +149,31 @@ struct InspectorSimulatorTab: View {
             HStack(spacing: 9) {
                 Image(systemName: target.device.isIPad ? "ipad" : "iphone")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .frame(width: 30, height: 30)
-                    .background(LocusTheme.accentFill.opacity(0.13))
+                    .background(viewColors.accentFill.opacity(0.13))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(target.device.name)
                         .font(LocusType.caption.weight(.semibold))
-                        .foregroundStyle(LocusTheme.textPrimary)
+                        .foregroundStyle(viewColors.textPrimary)
                         .lineLimit(1)
                     HStack(spacing: 5) {
                         Circle()
                             .fill(service.previewIsLive
-                                ? LocusTheme.successForeground
-                                : LocusTheme.warningForeground)
+                                ? viewColors.successForeground
+                                : viewColors.warningForeground)
                             .frame(width: 6, height: 6)
                         Text("\(target.device.runtime) · \(target.device.state.rawValue)")
                             .font(LocusType.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                             .lineLimit(1)
                     }
                 }
                 Image(systemName: "chevron.down")
                     .font(.locus(size: 7, weight: .bold))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             .contentShape(Rectangle())
         }
@@ -194,7 +198,7 @@ struct InspectorSimulatorTab: View {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 11, weight: .semibold))
                 .rotationEffect(.degrees(90))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .frame(width: 30, height: 30)
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -213,7 +217,7 @@ struct InspectorSimulatorTab: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .frame(width: 30, height: 30)
         }
         .buttonStyle(.locus(.icon))
@@ -240,7 +244,7 @@ struct InspectorSimulatorTab: View {
                 .controlSize(.small)
             Text("Finding simulators…")
                 .font(LocusType.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("simulator.loading")
@@ -252,16 +256,16 @@ struct InspectorSimulatorTab: View {
                 VStack(spacing: 8) {
                     Image(systemName: "ipad.and.iphone")
                         .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(LocusTheme.accentAction)
+                        .foregroundStyle(viewColors.accentAction)
                         .frame(width: 66, height: 66)
-                        .background(LocusTheme.accentFill.opacity(0.12))
+                        .background(viewColors.accentFill.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     Text("Finish simulator setup")
                         .font(LocusType.title)
-                        .foregroundStyle(LocusTheme.textPrimary)
+                        .foregroundStyle(viewColors.textPrimary)
                     Text(service.helperHealth.message)
                         .font(LocusType.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -303,10 +307,10 @@ struct InspectorSimulatorTab: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Attach a simulator")
                         .font(LocusType.title)
-                        .foregroundStyle(LocusTheme.textPrimary)
+                        .foregroundStyle(viewColors.textPrimary)
                     Text("Locus and this task will share the same device. You can tap, type, rotate, capture, and record without giving up your Mac pointer.")
                         .font(LocusType.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.bottom, 6)
@@ -328,25 +332,25 @@ struct InspectorSimulatorTab: View {
         HStack(spacing: 12) {
             Image(systemName: device.isIPad ? "ipad" : "iphone")
                 .font(.locus(size: 14, weight: .medium))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .frame(width: 38, height: 38)
-                .background(LocusTheme.surfaceStructural)
+                .background(viewColors.surfaceStructural)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(device.name)
                     .font(LocusType.caption.weight(.semibold))
-                    .foregroundStyle(LocusTheme.textPrimary)
+                    .foregroundStyle(viewColors.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Circle()
                         .fill(device.state == .booted
-                            ? LocusTheme.successForeground
-                            : LocusTheme.textTertiary.opacity(0.65))
+                            ? viewColors.successForeground
+                            : viewColors.textTertiary.opacity(0.65))
                         .frame(width: 6, height: 6)
                     Text(device.subtitle)
                         .font(LocusType.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .lineLimit(1)
                 }
             }
@@ -368,17 +372,17 @@ struct InspectorSimulatorTab: View {
             Image(systemName: complete ? "checkmark.circle.fill" : "circle")
                 .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(complete
-                    ? LocusTheme.successForeground
-                    : LocusTheme.textTertiary)
+                    ? viewColors.successForeground
+                    : viewColors.textTertiary)
             Text(title)
                 .font(LocusType.caption)
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
             Spacer()
             Text(complete ? "Ready" : "Needed")
                 .font(LocusType.badge)
                 .foregroundStyle(complete
-                    ? LocusTheme.successForeground
-                    : LocusTheme.textTertiary)
+                    ? viewColors.successForeground
+                    : viewColors.textTertiary)
         }
         .padding(.horizontal, 13)
         .frame(minHeight: 44)
@@ -386,7 +390,7 @@ struct InspectorSimulatorTab: View {
 
     private var setupDivider: some View {
         Rectangle()
-            .fill(LocusTheme.separator)
+            .fill(viewColors.separator)
             .frame(height: 1)
             .padding(.leading, 42)
     }
@@ -404,10 +408,10 @@ struct InspectorSimulatorTab: View {
                 Text(title)
             }
             .font(LocusType.badge)
-            .foregroundStyle(LocusTheme.brandInk)
+            .foregroundStyle(viewColors.brandInk)
             .padding(.horizontal, 13)
             .frame(minHeight: 30)
-            .background(LocusTheme.accentFill)
+            .background(viewColors.accentFill)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.locus(.primary))
@@ -470,7 +474,7 @@ struct InspectorSimulatorTab: View {
 
     private var simulatorStageBackground: some View {
         ZStack {
-            LocusTheme.surfaceStructural
+            viewColors.surfaceStructural
             Rectangle().fill(Color.black.opacity(0.025))
         }
         .ignoresSafeArea()
@@ -519,15 +523,15 @@ struct InspectorSimulatorTab: View {
         HStack(spacing: 7) {
             Circle()
                 .fill(isRecording
-                    ? LocusTheme.dangerForeground
+                    ? viewColors.dangerForeground
                     : (service.previewIsLive
-                        ? LocusTheme.successForeground
-                        : LocusTheme.warningForeground))
+                        ? viewColors.successForeground
+                        : viewColors.warningForeground))
                 .frame(width: 7, height: 7)
 
             Text(statusText)
                 .font(LocusType.badge)
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .lineLimit(1)
         }
         .padding(.horizontal, 10)
@@ -535,7 +539,7 @@ struct InspectorSimulatorTab: View {
         .locusSurface(.floating, radius: 9)
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.separator, lineWidth: 1)
+                .stroke(viewColors.separator, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.10), radius: 8, y: 3)
         .help(statusText)
@@ -587,7 +591,7 @@ struct InspectorSimulatorTab: View {
         .locusSurface(.floating, radius: 12)
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(LocusTheme.separator, lineWidth: 1)
+                .stroke(viewColors.separator, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
         .fixedSize()
@@ -597,7 +601,7 @@ struct InspectorSimulatorTab: View {
 
     private var dockDivider: some View {
         Rectangle()
-            .fill(LocusTheme.separator)
+            .fill(viewColors.separator)
             .frame(width: 1, height: 18)
             .padding(.horizontal, 2)
     }
@@ -614,16 +618,16 @@ struct InspectorSimulatorTab: View {
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(
                     destructive
-                        ? LocusTheme.dangerForeground
-                        : (active ? LocusTheme.accentAction : LocusTheme.textPrimary)
+                        ? viewColors.dangerForeground
+                        : (active ? viewColors.accentAction : viewColors.textPrimary)
                 )
                 .frame(width: 32, height: 30)
                 .background {
                     if active {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(destructive
-                                ? LocusTheme.dangerForeground.opacity(0.10)
-                                : LocusTheme.accentFill.opacity(0.14))
+                                ? viewColors.dangerForeground.opacity(0.10)
+                                : viewColors.accentFill.opacity(0.14))
                     }
                 }
         }
@@ -658,7 +662,7 @@ struct InspectorSimulatorTab: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .frame(width: 32, height: 30)
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -673,7 +677,7 @@ struct InspectorSimulatorTab: View {
         HStack(spacing: 8) {
             Image(systemName: "keyboard")
                 .font(.locus(size: 10, weight: .medium))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
 
             TextField("Type into the focused field", text: $typingText)
                 .textFieldStyle(.plain)
@@ -684,9 +688,9 @@ struct InspectorSimulatorTab: View {
             Button(action: sendTyping) {
                 Image(systemName: "arrow.up")
                     .font(.locus(size: 9, weight: .bold))
-                    .foregroundStyle(LocusTheme.brandInk)
+                    .foregroundStyle(viewColors.brandInk)
                     .frame(width: 26, height: 26)
-                    .background(LocusTheme.accentFill)
+                    .background(viewColors.accentFill)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .buttonStyle(.locus(.primary))
@@ -700,7 +704,7 @@ struct InspectorSimulatorTab: View {
         .locusSurface(.floating, radius: 11)
         .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(LocusTheme.separator, lineWidth: 1)
+                .stroke(viewColors.separator, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
         .accessibilityElement(children: .contain)
@@ -712,10 +716,10 @@ struct InspectorSimulatorTab: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Stream quality")
                     .font(LocusType.caption.weight(.semibold))
-                    .foregroundStyle(LocusTheme.textPrimary)
+                    .foregroundStyle(viewColors.textPrimary)
                 Text("These settings change the preview, not the simulated app.")
                     .font(LocusType.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -762,7 +766,7 @@ struct InspectorSimulatorTab: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(LocusType.badge)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             content()
         }
     }

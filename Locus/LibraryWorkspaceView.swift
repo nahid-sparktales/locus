@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 
 struct LibraryWorkspaceView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
     @EnvironmentObject private var outputs: OutputsLibraryModel
@@ -12,7 +16,7 @@ struct LibraryWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Library").font(.title2.weight(.semibold))
                     Text("Documents and saved work · \(URL(fileURLWithPath: library.workspace).lastPathComponent)")
-                        .font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(1)
+                        .font(.subheadline).foregroundStyle(viewColors.textSecondary).lineLimit(1)
                 }
                 Spacer()
                 Picker("Library", selection: $library.tab) {
@@ -29,9 +33,9 @@ struct LibraryWorkspaceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .frame(minWidth: 700, idealWidth: 1000, minHeight: 520, idealHeight: 700, alignment: .top)
-        .background(LocusTheme.paper)
-        .foregroundStyle(LocusTheme.ink)
-        .sheet(item: $library.previewRequest) { DocumentPreviewSheet(request: $0) }
+        .background(viewColors.paper)
+        .foregroundStyle(viewColors.ink)
+        .locusSheet(item: $library.previewRequest) { DocumentPreviewSheet(request: $0) }
         .onChange(of: library.query) { _, _ in library.search() }
     }
     private var documents: some View {
@@ -47,7 +51,7 @@ struct LibraryWorkspaceView: View {
                 Toggle("Use documents in chats", isOn: Binding(get: { library.documentsEnabled }, set: { library.setEnabled($0) }))
                     .disabled(library.pending.contains("settings"))
                 Text("Search PDF, Word, and spreadsheet content in this workspace. Imports are copied into Locus Documents.")
-                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary).frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.subheadline).foregroundStyle(viewColors.textSecondary).frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.horizontal).padding(.bottom)
             if let error = library.error { libraryError(error) }
             Divider()
@@ -76,8 +80,8 @@ struct LibraryWorkspaceView: View {
                                 Button { library.openSearchHit(hit) } label: {
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text((hit.path as NSString).lastPathComponent).font(.headline)
-                                        Text(hit.locator?.label ?? "Line \(hit.lineStart ?? 1)").font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
-                                        Text(hit.snippet ?? hit.text ?? "").lineLimit(3).foregroundStyle(LocusTheme.textSecondary)
+                                        Text(hit.locator?.label ?? "Line \(hit.lineStart ?? 1)").font(.subheadline).foregroundStyle(viewColors.textSecondary)
+                                        Text(hit.snippet ?? hit.text ?? "").lineLimit(3).foregroundStyle(viewColors.textSecondary)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
                                 }.buttonStyle(.locus())
                             }
@@ -97,24 +101,24 @@ struct LibraryWorkspaceView: View {
     }
     private func documentRow(_ document: LibraryDocument) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: document.format == "pdf" ? "doc.richtext" : "doc.text").font(.title2).foregroundStyle(LocusTheme.textSecondary).frame(width: 30)
+            Image(systemName: document.format == "pdf" ? "doc.richtext" : "doc.text").font(.title2).foregroundStyle(viewColors.textSecondary).frame(width: 30)
             Button { library.open(document) } label: {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(document.title).font(.headline)
-                    Text(document.path).font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(1)
+                    Text(document.path).font(.subheadline).foregroundStyle(viewColors.textSecondary).lineLimit(1)
                     HStack {
                         Text(document.excluded ? "Excluded" : document.stateLabel)
                         Text("·")
                         Text(ByteCountFormatter.string(fromByteCount: document.size, countStyle: .file))
                         if document.status == "running" || document.status == "queued" { ProgressView().controlSize(.small) }
-                    }.font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                    }.font(.subheadline).foregroundStyle(viewColors.textSecondary)
                     if let jobID = document.jobID, let job = library.jobs[jobID], job.isActive, job.total > 0 {
                         ProgressView(value: Double(job.progress), total: Double(job.total)) {
                             Text("\(job.progress) of \(job.total) processed").font(.subheadline)
                         }.accessibilityLabel("\(document.title), \(job.progress) of \(job.total) processed")
                     }
-                    if let reason = document.error { Text(reason).font(.subheadline).foregroundStyle(LocusTheme.dangerForeground) }
-                    if !document.warnings.isEmpty { Text(document.warnings.joined(separator: " · ")).font(.subheadline).foregroundStyle(LocusTheme.textSecondary).lineLimit(3) }
+                    if let reason = document.error { Text(reason).font(.subheadline).foregroundStyle(viewColors.dangerForeground) }
+                    if !document.warnings.isEmpty { Text(document.warnings.joined(separator: " · ")).font(.subheadline).foregroundStyle(viewColors.textSecondary).lineLimit(3) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.locus())
                 .accessibilityIdentifier("library.document.\(document.id)")
@@ -138,11 +142,15 @@ struct LibraryWorkspaceView: View {
             Label(message, systemImage: "exclamationmark.triangle").font(.subheadline)
             Spacer()
             Button("Retry") { Task { await library.refresh() } }
-        }.padding().background(LocusTheme.warningForeground.opacity(0.10))
+        }.padding().background(viewColors.warningForeground.opacity(0.10))
     }
 }
 
 struct OutputsLibraryView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
     @EnvironmentObject private var outputs: OutputsLibraryModel
@@ -216,10 +224,10 @@ struct OutputsLibraryView: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                 Text(output.title).font(.headline).lineLimit(1)
                                 Text(output.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                                 Text(output.isWebsite ? "Live website" : "\(output.versions.filter { $0.hash != nil }.count) saved \(output.versions.filter { $0.hash != nil }.count == 1 ? "version" : "versions")")
-                                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
-                                if let reason = output.latest?.unavailableReason { Text(reason).font(.subheadline).foregroundStyle(LocusTheme.warningForeground).lineLimit(2) }
+                                    .font(.subheadline).foregroundStyle(viewColors.textSecondary)
+                                if let reason = output.latest?.unavailableReason { Text(reason).font(.subheadline).foregroundStyle(viewColors.warningForeground).lineLimit(2) }
                                 }
                             }.padding(.vertical, 6).tag(output.id)
                                 .accessibilityIdentifier("library.output.item.\(output.target)")
@@ -232,10 +240,10 @@ struct OutputsLibraryView: View {
             Divider()
             HStack {
                 Text("\(visibleItems.count) \(visibleItems.count == 1 ? "output" : "outputs")")
-                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.subheadline).foregroundStyle(viewColors.textSecondary)
                 Spacer()
                 Text("\(ByteCountFormatter.string(fromByteCount: outputs.storageUsed, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: outputs.storageLimit, countStyle: .file)) used")
-                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.subheadline).foregroundStyle(viewColors.textSecondary)
                 if outputs.isRefreshing { ProgressView().controlSize(.small) }
             }.padding(12)
         }
@@ -255,8 +263,8 @@ struct OutputsLibraryView: View {
         .onChange(of: outputs.visibleItems.map(\.id), initial: true) { _, ids in
             if !ids.contains(outputs.selectedItemID ?? "") { outputs.open(itemID: ids.first ?? "") }
         }
-        .sheet(item: $comparison) { OutputComparisonView(request: $0) }
-        .sheet(item: $expandedPreview) { DocumentPreviewSheet(request: $0) }
+        .locusSheet(item: $comparison) { OutputComparisonView(request: $0) }
+        .locusSheet(item: $expandedPreview) { DocumentPreviewSheet(request: $0) }
         .alert("Remove saved history?", isPresented: Binding(get: { removeItem != nil }, set: { if !$0 { removeItem = nil } })) {
             Button("Cancel", role: .cancel) { removeItem = nil }
             Button("Remove history", role: .destructive) { if let item = removeItem { outputs.remove(item) }; removeItem = nil }
@@ -267,7 +275,7 @@ struct OutputsLibraryView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled).lineLimit(2)
-                    Text(item.target).font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    Text(item.target).font(.caption).foregroundStyle(viewColors.textSecondary)
                         .lineLimit(1).truncationMode(.middle).help(item.target)
                 }
                 Spacer(minLength: 8)
@@ -312,7 +320,7 @@ struct OutputsLibraryView: View {
             }
             if outputs.sourceSession(for: version).isEmpty {
                 Text("Created in this workspace. Its source task could not be confirmed.")
-                    .font(.subheadline).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.subheadline).foregroundStyle(viewColors.textSecondary)
             }
             if let reason = version.unavailableReason { Label(reason, systemImage: "exclamationmark.triangle").font(.body) }
             if let selectedURL {
@@ -339,12 +347,16 @@ struct OutputsLibraryView: View {
 }
 
 struct LibrarySearchField: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let prompt: String
     @Binding var text: String
     var identifier: String
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.textSecondary).accessibilityHidden(true)
+            Image(systemName: "magnifyingglass").foregroundStyle(viewColors.textSecondary).accessibilityHidden(true)
             TextField(prompt, text: $text).textFieldStyle(.plain)
                 .accessibilityLabel(prompt).accessibilityIdentifier(identifier)
             if !text.isEmpty {
@@ -352,12 +364,16 @@ struct LibrarySearchField: View {
                     .buttonStyle(.locus(.icon)).accessibilityLabel("Clear search").help("Clear search")
             }
         }.padding(.horizontal, 10).padding(.vertical, 7)
-            .background(LocusTheme.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.separator, lineWidth: 1))
+            .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(viewColors.separator, lineWidth: 1))
     }
 }
 
 private struct OutputLibraryThumbnail: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let item: LibraryOutput
     @EnvironmentObject private var outputs: OutputsLibraryModel
     @Environment(\.displayScale) private var displayScale
@@ -375,8 +391,8 @@ private struct OutputLibraryThumbnail: View {
     var body: some View {
         Group {
             if let image { Image(nsImage: image).resizable().scaledToFit() }
-            else { Image(systemName: symbol).font(.title2).foregroundStyle(LocusTheme.textSecondary) }
-        }.frame(width: 48, height: 48).background(LocusTheme.surfaceCard)
+            else { Image(systemName: symbol).font(.title2).foregroundStyle(viewColors.textSecondary) }
+        }.frame(width: 48, height: 48).background(viewColors.surfaceCard)
             .clipShape(RoundedRectangle(cornerRadius: 6)).accessibilityHidden(true)
             .task(id: item.latest?.id) {
                 image = nil
@@ -399,6 +415,10 @@ struct OutputComparisonRequest: Identifiable {
     let rightLabel: String
 }
 struct OutputComparisonView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let request: OutputComparisonRequest
     @Environment(\.dismiss) private var dismiss
     @State private var differences: [String]?
@@ -410,7 +430,7 @@ struct OutputComparisonView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(differences.enumerated()), id: \.offset) { _, line in
                             Text(line).font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                                .foregroundStyle(line.hasPrefix("+ ") ? LocusTheme.diffAdded : line.hasPrefix("− ") ? LocusTheme.diffRemoved : LocusTheme.inkSoft)
+                                .foregroundStyle(line.hasPrefix("+ ") ? viewColors.diffAdded : line.hasPrefix("− ") ? viewColors.diffRemoved : viewColors.inkSoft)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }.padding()

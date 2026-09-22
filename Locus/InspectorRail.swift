@@ -9,6 +9,10 @@ import SwiftUI
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     static let width: CGFloat = 44
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -36,7 +40,7 @@ struct InspectorRail: View {
         VStack(spacing: 4) {
             moreMenu
             panelToggleButton
-            Rectangle().fill(LocusTheme.line).frame(width: 24, height: 1).padding(.vertical, 5)
+            Rectangle().fill(viewColors.line).frame(width: 24, height: 1).padding(.vertical, 5)
                 .accessibilityHidden(true)
             if model.sidebarDestination == .agents {
                 // Agents mode leads with the selected agent.
@@ -59,7 +63,7 @@ struct InspectorRail: View {
         .frame(maxHeight: .infinity)
         .locusSurface(.structural)
         .overlay(alignment: .leading) {
-            Rectangle().fill(LocusTheme.line).frame(width: 1)
+            Rectangle().fill(viewColors.line).frame(width: 1)
         }
     }
 
@@ -75,18 +79,18 @@ struct InspectorRail: View {
         } label: {
             Image(systemName: "sidebar.right")
                 .font(.locus(size: 13, weight: .medium))
-                .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+                .foregroundStyle(selected ? viewColors.ink : viewColors.muted)
                 .frame(width: 34, height: 32)
                 .background {
                     if selected {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(LocusTheme.ink.opacity(0.09))
+                            .fill(viewColors.ink.opacity(0.09))
                     }
                 }
                 .overlay(alignment: .leading) {
                     if selected {
                         Capsule()
-                            .fill(LocusTheme.signalDeep)
+                            .fill(viewColors.signalDeep)
                             .frame(width: 2, height: 14)
                             .offset(x: -3)
                     }
@@ -110,7 +114,7 @@ struct InspectorRail: View {
                     : "arrow.up.left.and.arrow.down.right"
             )
             .font(.locus(size: 12, weight: .medium))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(width: 32, height: 30)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -137,7 +141,7 @@ struct InspectorRail: View {
         } label: {
             Image(locusSymbol: tab.symbol)
                 .font(.locus(size: 13, weight: .medium))
-                .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+                .foregroundStyle(selected ? viewColors.ink : viewColors.muted)
                 .overlay(alignment: .topTrailing) {
                     InspectorTabBadge(tab: tab)
                 }
@@ -145,16 +149,16 @@ struct InspectorRail: View {
                 .background {
                     if selected {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(LocusTheme.ink.opacity(0.09))
+                            .fill(viewColors.ink.opacity(0.09))
                     } else if hovered {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(LocusTheme.ink.opacity(0.045))
+                            .fill(viewColors.ink.opacity(0.045))
                     }
                 }
                 .overlay(alignment: .leading) {
                     if selected {
                         Capsule()
-                            .fill(LocusTheme.signalDeep)
+                            .fill(viewColors.signalDeep)
                             .frame(width: 2, height: 14)
                             .offset(x: -3)
                     }
@@ -201,13 +205,13 @@ struct InspectorRail: View {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 12, weight: .semibold))
                 .rotationEffect(.degrees(90))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .overlay(alignment: .topTrailing) {
                     // Changes lives in this menu, so its unseen dot surfaces
                     // here — the count itself waits in the menu title.
                     if gitWorkspace.changesHaveUnseenUpdate {
                         Circle()
-                            .fill(LocusTheme.coral)
+                            .fill(viewColors.coral)
                             .frame(width: 5, height: 5)
                             .offset(x: 5, y: -3)
                     }
@@ -237,6 +241,10 @@ struct InspectorRail: View {
 /// Workspace-level actions sit beside the model picker in the conversation
 /// header. This keeps them separate from the inspector's panel picker.
 struct WorkspaceActionsMenu: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -348,13 +356,13 @@ struct WorkspaceActionsMenu: View {
             Image(systemName: "ellipsis")
                 .font(.locus(size: 14, weight: .semibold))
                 .rotationEffect(.degrees(90))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 32, height: 32)
-                .background(LocusTheme.white)
+                .background(viewColors.white)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
         }
         .menuStyle(.borderlessButton)

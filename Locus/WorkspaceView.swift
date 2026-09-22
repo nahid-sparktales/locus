@@ -4,6 +4,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -71,14 +75,14 @@ struct WorkspaceView: View {
             }
             Label("Agent overview", systemImage: "person.crop.rectangle")
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
             Spacer()
         }
         .padding(.leading, sidebarVisible ? 20 : 76)
         .padding(.trailing, 18)
         .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     @ViewBuilder
@@ -94,7 +98,7 @@ struct WorkspaceView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(LocusTheme.lineStrong, lineWidth: 1)
+                        .stroke(viewColors.lineStrong, lineWidth: 1)
                 }
                 .shadow(
                     color: isLiveResizing ? .clear : .black.opacity(0.18),
@@ -193,7 +197,7 @@ struct WorkspaceView: View {
                 .font(.locus(size: 10))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.breadcrumb")
             }
@@ -222,21 +226,21 @@ struct WorkspaceView: View {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "waveform.path.ecg")
                             .font(.locus(size: 12, weight: .medium))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .frame(width: 28, height: 28)
                         Circle()
                             .fill(teamProgressColor)
                             .frame(width: 6, height: 6)
                             .overlay {
-                                Circle().stroke(LocusTheme.panel, lineWidth: 1.5)
+                                Circle().stroke(viewColors.panel, lineWidth: 1.5)
                             }
                             .offset(x: -3, y: 3)
                     }
-                    .background(LocusTheme.white)
+                    .background(viewColors.white)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
+                            .stroke(viewColors.line, lineWidth: 1)
                     }
                 }
                 .buttonStyle(.locus())
@@ -261,7 +265,7 @@ struct WorkspaceView: View {
                 Button("Review & Land") { landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(model.isBusy)
                     .help("Review this worktree's changes, checks, and landing destination")
                     .accessibilityIdentifier("workspace.reviewAndLand")
@@ -283,19 +287,19 @@ struct WorkspaceView: View {
                     if model.modelSelectionLockReason != nil {
                         Image(systemName: "lock.fill")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Image(systemName: "chevron.down")
                         .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .padding(.horizontal, 9)
                 .frame(height: 28)
-                .background(LocusTheme.white.opacity(0.78))
+                .background(viewColors.white.opacity(0.78))
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
                 .frame(maxWidth: 176)
             }
@@ -328,7 +332,7 @@ struct WorkspaceView: View {
         .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -355,9 +359,9 @@ struct WorkspaceView: View {
     private var runtimeHealthColor: Color {
         let phase = model.isAgentOnline ? model.modelRuntimePhase : model.agentRuntimePhase
         return switch phase {
-        case .online: LocusTheme.success
-        case .starting, .recovering: LocusTheme.warning
-        case .unavailable: LocusTheme.coral
+        case .online: viewColors.success
+        case .starting, .recovering: viewColors.warning
+        case .unavailable: viewColors.coral
         }
     }
 
@@ -377,21 +381,21 @@ struct WorkspaceView: View {
     }
 
     private var teamProgressColor: Color {
-        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
+        if model.selectedTeamRouteIssue != nil { return viewColors.coral }
         switch model.orchestrationState {
-        case .completed: return LocusTheme.success
-        case .failed, .interrupted, .cancelled, .discarded: return LocusTheme.coral
+        case .completed: return viewColors.success
+        case .failed, .interrupted, .cancelled, .discarded: return viewColors.coral
         case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
-            return LocusTheme.warning
-        case .queued, .dispatching, .running, .reviewing: return LocusTheme.signalDeep
-        case nil: return LocusTheme.success
+            return viewColors.warning
+        case .queued, .dispatching, .running, .reviewing: return viewColors.signalDeep
+        case nil: return viewColors.success
         }
     }
 
     private func runtimeBanner(_ message: String, recovering: Bool) -> some View {
         HStack(spacing: 9) {
             Image(systemName: recovering ? "arrow.clockwise" : "exclamationmark.triangle.fill")
-                .foregroundStyle(recovering ? LocusTheme.warning : LocusTheme.coral)
+                .foregroundStyle(recovering ? viewColors.warning : viewColors.coral)
             Text(message)
                 .font(.locus(size: 10, weight: .medium))
                 .lineLimit(1)
@@ -409,10 +413,10 @@ struct WorkspaceView: View {
         }
         .padding(.horizontal, 18)
         .frame(height: 38)
-        .background((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.09))
+        .background((recovering ? viewColors.warning : viewColors.coral).opacity(0.09))
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill((recovering ? LocusTheme.warning : LocusTheme.coral).opacity(0.25))
+                .fill((recovering ? viewColors.warning : viewColors.coral).opacity(0.25))
                 .frame(height: 1)
         }
     }
@@ -474,6 +478,10 @@ private struct WorkspaceSessionTitle: View {
 /// Keeps workspace-profile publications scoped to the one header control that
 /// needs them instead of invalidating the full conversation workspace.
 private struct WorkspaceEffortPicker: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -496,21 +504,21 @@ private struct WorkspaceEffortPicker: View {
             HStack(spacing: 5) {
                 Image(systemName: "gauge.with.dots.needle.33percent")
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(label)
                     .font(.locus(size: 9, weight: .semibold))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .padding(.horizontal, 9)
             .frame(height: 28)
-            .background(LocusTheme.white.opacity(0.78))
+            .background(viewColors.white.opacity(0.78))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         .buttonStyle(.locus())
@@ -547,19 +555,19 @@ private struct WorkspaceEffortPicker: View {
                 )
             }
 
-            Divider().overlay(LocusTheme.line)
+            Divider().overlay(viewColors.line)
 
             Text(
                 "Applies to this workspace and takes effect on the next message. "
                 + "Higher efforts think longer and cost more."
             )
             .font(.locus(size: 8))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
         .frame(width: 240)
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.effortPicker.popover")
     }
@@ -582,10 +590,10 @@ private struct WorkspaceEffortPicker: View {
                 }
             }
             .font(.locus(size: 9, weight: .semibold))
-            .foregroundStyle(LocusTheme.inkSoft)
+            .foregroundStyle(viewColors.inkSoft)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .background(selectedEffort == effort ? LocusTheme.paperDeep : Color.clear)
+            .background(selectedEffort == effort ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -607,6 +615,10 @@ enum ChatWorkspacePresentation: Equatable {
 }
 
 struct SplitChatWorkspaceView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -656,7 +668,7 @@ struct SplitChatWorkspaceView: View {
         if model.chatSplitRestoration.focusedPane == pane {
             liveWorkspace
                 .overlay(alignment: .leading) {
-                    Rectangle().fill(LocusTheme.signalDeep).frame(width: 2)
+                    Rectangle().fill(viewColors.signalDeep).frame(width: 2)
                 }
                 .onDrop(of: [.plainText], isTargeted: nil) { providers in
                     handlePaneDrop(providers, into: pane)
@@ -696,6 +708,10 @@ struct SplitChatWorkspaceView: View {
 }
 
 private struct SplitPaneDivider: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let totalWidth: CGFloat
     let minimumRatio: Double
@@ -703,8 +719,8 @@ private struct SplitPaneDivider: View {
 
     var body: some View {
         Rectangle()
-            .fill(LocusTheme.line)
-            .overlay { Capsule().fill(LocusTheme.muted.opacity(0.45)).frame(width: 2, height: 34) }
+            .fill(viewColors.line)
+            .overlay { Capsule().fill(viewColors.muted.opacity(0.45)).frame(width: 2, height: 34) }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
@@ -721,6 +737,10 @@ private struct SplitPaneDivider: View {
 }
 
 private struct BackgroundChatPane: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let pane: ChatPaneID
@@ -739,7 +759,7 @@ private struct BackgroundChatPane: View {
         .onAppear { model.refreshSplitPane(session.id) }
         .onDrop(of: [.plainText], isTargeted: nil, perform: handleDrop)
         .overlay {
-            Rectangle().stroke(LocusTheme.line, lineWidth: 1)
+            Rectangle().stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityIdentifier("split.pane.\(pane.rawValue)")
     }
@@ -752,14 +772,14 @@ private struct BackgroundChatPane: View {
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(model.chatHasActiveRun(session) ? LocusTheme.success : LocusTheme.muted.opacity(0.4))
+                        .fill(model.chatHasActiveRun(session) ? viewColors.success : viewColors.muted.opacity(0.4))
                         .frame(width: 6, height: 6)
                     Text(session.workspacePath.map { URL(fileURLWithPath: $0).lastPathComponent }
                         ?? "Saved chat")
                         .lineLimit(1)
                 }
                 .font(.locus(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             }
             Spacer()
             Button {
@@ -784,7 +804,7 @@ private struct BackgroundChatPane: View {
         .padding(.horizontal, 14)
         .frame(height: 52)
         .locusSurface(.toolbar)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var transcript: some View {
@@ -794,7 +814,7 @@ private struct BackgroundChatPane: View {
                 if blocks.isEmpty {
                     ProgressView("Loading chat…")
                         .controlSize(.small)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(maxWidth: .infinity, minHeight: 180)
                 } else {
                     ForEach(blocks) { block in
@@ -820,21 +840,21 @@ private struct BackgroundChatPane: View {
                 get: { paneState.draft },
                 set: { model.setPaneDraft($0, for: session.id) }
             ))
-            .foregroundStyle(LocusTheme.inkSoft)
-            .tint(LocusTheme.accentAction)
+            .foregroundStyle(viewColors.inkSoft)
+            .tint(viewColors.accentAction)
             .font(.locus(size: 12))
             .scrollContentBackground(.hidden)
             .frame(minHeight: 44, maxHeight: 92)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(LocusTheme.paperDeep.opacity(0.55))
+            .background(viewColors.paperDeep.opacity(0.55))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .accessibilityIdentifier("split.pane.\(pane.rawValue).composer")
 
             HStack {
                 Text(model.chatHasActiveRun(session) ? "Working in background" : "Ready")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Spacer()
                 Button {
                     model.submitDraft(in: pane)
@@ -845,7 +865,7 @@ private struct BackgroundChatPane: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(paneState.draft
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Send in \(session.displayTitle)")
@@ -854,7 +874,7 @@ private struct BackgroundChatPane: View {
         }
         .padding(10)
         .locusWorkspaceBackground()
-        .overlay(alignment: .top) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -879,6 +899,10 @@ private struct BackgroundChatPane: View {
 }
 
 private struct PassiveChatBlockView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let block: ChatBlock
     let accent: LocusAccentSelection
     let workspacePath: String
@@ -893,7 +917,7 @@ private struct PassiveChatBlockView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
-                    .background(LocusTheme.paperDeep.opacity(0.88))
+                    .background(viewColors.paperDeep.opacity(0.88))
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         case .assistant:
@@ -919,23 +943,27 @@ private struct PassiveChatBlockView: View {
         case .tool:
             Label(block.tool?.summary ?? "Tool activity", systemImage: "wrench.and.screwdriver")
                 .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(9)
-                .background(LocusTheme.paperDeep.opacity(0.6))
+                .background(viewColors.paperDeep.opacity(0.6))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         case .note:
             Text(block.text)
                 .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         case .error:
             Label(block.text, systemImage: "xmark.octagon.fill")
                 .font(.locus(size: 10, weight: .medium))
-                .foregroundStyle(LocusTheme.coral)
+                .foregroundStyle(viewColors.coral)
         }
     }
 }
 
 struct ReviewAndLandView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var landingFlow: LandingFlowModel
     @Environment(\.dismiss) private var dismiss
@@ -978,7 +1006,7 @@ struct ReviewAndLandView: View {
                         .font(.locus(size: 17, weight: .bold))
                     Text("Review the complete worktree delta, verify it, then choose its destination.")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button("Close") { dismiss() }
@@ -1003,7 +1031,7 @@ struct ReviewAndLandView: View {
                                 Button("Open Checkout") { model.openActiveTaskCheckout() }
                             }
                             .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
 
                             ScrollView([.horizontal, .vertical]) {
                                 Text(landingFlow.landingPatch.isEmpty ? "No changes." : landingFlow.landingPatch)
@@ -1013,9 +1041,9 @@ struct ReviewAndLandView: View {
                                     .padding(10)
                             }
                             .frame(height: 210)
-                            .background(LocusTheme.paperDeep)
+                            .background(viewColors.paperDeep)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(viewColors.line) }
                             .accessibilityIdentifier("landing.diff")
                         }
 
@@ -1023,17 +1051,17 @@ struct ReviewAndLandView: View {
                         stageHeader("2", "Review test evidence")
                         Text("Enter one explicit check per line. Locus runs up to eight sequentially in this chat’s worktree; each has a ten-minute limit.")
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                         TextEditor(text: $commandsText)
-                            .foregroundStyle(LocusTheme.inkSoft)
-                            .tint(LocusTheme.accentAction)
+                            .foregroundStyle(viewColors.inkSoft)
+                            .tint(viewColors.accentAction)
                             .font(.locus(size: 10, design: .monospaced))
                             .scrollContentBackground(.hidden)
                             .padding(6)
                             .frame(height: 78)
-                            .background(LocusTheme.white)
+                            .background(viewColors.white)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line) }
+                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(viewColors.line) }
                             .accessibilityIdentifier("landing.checkCommands")
                         HStack {
                             if landingFlow.activeLandingCheckRunID != nil {
@@ -1050,17 +1078,17 @@ struct ReviewAndLandView: View {
                             Spacer()
                             if checksAreCurrentAndPassing {
                                 Label("Checks passed", systemImage: "checkmark.circle.fill")
-                                    .foregroundStyle(LocusTheme.success)
+                                    .foregroundStyle(viewColors.success)
                             } else if let check = landingFlow.landingCheckRun {
                                 Label(
                                     check.tree == landingFlow.landingPreflight?.tree
                                         ? "Checks did not pass" : "Checks are stale",
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                             } else {
                                 Text("No current check evidence")
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             }
                         }
                         .font(.locus(size: 9, weight: .semibold))
@@ -1086,12 +1114,12 @@ struct ReviewAndLandView: View {
                                         }
                                         .font(.locus(size: 8, design: .monospaced))
                                         .foregroundStyle(result.state == "passed"
-                                            ? LocusTheme.success : LocusTheme.warning)
+                                            ? viewColors.success : viewColors.warning)
                                     }
                                 }
                             }
                             .padding(10)
-                            .background(LocusTheme.white.opacity(0.65))
+                            .background(viewColors.white.opacity(0.65))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
 
@@ -1103,7 +1131,7 @@ struct ReviewAndLandView: View {
                             if landingFlow.landingPreflight?.canApplyLocal == true {
                                 Text("The complete patch will be applied unstaged to Local. This chat remains in its worktree.")
                                     .font(.locus(size: 9))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             } else {
                                 Label(
                                     landingFlow.landingPreflight?.conflict.nilIfEmpty
@@ -1111,33 +1139,33 @@ struct ReviewAndLandView: View {
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.coral)
+                                .foregroundStyle(viewColors.coral)
                             }
                         } else if let task = model.activeTaskRecord, task.landingCommit != nil {
                             VStack(alignment: .leading, spacing: 8) {
                                 Label("Committed on \(task.branch ?? branchName)", systemImage: "checkmark.seal.fill")
-                                    .foregroundStyle(LocusTheme.success)
+                                    .foregroundStyle(viewColors.success)
                                 HStack {
                                     Button("Publish") { model.publishLandedWorktree() }
                                         .disabled(landingFlow.isLandingOperationRunning)
                                     Button("Open Pull Request") { model.openLandedPullRequest() }
                                     Text(task.landingCommit?.prefix(10) ?? "")
                                         .font(.locus(size: 8, design: .monospaced))
-                                        .foregroundStyle(LocusTheme.muted)
+                                        .foregroundStyle(viewColors.muted)
                                 }
                             }
                         } else {
                             TextField("Branch name", text: $branchName)
                                 .accessibilityIdentifier("landing.branch")
                             if let branchProblem {
-                                Text(branchProblem).font(.locus(size: 8)).foregroundStyle(LocusTheme.coral)
+                                Text(branchProblem).font(.locus(size: 8)).foregroundStyle(viewColors.coral)
                             }
                             TextField("Commit message", text: $commitMessage, axis: .vertical)
                                 .lineLimit(2...5)
                                 .accessibilityIdentifier("landing.commitMessage")
                             Text("A failed commit hook leaves the new branch and staged index ready to inspect and retry.")
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         Color.clear
                             .frame(height: 0)
@@ -1158,7 +1186,7 @@ struct ReviewAndLandView: View {
                     ? "Current checks passed."
                     : "Landing without passing current checks requires an explicit confirmation.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(checksAreCurrentAndPassing ? LocusTheme.success : LocusTheme.warning)
+                    .foregroundStyle(checksAreCurrentAndPassing ? viewColors.success : viewColors.warning)
                 Spacer()
                 if model.activeTaskRecord?.landingCommit != nil && destination == "branch" {
                     Button("Done") { dismiss() }
@@ -1202,11 +1230,11 @@ struct ReviewAndLandView: View {
             landingDestinationButton("Branch, Commit & PR", value: "branch")
         }
         .padding(2)
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Destination")
@@ -1220,10 +1248,10 @@ struct ReviewAndLandView: View {
         } label: {
             Text(title)
                 .font(.locus(size: 10, weight: .medium))
-                .foregroundStyle(selected ? LocusTheme.ink : LocusTheme.muted)
+                .foregroundStyle(selected ? viewColors.ink : viewColors.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .background(selected ? LocusTheme.white : Color.clear)
+                .background(selected ? viewColors.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .contentShape(Rectangle())
         }
@@ -1235,9 +1263,9 @@ struct ReviewAndLandView: View {
         HStack(spacing: 8) {
             Text(number)
                 .font(.locus(size: 9, weight: .bold, design: .monospaced))
-                .foregroundStyle(LocusTheme.brandInk)
+                .foregroundStyle(viewColors.brandInk)
                 .frame(width: 22, height: 22)
-                .background(LocusTheme.signal)
+                .background(viewColors.signal)
                 .clipShape(Circle())
             Text(title).font(.locus(size: 12, weight: .bold))
         }
@@ -1266,11 +1294,15 @@ private enum ActivityGroup: String, CaseIterable, Identifiable {
 /// macOS click target. Padding lives inside the button style so the visible and
 /// accessibility frames agree instead of exposing a ten-point-tall link.
 struct ActivityActionButtonStyle: ButtonStyle {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 5)
             .frame(minHeight: 22)
-            .background(configuration.isPressed ? LocusTheme.paperDeep : Color.clear)
+            .background(configuration.isPressed ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.75 : 1)
@@ -1278,6 +1310,10 @@ struct ActivityActionButtonStyle: ButtonStyle {
 }
 
 struct ActivityCenterView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
@@ -1294,7 +1330,7 @@ struct ActivityCenterView: View {
                         .font(.locus(size: 16, weight: .bold))
                     Text("Your work, across all chats.")
                         .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer(minLength: 0)
                 Button {
@@ -1328,7 +1364,7 @@ struct ActivityCenterView: View {
                 activityTab(.read, count: activityCenter.readRuns.count)
             }
             .padding(4)
-            .background(LocusTheme.paperDeep.opacity(0.7))
+            .background(viewColors.paperDeep.opacity(0.7))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 16)
             .accessibilityElement(children: .contain)
@@ -1346,10 +1382,10 @@ struct ActivityCenterView: View {
                 }
                 Text(tabDescription)
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                    Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
                     TextField("Search activity", text: $searchText)
                         .textFieldStyle(.plain)
                         .accessibilityIdentifier("activity.search")
@@ -1361,13 +1397,13 @@ struct ActivityCenterView: View {
                 }
                 .font(.locus(size: 11))
                 .padding(9)
-                .background(LocusTheme.white.opacity(0.7))
+                .background(viewColors.white.opacity(0.7))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay { RoundedRectangle(cornerRadius: 7).stroke(LocusTheme.line) }
+                .overlay { RoundedRectangle(cornerRadius: 7).stroke(viewColors.line) }
                 if let error = activityCenter.focusError ?? activityCenter.refreshError {
                     Label(error, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                 }
                 if activityCenter.selectedTab == .inbox {
                     HStack {
@@ -1401,7 +1437,7 @@ struct ActivityCenterView: View {
                 }
             }
             .padding(16)
-            Divider().overlay(LocusTheme.line)
+            Divider().overlay(viewColors.line)
 
             if filteredRuns.isEmpty && filteredAttentionItems.isEmpty {
                 emptyContent
@@ -1494,12 +1530,12 @@ struct ActivityCenterView: View {
                 if count > 0 {
                     Text("\(count)")
                         .monospacedDigit()
-                        .foregroundStyle(activityCenter.selectedTab == tab ? LocusTheme.ink : LocusTheme.muted)
+                        .foregroundStyle(activityCenter.selectedTab == tab ? viewColors.ink : viewColors.muted)
                 }
             }
             .font(.locus(size: 11, weight: activityCenter.selectedTab == tab ? .semibold : .medium))
             .frame(maxWidth: .infinity, minHeight: 32)
-            .background(activityCenter.selectedTab == tab ? LocusTheme.white : Color.clear)
+            .background(activityCenter.selectedTab == tab ? viewColors.white : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
@@ -1577,7 +1613,7 @@ struct ActivityCenterView: View {
     private func sectionHeading(_ title: String, count: Int) -> some View {
         HStack(spacing: 6) {
             Text(title).font(.locus(size: 11, weight: .semibold))
-            Text("\(count)").font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+            Text("\(count)").font(.locus(size: 10)).foregroundStyle(viewColors.muted)
         }
         .accessibilityElement(children: .combine)
     }
@@ -1600,7 +1636,7 @@ struct ActivityCenterView: View {
                 Image(systemName: attentionSymbol(item))
                     .font(.locus(size: 13, weight: .semibold))
                     .foregroundStyle(item.group == .decisions
-                        ? LocusTheme.warning : LocusTheme.signalDeep)
+                        ? viewColors.warning : viewColors.signalDeep)
                     .frame(width: 20)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
@@ -1608,13 +1644,13 @@ struct ActivityCenterView: View {
                         .font(.locus(size: 13, weight: .semibold))
                     Text(item.detail)
                         .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                         .textSelection(.enabled)
                     if let sessionID = item.sessionID,
                        let session = sessionCatalog.snapshot.sessionsByID[sessionID] {
                         Text(session.displayTitle)
                             .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .lineLimit(1)
                     }
                 }
@@ -1645,9 +1681,9 @@ struct ActivityCenterView: View {
             }
         }
         .padding(12)
-        .background(LocusTheme.white.opacity(0.72))
+        .background(viewColors.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(viewColors.line) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("attention.item.\(item.id)")
     }
@@ -1752,7 +1788,7 @@ struct ActivityCenterView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(chatTitle(for: run))
                             .font(.locus(size: 13, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                         HStack(spacing: 6) {
@@ -1761,37 +1797,37 @@ struct ActivityCenterView: View {
                             Text(Date(timeIntervalSince1970: run.updatedAt), format: .relative(presentation: .named))
                         }
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                         if let name = agentName(for: run) {
                             Label("By \(name)", systemImage: run.runKind == "team" ? "person.3" : "person.crop.square")
                                 .font(.locus(size: 10, weight: .medium))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .foregroundStyle(viewColors.inkSoft)
                                 .lineLimit(1)
                                 .help(name)
                                 .accessibilityIdentifier("activity.agent.\(run.id)")
                         }
                         Text(workspaceTitle(for: run))
                             .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .lineLimit(1)
                         if run.state != "completed" {
                             Text(run.recoveryReason?.nilIfEmpty ?? meaningfulStatus(for: run))
                                 .font(.locus(size: 11))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .foregroundStyle(viewColors.inkSoft)
                                 .multilineTextAlignment(.leading)
                                 .lineLimit(2)
                         }
                     }
                     Spacer(minLength: 0)
                     if activityCenter.isFinished(run), activityCenter.activityIsUnseen(run) {
-                        Circle().fill(LocusTheme.accentAction).frame(width: 7, height: 7)
+                        Circle().fill(viewColors.accentAction).frame(width: 7, height: 7)
                             .padding(.top, 8)
                             .accessibilityLabel("Unread")
                     }
                     Image(systemName: "chevron.right")
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.top, 6)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1803,7 +1839,7 @@ struct ActivityCenterView: View {
 
             HStack(spacing: 8) {
                 Button(run.state == "completed" ? "View result" : "Open chat") { model.openActivityRun(run) }
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                 if activityCenter.isFinished(run) {
                     if activityCenter.activityIsUnseen(run) {
                         Button("Mark as read") { activityCenter.markActivitySeen(run) }
@@ -1864,9 +1900,9 @@ struct ActivityCenterView: View {
             .buttonStyle(ActivityActionButtonStyle())
         }
         .padding(12)
-        .background(LocusTheme.white.opacity(0.72))
+        .background(viewColors.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.line) }
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(viewColors.line) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("activity.run.\(run.id)")
     }
@@ -1936,17 +1972,21 @@ struct ActivityCenterView: View {
     }
 
     private func color(for run: OrchestrationRun) -> Color {
-        if ["failed", "interrupted"].contains(run.state) { return LocusTheme.warning }
+        if ["failed", "interrupted"].contains(run.state) { return viewColors.warning }
         return switch activityGroup(for: run) {
-        case .attention: LocusTheme.warning
-        case .running: LocusTheme.signalDeep
-        case .queued: LocusTheme.blue
-        case .recent: run.state == "completed" ? LocusTheme.success : LocusTheme.muted
+        case .attention: viewColors.warning
+        case .running: viewColors.signalDeep
+        case .queued: viewColors.blue
+        case .recent: run.state == "completed" ? viewColors.success : viewColors.muted
         }
     }
 }
 
 struct ScheduleEditorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
@@ -2006,7 +2046,7 @@ struct ScheduleEditorView: View {
             footer
         }
         .frame(width: 650, height: 580)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .interactiveDismissDisabled()
         .onAppear {
             guard !initialized else { return }
@@ -2033,16 +2073,16 @@ struct ScheduleEditorView: View {
         HStack(spacing: 12) {
             Image(systemName: "calendar.badge.clock")
                 .font(.locus(size: 19, weight: .medium))
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .frame(width: 42, height: 42)
-                .background(LocusTheme.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .background(viewColors.accentAction.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(draft.id == nil ? "Create a scheduled Agent" : "Edit scheduled Agent")
                     .font(.locus(size: 17, weight: .semibold))
                 Text("Set the work once. Each run continues the Agent’s dedicated chat.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             Spacer()
         }
@@ -2063,22 +2103,22 @@ struct ScheduleEditorView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Instructions").font(.locus(size: 11, weight: .medium))
                 TextEditor(text: instructionsBinding)
-                    .foregroundStyle(LocusTheme.ink)
-                    .tint(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.ink)
+                    .tint(viewColors.accentAction)
                     .scrollContentBackground(.hidden)
                     .font(.locus(size: 11))
                     .frame(height: 104)
                     .padding(8)
-                    .background(LocusTheme.surfaceCard)
+                    .background(viewColors.surfaceCard)
                     .clipShape(RoundedRectangle(cornerRadius: 9))
-                    .overlay { RoundedRectangle(cornerRadius: 9).stroke(LocusTheme.lineStrong) }
+                    .overlay { RoundedRectangle(cornerRadius: 9).stroke(viewColors.lineStrong) }
                     .accessibilityLabel("Instructions for each scheduled run")
                     .accessibilityIdentifier("scheduleEditor.prompt")
                 Text(draft.workflow.steps.count > 1
                     ? "Instructions for the first agent step. Edit the remaining steps in Workflow below."
                     : "Describe what to do and what to report. Temporary context chips and attachments are not included.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -2110,7 +2150,7 @@ struct ScheduleEditorView: View {
             } else {
                 Text(scheduleSummary)
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("scheduleEditor.scheduleSummary")
             }
@@ -2144,7 +2184,7 @@ struct ScheduleEditorView: View {
                 Button("Choose…") { chooseWorkspace() }
                     .accessibilityIdentifier("scheduleEditor.chooseWorkspace")
             }
-            Text(draft.workspaceRoot).font(.locus(size: 10)).foregroundStyle(LocusTheme.textTertiary)
+            Text(draft.workspaceRoot).font(.locus(size: 10)).foregroundStyle(viewColors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 .accessibilityIdentifier("scheduleEditor.workspacePath")
             Picker("Work location", selection: $draft.executionEnvironment) {
@@ -2156,10 +2196,10 @@ struct ScheduleEditorView: View {
                 : selectedProfile.map { draft.workspaceRoot == model.savedAgentHomePath($0) } == true
                     ? "This schedule gets its own task folder inside the agent home."
                     : "Runs use this folder directly. File changes are visible to other chats using it.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("This folder is saved with the schedule. Changing the active chat or the agent’s default does not move its work.")
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -2223,7 +2263,7 @@ struct ScheduleEditorView: View {
                 }
                 Text("Keep Locus running to process scheduled work. The selected provider receives the task when it starts.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let environmentIssue {
@@ -2247,17 +2287,17 @@ struct ScheduleEditorView: View {
     private var permissionSummary: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "lock.shield")
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
                 Text("Access now · \(model.permissionMode.title)")
                     .font(.locus(size: 11, weight: .medium))
                 Text(permissionDetail)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                 Text("Each run uses the app’s permission policy at that time. Approval requests pause the run and notify you.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -2277,7 +2317,7 @@ struct ScheduleEditorView: View {
                 } else {
                     Text(validationIssue ?? (draft.id == nil ? "The schedule starts after you create the Agent." : "Changes apply to future runs."))
                         .font(.locus(size: 9))
-                        .foregroundStyle(validationIssue == nil ? LocusTheme.textTertiary : LocusTheme.warningForeground)
+                        .foregroundStyle(validationIssue == nil ? viewColors.textTertiary : viewColors.warningForeground)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("scheduleEditor.validation")
                 }
@@ -2288,7 +2328,7 @@ struct ScheduleEditorView: View {
                     .accessibilityIdentifier("scheduleEditor.cancel")
                 Button(draft.id == nil ? "Create Agent" : "Save changes") { save() }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.accentAction)
+                    .tint(viewColors.accentAction)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isSaving || validationIssue != nil)
                     .accessibilityIdentifier("scheduleEditor.save")
@@ -2296,7 +2336,7 @@ struct ScheduleEditorView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 14)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
     }
 
     private func sectionHeading(_ title: String, symbol: String) -> some View {
@@ -2310,15 +2350,15 @@ struct ScheduleEditorView: View {
             withAnimation(reduceMotion ? nil : LocusMotion.spatial) { expanded.wrappedValue.toggle() }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: symbol).frame(width: 20).foregroundStyle(LocusTheme.textTertiary)
+                Image(systemName: symbol).frame(width: 20).foregroundStyle(viewColors.textTertiary)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.locus(size: 11, weight: .semibold))
-                    Text(detail).font(.locus(size: 9)).foregroundStyle(LocusTheme.textTertiary).lineLimit(2)
+                    Text(detail).font(.locus(size: 9)).foregroundStyle(viewColors.textTertiary).lineLimit(2)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
             }
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
@@ -2332,7 +2372,7 @@ struct ScheduleEditorView: View {
     private func issueLabel(_ text: String) -> some View {
         Label(text, systemImage: "exclamationmark.circle")
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.warningForeground)
+            .foregroundStyle(viewColors.warningForeground)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -2546,6 +2586,10 @@ struct ScheduleEditorView: View {
 /// could pin the main thread at 100% CPU. This popover owns its width and lets
 /// its contents scroll, so a long route can never resize the app or its menu.
 private struct ModelPickerPopover: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -2575,7 +2619,7 @@ private struct ModelPickerPopover: View {
             if let explanation = model.modelSelectionLockReason {
                 Label(explanation, systemImage: "lock.fill")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14)
                     .accessibilityIdentifier("workspace.modelPicker.lockExplanation")
@@ -2584,7 +2628,7 @@ private struct ModelPickerPopover: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Changes apply to your next message in this chat with \(profile.name).")
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     if model.settings.agentChatModelSelections[model.currentSessionID] != nil {
                         Button("Use agent default") {
                             model.resetAgentChatModel()
@@ -2667,7 +2711,7 @@ private struct ModelPickerPopover: View {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "cpu")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .frame(width: 13)
                     Text(name)
                         .font(.locus(size: 8, design: .monospaced))
@@ -2699,7 +2743,7 @@ private struct ModelPickerPopover: View {
             if let message = section.emptyMessage {
                 Text(message)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             ForEach(section.models, id: \.self) { name in
                 Button {
@@ -2713,8 +2757,8 @@ private struct ModelPickerPopover: View {
                             : "circle")
                             .font(.locus(size: 9))
                             .foregroundStyle(model.isCurrentRoute(account: section.account, model: name)
-                                ? LocusTheme.signalDeep
-                                : LocusTheme.muted)
+                                ? viewColors.signalDeep
+                                : viewColors.muted)
                             .frame(width: 13)
                         Text(name)
                             .font(.locus(size: 9, design: .monospaced))
@@ -2753,11 +2797,15 @@ private struct ModelPickerPopover: View {
         Text(title)
             .font(.locus(size: 8, weight: .bold))
             .tracking(0.7)
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
     }
 }
 
 private struct WorkStatusStrip: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     // The provider pill names the chat's own route, which lives in these
@@ -2773,7 +2821,7 @@ private struct WorkStatusStrip: View {
                 HStack(spacing: 8) {
                     statusPill(
                         label: model.providerLabel,
-                        color: model.providerRuntimePhase.map { runtimeColor($0) } ?? LocusTheme.muted,
+                        color: model.providerRuntimePhase.map { runtimeColor($0) } ?? viewColors.muted,
                         identifier: "workspace.modelStatus"
                     )
                     if model.isBusy, let started = model.activeWorkStartedAt {
@@ -2799,7 +2847,7 @@ private struct WorkStatusStrip: View {
                     }
                 }
                 .font(.locus(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .frame(maxWidth: 740)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.workStatus")
@@ -2834,9 +2882,9 @@ private struct WorkStatusStrip: View {
 
     private func runtimeColor(_ phase: RuntimePhase) -> Color {
         switch phase {
-        case .starting, .recovering: LocusTheme.warning
-        case .online: LocusTheme.success
-        case .unavailable: LocusTheme.coral
+        case .starting, .recovering: viewColors.warning
+        case .online: viewColors.success
+        case .unavailable: viewColors.coral
         }
     }
 }
@@ -2844,6 +2892,10 @@ private struct WorkStatusStrip: View {
 /// Top-level navigation between ordinary conversations and persistent agents.
 /// Work mode remains a property of each conversation's composer.
 struct SidebarDestinationControl: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let destination: SidebarDestination
     let select: (SidebarDestination) -> Void
 
@@ -2867,13 +2919,13 @@ struct SidebarDestinationControl: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 32)
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .clipShape(Capsule())
         .overlay {
             Capsule()
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
-        .shadow(color: LocusTheme.ink.opacity(0.08), radius: 2, y: 1)
+        .shadow(color: viewColors.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
         .animation(LocusMotion.spatial, value: destination)
         .help(destination == .agents ? "Showing agent conversations" : "Showing workspaces and chats")
@@ -2892,13 +2944,13 @@ struct SidebarDestinationControl: View {
         Button(action: action) {
             Text(title)
                 .font(.locus(size: 12, weight: .medium))
-                .foregroundStyle(selected ? LocusTheme.white : LocusTheme.muted)
+                .foregroundStyle(selected ? viewColors.white : viewColors.muted)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
                     if selected {
                         Capsule()
-                            .fill(LocusTheme.inkSoft)
-                            .shadow(color: LocusTheme.ink.opacity(0.16), radius: 1, y: 1)
+                            .fill(viewColors.inkSoft)
+                            .shadow(color: viewColors.ink.opacity(0.16), radius: 1, y: 1)
                     }
                 }
                 .contentShape(Capsule())
@@ -2964,6 +3016,10 @@ private struct TranscriptLayoutStack<Content: View>: View {
 }
 
 private struct ConversationView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     @EnvironmentObject private var schedule: ScheduleModel
@@ -2988,7 +3044,7 @@ private struct ConversationView: View {
         GeometryReader { viewport in
             transcriptContent(viewportWidth: viewport.size.width)
         }
-        .sheet(item: $reusableCheckSource) { source in ReusableChecksView(source: source).environmentObject(model) }
+        .locusSheet(item: $reusableCheckSource) { source in ReusableChecksView(source: source).environmentObject(model) }
     }
 
     private func transcriptContent(viewportWidth: CGFloat) -> some View {
@@ -3081,12 +3137,12 @@ private struct ConversationView: View {
                     } label: {
                         Label("Jump to Latest", systemImage: "arrow.down")
                             .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .padding(.horizontal, 12)
                             .frame(height: 30)
-                            .background(LocusTheme.white)
+                            .background(viewColors.white)
                             .clipShape(Capsule())
-                            .overlay { Capsule().stroke(LocusTheme.line, lineWidth: 1) }
+                            .overlay { Capsule().stroke(viewColors.line, lineWidth: 1) }
                             .shadow(color: .black.opacity(0.08), radius: 12, y: 5)
                     }
                     .buttonStyle(.locus())
@@ -3459,18 +3515,18 @@ private struct ConversationView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline) {
                         Label("Task result", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(LocusTheme.success)
+                            .foregroundStyle(viewColors.success)
                         Spacer(minLength: 8)
                         if let date = result.completedAt {
                             Text(date.formatted(date: .abbreviated, time: .shortened))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                     }
                     .font(.locus(size: 8, weight: .medium))
                     Text(result.title).font(.locus(size: 11, weight: .semibold))
                     if let name = result.agentName {
                         Text("Completed by \(name)")
-                            .font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                     }
                     Divider().padding(.top, 5)
                 }
@@ -3565,10 +3621,10 @@ private struct ConversationView: View {
         .background {
             if taskResult != nil {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(LocusTheme.white.opacity(0.5))
+                    .fill(viewColors.white.opacity(0.5))
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
+                            .stroke(viewColors.line, lineWidth: 1)
                     }
             }
         }
@@ -3577,10 +3633,10 @@ private struct ConversationView: View {
                request.sessionID == transcriptPresentation.snapshot.sessionID,
                request.blockID == sourceBlock.id {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(LocusTheme.accentAction.opacity(0.06))
+                    .fill(viewColors.accentAction.opacity(0.06))
                     .overlay {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(LocusTheme.accentAction, lineWidth: 2)
+                            .stroke(viewColors.accentAction, lineWidth: 2)
                     }
                     .padding(-7)
                     .allowsHitTesting(false)
@@ -3590,8 +3646,8 @@ private struct ConversationView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(
                         style == .current
-                            ? LocusTheme.signalDeep
-                            : LocusTheme.lineStrong.opacity(0.7),
+                            ? viewColors.signalDeep
+                            : viewColors.lineStrong.opacity(0.7),
                         lineWidth: style == .current ? 2 : 1
                     )
                     .padding(-7)
@@ -5170,6 +5226,10 @@ final class TranscriptTailLayoutView: NSView {
 /// ⌘F search over the current conversation. Matches whole blocks (tool cards
 /// excluded); ↵ and ⇧↵ walk matches with wrap-around, esc closes.
 private struct TranscriptSearchBar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @FocusState private var focused: Bool
 
@@ -5188,7 +5248,7 @@ private struct TranscriptSearchBar: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
 
             TextField("Find in conversation", text: $model.transcriptSearchQuery)
                 .textFieldStyle(.plain)
@@ -5207,7 +5267,7 @@ private struct TranscriptSearchBar: View {
             if !countText.isEmpty {
                 Text(countText)
                     .font(.locus(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityIdentifier("search.count")
             }
 
@@ -5218,7 +5278,7 @@ private struct TranscriptSearchBar: View {
                     .font(.locus(size: 9, weight: .semibold))
             }
             .buttonStyle(.locus())
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .disabled(model.transcriptSearchMatches.isEmpty)
             .help("Previous match (⇧↵)")
             .accessibilityLabel("Previous match")
@@ -5231,7 +5291,7 @@ private struct TranscriptSearchBar: View {
                     .font(.locus(size: 9, weight: .semibold))
             }
             .buttonStyle(.locus())
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .disabled(model.transcriptSearchMatches.isEmpty)
             .help("Next match (↵)")
             .accessibilityLabel("Next match")
@@ -5244,22 +5304,26 @@ private struct TranscriptSearchBar: View {
                     .font(.locus(size: 9, weight: .semibold))
             }
             .buttonStyle(.locus())
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .help("Close search (esc)")
             .accessibilityLabel("Close search")
             .accessibilityIdentifier("search.close")
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .onAppear { focused = true }
     }
 }
 
 private struct EmptyConversationView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -5270,13 +5334,13 @@ private struct EmptyConversationView: View {
             Text("How can Locus help?")
                 .font(.locus(size: 26, weight: .medium))
                 .tracking(-0.7)
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .multilineTextAlignment(.center)
                 .accessibilityIdentifier("conversation.welcome.title")
 
             Text("Ask a question or describe what you’d like Locus to do.")
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .multilineTextAlignment(.center)
                 .accessibilityIdentifier("conversation.welcome.prompt")
 
@@ -5300,9 +5364,9 @@ private struct EmptyConversationView: View {
 
     private var runtimeColor: Color {
         switch activeRuntimePhase {
-        case .starting, .recovering: LocusTheme.warning
-        case .online: LocusTheme.success
-        case .unavailable: LocusTheme.coral
+        case .starting, .recovering: viewColors.warning
+        case .online: viewColors.success
+        case .unavailable: viewColors.coral
         }
     }
 
@@ -5407,6 +5471,10 @@ struct LocusMessageMarker: View {
 }
 
 private struct IncomingEventTranscriptCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let context: EventTranscriptContext
 
@@ -5426,30 +5494,30 @@ private struct IncomingEventTranscriptCard: View {
                 Spacer()
                 Text("AUTOMATION EVENT")
                     .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text("TRUSTED INSTRUCTION")
                     .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                 Text(context.instruction)
                     .font(.locus(size: 9, weight: .medium))
             }
             .padding(9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(LocusTheme.signal.opacity(0.1))
+            .background(viewColors.signal.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("UNTRUSTED EVENT DATA")
                     .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                 Text(context.event.subject.isEmpty
                     ? context.event.eventType : context.event.subject)
                     .font(.locus(size: 11, weight: .bold))
                 Text("From \(actor)")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 if !context.event.text.isEmpty {
                     Text(context.event.text)
                         .font(.locus(size: 9))
@@ -5467,11 +5535,11 @@ private struct IncomingEventTranscriptCard: View {
                     }
                 }
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             }
             Text("Normal chat permissions still apply · source event \(context.sourceEventID)")
                 .font(.locus(size: 7, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Button("View event") { model.inspectAgentEvent(context) }
                 .buttonStyle(.locus())
                 .font(.locus(size: 12, weight: .medium))
@@ -5479,11 +5547,11 @@ private struct IncomingEventTranscriptCard: View {
         }
         .padding(12)
         .frame(maxWidth: 620, alignment: .leading)
-        .background(LocusTheme.paperDeep.opacity(0.9))
+        .background(viewColors.paperDeep.opacity(0.9))
         .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.28), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.28), lineWidth: 1)
         }
         .textSelection(.enabled)
         .accessibilityIdentifier("eventTranscript.\(context.deliveryID)")
@@ -5534,6 +5602,10 @@ private struct TrailingFractionLayout: Layout {
 }
 
 struct MessageBlockView: View, Equatable {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     @State private var responseCopied = false
@@ -5595,11 +5667,11 @@ struct MessageBlockView: View, Equatable {
                             )
                             .padding(.horizontal, 13)
                             .padding(.vertical, 11)
-                            .background(LocusTheme.paperDeep.opacity(0.88))
+                            .background(viewColors.paperDeep.opacity(0.88))
                             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                                    .stroke(LocusTheme.line.opacity(0.7), lineWidth: 1)
+                                    .stroke(viewColors.line.opacity(0.7), lineWidth: 1)
                                     // A shape in an overlay takes mouse events
                                     // by default, and this one covers the whole
                                     // bubble: clicks fell through but drags did
@@ -5643,7 +5715,7 @@ struct MessageBlockView: View, Equatable {
                                     Spacer(minLength: 0)
                                 }
                                 .font(.locus(size: 12))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
@@ -5676,24 +5748,24 @@ struct MessageBlockView: View, Equatable {
                 } else {
                     Label(block.text, systemImage: "info.circle")
                         .font(.locus(size: 10, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LocusTheme.paperDeep.opacity(0.7))
+                        .background(viewColors.paperDeep.opacity(0.7))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
 
             case .error:
                 Label(block.text, systemImage: "xmark.octagon.fill")
                     .font(.locus(size: 10, weight: .medium))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(LocusTheme.coral.opacity(0.08))
+                    .background(viewColors.coral.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.coral.opacity(0.28), lineWidth: 1)
+                            .stroke(viewColors.coral.opacity(0.28), lineWidth: 1)
                     }
             }
         }
@@ -5806,10 +5878,10 @@ struct MessageBlockView: View, Equatable {
                     systemImage: responseCopied ? "checkmark" : "doc.on.doc"
                 )
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(responseCopied ? LocusTheme.success : LocusTheme.muted)
+                .foregroundStyle(responseCopied ? viewColors.success : viewColors.muted)
                 .padding(.horizontal, 8)
                 .frame(minWidth: 62, minHeight: 22)
-                .background(LocusTheme.paperDeep.opacity(responseCopied ? 0.92 : 0.68))
+                .background(viewColors.paperDeep.opacity(responseCopied ? 0.92 : 0.68))
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .buttonStyle(.locus())
@@ -5831,9 +5903,9 @@ struct MessageBlockView: View, Equatable {
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 22, height: 22)
-                    .background(LocusTheme.paperDeep.opacity(0.68))
+                    .background(viewColors.paperDeep.opacity(0.68))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .menuStyle(.borderlessButton)
@@ -5865,10 +5937,10 @@ struct MessageBlockView: View, Equatable {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(showsMessageActions ? LocusTheme.muted : Color.clear)
+                .foregroundStyle(showsMessageActions ? viewColors.muted : Color.clear)
                 .frame(width: 24, height: 22)
                 .background(
-                    showsMessageActions ? LocusTheme.paperDeep.opacity(0.8) : Color.clear
+                    showsMessageActions ? viewColors.paperDeep.opacity(0.8) : Color.clear
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
@@ -5885,13 +5957,17 @@ struct MessageBlockView: View, Equatable {
 }
 
 private struct TurnCompletionMarker: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let completion: TurnCompletion
 
     private var color: Color {
         switch completion.outcome {
-        case .complete: LocusTheme.success
-        case .interrupted, .maxIterations, .modelCallBudget: LocusTheme.warning
-        case .error: LocusTheme.coral
+        case .complete: viewColors.success
+        case .interrupted, .maxIterations, .modelCallBudget: viewColors.warning
+        case .error: viewColors.coral
         }
     }
 
@@ -5907,7 +5983,7 @@ private struct TurnCompletionMarker: View {
     var body: some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(height: 1)
 
             Image(systemName: symbol)
@@ -5916,16 +5992,16 @@ private struct TurnCompletionMarker: View {
 
             Text(completion.title)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .fixedSize()
 
             Text("· Worked for \(completion.durationText)")
                 .font(.locus(size: 8, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize()
 
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(height: 1)
         }
         .padding(.vertical, 2)
@@ -5938,6 +6014,10 @@ private struct TurnCompletionMarker: View {
 /// The bordered icon button used for the panel-restore controls in the header.
 /// Shared so the two cannot drift apart.
 private struct HeaderIconButton: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let symbol: String
     let label: String
     let identifier: String
@@ -5947,12 +6027,12 @@ private struct HeaderIconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 13, weight: .medium))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 30, height: 30)
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
         }
         .buttonStyle(.locus())
@@ -5963,6 +6043,10 @@ private struct HeaderIconButton: View {
 }
 
 private struct ContextUsageChip: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @State private var detailPresented = false
 
@@ -6002,7 +6086,7 @@ private struct ContextUsageChip: View {
                 Circle()
                     .trim(from: 0, to: fraction.map { max($0, 0.02) } ?? 0)
                     .stroke(
-                        (fraction ?? 0) > 0.8 ? LocusTheme.warning : LocusTheme.signalDeep,
+                        (fraction ?? 0) > 0.8 ? viewColors.warning : viewColors.signalDeep,
                         // Dashed for a window nobody measured: the ring reads as
                         // precise, and this one is only as good as a vendor's
                         // documentation for a model id.
@@ -6012,20 +6096,20 @@ private struct ContextUsageChip: View {
                     )
                     .rotationEffect(.degrees(-90))
                     .background {
-                        Circle().stroke(LocusTheme.line, lineWidth: 2.5)
+                        Circle().stroke(viewColors.line, lineWidth: 2.5)
                     }
                     .frame(width: 12, height: 12)
                 Text(chipText)
                     .font(.locus(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .padding(.horizontal, 9)
             .frame(height: 32)
-            .background(LocusTheme.white)
+            .background(viewColors.white)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         .buttonStyle(.locus())
@@ -6041,7 +6125,7 @@ private struct ContextUsageChip: View {
                 Text("CONTEXT WINDOW")
                     .font(.locus(size: 8, weight: .bold))
                     .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 statRow(
                     "Model window",
                     model.contextWindowTokens.map { "\($0.formatted()) tokens" } ?? "Unknown"
@@ -6078,7 +6162,7 @@ private struct ContextUsageChip: View {
         HStack {
             Text(label)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Spacer()
             Text(value)
                 .font(.locus(size: 9, weight: .semibold, design: .monospaced))
@@ -6090,12 +6174,16 @@ private struct ContextUsageChip: View {
 /// way the previous underscore-shaped rule did not — it sits on the text
 /// baseline rather than below the paragraph.
 private struct StreamingCaret: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = true
 
     var body: some View {
         RoundedRectangle(cornerRadius: 1, style: .continuous)
-            .fill(LocusTheme.signalDeep)
+            .fill(viewColors.signalDeep)
             .frame(width: 2, height: 14)
             .opacity(visible ? 0.9 : 0.15)
             .animation(LocusMotion.caretBlink(reduceMotion: reduceMotion), value: visible)
@@ -6108,6 +6196,10 @@ private struct StreamingCaret: View {
 }
 
 private struct ThinkingDots: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var active = false
 
@@ -6115,7 +6207,7 @@ private struct ThinkingDots: View {
         HStack(spacing: 4) {
             ForEach(0..<3, id: \.self) { index in
                 Circle()
-                    .fill(LocusTheme.muted)
+                    .fill(viewColors.muted)
                     .frame(width: 4, height: 4)
                     // A quiet luminance pulse communicates activity without
                     // the vestibular cost of endlessly moving dots.
@@ -6127,7 +6219,7 @@ private struct ThinkingDots: View {
             }
             Text("Thinking")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(.leading, 3)
         }
         .animation(reduceMotion ? nil : LocusMotion.activityPulse, value: active)
@@ -6138,6 +6230,10 @@ private struct ThinkingDots: View {
 /// One source-local reasoning item. Collapsed mode rests as a quiet inline
 /// summary; Expanded mode preserves the original detailed card verbatim.
 private struct ThinkingActivityView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let groupID: ThinkingPresentationGroupID
     let entries: [ThinkingPresentationEntry]
@@ -6185,7 +6281,7 @@ private struct ThinkingActivityView: View {
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
         }
@@ -6219,18 +6315,18 @@ private struct ThinkingActivityView: View {
                     if visibility != .expanded {
                         Image(systemName: isOpen ? "chevron.down" : "chevron.right")
                             .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Image(systemName: "brain")
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text("Thought process")
                         .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     Spacer()
                     Text("DONE")
                         .font(.locus(size: 7, weight: .bold))
                         .tracking(0.6)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 39)
@@ -6255,13 +6351,13 @@ private struct ThinkingActivityView: View {
                             )
                         if index < entries.count - 1 {
                             Rectangle()
-                                .fill(LocusTheme.line)
+                                .fill(viewColors.line)
                                 .frame(height: 1)
                         }
                     }
                 }
                 .overlay(alignment: .top) {
-                    Rectangle().fill(LocusTheme.line).frame(height: 1)
+                    Rectangle().fill(viewColors.line).frame(height: 1)
                 }
             }
         }
@@ -6285,6 +6381,10 @@ private struct ThinkingActivityView: View {
 }
 
 private struct ToolActivityView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let groupID: UUID
     let tools: [ToolPayload]
@@ -6345,7 +6445,7 @@ private struct ToolActivityView: View {
                     }
                     HStack(spacing: 0) {
                         Text(compactSummary.title)
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                         if let compactStatusSuffix {
                             Text(" · \(compactStatusSuffix)")
                                 .foregroundStyle(compactStatusColor)
@@ -6390,17 +6490,17 @@ private struct ToolActivityView: View {
     private var hiddenLine: some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(height: 1)
             Image(systemName: statusSymbol)
                 .font(.locus(size: 10, weight: .semibold))
                 .foregroundStyle(statusColor)
             Text(hiddenStatusLabel)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .fixedSize()
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(height: 1)
         }
         .padding(.vertical, 2)
@@ -6445,16 +6545,16 @@ private struct ToolActivityView: View {
 
     private var statusColor: Color {
         switch status {
-        case .awaitingPermission: LocusTheme.warning
-        case .running: LocusTheme.blue
-        case .error: LocusTheme.coral
-        case .denied: LocusTheme.muted
-        case .done: LocusTheme.success
+        case .awaitingPermission: viewColors.warning
+        case .running: viewColors.blue
+        case .error: viewColors.coral
+        case .denied: viewColors.muted
+        case .done: viewColors.success
         }
     }
 
     private var compactStatusColor: Color {
-        status == .done ? LocusTheme.muted : statusColor
+        status == .done ? viewColors.muted : statusColor
     }
 }
 
@@ -6615,6 +6715,10 @@ private final class ToolHeaderHitTestDiagnosticView: NSView {
 #endif
 
 private struct ToolCardView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let tool: ToolPayload
     @State private var expanded = false
 
@@ -6626,7 +6730,7 @@ private struct ToolCardView: View {
                 HStack(spacing: 8) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Image(systemName: statusSymbol)
                         .font(.locus(size: 12, weight: .semibold))
                         .foregroundStyle(statusColor)
@@ -6634,13 +6738,13 @@ private struct ToolCardView: View {
                         .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     Text(tool.summary)
                         .font(.locus(size: 9, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                     Spacer()
                     Text(statusLabel.uppercased())
                         .font(.locus(size: 7, weight: .bold))
                         .tracking(0.6)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 39)
@@ -6663,7 +6767,7 @@ private struct ToolCardView: View {
                         ToolOutputText(text: tool.detail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(10)
-                            .background(LocusTheme.paperDeep.opacity(0.65))
+                            .background(viewColors.paperDeep.opacity(0.65))
                             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     }
 
@@ -6673,7 +6777,7 @@ private struct ToolCardView: View {
                         } else {
                             Text(result)
                                 .font(.locus(size: 9, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .lineLimit(14)
                                 .textSelection(.enabled)
                         }
@@ -6687,12 +6791,12 @@ private struct ToolCardView: View {
                             systemImage: "arrow.down.to.line"
                         )
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                     }
                 }
                 .padding(11)
                 .overlay(alignment: .top) {
-                    Rectangle().fill(LocusTheme.line).frame(height: 1)
+                    Rectangle().fill(viewColors.line).frame(height: 1)
                 }
             }
             if let media = tool.media, !media.isEmpty {
@@ -6719,11 +6823,11 @@ private struct ToolCardView: View {
 
     private var statusColor: Color {
         switch tool.status {
-        case .awaitingPermission: LocusTheme.warning
-        case .running: LocusTheme.blue
-        case .done: LocusTheme.success
-        case .error: LocusTheme.coral
-        case .denied: LocusTheme.muted
+        case .awaitingPermission: viewColors.warning
+        case .running: viewColors.blue
+        case .done: viewColors.success
+        case .error: viewColors.coral
+        case .denied: viewColors.muted
         }
     }
 
@@ -6739,6 +6843,10 @@ private struct ToolCardView: View {
 }
 
 private struct MCPImagePreview: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let reference: ToolMediaReference
     @State private var data: Data?
@@ -6762,12 +6870,12 @@ private struct MCPImagePreview: View {
                     }
             } else if let failure {
                 Label(failure, systemImage: "photo")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
             } else {
                 ProgressView().controlSize(.small)
             }
             Text("\(reference.name) · \(reference.width)×\(reference.height)")
-                .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("tool.image.\(reference.id)")

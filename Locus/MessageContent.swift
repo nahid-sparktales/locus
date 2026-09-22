@@ -158,6 +158,10 @@ enum DiffDetector {
 /// thinking-visibility mode, block markdown with copyable code cards, plain
 /// paragraphs elsewhere.
 struct MessageContentView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let text: String
     let isStreaming: Bool
     var reasoningText: String? = nil
@@ -221,7 +225,7 @@ struct MessageContentView: View {
                         .controlSize(.mini)
                     Text("Thinking…")
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .accessibilityIdentifier("message.thinking.hiddenIndicator")
             }
@@ -282,6 +286,10 @@ struct MessageContentView: View {
 /// The active reply publishes an append-only revision. Completed Markdown
 /// blocks freeze once, while the mutable tail stays native plain text.
 struct StreamingMessageContentView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var reply: StreamingReplyState
     var snapshotOverride: StreamingReplySnapshot? = nil
     let thinkingVisibility: ThinkingVisibility
@@ -321,7 +329,7 @@ struct StreamingMessageContentView: View {
                         }
                         Text("Thinking…")
                             .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                 }
             } else {
@@ -334,7 +342,7 @@ struct StreamingMessageContentView: View {
                     onOpenWorkspaceReference: onOpenWorkspaceReference
                 )
                 Capsule()
-                    .fill(LocusTheme.signalDeep)
+                    .fill(viewColors.signalDeep)
                     .frame(width: 9, height: 2)
                     .opacity(0.8)
             }
@@ -348,6 +356,10 @@ struct StreamingMessageContentView: View {
 }
 
 private struct StreamingThinkingSegmentView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let sections: [String]
@@ -397,7 +409,7 @@ private struct StreamingThinkingSegmentView: View {
                 if isActive { ProgressView().controlSize(.mini) }
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
         }
@@ -436,7 +448,7 @@ private struct StreamingThinkingSegmentView: View {
                     if isActive { ProgressView().controlSize(.mini) }
                     Spacer()
                 }
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(.horizontal, 11)
                 .frame(height: 34)
                 .contentShape(Rectangle())
@@ -454,11 +466,11 @@ private struct StreamingThinkingSegmentView: View {
                 .padding(.bottom, 12)
             }
         }
-        .background(LocusTheme.paperDeep.opacity(0.46))
+        .background(viewColors.paperDeep.opacity(0.46))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
+                .stroke(viewColors.line.opacity(0.8), lineWidth: 1)
         }
     }
 
@@ -657,6 +669,10 @@ final class AppendOnlyTextView: LocusSelectionTextView {
 /// Reasoning disclosure. Collapsed mode rests as a lightweight inline summary;
 /// Expanded mode pins the existing detailed card open.
 struct ThinkingSegmentView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     var sections: [String] = []
@@ -693,7 +709,7 @@ struct ThinkingSegmentView: View {
                 if isActive { ProgressView().controlSize(.mini) }
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(minHeight: 24)
             .contentShape(Rectangle())
         }
@@ -725,7 +741,7 @@ struct ThinkingSegmentView: View {
                     }
                     Spacer()
                 }
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(.horizontal, 11)
                 .frame(height: 34)
                 .contentShape(Rectangle())
@@ -745,11 +761,11 @@ struct ThinkingSegmentView: View {
                     .padding(.bottom, 12)
             }
         }
-        .background(LocusTheme.paperDeep.opacity(0.46))
+        .background(viewColors.paperDeep.opacity(0.46))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(LocusTheme.line.opacity(0.8), lineWidth: 1)
+                .stroke(viewColors.line.opacity(0.8), lineWidth: 1)
         }
     }
 
@@ -768,6 +784,10 @@ struct ThinkingSegmentView: View {
 }
 
 private struct ReasoningSectionsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let sections: [String]
     let workspacePath: String?
     let streaming: Bool
@@ -790,7 +810,7 @@ private struct ReasoningSectionsView: View {
                 }
                 if index < sections.count - 1 {
                     Rectangle()
-                        .fill(LocusTheme.line.opacity(0.75))
+                        .fill(viewColors.line.opacity(0.75))
                         .frame(height: 1)
                 }
             }
@@ -1196,6 +1216,10 @@ extension EnvironmentValues {
 }
 
 struct CodeBlockView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let language: String?
     let code: String
     var density: MarkdownRenderDensity = .regular
@@ -1248,14 +1272,14 @@ struct CodeBlockView: View {
             HStack(spacing: 7) {
                 Image(systemName: headerSymbol)
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(displayLanguage)
                     .font(.locus(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                 if isLong {
                     Text("\(lines.count) lines")
                         .font(.locus(size: 9, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 if isLong {
@@ -1264,7 +1288,7 @@ struct CodeBlockView: View {
                     } label: {
                         Image(systemName: collapsed ? "chevron.down" : "chevron.up")
                             .font(.locus(size: 8, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.locus())
@@ -1290,10 +1314,10 @@ struct CodeBlockView: View {
                             systemImage: sentToTerminal ? "checkmark" : "play.fill"
                         )
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(sentToTerminal ? LocusTheme.success : LocusTheme.muted)
+                        .foregroundStyle(sentToTerminal ? viewColors.success : viewColors.muted)
                         .padding(.horizontal, 7)
                         .frame(height: 24)
-                        .background(LocusTheme.white.opacity(0.7))
+                        .background(viewColors.white.opacity(0.7))
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                     .buttonStyle(.locus())
@@ -1315,10 +1339,10 @@ struct CodeBlockView: View {
                         systemImage: copied ? "checkmark" : "doc.on.doc"
                     )
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(copied ? LocusTheme.success : LocusTheme.muted)
+                    .foregroundStyle(copied ? viewColors.success : viewColors.muted)
                     .padding(.horizontal, 7)
                     .frame(height: 24)
-                    .background(LocusTheme.white.opacity(0.7))
+                    .background(viewColors.white.opacity(0.7))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.locus())
@@ -1327,10 +1351,10 @@ struct CodeBlockView: View {
             }
             .padding(.horizontal, 11)
             .frame(height: 34)
-            .background(LocusTheme.paperDeep.opacity(0.78))
+            .background(viewColors.paperDeep.opacity(0.78))
 
             Rectangle()
-                .fill(LocusTheme.line.opacity(0.8))
+                .fill(viewColors.line.opacity(0.8))
                 .frame(height: 1)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1368,25 +1392,25 @@ struct CodeBlockView: View {
 
             if collapsed, isLong {
                 Rectangle()
-                    .fill(LocusTheme.line.opacity(0.8))
+                    .fill(viewColors.line.opacity(0.8))
                     .frame(height: 1)
                 Button("Show all \(lines.count) lines") {
                     collapsed = false
                 }
                 .buttonStyle(.plain)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                 .contentShape(Rectangle())
                 .accessibilityIdentifier("message.codeBlock.showAll")
             }
         }
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -1486,6 +1510,10 @@ struct DiffTextView: View {
 
 /// Chooses between diff-aware and plain monospaced rendering for tool output.
 struct ToolOutputText: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let text: String
 
     var body: some View {
@@ -1494,7 +1522,7 @@ struct ToolOutputText: View {
         } else {
             Text(text)
                 .font(.locus(size: 9, design: .monospaced))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

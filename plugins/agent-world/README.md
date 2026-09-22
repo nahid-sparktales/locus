@@ -1,5 +1,48 @@
 # Agent World for Locus
 
+## Current agent workflow
+
+Select an agent or ship to open **Overview**, the same agent page used in the main
+workspace. It includes settings, chats, automations, connections, and recent results.
+**Chat** opens its conversation with the native tools alongside it. Use **Show tools**
+or **Hide tools** to control the split view without leaving the chat.
+**New chat**, **Crew Chat**, and agent editing remain available inside Agent World.
+**Captain’s Quarters** opens a large, themed management deck over the ocean
+(**Agent workspace** in Outpost). It keeps the searchable crew list beside the
+shared agent overview, chat, and workspace tools. Calendar and Task board have
+direct navigation and stay beside chat when a conversation is active. The crew
+overview lists all agents as cards, even before one is selected. Accounts, Plugins, Connections, automations, Library, and
+Identity Vault use the existing native controls. The task board is Locus’s shared
+project board; it is not an Atlassian Jira connection. Board cards can open a new,
+profile-bound chat in the world with an editable draft, without sending it.
+
+Captain’s Quarters has a full ship-deck backdrop and defaults to warm wood,
+cream, and brass. **Settings → Captain’s Quarters appearance** keeps **Ocean blue**
+available; the choice persists between launches. Native sheets, editors, chat,
+and tools inherit the chosen palette. The ocean map keeps its blue appearance.
+
+Calendar always includes **Locus Calendar**, stored locally and usable without an
+external account. Connected macOS calendars overlay it with separate visibility
+controls. Both event and board editors include an **@ Tag an agent** picker;
+tags store stable agent IDs and show current profile names. Tags identify agents;
+they do not automatically dispatch work or send calendar invitations.
+
+Click the camera on an agent’s Overview to choose a profile picture. Right-click
+the picture to remove it. Pictures appear in the regular sidebar, agent picker,
+overview, and world crew list. They are cropped locally to 256px thumbnails,
+persisted separately from execution profiles, and excluded from plugin snapshots.
+
+The native **Activity Center** shows live tasks, approvals, results, refresh errors,
+and recovery actions. The snail communicator opens that same Activity Center.
+
+When work starts, ships reserve the nearest free island by navigable sailing
+distance. Existing reservations survive queued and attention states, and release
+on completion. All fourteen Local Line islands can host work. A mint glow follows
+working ships until docking, then the island shoreline and beacon light up.
+Decorative rendezvous never divert working ships. Reduced motion keeps signals
+static. The four near-bank island models face across the channel; Alabatcha sits
+farther left, with more water separating it from Elbatch.
+
 Meet your saved agents in **Orbital Locus Outpost**, or set sail in **The Local Line**
 with a separate ship for each agent. Chat and assign work through a native
 Locus conversation panel.
@@ -29,9 +72,9 @@ and hair, and robots share the campus. **Pandas** and **Explorers** remain avail
 The choice is remembered, and existing agents keep their kind as the roster changes.
 Pandas and humans have articulated walking and idle animation.
 
-In The Local Line, each ship has its own island and pier. Idle agents roam freely
-across the sea, pausing briefly between destinations; working agents return and dock
-side-on at their island. Once settled, a small One Piece-inspired crew walks and
+In The Local Line, each working ship reserves an available island and pier. Idle agents roam freely
+across the sea, pausing briefly between destinations; working agents choose the
+nearest reachable free island and dock side-on. Once settled, a small One Piece-inspired crew walks and
 works in the shore plaza; it leaves before the ship departs. Eight articulated
 character designs are built locally without additional generation credits. Each agent keeps its own ship design, named in the Fleet list. The
 twelve ships include Thousand Funny, Going Sherry, BaratAI, Navy Q4, Polar Tensor,
@@ -50,11 +93,11 @@ sailing, rocking, wakes, moving water, and drifting scenery.
 **Crew Chat** is shared with the main Agents page. Mention a member with `@` or
 let the recipient preview select agents whose declared skills match your request.
 Only selected members reply through their own saved models and permissions.
-**Captain’s Quarters** opens the full native Locus chat, composer, inspector,
+**Captain’s Quarters** (or **Agent workspace** in Outpost) opens the full native Locus chat, composer, inspector,
 agent editing, and task controls. Approvals and input requests appear in the
 **Ping Ping** card at the top right; selecting one opens the exact request. Collapse the card
 to a pill or hide it, then use **Show alerts** to restore it. This choice is remembered.
-**Ship signals** lists these alerts and actual context/result handoffs. Courier
+**Activity Center** shows live work, approvals, and saved results. Courier
 skiffs carry those handoffs between islands once per event.
 
 The plugin requests:

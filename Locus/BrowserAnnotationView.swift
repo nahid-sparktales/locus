@@ -45,6 +45,10 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 /// `AnnotationGeometry` paths draw the live preview and the flattened export,
 /// so preview equals output by construction.
 struct BrowserScreenshotSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let draft: BrowserScreenshotDraft
     /// Returns whether the attachment was accepted — a full composer refuses,
     /// and the sheet must keep the user's annotation work alive when it does.
@@ -70,14 +74,14 @@ struct BrowserScreenshotSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(LocusTheme.line)
+            Divider().overlay(viewColors.line)
             toolStrip
             canvasArea
-            Divider().overlay(LocusTheme.line)
+            Divider().overlay(viewColors.line)
             footer
         }
         .frame(width: 900, height: 640)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .onExitCommand { dismiss() }
     }
 
@@ -88,7 +92,7 @@ struct BrowserScreenshotSheet: View {
                     .font(.locus(size: 15, weight: .bold))
                 Text(draft.pageTitle.isEmpty ? "Captured page" : draft.pageTitle)
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(1)
             }
             Spacer()
@@ -126,7 +130,7 @@ struct BrowserScreenshotSheet: View {
                             .frame(width: 14, height: 14)
                             .overlay {
                                 if swatch == color {
-                                    Circle().stroke(LocusTheme.ink, lineWidth: 2)
+                                    Circle().stroke(viewColors.ink, lineWidth: 2)
                                         .padding(-2)
                                 }
                             }
@@ -188,7 +192,7 @@ struct BrowserScreenshotSheet: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(14)
-        .background(LocusTheme.paperDeep.opacity(0.5))
+        .background(viewColors.paperDeep.opacity(0.5))
         .accessibilityIdentifier("browser.annotate.canvas")
     }
 
@@ -335,7 +339,7 @@ struct BrowserScreenshotSheet: View {
             if attachRefused {
                 Text("The composer could not take it — remove an attachment or crop smaller.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .accessibilityIdentifier("browser.annotate.refused")
             }
             Spacer()
@@ -358,7 +362,7 @@ struct BrowserScreenshotSheet: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .tint(LocusTheme.ink)
+            .tint(viewColors.ink)
             .keyboardShortcut(.return, modifiers: .command)
             .accessibilityIdentifier("browser.annotate.attach")
         }

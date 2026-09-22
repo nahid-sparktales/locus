@@ -6,6 +6,10 @@ import SwiftUI
 /// The account and its key are handed back to `AppModel` on Save — nothing is
 /// written while the sheet is open, so Cancel really does leave no trace.
 struct AccountEditorView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var codexComponent: CodexComponentInstaller
@@ -106,7 +110,7 @@ struct AccountEditorView: View {
                 systemImage: "lock.open"
             )
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.warningForeground)
+            .foregroundStyle(viewColors.warningForeground)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("accountEditor.cleartextRoutable")
         case .cleartextPrivate:
@@ -115,7 +119,7 @@ struct AccountEditorView: View {
                 systemImage: "lock.open"
             )
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.textSecondary)
+            .foregroundStyle(viewColors.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("accountEditor.cleartextPrivate")
         case .encrypted, .none:
@@ -137,7 +141,7 @@ struct AccountEditorView: View {
                             : "Models served by \(kind.vendorName)"
                     )
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button {
@@ -151,7 +155,7 @@ struct AccountEditorView: View {
             }
             .padding(17)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
 
             Form {
@@ -165,7 +169,7 @@ struct AccountEditorView: View {
 
                     Text("Names tell two accounts for the same provider apart in the model picker.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
 
                     if kind.isManagedPlan {
                         chatGPTControls
@@ -198,7 +202,7 @@ struct AccountEditorView: View {
                     if let note = kind.note {
                         Text(note.text)
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("accountEditor.note")
                         if note.hasLink, let noteURL = URL(string: note.linkURL) {
@@ -216,7 +220,7 @@ struct AccountEditorView: View {
 
                     Text(windowHelp)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
 
                     HStack(spacing: 10) {
@@ -241,26 +245,26 @@ struct AccountEditorView: View {
                     if let testResult {
                         Text(testResult)
                             .font(.locus(size: 9))
-                            .foregroundStyle(testFailed ? LocusTheme.coral : LocusTheme.success)
+                            .foregroundStyle(testFailed ? viewColors.coral : viewColors.success)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Text("The key is written to \(CredentialStore.displayPath), readable only by your macOS user account, and passed to the local agent in memory. It is only ever sent to this provider. Anything else running as you can read that file.")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
+            .background(viewColors.surfaceCanvas)
 
             HStack(spacing: 12) {
                 if let saveBlocker {
                     Text(saveBlocker)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("accountEditor.saveBlocker")
                 }
@@ -274,11 +278,11 @@ struct AccountEditorView: View {
             }
             .padding(17)
             .overlay(alignment: .top) {
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
             }
         }
         .frame(width: 520, height: 480)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .onExitCommand { dismiss() }
         .onAppear {
             name = account.name
@@ -300,14 +304,14 @@ struct AccountEditorView: View {
         VStack(alignment: .leading, spacing: 10) {
             if let status, status.status == "signed_in" {
                 Label("Signed in", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(LocusTheme.success)
+                    .foregroundStyle(viewColors.success)
                 if let email = status.email, !email.isEmpty {
                     Text(email).font(.locus(size: 10, weight: .semibold))
                 }
                 if let plan = status.planType, !plan.isEmpty {
                     Text("\(plan.replacingOccurrences(of: "_", with: " ").capitalized) plan")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 HStack {
                     Button("Refresh") {
@@ -342,7 +346,7 @@ struct AccountEditorView: View {
                 if let message = status?.message, !message.isEmpty {
                     Text(message)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button(kind == .claudePlan ? "Sign in with Claude" : "Sign in with ChatGPT") {
@@ -357,14 +361,14 @@ struct AccountEditorView: View {
                 .accessibilityIdentifier("accountEditor.chatGPT.nativeMode")
             Text("Off by default: this account's chats use Locus's prompt, tools, memory, and skills. Turn it on to match OpenAI's Codex instead — native prompt and tools, and no Locus memory or skills here. Changing this restarts conversation context.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             Toggle("Web search", isOn: $webSearch)
                 .accessibilityIdentifier("accountEditor.chatGPT.webSearch")
             Text("Lets the model use OpenAI's web search (sends search queries to OpenAI).")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             }
@@ -381,7 +385,7 @@ struct AccountEditorView: View {
                 + "Locus never reads or stores its OAuth tokens and does not switch this account to API-key billing."
             )
             .font(.locus(size: 9))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -422,7 +426,7 @@ struct AccountEditorView: View {
                     + "It is about 100 MB to download and stays on this Mac until you remove it."
                 )
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 Button("Download and Continue") {
                     Task { await model.installCodexComponent(for: account, allowUnsavedAccount: isNew) }
@@ -443,11 +447,11 @@ struct AccountEditorView: View {
             case let .installed(version):
                 Label("ChatGPT plan support \(version) installed", systemImage: "checkmark.circle.fill")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.success)
+                    .foregroundStyle(viewColors.success)
             case let .failed(message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.danger)
+                    .foregroundStyle(viewColors.danger)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try Again") {
                     Task { await model.installCodexComponent(for: account, allowUnsavedAccount: isNew) }
@@ -462,7 +466,7 @@ struct AccountEditorView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             if let fraction {
                 ProgressView(value: fraction)
             } else {

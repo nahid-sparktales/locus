@@ -5,6 +5,10 @@ import SwiftUI
 /// decision is always where your hands already are. ↑/↓ move the selection,
 /// 1–3 answer directly, ↵ confirms, esc denies.
 struct PermissionPromptView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let request: ToolPayload
 
@@ -28,7 +32,7 @@ struct PermissionPromptView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.warning.opacity(0.55), lineWidth: 1)
+                .stroke(viewColors.warning.opacity(0.55), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .focusable()
@@ -76,21 +80,21 @@ struct PermissionPromptView: View {
             Text("PERMISSION REQUIRED")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
             HStack(spacing: 7) {
                 Image(systemName: "shield.lefthalf.filled.badge.checkmark")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .accessibilityHidden(true)
                 Text(request.tool)
                     .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .frame(height: 18)
-                    .background(LocusTheme.paperDeep)
+                    .background(viewColors.paperDeep)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text(question)
                     .font(.locus(size: 12, weight: .bold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
             }
         }
     }
@@ -103,13 +107,13 @@ struct PermissionPromptView: View {
             if !summary.isEmpty, summary != detail {
                 Text(summary)
                     .font(.locus(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                     .textSelection(.enabled)
                     .lineLimit(2)
             }
             if summary.isEmpty && detail.isEmpty {
                 Text("No preview was supplied for this request.")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
             }
             if !detail.isEmpty {
                 ScrollView {
@@ -122,7 +126,7 @@ struct PermissionPromptView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LocusTheme.paperDeep.opacity(0.65))
+        .background(viewColors.paperDeep.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityIdentifier("permission.preview")
     }
@@ -161,37 +165,37 @@ struct PermissionPromptView: View {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text("\(index + 1).")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(title)
                     .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.horizontal, 5)
                         .frame(height: 15)
                         .overlay {
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
+                                .stroke(viewColors.line, lineWidth: 1)
                         }
                 }
                 if isSelected {
                     Text("↵")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(minHeight: 34)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }

@@ -309,12 +309,113 @@ private struct LocusOceanThemeKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct LocusCaptainDeckThemeKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
+    var locusCaptainDeckTheme: Bool {
+        get { self[LocusCaptainDeckThemeKey.self] }
+        set { self[LocusCaptainDeckThemeKey.self] = newValue }
+    }
+
     /// Scoped to the Agent World subtree; regular Locus windows retain their appearance.
     var locusOceanTheme: Bool {
         get { self[LocusOceanThemeKey.self] }
         set { self[LocusOceanThemeKey.self] = newValue }
     }
+}
+
+struct LocusWorldSheetTheme: ViewModifier {
+    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusCaptainDeckTheme) private var deck
+    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    func body(content: Content) -> some View {
+        if ocean || deck {
+            content.foregroundStyle(colors.ink).tint(colors.signalDeep).background(colors.paper)
+        } else { content }
+    }
+}
+
+extension View {
+    /// Every native sheet inherits its presenting world, including nested editors.
+    /// Outside Agent World this keeps the standard sheet appearance untouched.
+    func locusSheet<Sheet: View>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil,
+                                 @ViewBuilder content: @escaping () -> Sheet) -> some View {
+        sheet(isPresented: isPresented, onDismiss: onDismiss) {
+            content().modifier(LocusWorldSheetTheme())
+        }
+    }
+
+    func locusSheet<Item: Identifiable, Sheet: View>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
+                                                    @ViewBuilder content: @escaping (Item) -> Sheet) -> some View {
+        sheet(item: item, onDismiss: onDismiss) { value in
+            content(value).modifier(LocusWorldSheetTheme())
+        }
+    }
+}
+
+/// SwiftUI normalizes NSAppearance to light/dark before resolving dynamic
+/// NSColors. Read the world palette from the view environment instead, so
+/// forms, popovers and sheets retain the theme without affecting other windows.
+struct LocusViewColors {
+    let ocean: Bool
+    let deck: Bool
+    init(ocean: Bool, deck: Bool = false) { self.ocean = ocean; self.deck = deck }
+    private var themed: Bool { ocean || deck }
+    private var palette: LocusTheme.Palette { deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette }
+    var ink: Color { themed ? Color(nsColor: palette.ink) : LocusTheme.ink }
+    var inkSoft: Color { themed ? Color(nsColor: palette.inkSoft) : LocusTheme.inkSoft }
+    var paper: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.paper }
+    var paperDeep: Color { themed ? Color(nsColor: palette.paperDeep) : LocusTheme.paperDeep }
+    var panel: Color { themed ? Color(nsColor: palette.panel) : LocusTheme.panel }
+    var white: Color { themed ? Color(nsColor: palette.white) : LocusTheme.white }
+    var line: Color { themed ? Color(nsColor: palette.line) : LocusTheme.line }
+    var lineStrong: Color { themed ? Color(nsColor: palette.lineStrong) : LocusTheme.lineStrong }
+    var muted: Color { themed ? Color(nsColor: palette.muted) : LocusTheme.muted }
+    var signal: Color { themed ? Color(nsColor: palette.signal) : LocusTheme.signal }
+    var signalDeep: Color { themed ? Color(nsColor: palette.signalDeep) : LocusTheme.signalDeep }
+    var coral: Color { themed ? Color(nsColor: palette.coral) : LocusTheme.coral }
+    var danger: Color { themed ? Color(nsColor: palette.danger) : LocusTheme.danger }
+    var blue: Color { themed ? Color(nsColor: palette.blue) : LocusTheme.blue }
+    var success: Color { themed ? Color(nsColor: palette.success) : LocusTheme.success }
+    var warning: Color { themed ? Color(nsColor: palette.warning) : LocusTheme.warning }
+    var successSoft: Color { themed ? Color(nsColor: palette.successSoft) : LocusTheme.successSoft }
+    var codeKeyword: Color { themed ? Color(nsColor: palette.codeKeyword) : LocusTheme.codeKeyword }
+    var codeType: Color { themed ? Color(nsColor: palette.codeType) : LocusTheme.codeType }
+    var contentLink: Color { themed ? Color(nsColor: palette.contentLink) : LocusTheme.contentLink }
+    var codeFunction: Color { themed ? Color(nsColor: palette.codeFunction) : LocusTheme.codeFunction }
+    var codeString: Color { themed ? Color(nsColor: palette.codeString) : LocusTheme.codeString }
+    var codeNumber: Color { themed ? Color(nsColor: palette.codeNumber) : LocusTheme.codeNumber }
+    var codeProperty: Color { themed ? Color(nsColor: palette.codeProperty) : LocusTheme.codeProperty }
+    var codePunctuation: Color { themed ? Color(nsColor: palette.codePunctuation) : LocusTheme.codePunctuation }
+    var diffAdded: Color { themed ? Color(nsColor: palette.diffAdded) : LocusTheme.diffAdded }
+    var diffRemoved: Color { themed ? Color(nsColor: palette.diffRemoved) : LocusTheme.diffRemoved }
+    var textPrimary: Color { themed ? Color(nsColor: palette.ink) : LocusTheme.textPrimary }
+    var textSecondary: Color { themed ? Color(nsColor: palette.inkSoft) : LocusTheme.textSecondary }
+    var textTertiary: Color { themed ? Color(nsColor: palette.muted) : LocusTheme.textTertiary }
+    var surfaceCanvas: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.surfaceCanvas }
+    var surfaceStructural: Color { themed ? Color(nsColor: palette.paperDeep) : LocusTheme.surfaceStructural }
+    var surfacePanel: Color { themed ? Color(nsColor: palette.panel) : LocusTheme.surfacePanel }
+    var surfaceCard: Color { themed ? Color(nsColor: palette.white) : LocusTheme.surfaceCard }
+    var separator: Color { themed ? Color(nsColor: palette.line) : LocusTheme.separator }
+    var separatorStrong: Color { themed ? Color(nsColor: palette.lineStrong) : LocusTheme.separatorStrong }
+    var accentFill: Color { themed ? Color(nsColor: palette.signal) : LocusTheme.accentFill }
+    var accentAction: Color { themed ? Color(nsColor: palette.signalDeep) : LocusTheme.accentAction }
+    var successForeground: Color { themed ? Color(nsColor: palette.success) : LocusTheme.successForeground }
+    var warningForeground: Color { themed ? Color(nsColor: palette.warning) : LocusTheme.warningForeground }
+    var dangerForeground: Color { themed ? Color(nsColor: palette.danger) : LocusTheme.dangerForeground }
+    var inlineCodeFill: Color { themed ? Color(nsColor: palette.paperDeep) : LocusTheme.inlineCodeFill }
+    var focusRing: Color { themed ? Color(nsColor: palette.blue) : LocusTheme.focusRing }
+    var noteCoral: Color { themed ? Color(nsColor: palette.coral) : LocusTheme.noteCoral }
+    var noteAmber: Color { themed ? Color(nsColor: palette.warning) : LocusTheme.noteAmber }
+    var noteGreen: Color { themed ? Color(nsColor: palette.success) : LocusTheme.noteGreen }
+    var noteBlue: Color { themed ? Color(nsColor: palette.blue) : LocusTheme.noteBlue }
+    var notePurple: Color { themed ? Color(nsColor: palette.codeKeyword) : LocusTheme.notePurple }
+    var noteGray: Color { themed ? Color(nsColor: palette.muted) : LocusTheme.noteGray }
+    var brandInk: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.brandInk }
+    var diffAddedFill: Color { diffAdded.opacity(0.08) }
+    var diffRemovedFill: Color { diffRemoved.opacity(0.08) }
 }
 
 enum LocusTheme {
@@ -405,6 +506,19 @@ enum LocusTheme {
         successSoft: rgb(0x2A3226),
         codeKeyword: rgb(0xC1A4BD),
         codeType: rgb(0x92B9B5)
+    )
+
+    /// Warm walnut surfaces and brass accents for Captain’s Quarters.
+    static let deckPalette = Palette(
+        ink: rgb(0xFFF4DF), inkSoft: rgb(0xE7D1B5),
+        paper: rgb(0x3B271D), paperDeep: rgb(0x2C1E18),
+        panel: rgb(0x4A3123), white: rgb(0x5F402B),
+        line: rgb(0x8A6542), lineStrong: rgb(0xB89162),
+        muted: rgb(0xD6BBA0), signal: rgb(0xF2CB89), signalDeep: rgb(0xEFC27D),
+        coral: rgb(0xEAB59D), danger: rgb(0xF0A39A), blue: rgb(0xB8D4D8),
+        success: rgb(0xBAD19E), warning: rgb(0xF2CB89),
+        permissionInk: rgb(0xF0D3A8), permissionMuted: rgb(0xD0C6AA),
+        successSoft: rgb(0x3C4B30), codeKeyword: rgb(0xDDB9CE), codeType: rgb(0xAED7CF)
     )
 
     static let oceanPalette = Palette(
@@ -541,7 +655,7 @@ enum LocusTheme {
     }
 
     static func palette(for appearance: NSAppearance) -> Palette {
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? darkPalette
             : lightPalette
     }
@@ -563,7 +677,7 @@ enum LocusTheme {
         // returns a distinct dynamic NSColor, so a re-evaluated body still
         // reads as a changed value.
         Color(nsColor: NSColor(name: nil) { appearance in
-            resolve(LocusAccentRuntime.shared.currentSelection(), appearance)
+            return resolve(LocusAccentRuntime.shared.currentSelection(), appearance)
         })
     }
 
@@ -732,6 +846,10 @@ enum LocusSurfaceKind {
 }
 
 private struct LocusSurfaceModifier: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -743,15 +861,15 @@ private struct LocusSurfaceModifier: ViewModifier {
     private var solidColor: Color {
         if ocean {
             switch kind {
-            case .structural: return Color(nsColor: LocusTheme.oceanPalette.paper)
-            case .toolbar: return Color(nsColor: LocusTheme.oceanPalette.panel)
-            case .floating: return Color(nsColor: LocusTheme.oceanPalette.white)
+            case .structural: return viewColors.paper
+            case .toolbar: return viewColors.panel
+            case .floating: return viewColors.white
             }
         }
         return switch kind {
-        case .structural: LocusTheme.surfaceStructural
-        case .toolbar: LocusTheme.surfacePanel
-        case .floating: LocusTheme.surfaceCard
+        case .structural: viewColors.surfaceStructural
+        case .toolbar: viewColors.surfacePanel
+        case .floating: viewColors.surfaceCard
         }
     }
 
@@ -786,20 +904,24 @@ private struct LocusSurfaceModifier: ViewModifier {
 }
 
 private struct LocusCardModifier: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.colorSchemeContrast) private var contrast
     let radius: CGFloat
 
     func body(content: Content) -> some View {
         content
-            .background(ocean ? Color(nsColor: LocusTheme.oceanPalette.white) : LocusTheme.surfaceCard)
+            .background(viewColors.surfaceCard)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(
                         contrast == .increased
-                            ? LocusTheme.separatorStrong
-                            : LocusTheme.separator,
+                            ? viewColors.separatorStrong
+                            : viewColors.separator,
                         lineWidth: contrast == .increased ? 1.5 : 1
                     )
                     // The border decorates the card; its content owns input.
@@ -810,9 +932,13 @@ private struct LocusCardModifier: ViewModifier {
 }
 
 private struct LocusWorkspaceBackground: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.locusOceanTheme) private var ocean
     func body(content: Content) -> some View {
-        content.background(ocean ? Color(nsColor: LocusTheme.oceanPalette.panel) : LocusTheme.panel)
+        content.background(viewColors.panel)
     }
 }
 
@@ -833,6 +959,10 @@ struct LocusButtonStyle: ButtonStyle {
 }
 
 private struct LocusButtonStyleBody: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isFocused) private var isFocused
@@ -845,10 +975,10 @@ private struct LocusButtonStyleBody: View {
 
     private var hoverColor: Color {
         switch kind {
-        case .quiet, .icon: LocusTheme.textPrimary.opacity(0.055)
-        case .card: LocusTheme.accentFill.opacity(0.10)
+        case .quiet, .icon: viewColors.textPrimary.opacity(0.055)
+        case .card: viewColors.accentFill.opacity(0.10)
         case .primary: Color.white.opacity(0.12)
-        case .destructive: LocusTheme.dangerForeground.opacity(0.10)
+        case .destructive: viewColors.dangerForeground.opacity(0.10)
         }
     }
 
@@ -864,7 +994,7 @@ private struct LocusButtonStyleBody: View {
                         // ring at once — those panels disable the focus
                         // effect, and the ring has to honor that.
                         isFocused && focusEffectEnabled
-                            ? LocusTheme.focusRing : Color.clear,
+                            ? viewColors.focusRing : Color.clear,
                         lineWidth: contrast == .increased ? 3 : 2
                     )
                     .padding(-2)
@@ -1136,6 +1266,10 @@ struct MCPLogo: View {
 }
 
 struct SettingsAdvancedLabel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     var detail: String
 
     var body: some View {
@@ -1145,12 +1279,12 @@ struct SettingsAdvancedLabel: View {
                     .fontWeight(.semibold)
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         } icon: {
             Image(systemName: "slider.horizontal.3")
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .frame(width: 24)
         }
         .padding(.vertical, 3)
@@ -1158,6 +1292,10 @@ struct SettingsAdvancedLabel: View {
 }
 
 struct SettingsAdvancedDisclosureRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Binding var isExpanded: Bool
     var detail: String
 
@@ -1172,7 +1310,7 @@ struct SettingsAdvancedDisclosureRow: View {
                 Spacer(minLength: 12)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .accessibilityHidden(true)
             }

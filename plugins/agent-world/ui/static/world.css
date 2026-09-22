@@ -269,6 +269,8 @@ body[data-demo=true] .courier-label .agent-label-name:before{content:"Demo · "}
 
 /* The communicator stays within reach; the sea remains clear until it is opened. */
 .world-header-actions{display:flex;gap:9px;align-items:center;pointer-events:auto}
+/* Native windows own the agent roster, world menu and appearance controls. */
+body[data-native-chrome=true] .world-header,body[data-native-chrome=true] .roster-panel{display:none!important}
 .standalone-residents-button{display:flex;align-items:center;gap:7px;background:#102e40e8;border:1px solid #d7c59540;border-radius:8px;padding:10px 12px;color:#dacfae;font-size:10px;line-height:1.3;white-space:nowrap}.standalone-residents-button>span{font-size:15px;line-height:1}.standalone-residents-button:hover,.standalone-residents-button[aria-expanded=true]{background:#244858;border-color:#e4cd8b80;color:#f3dfb7}
 .resident-card{min-width:0}.resident-ship-picker{display:flex;align-items:center;gap:9px;margin:0 6px 9px 8px;padding:0 3px 9px;color:#92afb7;font-size:8px;border-bottom:1px solid #d7c59515}.resident-ship-picker>span{flex:none}.resident-ship-picker select{min-width:0;width:100%;background:#0b283b;color:#dacfaf;border:1px solid #d4c3943d;border-radius:5px;padding:6px 5px;font:inherit;font-size:8px;line-height:1.4;cursor:pointer}.resident-ship-picker select:focus-visible{outline:2px solid #ecd29b;outline-offset:2px}.resident-ship-picker option{background:#0b283b;color:#e3d8b8}body[data-demo=true][data-environment=ocean] .roster-panel{width:252px}body[data-demo=true][data-environment=ocean] .resident-list{max-height:min(46vh,calc(100vh - 424px))}
 :root{--communications-top:98px;--communications-right:28px;--communications-width:284px;--center-top:214px}

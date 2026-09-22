@@ -5,6 +5,10 @@ import SwiftUI
 /// minimized without moving keyboard focus. Opening a workspace panel takes
 /// its place on the right until that panel closes.
 struct SessionOverviewView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var session: SessionStateEmitter
@@ -78,8 +82,8 @@ struct SessionOverviewView: View {
             .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
         }
         .frame(height: detail == nil ? min(maximumHeight, summaryHeight + 46) : maximumHeight)
-        .background(LocusTheme.paperDeep)
-        .foregroundStyle(LocusTheme.ink)
+        .background(viewColors.paperDeep)
+        .foregroundStyle(viewColors.ink)
         .font(.locus(size: 11))
         .animation(reduceMotion ? nil : LocusMotion.spatial, value: detail)
         .onChange(of: model.currentSessionID) { detail = nil }
@@ -109,6 +113,10 @@ struct SessionOverviewView: View {
 }
 
 struct RequestOverviewActivity: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.locusWorkspaceGeometry) private var geometry
     @ObservedObject var session: SessionStateEmitter
@@ -127,7 +135,7 @@ struct RequestOverviewActivity: View {
                     maximumHeight: min(380, max(220, geometry.workspaceHeight - 150))
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay { RoundedRectangle(cornerRadius: 12).stroke(LocusTheme.lineStrong, lineWidth: 1) }
+                .overlay { RoundedRectangle(cornerRadius: 12).stroke(viewColors.lineStrong, lineWidth: 1) }
                 .shadow(color: .black.opacity(0.14), radius: 16, y: 6)
             } else {
                 HStack(spacing: 0) {
@@ -158,9 +166,9 @@ struct RequestOverviewActivity: View {
                     .help("Dismiss request overview")
                     .accessibilityLabel("Dismiss request overview")
                 }
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .locusSurface(.floating, radius: 10)
-                .overlay { RoundedRectangle(cornerRadius: 10).stroke(LocusTheme.lineStrong, lineWidth: 1) }
+                .overlay { RoundedRectangle(cornerRadius: 10).stroke(viewColors.lineStrong, lineWidth: 1) }
                 .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -177,6 +185,10 @@ private struct OverviewContentHeightKey: PreferenceKey {
 
 /// Back button plus an eyebrow title, mirroring the Runs tab's push header.
 struct SummaryDetailHeader: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     let count: Int?
     let onBack: () -> Void
@@ -186,7 +198,7 @@ struct SummaryDetailHeader: View {
             Button(action: onBack) {
                 Label("Overview", systemImage: "chevron.left")
                     .font(.locus(size: 11, weight: .semibold))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .padding(.horizontal, 6)
                     .frame(minHeight: 27)
                     .contentShape(Rectangle())
@@ -198,13 +210,13 @@ struct SummaryDetailHeader: View {
             Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())
                 .font(.locus(size: 9, weight: .bold))
                 .tracking(0.5)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .lineLimit(1)
         }
         .padding(.horizontal, 12)
         .frame(height: 31)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 }
@@ -212,6 +224,10 @@ struct SummaryDetailHeader: View {
 /// Codex's complete source list: icon, label, muted meta, and the activity
 /// lines that explain how each source was used.
 struct SourcesDetailView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let sources: [PinnedSummary.SourceRow]
     @ObservedObject var browser: BrowserService
     let onBack: () -> Void
@@ -225,7 +241,7 @@ struct SourcesDetailView: View {
                     if sources.isEmpty {
                         Text("No sources yet")
                             .font(.locus(size: 11))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -234,7 +250,7 @@ struct SourcesDetailView: View {
                             model.openSummarySource(row.source)
                         }
                         if index < sources.count - 1 {
-                            Rectangle().fill(LocusTheme.line).frame(height: 1)
+                            Rectangle().fill(viewColors.line).frame(height: 1)
                                 .accessibilityHidden(true)
                         }
                     }
@@ -266,6 +282,10 @@ struct SourcesDetailView: View {
 }
 
 private struct SourceDetailRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let row: PinnedSummary.SourceRow
     let index: Int
     let icon: SummaryIcon
@@ -300,19 +320,19 @@ private struct SourceDetailRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.source.label)
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
                     .lineLimit(2)
                 if let meta = row.meta {
                     Text(meta)
                         .font(.locus(size: 10))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 ForEach(row.detailLines, id: \.self) { line in
                     Text(line)
                         .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                 }
             }
             Spacer(minLength: 0)
@@ -326,6 +346,10 @@ private struct SourceDetailRow: View {
 
 /// The plan as a checklist, opened from the summary's plan row.
 struct PlanDetailView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
     @ObservedObject var session: SessionStateEmitter
@@ -346,7 +370,7 @@ struct PlanDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(state.completedStepCount) of \(state.plan.count) steps done")
                             .font(.locus(size: 11))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .padding(.horizontal, 4)
                         VStack(spacing: 3) {
                             ForEach(state.plan) { step in
@@ -380,6 +404,10 @@ struct PlanDetailView: View {
 }
 
 private struct SessionPlanStepRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let step: SessionPlanStep
     let now: Date
 
@@ -395,12 +423,12 @@ private struct SessionPlanStepRow: View {
             if step.state == .running, let started = step.startedAt {
                 Text(elapsed(from: started))
                     .font(.locus(size: 8.5, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
             }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
-        .background(step.state == .running ? LocusTheme.successSoft : .clear)
+        .background(step.state == .running ? viewColors.successSoft : .clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         // `.ignore` (not `.combine`): with only an image and a text child,
         // AppKit collapses a combined row onto the text and drops the label.
@@ -413,22 +441,22 @@ private struct SessionPlanStepRow: View {
     private var stepIcon: some View {
         switch step.state {
         case .done:
-            Image(systemName: "checkmark").fontWeight(.bold).foregroundStyle(LocusTheme.success)
+            Image(systemName: "checkmark").fontWeight(.bold).foregroundStyle(viewColors.success)
         case .running:
-            ProgressView().controlSize(.small).tint(LocusTheme.signalDeep)
+            ProgressView().controlSize(.small).tint(viewColors.signalDeep)
         case .pending:
-            Image(systemName: "circle").foregroundStyle(LocusTheme.muted)
+            Image(systemName: "circle").foregroundStyle(viewColors.muted)
         case .failed:
-            Image(systemName: "xmark").fontWeight(.bold).foregroundStyle(LocusTheme.danger)
+            Image(systemName: "xmark").fontWeight(.bold).foregroundStyle(viewColors.danger)
         }
     }
 
     private var labelColor: Color {
         switch step.state {
-        case .done: LocusTheme.muted
-        case .running: LocusTheme.ink
-        case .pending: LocusTheme.inkSoft
-        case .failed: LocusTheme.danger
+        case .done: viewColors.muted
+        case .running: viewColors.ink
+        case .pending: viewColors.inkSoft
+        case .failed: viewColors.danger
         }
     }
 

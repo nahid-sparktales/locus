@@ -179,6 +179,10 @@ struct InspectorContextTab: View {
 }
 
 struct ContextWindowInfoCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @State private var expandedCategories: Set<String> = []
 
@@ -195,18 +199,18 @@ struct ContextWindowInfoCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Context window")
                     .font(.locus(size: 12, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("≈\(compactTokens(usage.used))")
                         .font(.locus(size: 20, weight: .semibold))
                     Text(usage.window.map { "/ \(compactTokens($0))" } ?? "/ Unknown")
                         .font(.locus(size: 13))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Spacer(minLength: 0)
                     if let fraction = usage.fraction {
                         Text(fraction.formatted(.percent.precision(.fractionLength(0))))
                             .font(.locus(size: 12, weight: .semibold))
-                            .foregroundStyle(fraction > 0.8 ? LocusTheme.warning : LocusTheme.ink)
+                            .foregroundStyle(fraction > 0.8 ? viewColors.warning : viewColors.ink)
                     }
                 }
                 .monospacedDigit()
@@ -234,24 +238,24 @@ struct ContextWindowInfoCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Available on demand")
                         .font(.locus(size: 11, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     ForEach(usage.deferred) { category in
                         categoryRow(category, window: nil)
                     }
                     Text("Deferred tools do not use context until loaded.")
                         .font(.locus(size: 11))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Text(usage.note)
                 .font(.locus(size: 11))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Text(model.contextWindowProvenance.label)
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
         .padding(12)
         .locusCard(radius: 10)
@@ -292,7 +296,7 @@ struct ContextWindowInfoCard: View {
                             Text(compactTokens(max(item.tokens, 0)))
                                 .font(.locus(size: 11, design: .monospaced))
                         }
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     }
                 }
                 .padding(.leading, 24)
@@ -317,7 +321,7 @@ struct ContextWindowInfoCard: View {
             Spacer(minLength: 2)
             tokenColumns(category.tokens, window: window)
         }
-        .foregroundStyle(LocusTheme.ink)
+        .foregroundStyle(viewColors.ink)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -339,9 +343,9 @@ struct ContextWindowInfoCard: View {
     private func tokenColumns(_ tokens: Int?, window: Int?) -> some View {
         HStack(spacing: 7) {
             Text(tokens.map(compactTokens) ?? "Unknown")
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(percentage(tokens, window: window))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .frame(width: 43, alignment: .trailing)
         }
         .font(.locus(size: 11, design: .monospaced))
@@ -373,8 +377,8 @@ struct ContextWindowInfoCard: View {
         case "agent_instructions": .pink
         case "workspace_instructions": .teal
         case "memory": .indigo
-        case "free": LocusTheme.line
-        default: LocusTheme.muted.opacity(0.5)
+        case "free": viewColors.line
+        default: viewColors.muted.opacity(0.5)
         }
     }
 
@@ -390,11 +394,11 @@ struct ContextWindowInfoCard: View {
                     color(item.id)
                         .frame(width: geometry.size.width * Double(item.tokens) / Double(total))
                         .overlay(alignment: .trailing) {
-                            Rectangle().fill(LocusTheme.paper).frame(width: 1)
+                            Rectangle().fill(viewColors.paper).frame(width: 1)
                         }
                 }
             }
-            .background(LocusTheme.line)
+            .background(viewColors.line)
             .clipShape(Capsule())
         }
         .frame(height: 7)

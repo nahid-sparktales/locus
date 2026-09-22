@@ -26,6 +26,7 @@ extension AppModel {
                 self.splitPaneBlocks[id] = ChatTranscriptBuilder.blocks(from: detail.messages)
             },
             activity: { [weak self] profile, workspace in
+                if let activity = self?.agentWorldSavedChatActivity(profileID: profile.id, workspace: workspace) { return activity }
                 if let activity = self?.agentCrewChat.activity(for: profile.id, workspace: workspace), activity.busy { return activity }
                 guard let self, SessionSummary.canonicalWorkspacePath(self.workspacePath) == workspace,
                       let activity = self.teamRunLive.agentActivities.first(where: {
@@ -55,6 +56,17 @@ extension AppModel {
             manage: { [weak self] in self?.settingsPage = .agents; self?.settingsPresented = true },
             defaults: persistenceEnabled ? .standard : nil
         )
+    }
+
+    /// A ship represents its agent across saved chats, including work started on
+    /// the regular agent page rather than the world's most recent chat binding.
+    func agentWorldSavedChatActivity(profileID: UUID, workspace: String) -> AgentWorldConversationState? {
+        let priority = ["needs_attention": 0, "working": 1, "queued": 2]
+        return sessions.filter {
+            !$0.isArchived && $0.belongsToWorkspace(workspace) && savedAgentProfileID(for: $0.id) == profileID
+        }.map { agentWorldConversationState($0.id) }
+            .filter(\.busy)
+            .min { (priority[$0.status] ?? 3) < (priority[$1.status] ?? 3) }
     }
 
     func agentWorldProfileDispatch(profileID: UUID, mode: WorkMode, sessionID: String? = nil,

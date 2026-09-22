@@ -34,6 +34,10 @@ struct InspectorBrowserTab: View {
 }
 
 struct BrowserPanel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     let sessionID: String
     let homeURL: URL?
@@ -102,7 +106,7 @@ struct BrowserPanel: View {
                             }
                         }
                         Text("Fill and attach locally. AI reads page text only after your review.")
-                            .font(.caption2).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.caption2).foregroundStyle(viewColors.textTertiary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 }
                 if let prompt = browser.autofillPrompt,
@@ -133,7 +137,7 @@ struct BrowserPanel: View {
             browser.prewarm()
         }
         .background(shortcutHost)
-        .sheet(item: $screenshotDraft) { draft in
+        .locusSheet(item: $screenshotDraft) { draft in
             BrowserScreenshotSheet(draft: draft) { data in
                 onAttachToChat?(data) ?? false
             }
@@ -244,7 +248,7 @@ struct BrowserPanel: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
 
             TextField("Find on page", text: $findQuery)
                 .textFieldStyle(.plain)
@@ -260,7 +264,7 @@ struct BrowserPanel: View {
             if findMatched == false, !findQuery.isEmpty {
                 Text("Not found")
                     .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .accessibilityIdentifier("browser.find.empty")
             }
 
@@ -288,12 +292,12 @@ struct BrowserPanel: View {
             .help("Close find bar")
             .accessibilityLabel("Close find bar")
         }
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(viewColors.muted)
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityIdentifier("browser.find")
     }
@@ -311,7 +315,7 @@ struct BrowserPanel: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.locus(size: 9, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .frame(width: 20, height: 20)
                     }
                     .buttonStyle(.locus())
@@ -331,9 +335,9 @@ struct BrowserPanel: View {
             }
         }
         .accessibilityIdentifier("browser.tabs")
-        .background(LocusTheme.paperDeep)
+        .background(viewColors.paperDeep)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -354,14 +358,14 @@ struct BrowserPanel: View {
                 } else {
                     Image(systemName: "globe")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .frame(width: 12, height: 12)
             .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
             Text(title)
                 .font(.locus(size: 9, weight: tab.isActive ? .semibold : .regular))
-                .foregroundStyle(tab.isActive ? LocusTheme.ink : LocusTheme.muted)
+                .foregroundStyle(tab.isActive ? viewColors.ink : viewColors.muted)
                 .lineLimit(1)
                 .frame(maxWidth: 120)
             Button {
@@ -369,7 +373,7 @@ struct BrowserPanel: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.locus(size: 7, weight: .bold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .buttonStyle(.locus())
             .help("Close tab")
@@ -377,12 +381,12 @@ struct BrowserPanel: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(tab.isActive ? LocusTheme.white : .clear)
+        .background(tab.isActive ? viewColors.white : .clear)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay {
             if tab.isActive {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         .contentShape(Rectangle())
@@ -434,7 +438,7 @@ struct BrowserPanel: View {
             }
             .buttonStyle(.locus())
             .disabled(snapshot?.canGoBack != true)
-            .foregroundStyle(snapshot?.canGoBack == true ? LocusTheme.ink : LocusTheme.muted)
+            .foregroundStyle(snapshot?.canGoBack == true ? viewColors.ink : viewColors.muted)
             .help("Back")
             .accessibilityLabel("Back")
             .accessibilityIdentifier("browser.back")
@@ -446,7 +450,7 @@ struct BrowserPanel: View {
             }
             .buttonStyle(.locus())
             .disabled(snapshot?.canGoForward != true)
-            .foregroundStyle(snapshot?.canGoForward == true ? LocusTheme.ink : LocusTheme.muted)
+            .foregroundStyle(snapshot?.canGoForward == true ? viewColors.ink : viewColors.muted)
             .help("Forward")
             .accessibilityLabel("Forward")
             .accessibilityIdentifier("browser.forward")
@@ -458,7 +462,7 @@ struct BrowserPanel: View {
                     Image(systemName: "xmark").font(.locus(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(LocusTheme.coral)
+                .foregroundStyle(viewColors.coral)
                 .help("Stop loading")
                 .accessibilityLabel("Stop loading")
                 .accessibilityIdentifier("browser.stop")
@@ -469,7 +473,7 @@ struct BrowserPanel: View {
                     Image(systemName: "arrow.clockwise").font(.locus(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(snapshot == nil ? LocusTheme.muted : LocusTheme.ink)
+                .foregroundStyle(snapshot == nil ? viewColors.muted : viewColors.ink)
                 .disabled(snapshot == nil)
                 .help("Reload")
                 .accessibilityLabel("Reload page")
@@ -491,7 +495,7 @@ struct BrowserPanel: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 38)
-        .background(LocusTheme.paperDeep.opacity(0.72))
+        .background(viewColors.paperDeep.opacity(0.72))
     }
 
     @ViewBuilder
@@ -499,13 +503,13 @@ struct BrowserPanel: View {
         if let snapshot, snapshot.isLoading {
             GeometryReader { proxy in
                 Rectangle()
-                    .fill(LocusTheme.signalDeep)
+                    .fill(viewColors.signalDeep)
                     .frame(width: proxy.size.width * max(0.05, snapshot.progress))
             }
             .frame(height: 2)
             .animation(LocusMotion.content, value: snapshot.progress)
         } else {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -586,8 +590,8 @@ struct BrowserPanel: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 34)
-        .background(LocusTheme.paperDeep)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .background(viewColors.paperDeep)
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private func tabDisplayTitle(_ tab: BrowserService.TabSnapshot?) -> String {
@@ -632,7 +636,7 @@ struct BrowserPanel: View {
         } label: {
             Image(systemName: snapshot?.url.hasPrefix("https://") == true ? "lock.fill" : "info.circle")
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(snapshot?.url.hasPrefix("https://") == true ? LocusTheme.signalDeep : LocusTheme.muted)
+                .foregroundStyle(snapshot?.url.hasPrefix("https://") == true ? viewColors.signalDeep : viewColors.muted)
                 .frame(width: 24, height: 24)
         }
         .menuStyle(.borderlessButton)
@@ -761,7 +765,7 @@ struct BrowserPanel: View {
                         Image(systemName: "clock").frame(width: 18)
                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
                         Spacer()
-                        Text(entry.host).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
+                        Text(entry.host).font(.caption).foregroundStyle(viewColors.textTertiary).lineLimit(1)
                     }
                     .padding(.horizontal, 10)
                     .frame(height: 30)
@@ -771,7 +775,7 @@ struct BrowserPanel: View {
             }
         }
         .background(.regularMaterial)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
         .accessibilityIdentifier("browser.omnibox.suggestions")
     }
 
@@ -781,12 +785,12 @@ struct BrowserPanel: View {
 
     private func passwordSaveBanner(_ prompt: BrowserPasswordSavePrompt) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "key.fill").foregroundStyle(LocusTheme.signalDeep)
+            Image(systemName: "key.fill").foregroundStyle(viewColors.signalDeep)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Save password for \(URL(string: prompt.origin)?.host ?? prompt.origin)?")
                     .font(.locus(size: 10, weight: .semibold))
                 if !prompt.username.isEmpty {
-                    Text(prompt.username).font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    Text(prompt.username).font(.caption).foregroundStyle(viewColors.textTertiary)
                 }
             }
             Spacer()
@@ -797,7 +801,7 @@ struct BrowserPanel: View {
         .padding(.horizontal, 12)
         .frame(minHeight: 44)
         .background(.regularMaterial)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
         .accessibilityIdentifier("browser.passwordSave")
     }
 
@@ -876,6 +880,10 @@ struct BorrowedWebView: NSViewRepresentable {
 }
 
 private struct BrowserQuickHistory: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: BrowserActivityStore
     let open: (String) -> Void
 
@@ -894,10 +902,10 @@ private struct BrowserQuickHistory: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
-                                        Text(entry.url).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
+                                        Text(entry.url).font(.caption).foregroundStyle(viewColors.textTertiary).lineLimit(1)
                                     }
                                     Spacer()
-                                    Text(entry.visitedAt, style: .relative).font(.caption2).foregroundStyle(LocusTheme.textTertiary)
+                                    Text(entry.visitedAt, style: .relative).font(.caption2).foregroundStyle(viewColors.textTertiary)
                                 }.padding(.horizontal, 12).frame(height: 46)
                             }.buttonStyle(.plain)
                         }
@@ -909,6 +917,10 @@ private struct BrowserQuickHistory: View {
 }
 
 private struct BrowserQuickDownloads: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @ObservedObject var store: BrowserActivityStore
 
@@ -924,7 +936,7 @@ private struct BrowserQuickDownloads: View {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(store.downloads.prefix(20)) { item in
                             VStack(alignment: .leading, spacing: 5) {
-                                HStack { Text(item.fileName).lineLimit(1); Spacer(); Text(item.state.rawValue.capitalized).font(.caption).foregroundStyle(LocusTheme.textTertiary) }
+                                HStack { Text(item.fileName).lineLimit(1); Spacer(); Text(item.state.rawValue.capitalized).font(.caption).foregroundStyle(viewColors.textTertiary) }
                                 if item.state == .running { ProgressView(value: item.progress) }
                                 HStack {
                                     if item.state == .running { Button("Pause") { browser.pauseDownload(item.id) }; Button("Cancel") { browser.cancelDownload(item.id) } }
@@ -942,6 +954,10 @@ private struct BrowserQuickDownloads: View {
 }
 
 private struct BrowserAutofillSuggestionBar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @ObservedObject private var vault: BrowserAutofillVault
     let prompt: BrowserAutofillPrompt
@@ -954,7 +970,7 @@ private struct BrowserAutofillSuggestionBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: symbol).foregroundStyle(LocusTheme.signalDeep)
+            Image(systemName: symbol).foregroundStyle(viewColors.signalDeep)
             Text(title).font(.locus(size: 9, weight: .semibold))
             if vault.isLoading {
                 ProgressView().controlSize(.small)
@@ -971,7 +987,7 @@ private struct BrowserAutofillSuggestionBar: View {
         .padding(.horizontal, 10)
         .frame(minHeight: 38)
         .background(.regularMaterial)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
         .accessibilityIdentifier("browser.autofill.suggestions")
         .task { if !vault.isReady { await vault.load() } }
     }
@@ -1011,6 +1027,10 @@ private struct BrowserAutofillSuggestionBar: View {
 // MARK: - Console / network drawer
 
 struct CaptureDrawer: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var log: BrowserCaptureLog
     @State private var pane = Pane.console
 
@@ -1058,9 +1078,9 @@ struct CaptureDrawer: View {
             }
         }
         .frame(height: 150)
-        .background(LocusTheme.white.opacity(0.6))
+        .background(viewColors.white.opacity(0.6))
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .accessibilityIdentifier("browser.drawer.content")
     }
@@ -1070,12 +1090,12 @@ struct CaptureDrawer: View {
         if log.console.isEmpty {
             Text("The console is empty.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         } else {
             ForEach(log.console) { entry in
                 Text("[\(entry.level)] \(entry.message)")
                     .font(.locus(size: 9, design: .monospaced))
-                    .foregroundStyle(entry.isError ? LocusTheme.coral : LocusTheme.inkSoft)
+                    .foregroundStyle(entry.isError ? viewColors.coral : viewColors.inkSoft)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .id(entry.id)
@@ -1083,7 +1103,7 @@ struct CaptureDrawer: View {
             if log.droppedEntries > 0 {
                 Text("\(log.droppedEntries) entries dropped while the page was noisy.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
         }
     }
@@ -1093,12 +1113,12 @@ struct CaptureDrawer: View {
         if log.network.isEmpty {
             Text("No requests recorded for this page.")
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         } else {
             ForEach(log.network) { entry in
                 Text(entry.summary)
                     .font(.locus(size: 9, design: .monospaced))
-                    .foregroundStyle(entry.ok ? LocusTheme.inkSoft : LocusTheme.coral)
+                    .foregroundStyle(entry.ok ? viewColors.inkSoft : viewColors.coral)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .id(entry.id)

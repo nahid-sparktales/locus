@@ -31,6 +31,10 @@ enum SummaryDetail: Hashable {
 /// only while it has something to say (Outputs and Sources always show so
 /// their "+" actions stay discoverable).
 struct PinnedSummaryCard: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @EnvironmentObject private var backgroundServices: BackgroundServicesModel
@@ -129,7 +133,7 @@ struct PinnedSummaryCard: View {
                 icon: .process,
                 label: row.label,
                 meta: row.meta,
-                metaColor: failed ? LocusTheme.danger : LocusTheme.muted,
+                metaColor: failed ? viewColors.danger : viewColors.muted,
                 identifier: "plan.activity.row.\(index)",
                 accessibilityLabel: [row.label, row.meta].compactMap { $0 }.joined(separator: ", "),
                 help: row.label,
@@ -274,10 +278,10 @@ struct PinnedSummaryCard: View {
 
     private func subagentColor(_ status: PinnedSummary.SubagentStatus) -> Color {
         switch status {
-        case .working: LocusTheme.success
-        case .waiting: LocusTheme.warning
-        case .done: LocusTheme.muted
-        case .failed: LocusTheme.danger
+        case .working: viewColors.success
+        case .waiting: viewColors.warning
+        case .done: viewColors.muted
+        case .failed: viewColors.danger
         }
     }
 
@@ -414,6 +418,10 @@ struct PinnedSummaryCard: View {
 /// collapsed, chevron shows on hover, trailing action stays put, and a
 /// hairline separates it from the next section.
 struct SummarySection<Trailing: View, Content: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The person's own choice, persisted per section like Codex's
     /// `thread-summary-panel-section-expanded-<key>`.
@@ -472,7 +480,7 @@ struct SummarySection<Trailing: View, Content: View>: View {
             .padding(-4)
             if !isLast {
                 Rectangle()
-                    .fill(LocusTheme.line)
+                    .fill(viewColors.line)
                     .frame(height: 1)
                     .padding(.top, 2)
                     .accessibilityHidden(true)
@@ -516,16 +524,16 @@ struct SummarySection<Trailing: View, Content: View>: View {
                 HStack(spacing: 6) {
                     Text(title)
                         .font(.locus(size: 11, weight: .bold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                     if isCollapsed, let count, count > 0 {
                         Text("\(count)")
                             .font(.locus(size: 11))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .opacity(hovering || isCollapsed ? 1 : 0)
                         .accessibilityHidden(true)
                     Spacer(minLength: 0)
@@ -570,6 +578,10 @@ extension SummarySection where Trailing == EmptyView {
 
 /// The 27×27 "+" in a section header that drops a menu.
 struct SummaryHeaderMenu<Items: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let symbol: String
     let label: String
     let identifier: String
@@ -581,7 +593,7 @@ struct SummaryHeaderMenu<Items: View>: View {
         } label: {
             Image(systemName: symbol)
                 .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 27, height: 27)
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
@@ -595,6 +607,10 @@ struct SummaryHeaderMenu<Items: View>: View {
 }
 
 struct SummaryHeaderButton: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let symbol: String
     let label: String
     let identifier: String
@@ -604,7 +620,7 @@ struct SummaryHeaderButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 11, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 27, height: 27)
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
@@ -620,6 +636,10 @@ struct SummaryHeaderButton: View {
 /// Codex's `q.List`: the first six rows, then "Show N more" (up to 50 at a
 /// time) that turns into "Show less" once everything is out.
 struct SummaryList<Item: Identifiable, Row: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var extraVisible = 0
 
@@ -661,7 +681,7 @@ struct SummaryList<Item: Identifiable, Row: View>: View {
                 } label: {
                     Text(remaining == 0 ? "Show less" : "Show \(min(remaining, PinnedSummary.visibleItemIncrement)) more")
                         .font(.locus(size: 11, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.horizontal, 8)
                         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                         .contentShape(Rectangle())
@@ -686,6 +706,10 @@ struct SummaryList<Item: Identifiable, Row: View>: View {
 /// Leading glyph, label, optional trailing meta, optional chevron; the whole
 /// row is one button when it has an action.
 struct SummaryRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let icon: SummaryIcon
     let label: String
     var meta: String? = nil
@@ -751,7 +775,7 @@ struct SummaryRow: View {
                 .accessibilityHidden(true)
             Text(label)
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .lineLimit(1)
                 .truncationMode(truncation)
             Spacer(minLength: 6)
@@ -764,7 +788,7 @@ struct SummaryRow: View {
             if showsChevron {
                 Image(systemName: "chevron.right")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityHidden(true)
             }
         }
@@ -777,6 +801,10 @@ struct SummaryRow: View {
 /// Codex's empty state is the section's own action rendered as a full-width
 /// row — a `Menu` styled like `SummaryRow`.
 struct SummaryEmptyRow<Items: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     /// Codex's empty rows are text-only; pass a symbol to lead with a glyph.
     var symbol: String?
@@ -803,13 +831,13 @@ struct SummaryEmptyRow<Items: View>: View {
                 if let symbol {
                     Image(systemName: symbol)
                         .font(.locus(size: 11, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(width: 18, height: 18)
                         .accessibilityHidden(true)
                 }
                 Text(title)
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
@@ -884,6 +912,10 @@ enum SummaryIcon {
 // MARK: - Card chrome
 
 private struct SummaryCardChrome: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     /// Cards fill their column; a chrome-wrapped control that sits in a row
     /// beside others opts out so it can hug its own content instead.
     var stretches = true
@@ -891,11 +923,11 @@ private struct SummaryCardChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: stretches ? .infinity : nil, alignment: .leading)
-            .background(LocusTheme.white.opacity(0.72))
+            .background(viewColors.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
     }
 }

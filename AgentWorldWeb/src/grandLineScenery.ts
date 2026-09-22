@@ -16,7 +16,7 @@ import { createOceanWater } from './oceanWater';
 import { LaboonCompanion } from './laboonInteraction';
 import type { Point } from './state';
 
-import { GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
+import { islandArtworkRotation, GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
 export { GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
 
 type XYZ = [number, number, number];
@@ -319,7 +319,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     owner.name = landmark.id;
     if (detailed) {
       owner.parent = root; owner.position.set(landmark.x, 0, landmark.z);
-      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: -0.12 });
+      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: -0.12, rotation: islandArtworkRotation(landmark.id) });
     }
     if (landmark.id === 'twin-cape') {
       const whale = new TransformNode('laboon', scene); whale.parent = root;
@@ -465,6 +465,11 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       }
       palm(owner, -0.68, -0.16, 1.45, -0.21); palm(owner, 0.65, -0.40, 1.25, 0.16);
     }
+    }
+    if (!detailed) {
+      const art = new TransformNode(`${landmark.id}-facing`, scene); art.parent = owner;
+      for (const child of owner.getChildren(undefined, true)) if (child !== art) child.parent = art;
+      art.rotation.y = islandArtworkRotation(landmark.id);
     }
     if (landmark.id === 'sabaody') {
       const bubbleMat = mat('sabaody-bubble', '#b8f8e9', 0.30, 0.24); bubbleMat.specularColor = Color3.White(); bubbleMat.specularPower = 128;

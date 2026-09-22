@@ -94,6 +94,10 @@ enum WalletSendEligibility {
 }
 
 struct WalletSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gateway: WalletGateway
     @Binding var rpcURL: String
@@ -181,36 +185,36 @@ struct WalletSettingsView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-        .sheet(isPresented: $alphaRiskPresented) {
+        .locusSheet(isPresented: $alphaRiskPresented) {
             WalletAlphaRiskSheet {
                 alphaEnabled = true
             }
         }
-        .sheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
-        .sheet(isPresented: $deleteRecoveryPresented) {
+        .locusSheet(isPresented: $deletePresented) { WalletVaultDeleteSheet(gateway: gateway) }
+        .locusSheet(isPresented: $deleteRecoveryPresented) {
             WalletRecoveryVaultDeleteSheet(gateway: gateway)
         }
-        .sheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
-        .sheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
-        .sheet(item: $receiveSnapshot) { snapshot in
+        .locusSheet(isPresented: $policyPresented) { WalletNativePolicySheet(gateway: gateway) }
+        .locusSheet(isPresented: $registryPresented) { WalletContractRegistrySheet(gateway: gateway) }
+        .locusSheet(item: $receiveSnapshot) { snapshot in
             WalletReceiveSheet(gateway: gateway, snapshot: snapshot)
         }
-        .sheet(item: $sendSnapshot) { snapshot in
+        .locusSheet(item: $sendSnapshot) { snapshot in
             WalletSendSheet(gateway: gateway, snapshot: snapshot)
         }
-        .sheet(item: $contractPolicyEntry) { entry in
+        .locusSheet(item: $contractPolicyEntry) { entry in
             WalletContractPolicySheet(gateway: gateway, entry: entry)
         }
-        .sheet(item: $tokenPolicySnapshot) { snapshot in
+        .locusSheet(item: $tokenPolicySnapshot) { snapshot in
             WalletSPLTokenPolicySheet(gateway: gateway, snapshot: snapshot)
         }
-        .sheet(item: Binding(
+        .locusSheet(item: Binding(
             get: { gateway.pendingBrowserOriginGrant },
             set: { value in if value == nil { gateway.denyBrowserOrigin() } }
         )) { request in
             WalletBrowserOriginGrantSheet(gateway: gateway, request: request)
         }
-        .sheet(item: Binding(
+        .locusSheet(item: Binding(
             get: { gateway.pendingConfirmation },
             set: { value in
                 if value == nil, let pending = gateway.pendingConfirmation {
@@ -220,7 +224,7 @@ struct WalletSettingsView: View {
         )) { transaction in
             WalletTransactionConfirmationSheet(gateway: gateway, transaction: transaction)
         }
-        .sheet(item: Binding(
+        .locusSheet(item: Binding(
             get: { gateway.pendingConnectionProposal },
             set: { value in
                 if value == nil, gateway.pendingConnectionProposal != nil {
@@ -255,7 +259,7 @@ struct WalletSettingsView: View {
             .frame(maxWidth: .infinity, minHeight: 260)
             Text("No wallet setting can enable signing in this build.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
         .accessibilityIdentifier("settings.wallet.unavailable-build")
     }
@@ -267,13 +271,13 @@ struct WalletSettingsView: View {
                     .font(.title3.weight(.semibold))
                 Text("Create or restore a self-custodial wallet, review human and connected-app transactions, and give the Locus agent narrowly capped rules.")
                     .font(.body)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 Label(mainnetAccessNotice, systemImage: "lock.shield")
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(LocusTheme.success)
+                    .foregroundStyle(viewColors.success)
                 Button("Review Security Model and Enable") { alphaRiskPresented = true }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .controlSize(.large)
                     .accessibilityIdentifier("settings.wallet.enable-alpha")
             }
@@ -285,7 +289,7 @@ struct WalletSettingsView: View {
         WalletSectionCard(title: "Locus Vault Needs Attention", symbol: "exclamationmark.triangle.fill") {
             Text(gateway.lastError ?? "The wallet signer is unavailable in this build.")
                 .font(.body)
-                .foregroundStyle(LocusTheme.dangerForeground)
+                .foregroundStyle(viewColors.dangerForeground)
             Button("Try Again") { Task { await gateway.refreshStatus() } }
         }
     }
@@ -294,16 +298,16 @@ struct WalletSettingsView: View {
         HStack(spacing: 10) {
             Label("Locus Vault", systemImage: "wallet.bifold.fill")
                 .font(.headline)
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
             Text(gateway.statusText)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(gateway.hubState == .ready ? LocusTheme.success : LocusTheme.warning)
+                .foregroundStyle(gateway.hubState == .ready ? viewColors.success : viewColors.warning)
                 .accessibilityIdentifier("settings.wallet.status")
             #if LOCUS_WALLET
             if gateway.experimentalMainnetBuildEnabled {
                 Text(gateway.experimentalMainnetActive ? "Experimental Mainnet" : "Experimental build")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .accessibilityIdentifier("wallet.experimental.status")
             }
             #endif
@@ -331,7 +335,7 @@ struct WalletSettingsView: View {
                 ForEach(WalletHubSection.allCases) { section in
                     Button(section.rawValue) { selectedSection = section }
                         .buttonStyle(.bordered)
-                        .tint(selectedSection == section ? LocusTheme.ink : LocusTheme.textSecondary)
+                        .tint(selectedSection == section ? viewColors.ink : viewColors.textSecondary)
                         .controlSize(.small)
                         .accessibilityAddTraits(selectedSection == section ? .isSelected : [])
                         .help("Show \(section.rawValue)")
@@ -382,23 +386,23 @@ struct WalletSettingsView: View {
         WalletSectionCard(title: "Send", symbol: "arrow.up.circle.fill") {
             if gateway.accountSnapshots.isEmpty {
                 Text("Create or restore the vault before sending.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             } else {
             Text("Choose an asset, enter a recipient and amount, then review the transaction before sending.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 ForEach(gateway.accountSnapshots) { snapshot in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(snapshot.symbol).font(.headline)
                             Text(networkName(snapshot.networkID))
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                         }
                         Spacer()
                         if sendSupported(snapshot) {
                             Button("Send") { sendSnapshot = snapshot }
                                 .buttonStyle(.borderedProminent)
-                                .tint(LocusTheme.ink)
+                                .tint(viewColors.ink)
                                 .disabled(
                                     snapshot.ownership == .locusVault
                                         ? gateway.status != .unlocked
@@ -410,7 +414,7 @@ struct WalletSettingsView: View {
                         } else {
                             Label("Release-gated", systemImage: "lock.shield")
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                         }
                     }
                 }
@@ -424,9 +428,9 @@ struct WalletSettingsView: View {
             if accounts.isEmpty {
                 Label("Release gate locked", systemImage: "lock.shield.fill")
                     .font(.headline)
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                 Text("Swaps are not available for your accounts in this release. When a reviewed network and token pair are enabled, they will appear here.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             } else {
                 Picker("Account", selection: $swapAccountID) {
                     ForEach(accounts) { account in
@@ -468,7 +472,7 @@ struct WalletSettingsView: View {
                     if !swapAmount.isEmpty, swapInputAmountBaseUnits == nil {
                         Label("Enter an amount greater than zero using the token’s decimal precision.", systemImage: "exclamationmark.circle")
                             .font(.callout)
-                            .foregroundStyle(LocusTheme.dangerForeground)
+                            .foregroundStyle(viewColors.dangerForeground)
                     }
 
                     if let quote = gateway.currentSwapQuote,
@@ -480,11 +484,11 @@ struct WalletSettingsView: View {
                         if !swapQuoteMatchesSelection {
                             Label("Your selections changed. Refresh the quote before reviewing this swap.", systemImage: "arrow.clockwise")
                                 .font(.callout)
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                         } else if quote.expiresAt <= swapQuoteTime {
                             Label("This quote expired. Refresh it to see the current price.", systemImage: "clock.badge.exclamationmark")
                                 .font(.callout)
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                         }
                         LabeledContent("Route") {
                             Text(route.pathAssetIDs.compactMap { id in
@@ -547,7 +551,7 @@ struct WalletSettingsView: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(LocusTheme.warning)
+                            .tint(viewColors.warning)
                             .disabled(preparingSwap || gateway.swapQuoteInProgress || !swapQuoteMatchesSelection || swapMaximumFeeBaseUnits == nil)
                         }
                         Button(preparingSwap ? "Preparing Review…" : "Review Swap") {
@@ -562,7 +566,7 @@ struct WalletSettingsView: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
+                        .tint(viewColors.ink)
                         .disabled(
                             gateway.currentSwapQuote == nil
                                 || gateway.currentSwapAllowance != .sufficient
@@ -577,7 +581,7 @@ struct WalletSettingsView: View {
             if let error = gateway.lastError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.dangerForeground)
+                    .foregroundStyle(viewColors.dangerForeground)
             }
         }
     }
@@ -614,10 +618,10 @@ struct WalletSettingsView: View {
         switch state {
         case .unchecked:
             Label("Allowance not checked", systemImage: "questionmark.circle")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
         case .sufficient:
             Label("Finite allowances are sufficient", systemImage: "checkmark.shield")
-                .foregroundStyle(LocusTheme.success)
+                .foregroundStyle(viewColors.success)
         case .needsERC20Approval(_, _, let amount, let zeroFirst):
             Label(
                 zeroFirst
@@ -625,13 +629,13 @@ struct WalletSettingsView: View {
                     : "Token requires a finite Permit2 approval of \(amount).",
                 systemImage: "exclamationmark.shield"
             )
-            .foregroundStyle(LocusTheme.warning)
+            .foregroundStyle(viewColors.warning)
         case .needsPermit2Approval(_, _, let amount, let expiration):
             Label(
                 "Permit2 requires a finite router allowance of \(amount), expiring at \(expiration).",
                 systemImage: "exclamationmark.shield"
             )
-            .foregroundStyle(LocusTheme.warning)
+            .foregroundStyle(viewColors.warning)
         }
     }
 
@@ -675,7 +679,7 @@ struct WalletSettingsView: View {
                         Text(networkName(snapshot.networkID)).font(.headline)
                         Text(shortAddress(snapshot.address))
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                     }
                     Spacer()
                     Button("Copy") { copy(snapshot.address) }
@@ -691,7 +695,7 @@ struct WalletSettingsView: View {
             let collectibles = gateway.assets.filter { $0.kind == .nft || $0.kind == .collectible }
             if collectibles.isEmpty {
                 Text("No reviewed collectibles discovered.")
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             ForEach(collectibles) { asset in
                 HStack {
@@ -699,7 +703,7 @@ struct WalletSettingsView: View {
                         Text(asset.name).font(.headline)
                         Text(asset.canonicalID)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                             .lineLimit(1)
                     }
                     Spacer()
@@ -712,7 +716,7 @@ struct WalletSettingsView: View {
             }
             Text("Unknown NFTs stay quarantined. Active HTML, SVG, and script content is never rendered as trusted wallet UI.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -730,7 +734,7 @@ struct WalletSettingsView: View {
             default:
                 if gateway.accountSnapshots.isEmpty {
                     Text("Your public accounts will appear after vault setup completes.")
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 } else {
                     ForEach(gateway.accountSnapshots) { snapshot in
                         accountContent(snapshot)
@@ -744,7 +748,7 @@ struct WalletSettingsView: View {
             if let error = gateway.lastError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.dangerForeground)
+                    .foregroundStyle(viewColors.dangerForeground)
             }
         }
     }
@@ -755,7 +759,7 @@ struct WalletSettingsView: View {
                 .font(.title3.weight(.semibold))
             Text("Create a new 24-word phrase or restore the one production Locus Vault phrase you already backed up.")
                 .font(.body)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             if gateway.recoveryCeremonyActive {
                 recoveryProgressContent
             } else {
@@ -763,7 +767,7 @@ struct WalletSettingsView: View {
                     Task { _ = await gateway.beginVaultCreation() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(!gateway.canCreateVault)
                 .accessibilityIdentifier("settings.wallet.create")
                 Button("Restore from 24 Words") {
@@ -781,10 +785,10 @@ struct WalletSettingsView: View {
             Label("Recovery helper unavailable", systemImage: "exclamationmark.shield.fill")
                 .font(.title3.weight(.semibold))
             Text("This copy of Locus cannot open the signed recovery window. Reinstall the direct-download app before creating, rotating, or restoring a vault.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Text("Signing and existing public account information remain isolated from this error.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
         .accessibilityIdentifier("settings.wallet.recovery-unavailable")
     }
@@ -817,13 +821,13 @@ struct WalletSettingsView: View {
             Label("Confirm your recovery backup", systemImage: "key.viewfinder")
                 .font(.title3.weight(.semibold))
             Text("The vault cannot be used until the requested recovery words are confirmed.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             if gateway.recoveryCeremonyActive {
                 recoveryProgressContent
             } else {
                 Text("The earlier recovery window closed before confirmation. Clear its pending material, then create or restore again.")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 Button("Clear Pending Recovery") {
                     Task { await gateway.clearIncompleteRecovery() }
                 }
@@ -837,7 +841,7 @@ struct WalletSettingsView: View {
             Label("Rotate for Mainnet", systemImage: "arrow.triangle.2.circlepath.circle.fill")
                 .font(.title3.weight(.semibold))
             Text("Your earlier preview vault remains encrypted and recovery-only. Mainnet signing stays disabled until you create and verify a new production recovery phrase.")
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             if gateway.recoveryCeremonyActive {
                 recoveryProgressContent
             } else {
@@ -845,7 +849,7 @@ struct WalletSettingsView: View {
                     Task { _ = await gateway.beginMainnetRotation() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(!gateway.canRotateForMainnet)
             }
         }
@@ -864,17 +868,17 @@ struct WalletSettingsView: View {
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
-                            .background(LocusTheme.accentAction.opacity(0.14))
+                            .background(viewColors.accentAction.opacity(0.14))
                             .clipShape(Capsule())
                         Text(freshnessText(snapshot))
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         if let connector = snapshot.ownership.connectorID {
                             Text(connector.rawValue.capitalized)
                                 .font(.caption.weight(.bold))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
-                                .background(LocusTheme.warning.opacity(0.14))
+                                .background(viewColors.warning.opacity(0.14))
                                 .clipShape(Capsule())
                         }
                     }
@@ -891,12 +895,12 @@ struct WalletSettingsView: View {
             HStack(spacing: 8) {
                 Text(shortAddress(snapshot.address))
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .textSelection(.enabled)
                 Button("Copy") { copy(snapshot.address) }
                 Button("Send") { sendSnapshot = snapshot }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(
                         !sendSupported(snapshot)
                             || (snapshot.ownership == .locusVault
@@ -926,7 +930,7 @@ struct WalletSettingsView: View {
                 ? "Receiving remains available while locked. Signing authority, spending rules, prepared work, and website approvals are cleared."
                 : "Unlocked for this Locus session. Sleep, screen lock, quit, update, signer interruption, or manual lock clears authority.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -935,7 +939,7 @@ struct WalletSettingsView: View {
             if gateway.transactionHistory.isEmpty {
                 Text("No wallet transactions yet.")
                     .font(.body)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             } else {
                 ForEach(gateway.transactionHistory.prefix(8)) { item in
                     VStack(alignment: .leading, spacing: 6) {
@@ -950,11 +954,11 @@ struct WalletSettingsView: View {
                         }
                         Text(item.submittedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         HStack {
                             Text(shortHash(item.transactionHash))
                                 .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                             Button("Copy Hash") { copy(item.transactionHash) }
                             if let url = WalletNetworkCatalog.descriptor(id: item.networkID)?
                                 .explorerURL(transactionID: item.transactionHash) {
@@ -964,7 +968,7 @@ struct WalletSettingsView: View {
                         if let detail = item.detail, !detail.isEmpty {
                             Text(detail)
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.warning)
+                                .foregroundStyle(viewColors.warning)
                                 .lineLimit(3)
                         }
                     }
@@ -985,18 +989,18 @@ struct WalletSettingsView: View {
                     ? "No active rule. Agent transactions require exact confirmation."
                     : "Rules live only in the current unlocked signer session.")
                     .font(.body)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 Spacer()
                 Button("New Native Rule") { policyPresented = true }
                     .disabled(!gateway.canAuthorizeNativePolicy)
             }
             Text("Rules apply only to Locus Vault. MetaMask and Slush always require wallet approval; Phantom-managed accounts always require exact approval in Locus. Enabling mainnet creates no rule.")
-                .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                .font(.caption).foregroundStyle(viewColors.textSecondary)
             if !gateway.canAuthorizeNativePolicy {
                 Text(gateway.status != .unlocked
                     ? "Unlock Locus Vault to authorize a spending rule."
                     : "No vault network is currently configured and enabled for automated spending.")
-                    .font(.caption).foregroundStyle(LocusTheme.warning)
+                    .font(.caption).foregroundStyle(viewColors.warning)
                     .accessibilityIdentifier("wallet.policy.unavailable")
             }
             ForEach(gateway.accountSnapshots.filter { snapshot in
@@ -1029,7 +1033,7 @@ struct WalletSettingsView: View {
                     }
                     Text("Expires \(status.policy.expiresAt.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
             }
             if !gateway.activePolicies.isEmpty {
@@ -1042,7 +1046,7 @@ struct WalletSettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(template.name).font(.headline)
                         Text("Saved template · no current authorization")
-                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                            .font(.caption).foregroundStyle(viewColors.textTertiary)
                     }
                     Spacer()
                     Button("Authorize") {
@@ -1063,7 +1067,7 @@ struct WalletSettingsView: View {
                         .font(.headline)
                     Text("Websites request address access separately for each enabled network. Every transaction still requires exact confirmation.")
                         .font(.callout)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
                 Spacer()
                 Toggle("", isOn: Binding(
@@ -1080,7 +1084,7 @@ struct WalletSettingsView: View {
             ForEach(gateway.approvedBrowserOrigins, id: \.self) { origin in
                 HStack {
                     Image(systemName: "globe")
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                     Text(origin)
                         .font(.system(.callout, design: .monospaced))
                         .lineLimit(1)
@@ -1093,13 +1097,13 @@ struct WalletSettingsView: View {
             if gateway.approvedBrowserOrigins.isEmpty {
                 Text("No websites are approved.")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
             Divider()
             Text("Connect an account").font(.headline)
             Text("Locus never imports recovery phrases. MetaMask and Slush show their own approval. Phantom-managed accounts use an exact Locus review and never run automatically.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
             ForEach(WalletExternalConnectorCatalog.connectors) { descriptor in
                 let networks = gateway.availableExternalConnectionNetworks(for: descriptor.kind)
                 let selectedNetwork = selectedConnectorNetworks[descriptor.kind] ?? ""
@@ -1113,7 +1117,7 @@ struct WalletSettingsView: View {
                          ? "Managed by Phantom · approve each action in Locus"
                          : "Approve each action in Locus, then in \(descriptor.name)")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                     Picker("Network", selection: Binding(
                         get: { selectedConnectorNetworks[descriptor.kind] ?? "" },
                         set: { value in
@@ -1133,13 +1137,13 @@ struct WalletSettingsView: View {
                     if networks.isEmpty {
                         Text("No networks are enabled for \(descriptor.name) in this release.")
                             .font(.callout)
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .accessibilityIdentifier("wallet.connection.unavailable.\(descriptor.kind.rawValue)")
                     }
                     if !selectedNetwork.isEmpty {
                         Text("Allow Locus to see your account and request transactions. Connecting does not approve a transaction.")
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         ForEach(
                             allowedMethods.subtracting([.listAccounts, .sendTransaction])
                                 .sorted(by: { $0.rawValue < $1.rawValue }),
@@ -1200,7 +1204,7 @@ struct WalletSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
                 .background(
-                    LocusTheme.surfaceStructural,
+                    viewColors.surfaceStructural,
                     in: RoundedRectangle(cornerRadius: 10)
                 )
             }
@@ -1208,7 +1212,7 @@ struct WalletSettingsView: View {
             Text("Connect Locus Vault to a dapp").font(.headline)
             Text("Paste a WalletConnect link or scan its QR code. Review the dapp, accounts, networks, and permissions before connecting.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             #if LOCUS_WALLET
             HStack {
                 Button("Choose QR Image…") { chooseWalletConnectQRImage() }
@@ -1261,7 +1265,7 @@ struct WalletSettingsView: View {
             if let error = gateway.lastError, !error.isEmpty {
                 Label(error, systemImage: "exclamationmark.circle.fill")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.dangerForeground)
+                    .foregroundStyle(viewColors.dangerForeground)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("wallet.connection.error")
             }
@@ -1270,7 +1274,7 @@ struct WalletSettingsView: View {
             if gateway.connections.isEmpty {
                 Text("Your connected wallets and dapps will appear here. You can disconnect them at any time.")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             ForEach(gateway.connections) { connection in
                 HStack(alignment: .top) {
@@ -1281,18 +1285,18 @@ struct WalletSettingsView: View {
                             systemImage: WalletConnectionPresentation.symbol(connection.state)
                         )
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         Text(connection.networkIDs.sorted().map(networkName).joined(separator: " · "))
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         if !connection.state.isTerminal {
                             Text("Expires \(connection.expiresAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                         } else {
                             Text("Connect again above to start a new session.")
                                 .font(.caption)
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                         }
                     }
                     Spacer()
@@ -1319,7 +1323,7 @@ struct WalletSettingsView: View {
             if !gateway.connectionHelperAvailable {
                 Text("The Direct wallet connector runtime is unavailable in this build.")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
             }
         }
     }
@@ -1345,7 +1349,7 @@ struct WalletSettingsView: View {
         WalletSectionCard(title: "Experimental Mainnet", symbol: "exclamationmark.shield") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Not audited or approved for public release. Mainnet transactions use real funds and may cause permanent loss.")
-                    .font(.callout.weight(.semibold)).foregroundStyle(LocusTheme.warning)
+                    .font(.callout.weight(.semibold)).foregroundStyle(viewColors.warning)
                 if let expiry = gateway.experimentalMainnetExpiresAt {
                     Text("Enabled on this installation until \(expiry.formatted(date: .abbreviated, time: .standard)).")
                         .accessibilityIdentifier("wallet.experimental.enabled")
@@ -1354,7 +1358,7 @@ struct WalletSettingsView: View {
                         .accessibilityIdentifier("wallet.experimental.off")
                 }
                 Text("Keys remain in the isolated signer. Vault actions need exact approval unless covered by a spending rule you separately authorize. No rule, dapp connection, or transaction is created by this opt-in.")
-                    .font(.callout).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.callout).foregroundStyle(viewColors.textSecondary)
                 Button(experimentalImportInProgress ? "Verifying Activation…" : "Choose Signed Activation…") {
                     chooseExperimentalMainnetActivation()
                 }
@@ -1376,14 +1380,14 @@ struct WalletSettingsView: View {
                                 .font(.callout)
                             ForEach(Array(grant.connectors.enumerated()), id: \.offset) { _, connector in
                                 Text("\(connector.connector.rawValue) · \(connector.ownership.rawValue)\n\(connector.directions.map(\.rawValue).sorted().joined(separator: ", "))\n\(connector.methods.map(\.rawValue).sorted().joined(separator: ", "))")
-                                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                                    .font(.caption).foregroundStyle(viewColors.textSecondary)
                             }
                         }
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("wallet.experimental.preview.\(grant.networkID)")
                     }
                     Text("These are capability limits, not permission to spend. Asset identities, configured providers, simulation, and exact approval or signer-owned policy limits still apply. Collectibles and allowance setup never run automatically.")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                     Toggle("I understand this is experimental software using real funds, without completed release audits.", isOn: $experimentalRiskAcknowledged)
                         .accessibilityIdentifier("wallet.experimental.acknowledge")
                     HStack {
@@ -1399,11 +1403,11 @@ struct WalletSettingsView: View {
                     }
                 }
                 if let experimentalImportError {
-                    Text(experimentalImportError).font(.callout).foregroundStyle(LocusTheme.coral)
+                    Text(experimentalImportError).font(.callout).foregroundStyle(viewColors.coral)
                         .accessibilityIdentifier("wallet.experimental.error")
                 }
                 Text("Turn Off Wallet disables wallet actions and clears active session rules. Enabling the wallet again does not recreate those rules.")
-                    .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.caption).foregroundStyle(viewColors.textSecondary)
             }
         }
     }
@@ -1473,7 +1477,7 @@ struct WalletSettingsView: View {
                         .textSelection(.enabled)
                         .accessibilityIdentifier("wallet.canary.installation")
                     Text("Share this public code with the release team. It is not a wallet address, recovery phrase, or permission to spend.")
-                        .font(.caption).foregroundStyle(LocusTheme.textSecondary)
+                        .font(.caption).foregroundStyle(viewColors.textSecondary)
                     Button(admissionImportInProgress ? "Verifying Invitation…" : "Import Signed Invitation") {
                         importCanaryInvitation()
                     }
@@ -1481,7 +1485,7 @@ struct WalletSettingsView: View {
                     .accessibilityIdentifier("wallet.canary.import")
                 }
                 if let admissionImportError {
-                    Text(admissionImportError).font(.callout).foregroundStyle(LocusTheme.coral)
+                    Text(admissionImportError).font(.callout).foregroundStyle(viewColors.coral)
                         .accessibilityIdentifier("wallet.canary.error")
                 }
             }
@@ -1576,21 +1580,21 @@ struct WalletSettingsView: View {
                         .accessibilityIdentifier("settings.wallet.delete")
                     Text("Deletion removes the encrypted vault from this Mac and requires the exact confirmation phrase. Receiving addresses are removed with it.")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                     if gateway.recoveryOnlyVaultAvailable {
                         Button("Delete Earlier Recovery-Only Vault", role: .destructive) {
                             deleteRecoveryPresented = true
                         }
                         Text("The prior encrypted vault is retained only for deliberate recovery until you explicitly delete it.")
                             .font(.caption)
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                     }
                 }
                 .padding(.top, 14)
             } label: {
                 Text("RPC, contracts, diagnostics, and future capabilities")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
         }
     }
@@ -1613,7 +1617,7 @@ struct WalletSettingsView: View {
             .pickerStyle(.segmented)
             Text("Sleep, screen lock, quit, update, or signer interruption still locks immediately.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -1626,13 +1630,13 @@ struct WalletSettingsView: View {
             HStack {
                 Text(gateway.rpcHealthText)
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                 Spacer()
                 Button("Check Connection") { Task { await gateway.checkRPCHealth() } }
             }
             Text("The endpoint stays native and is never sent to Python or included in model context.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -1668,7 +1672,7 @@ struct WalletSettingsView: View {
             }
             Text("Contract and token rules use raw token units until authoritative metadata is available.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
             ForEach(gateway.contractRegistry) { entry in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
@@ -1689,14 +1693,14 @@ struct WalletSettingsView: View {
                         .textSelection(.enabled)
                     Text("Code \(entry.runtimeCodeHash)\nABI \(entry.abiDigest)\nAdapter \(entry.reviewedAdapterID ?? "exact confirmation only")\nMethods \(entry.permittedFunctions.joined(separator: ", "))")
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                         .textSelection(.enabled)
                 }
             }
             if gateway.contractRegistry.isEmpty {
                 Text("No registered contracts.")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
         }
     }
@@ -1721,12 +1725,12 @@ struct WalletSettingsView: View {
                         ? "SOL and trusted classic SPL transfers use reviewed signing"
                         : "Public address only · signing release-gated")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                 }
             }
             if gateway.accountSnapshots.allSatisfy({ $0.chain == .evm }) {
                 Text("No additional public addresses are available.")
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
             }
         }
     }
@@ -1736,7 +1740,7 @@ struct WalletSettingsView: View {
             Text("Deferred Capabilities").font(.headline)
             Text("Token-2022 extensions, programmable or compressed NFTs, Sui batching/gRPC migration, Uniswap V4, Jupiter/Cetus swaps, arbitrary messages, broad typed data, and remote collectible media remain outside GA.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -1748,7 +1752,7 @@ struct WalletSettingsView: View {
             }
             Text("Includes build, signer, feature-gate, vault, RPC category, and activity counts. Excludes addresses, origins, policy contents, ABIs, signed transactions, recovery material, and unrestricted errors.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 
@@ -1827,10 +1831,10 @@ struct WalletSettingsView: View {
 
     private func activityColor(_ state: WalletActivityState) -> Color {
         switch state {
-        case .confirmed: LocusTheme.success
-        case .submitted: LocusTheme.warning
-        case .failed: LocusTheme.coral
-        case .broadcastUnknown: LocusTheme.warning
+        case .confirmed: viewColors.success
+        case .submitted: viewColors.warning
+        case .failed: viewColors.coral
+        case .broadcastUnknown: viewColors.warning
         }
     }
 
@@ -1877,6 +1881,10 @@ private enum WalletConnectionPresentation {
 }
 
 private struct WalletConnectionProposalSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var gateway: WalletGateway
     let proposal: WalletConnectionProposalReview
     @State private var currentTime = Date()
@@ -1897,7 +1905,7 @@ private struct WalletConnectionProposalSheet: View {
                 if let peerURL = proposal.peerURL {
                     Text(peerURL)
                         .font(.system(.callout, design: .monospaced))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .textSelection(.enabled)
                 }
             }
@@ -1905,7 +1913,7 @@ private struct WalletConnectionProposalSheet: View {
                  ? "Check that this is the dapp you intended to connect. It will receive only the account access and permissions below."
                  : "Check the account and network before adding this connection to Wallet Hub.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             ForEach(proposal.namespaces, id: \.namespace) { namespace in
                 VStack(alignment: .leading, spacing: 5) {
                     Text(namespace.namespace.rawValue.uppercased())
@@ -1917,11 +1925,11 @@ private struct WalletConnectionProposalSheet: View {
                     ForEach(namespace.methods.sorted(by: { $0.rawValue < $1.rawValue }), id: \.rawValue) { method in
                         Label(WalletConnectionPresentation.methodLabel(method), systemImage: "checkmark")
                             .font(.callout)
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                     }
                 }
                 .padding(10)
-                .background(LocusTheme.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
+                .background(viewColors.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
             }
             ForEach(proposal.accounts) { account in
                 VStack(alignment: .leading, spacing: 4) {
@@ -1933,10 +1941,10 @@ private struct WalletConnectionProposalSheet: View {
                          ? "Managed by Phantom. You approve every action here in Locus. This account cannot run automatically."
                          : "You approve every action here in Locus, then in your wallet. This account cannot run automatically.")
                         .font(.callout)
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
                 .padding(10)
-                .background(LocusTheme.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
+                .background(viewColors.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
             }
             Label(
                 currentTime >= proposal.expiresAt
@@ -1945,7 +1953,7 @@ private struct WalletConnectionProposalSheet: View {
                 systemImage: currentTime >= proposal.expiresAt ? "clock.badge.exclamationmark" : "info.circle"
             )
                 .font(.callout)
-                .foregroundStyle(currentTime >= proposal.expiresAt ? LocusTheme.warning : LocusTheme.textSecondary)
+                .foregroundStyle(currentTime >= proposal.expiresAt ? viewColors.warning : viewColors.textSecondary)
                 .accessibilityIdentifier("wallet.connection.proposal.status")
                 }
                 .padding(24)
@@ -1969,7 +1977,7 @@ private struct WalletConnectionProposalSheet: View {
                 .accessibilityIdentifier("wallet.connection.proposal.approve")
             }
             .padding(18)
-            .background(LocusTheme.panel)
+            .background(viewColors.panel)
         }
         .frame(width: 560, height: 580)
         .interactiveDismissDisabled()
@@ -1983,6 +1991,10 @@ private struct WalletConnectionProposalSheet: View {
 }
 
 private struct WalletSectionCard<Content: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     let symbol: String
     let content: Content
@@ -1997,7 +2009,7 @@ private struct WalletSectionCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 13) {
             Label(title, systemImage: symbol)
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
             content
         }
         .padding(18)
@@ -2006,6 +2018,10 @@ private struct WalletSectionCard<Content: View>: View {
 }
 
 private struct WalletAlphaRiskSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     let enable: () -> Void
 
@@ -2015,7 +2031,7 @@ private struct WalletAlphaRiskSheet: View {
                 .font(.title2.weight(.bold))
             Text("You—not Locus—are responsible for safeguarding the recovery phrase and authorizing transactions or narrowly limited spending rules.")
                 .font(.body)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             risk("Mainnet access is separate", "Enabling the vault does not enable mainnet. Ordinary releases require signed release gates. A separately labeled experimental build requires its own signed-file review and explicit mainnet opt-in; it is not an audited public release.")
             risk("Create a separate recovery phrase", "Do not reuse or import a MetaMask, Phantom, Slush, or other wallet phrase.")
             risk("Start with limited funds", "Verify recovery and each chain address before increasing balances.")
@@ -2028,7 +2044,7 @@ private struct WalletAlphaRiskSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
             }
         }
         .padding(24)
@@ -2039,16 +2055,20 @@ private struct WalletAlphaRiskSheet: View {
     private func risk(_ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(LocusTheme.textTertiary)
+                Text(detail).font(.callout).foregroundStyle(viewColors.textTertiary)
             }
         }
     }
 }
 
 private struct WalletSendSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let snapshot: WalletAccountSnapshot
@@ -2068,7 +2088,7 @@ private struct WalletSendSheet: View {
                 .font(.headline)
             Text("From \(snapshot.address)")
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .textSelection(.enabled)
 
             field(
@@ -2079,7 +2099,7 @@ private struct WalletSendSheet: View {
             if !recipient.isEmpty, !validDestination {
                 Label("Enter a valid \(networkName) address. Names and other networks are not supported here.", systemImage: "exclamationmark.circle")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.dangerForeground)
+                    .foregroundStyle(viewColors.dangerForeground)
                     .accessibilityIdentifier("wallet.send.recipient-error")
             }
             if isNFT {
@@ -2101,23 +2121,23 @@ private struct WalletSendSheet: View {
 
             Text("You will review the recipient, amount, network fee, and simulation before sending.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             if snapshot.ownership != .locusVault {
                 Label(snapshot.ownership.isConnectorManaged
                       ? "Managed by Phantom. Approve this transfer in Locus. It cannot run automatically."
                       : "After your Locus review, approve this transfer in your connected wallet.",
                       systemImage: "person.crop.circle.badge.checkmark")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
 
             if !isTransferSupported {
                 Label("This asset does not have an active reviewed transfer path.", systemImage: "lock.shield")
                     .font(.callout)
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
             }
             if let error = preparationError, !error.isEmpty {
-                Text(error).font(.callout).foregroundStyle(LocusTheme.dangerForeground)
+                Text(error).font(.callout).foregroundStyle(viewColors.dangerForeground)
             }
             if preparing, externalReviewApproved {
                 Label(
@@ -2127,7 +2147,7 @@ private struct WalletSendSheet: View {
                     systemImage: "clock"
                 )
                 .font(.callout)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityIdentifier("wallet.send.approval-status")
             }
 
@@ -2150,7 +2170,7 @@ private struct WalletSendSheet: View {
                     prepare()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .disabled(!isValid || preparing)
                 .accessibilityIdentifier("wallet.send.review")
             }
@@ -2158,7 +2178,7 @@ private struct WalletSendSheet: View {
         .padding(24)
         .frame(width: 560, height: 600)
         .interactiveDismissDisabled(preparing)
-        .sheet(item: Binding<WalletPreparedTransaction?>(
+        .locusSheet(item: Binding<WalletPreparedTransaction?>(
             get: {
                 guard snapshot.ownership != .locusVault,
                       gateway.pendingConfirmation?.accountID == snapshot.accountID else { return nil }
@@ -2343,6 +2363,10 @@ private struct WalletSendSheet: View {
 }
 
 private struct WalletReceiveSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let snapshot: WalletAccountSnapshot
@@ -2380,7 +2404,7 @@ private struct WalletReceiveSheet: View {
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .background(LocusTheme.accentAction.opacity(0.14))
+                    .background(viewColors.accentAction.opacity(0.14))
                     .clipShape(Capsule())
                 if let image = qrImage {
                     Image(nsImage: image)
@@ -2396,7 +2420,7 @@ private struct WalletReceiveSheet: View {
                 HStack {
                     Button(addressCopied ? "Address Copied" : "Copy Address") { copyAddress() }
                         .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
+                        .tint(viewColors.ink)
                         .accessibilityIdentifier("wallet.receive.copy-address")
                     Button("Refresh Balance") {
                         Task { await gateway.refreshAccountSnapshots() }
@@ -2423,7 +2447,7 @@ private struct WalletReceiveSheet: View {
                     .multilineTextAlignment(.center)
                 Text("This QR code is generated on your Mac.")
                     .font(.caption)
-                    .foregroundStyle(LocusTheme.textTertiary)
+                    .foregroundStyle(viewColors.textTertiary)
                     .multilineTextAlignment(.center)
             }
             .padding(24)
@@ -2455,6 +2479,10 @@ private struct WalletReceiveSheet: View {
 }
 
 private struct WalletBrowserOriginGrantSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let request: WalletBrowserOriginGrant
@@ -2468,16 +2496,16 @@ private struct WalletBrowserOriginGrantSheet: View {
                 .textSelection(.enabled)
             Text("Connecting shares only the public address for \(networkName). It does not authorize transactions; every transaction requires a separate exact confirmation.")
                 .font(.body)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Text("The connection ends when you navigate to another website, lock the vault, quit, or restart Locus.")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
             HStack {
                 Button("Deny", role: .cancel) { gateway.denyBrowserOrigin(); dismiss() }
                 Spacer()
                 Button("Allow Address Access") { gateway.approveBrowserOrigin(); dismiss() }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
             }
         }
         .padding(24).frame(width: 500).interactiveDismissDisabled()
@@ -2489,6 +2517,10 @@ private struct WalletBrowserOriginGrantSheet: View {
 }
 
 private struct WalletNativePolicySheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     private struct PolicyOption: Identifiable {
         let account: WalletAccount
         let network: WalletNetworkDescriptor
@@ -2510,7 +2542,7 @@ private struct WalletNativePolicySheet: View {
         VStack(alignment: .leading, spacing: 13) {
             Text("Create an Agent Spending Rule").font(.title2.weight(.bold))
             Text("This rule lives only inside the signer and disappears when the vault locks or Locus exits.")
-                .font(.body).foregroundStyle(LocusTheme.textSecondary)
+                .font(.body).foregroundStyle(viewColors.textSecondary)
             Picker("Network", selection: $selectedOptionID) {
                 ForEach(options) { option in
                     Text("\(option.network.displayName) · \(option.account.address.prefix(8))…")
@@ -2528,15 +2560,15 @@ private struct WalletNativePolicySheet: View {
                 field("Template name", placeholder: "Test network allowance", text: $templateName)
             }
             Label("Only the reviewed native-transfer adapter for this exact account and network can use this rule. Contracts cannot.", systemImage: "shield.lefthalf.filled")
-                .font(.callout).foregroundStyle(LocusTheme.warning)
+                .font(.callout).foregroundStyle(viewColors.warning)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Authorize Rule") { activate() }.buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(!valid)
             }
-            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
+            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(viewColors.coral) }
         }
         .padding(24).frame(width: 540)
         .onAppear {
@@ -2643,6 +2675,10 @@ private struct WalletNativePolicySheet: View {
 }
 
 private struct WalletSPLTokenPolicySheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let snapshot: WalletAccountSnapshot
@@ -2658,10 +2694,10 @@ private struct WalletSPLTokenPolicySheet: View {
                 .font(.title2.weight(.bold))
             Text("This signer-owned rule is bound to this exact classic SPL mint, Solana account, recipient, amount caps, fee cap, and unlocked session.")
                 .font(.body)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Text(snapshot.assetID)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
                 .textSelection(.enabled)
             field("Approved recipient", placeholder: "Base58 address", text: $recipient)
             field(
@@ -2682,17 +2718,17 @@ private struct WalletSPLTokenPolicySheet: View {
             )
             Label("Token-2022, NFTs, approvals, swaps, and any other program remain outside this rule.", systemImage: "shield.lefthalf.filled")
                 .font(.callout)
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Authorize Rule") { activate() }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(!valid)
             }
             if let error = gateway.lastError {
-                Text(error).font(.callout).foregroundStyle(LocusTheme.coral)
+                Text(error).font(.callout).foregroundStyle(viewColors.coral)
             }
         }
         .padding(24)
@@ -2784,6 +2820,10 @@ private struct WalletSPLTokenPolicySheet: View {
 }
 
 private struct WalletContractPolicySheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let entry: WalletContractRegistryEntry
@@ -2816,9 +2856,9 @@ private struct WalletContractPolicySheet: View {
             }
             .accessibilityIdentifier("wallet.policy.contract.account")
             Text(entry.checksumAddress).font(.system(.caption, design: .monospaced))
-                .foregroundStyle(LocusTheme.muted).textSelection(.enabled)
+                .foregroundStyle(viewColors.muted).textSelection(.enabled)
             Text("This authorization is bound to this registry ID, runtime code hash, adapter, token asset, counterparty, fee ceiling, and signer session.")
-                .font(.callout).foregroundStyle(LocusTheme.muted)
+                .font(.callout).foregroundStyle(viewColors.muted)
             if isSwapAdapter {
                 field("Input token address", placeholder: "0x…", text: $inputToken)
                 Text("Swap recipient: \(selectedAccount?.address ?? "Select a vault account")")
@@ -2826,7 +2866,7 @@ private struct WalletContractPolicySheet: View {
                 field("Maximum slippage (basis points, 0–500)", placeholder: "50", text: $maximumSlippageBPS)
                 field("Minimum output per swap (raw output units)", placeholder: "1000000", text: $minimumOutput)
                 Text("This rule does not select an output token. It is limited to configured reviewed routes and your raw-unit output floor. Use exact transaction approval when you need to choose each output asset.")
-                    .font(.caption).foregroundStyle(LocusTheme.warning)
+                    .font(.caption).foregroundStyle(viewColors.warning)
             } else {
                 field(counterpartyTitle, placeholder: "0x…", text: $counterparty)
             }
@@ -2835,16 +2875,16 @@ private struct WalletContractPolicySheet: View {
             field("Maximum fee per action (wei)", placeholder: "2000000000000000", text: $feeCap)
             field("Expires after (minutes, max 480)", placeholder: "30", text: $durationMinutes)
             Label(adapterWarning, systemImage: "shield.lefthalf.filled")
-                .font(.callout).foregroundStyle(LocusTheme.warning)
+                .font(.callout).foregroundStyle(viewColors.warning)
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Authorize Rule") { activate() }.buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(!valid || authorizing)
             }
             if let error = gateway.lastError {
-                Text(error).font(.callout).foregroundStyle(LocusTheme.coral)
+                Text(error).font(.callout).foregroundStyle(viewColors.coral)
             }
         }
         .padding(22)
@@ -2927,6 +2967,10 @@ private struct WalletContractPolicySheet: View {
 }
 
 private struct WalletContractRegistrySheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     @State private var registryID = ""
@@ -2939,7 +2983,7 @@ private struct WalletContractRegistrySheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Verify a Sepolia Contract").font(.title2.weight(.bold))
             Text("Locus reads the deployed bytecode, normalizes the ABI, and records exact function selectors. Registration enables decoded confirmation only; autonomous use still requires a reviewed adapter.")
-                .font(.body).foregroundStyle(LocusTheme.muted)
+                .font(.body).foregroundStyle(viewColors.muted)
             HStack {
                 TextField("Registry ID (for example token.usdc)", text: $registryID)
                 TextField("Display label", text: $label)
@@ -2948,20 +2992,20 @@ private struct WalletContractRegistrySheet: View {
             TextField("Permitted signatures, comma-separated", text: $functions).textFieldStyle(.roundedBorder)
             Text("Normalized ABI source").font(.callout.weight(.semibold))
             TextEditor(text: $abiJSON)
-                .foregroundStyle(LocusTheme.inkSoft)
-                .tint(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.inkSoft)
+                .tint(viewColors.accentAction)
                 .scrollContentBackground(.hidden)
-                .background(LocusTheme.surfaceCard)
+                .background(viewColors.surfaceCard)
                 .font(.system(.caption, design: .monospaced))
-                .frame(height: 150).overlay(RoundedRectangle(cornerRadius: 6).stroke(LocusTheme.separator))
+                .frame(height: 150).overlay(RoundedRectangle(cornerRadius: 6).stroke(viewColors.separator))
             HStack {
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Verify and Add") { add() }.buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(registryID.isEmpty || label.isEmpty || address.isEmpty || abiJSON.isEmpty)
             }
-            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(LocusTheme.coral) }
+            if let error = gateway.lastError { Text(error).font(.callout).foregroundStyle(viewColors.coral) }
         }
         .padding(22).frame(width: 660)
     }
@@ -2978,6 +3022,10 @@ private struct WalletContractRegistrySheet: View {
 }
 
 private struct WalletVaultDeleteSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     @State private var confirmation = ""
@@ -2985,7 +3033,7 @@ private struct WalletVaultDeleteSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Delete Locus Vault?").font(.title2.weight(.bold))
             Text("This removes the encrypted vault from this Mac. Locus cannot recover funds without your 24-word phrase.")
-                .font(.body).foregroundStyle(LocusTheme.muted)
+                .font(.body).foregroundStyle(viewColors.muted)
             TextField("Type DELETE LOCUS VAULT", text: $confirmation).textFieldStyle(.roundedBorder)
             HStack {
                 Button("Cancel") { dismiss() }
@@ -2999,6 +3047,10 @@ private struct WalletVaultDeleteSheet: View {
 }
 
 private struct WalletRecoveryVaultDeleteSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     @State private var confirmation = ""
@@ -3007,7 +3059,7 @@ private struct WalletRecoveryVaultDeleteSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Delete Recovery-Only Vault?").font(.title2.weight(.bold))
             Text("This permanently removes the encrypted preview vault retained during mainnet rotation. It does not delete the active production vault.")
-                .font(.body).foregroundStyle(LocusTheme.muted)
+                .font(.body).foregroundStyle(viewColors.muted)
             TextField("Type DELETE RECOVERY VAULT", text: $confirmation)
                 .textFieldStyle(.roundedBorder)
             HStack {
@@ -3027,6 +3079,10 @@ private struct WalletRecoveryVaultDeleteSheet: View {
 }
 
 private struct WalletTransactionConfirmationSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
     let transaction: WalletPreparedTransaction
@@ -3047,14 +3103,14 @@ private struct WalletTransactionConfirmationSheet: View {
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(LocusTheme.accentAction.opacity(0.14))
+                            .background(viewColors.accentAction.opacity(0.14))
                             .clipShape(Capsule())
                     }
                     #if LOCUS_WALLET
                     if gateway.experimentalMainnetActive,
                        WalletNetworkCatalog.descriptor(id: transaction.networkID)?.environment == .mainnet {
                         Label("Experimental Mainnet · real funds · not an audited public release", systemImage: "exclamationmark.shield")
-                            .font(.callout.weight(.semibold)).foregroundStyle(LocusTheme.warning)
+                            .font(.callout.weight(.semibold)).foregroundStyle(viewColors.warning)
                             .accessibilityIdentifier("wallet.transaction.experimental")
                     }
                     #endif
@@ -3062,12 +3118,12 @@ private struct WalletTransactionConfirmationSheet: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(requester)
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(LocusTheme.textTertiary)
+                            .foregroundStyle(viewColors.textTertiary)
                         Text(actionTitle)
                             .font(.system(.title, design: .rounded, weight: .semibold))
                         Text(destinationText)
                             .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .textSelection(.enabled)
                     }
 
@@ -3075,13 +3131,13 @@ private struct WalletTransactionConfirmationSheet: View {
                         title: transaction.simulationSucceeded ? "Simulation succeeded" : "Simulation failed",
                         detail: transaction.simulation,
                         symbol: transaction.simulationSucceeded ? "checkmark.circle.fill" : "xmark.octagon.fill",
-                        color: transaction.simulationSucceeded ? LocusTheme.success : LocusTheme.dangerForeground
+                        color: transaction.simulationSucceeded ? viewColors.success : viewColors.dangerForeground
                     )
                     summaryStatus(
                         title: "Estimated network fee",
                         detail: feeText,
                         symbol: "fuelpump.fill",
-                        color: LocusTheme.textSecondary
+                        color: viewColors.textSecondary
                     )
                     if let ownership = transactionOwnership, ownership != .locusVault {
                         summaryStatus(
@@ -3090,7 +3146,7 @@ private struct WalletTransactionConfirmationSheet: View {
                                 ? "Phantom manages this account. This exact review authorizes this action; no separate Phantom prompt follows."
                                 : "After this review, your connected wallet must approve this same transaction before it can be sent.",
                             symbol: "person.crop.circle.badge.checkmark",
-                            color: LocusTheme.textSecondary
+                            color: viewColors.textSecondary
                         )
                         .accessibilityIdentifier("wallet.transaction.approval-model")
                     }
@@ -3100,7 +3156,7 @@ private struct WalletTransactionConfirmationSheet: View {
                         ForEach(riskMessages, id: \.self) { message in
                             Label(message, systemImage: canConfirm ? "info.circle" : "exclamationmark.triangle.fill")
                                 .font(.callout)
-                                .foregroundStyle(canConfirm ? LocusTheme.textSecondary : LocusTheme.warning)
+                                .foregroundStyle(canConfirm ? viewColors.textSecondary : viewColors.warning)
                         }
                     }
 
@@ -3145,7 +3201,7 @@ private struct WalletTransactionConfirmationSheet: View {
                     if let error = submissionError {
                         Label(error, systemImage: "exclamationmark.circle.fill")
                             .font(.callout)
-                            .foregroundStyle(LocusTheme.dangerForeground)
+                            .foregroundStyle(viewColors.dangerForeground)
                             .accessibilityIdentifier("wallet.transaction.error")
                     }
                 }
@@ -3186,12 +3242,12 @@ private struct WalletTransactionConfirmationSheet: View {
                     }
                 }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
                     .disabled(!canConfirm || submitting)
                     .accessibilityIdentifier("wallet.transaction.confirm")
             }
             .padding(18)
-            .background(LocusTheme.panel)
+            .background(viewColors.panel)
         }
         .frame(width: 620, height: 640)
         .interactiveDismissDisabled()
@@ -3348,7 +3404,7 @@ private struct WalletTransactionConfirmationSheet: View {
             Image(systemName: symbol).foregroundStyle(color)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(LocusTheme.textTertiary)
+                Text(detail).font(.callout).foregroundStyle(viewColors.textTertiary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -3358,10 +3414,10 @@ private struct WalletTransactionConfirmationSheet: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased())
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
             Text(value.isEmpty ? "None" : value)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .textSelection(.enabled)
         }
     }

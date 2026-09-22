@@ -1,13 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { GRAND_LINE_LANDMARKS, GRAND_LINE_HARBORS, GRAND_LINE_STATIONS, GRAND_LINE_HOME_NAMES, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION, GRAND_LINE_SEA_KING_POSITIONS } from '../src/grandLineGeography.ts';
+import { islandArtworkRotation, GRAND_LINE_LANDMARKS, GRAND_LINE_HARBORS, GRAND_LINE_STATIONS, GRAND_LINE_HOME_NAMES, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION, GRAND_LINE_SEA_KING_POSITIONS } from '../src/grandLineGeography.ts';
 import { parseTheme } from '../src/theme.ts';
 import { themeNavigation, findResidentPath, pointIsWalkable, segmentIsWalkable } from '../src/residentMotion.ts';
 
 const manifest = JSON.parse(readFileSync(new URL('../../plugins/agent-world/ui/themes/grand-line/theme.json', import.meta.url), 'utf8'));
 const theme = parseTheme(manifest), sea = themeNavigation(theme);
 const gap = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+
+test('the four near-bank islands face the far bank without moving navigable piers', () => {
+  assert.deepEqual(GRAND_LINE_LANDMARKS.filter(island => islandArtworkRotation(island.id) === Math.PI).map(island => island.id),
+    ['little-garden', 'alabasta', 'sabaody', 'elbaf']);
+  for (const harbor of GRAND_LINE_HARBORS) assert.ok(pointIsWalkable(harbor, sea));
+});
 
 test('fourteen irregular islands retain twelve stable captain homes and two visitable destinations', () => {
   assert.deepEqual(GRAND_LINE_LANDMARKS.slice(0, 12).map(island => island.id), ['twin-cape', 'little-garden', 'drum', 'alabasta', 'water-seven', 'enies-lobby', 'sabaody', 'marineford', 'wano', 'whole-cake', 'laugh-tale', 'jaya']);

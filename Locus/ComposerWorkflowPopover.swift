@@ -3,6 +3,10 @@ import SwiftUI
 /// Modes affect the next message. Goals and capsules open their own setup;
 /// keeping those actions in a separate section avoids implying a mode change.
 struct ComposerWorkflowPopover: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     let selectMode: (WorkMode) -> Void
@@ -62,7 +66,7 @@ struct ComposerWorkflowPopover: View {
             Divider().padding(.vertical, 5)
             Text("Longer tasks")
                 .font(.locus(size: 9, weight: .medium))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 2)
 
@@ -97,7 +101,7 @@ struct ComposerWorkflowPopover: View {
         }
         .padding(8)
         .frame(width: 320)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .focusable()
         .focusEffectDisabled()
         .focused($panelFocused)
@@ -172,6 +176,10 @@ struct ComposerWorkflowPopover: View {
 }
 
 private struct ComposerWorkflowRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
     let title: String
@@ -187,28 +195,28 @@ private struct ComposerWorkflowRow: View {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: symbol)
                     .font(.locus(size: 13, weight: .medium))
-                    .foregroundStyle(selected == true ? accent : LocusTheme.muted)
+                    .foregroundStyle(selected == true ? accent : viewColors.muted)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.locus(size: 11, weight: .medium))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                     Text(detail)
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: selected == nil ? "chevron.right" : "checkmark")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(selected == true ? accent : LocusTheme.muted)
+                    .foregroundStyle(selected == true ? accent : viewColors.muted)
                     .opacity(selected == false ? 0 : 1)
                     .accessibilityHidden(true)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                selected == true ? accent.opacity(0.08) : (hovering && isEnabled ? LocusTheme.paperDeep : Color.clear),
+                selected == true ? accent.opacity(0.08) : (hovering && isEnabled ? viewColors.paperDeep : Color.clear),
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {

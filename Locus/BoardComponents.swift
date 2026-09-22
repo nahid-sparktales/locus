@@ -7,6 +7,10 @@ import SwiftUI
 // MARK: - Card tile
 
 struct BoardCardTile: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let card: BoardCard
     let key: String
     let columns: [BoardColumn]
@@ -69,11 +73,11 @@ struct BoardCardTile: View {
             HStack(spacing: 5) {
                 Text(key)
                     .font(.locus(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                 if recentAgent != nil {
                     Image(systemName: "sparkles")
                         .imageScale(.small)
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .accessibilityHidden(true)
                 }
                 Spacer(minLength: 4)
@@ -81,7 +85,7 @@ struct BoardCardTile: View {
             }
             Text(card.title)
                 .font(.locus(size: 12, weight: .medium))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
                 .truncationMode(.tail)
@@ -93,6 +97,7 @@ struct BoardCardTile: View {
                     }
                 }
             }
+            AgentTagLabels(ids: card.agentIDs ?? [])
             if card.assignee != nil || card.commentCount > 0 {
                 HStack(spacing: 8) {
                     if let assignee = card.assignee {
@@ -118,7 +123,7 @@ struct BoardCardTile: View {
                     }
                 }
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             }
         }
         .padding(10)
@@ -126,7 +131,7 @@ struct BoardCardTile: View {
         .locusCard(radius: 9)
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.separatorStrong.opacity(hovering ? 0.7 : 0), lineWidth: 1)
+                .stroke(viewColors.separatorStrong.opacity(hovering ? 0.7 : 0), lineWidth: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
@@ -163,6 +168,10 @@ struct BoardCardTile: View {
 }
 
 private struct BoardDragPreview: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let key: String
     let title: String
 
@@ -170,10 +179,10 @@ private struct BoardDragPreview: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(key)
                 .font(.locus(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
             Text(title)
                 .font(.locus(size: 12, weight: .medium))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .lineLimit(2)
         }
         .padding(10)
@@ -185,6 +194,10 @@ private struct BoardDragPreview: View {
 /// Highlights a drop target: a capsule in the gap above a card, or an
 /// outline around a column or picker chip.
 struct BoardDropTarget: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     enum Indicator {
         case above
         case outline(radius: CGFloat)
@@ -201,7 +214,7 @@ struct BoardDropTarget: ViewModifier {
             .overlay(alignment: .top) {
                 if targeted, case .above = indicator {
                     Capsule()
-                        .fill(LocusTheme.signalDeep)
+                        .fill(viewColors.signalDeep)
                         .frame(height: 3)
                         .padding(.horizontal, 4)
                         .offset(y: -4.5)
@@ -213,9 +226,9 @@ struct BoardDropTarget: ViewModifier {
             .overlay {
                 if targeted, case .outline(let radius) = indicator {
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(LocusTheme.signalDeep, lineWidth: 2)
+                        .strokeBorder(viewColors.signalDeep, lineWidth: 2)
                         .background(
-                            LocusTheme.signalDeep.opacity(0.06),
+                            viewColors.signalDeep.opacity(0.06),
                             in: RoundedRectangle(cornerRadius: radius, style: .continuous)
                         )
                         .transition(.opacity)
@@ -234,6 +247,10 @@ struct BoardDropTarget: ViewModifier {
 // MARK: - Timeline
 
 struct BoardAuthorAvatar: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let author: BoardAuthor
 
     var body: some View {
@@ -241,9 +258,9 @@ struct BoardAuthorAvatar: View {
         Image(systemName: agent ? "sparkles" : "person.fill")
             .imageScale(.small)
             .font(.locus(size: 10, weight: .semibold))
-            .foregroundStyle(agent ? LocusTheme.brandInk : LocusTheme.textSecondary)
+            .foregroundStyle(agent ? viewColors.brandInk : viewColors.textSecondary)
             .frame(width: 24, height: 24)
-            .background(agent ? LocusTheme.accentFill : LocusTheme.textPrimary.opacity(0.08), in: Circle())
+            .background(agent ? viewColors.accentFill : viewColors.textPrimary.opacity(0.08), in: Circle())
             .accessibilityHidden(true)
     }
 }
@@ -251,6 +268,10 @@ struct BoardAuthorAvatar: View {
 /// Comments read as messages; activity is a single quieter line. Agent
 /// entries say so in text and to VoiceOver, never only through the glyph.
 struct BoardTimelineRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let entry: BoardTimelineEntry
     let now: Date
 
@@ -275,23 +296,23 @@ struct BoardTimelineRow: View {
                     HStack(spacing: 6) {
                         Text(entry.author.name)
                             .font(.locus(size: 11, weight: .semibold))
-                            .foregroundStyle(LocusTheme.textPrimary)
+                            .foregroundStyle(viewColors.textPrimary)
                         if entry.author.kind == .agent {
                             Text("Agent")
                                 .font(.locus(size: 10, weight: .semibold))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                                 .padding(.horizontal, 5)
                                 .frame(minHeight: 16)
-                                .background(LocusTheme.textPrimary.opacity(0.07), in: Capsule())
+                                .background(viewColors.textPrimary.opacity(0.07), in: Capsule())
                         }
                         Text(time)
                             .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .help(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
                     }
                     Text(entry.text)
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.textPrimary)
+                        .foregroundStyle(viewColors.textPrimary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 10)
@@ -299,12 +320,12 @@ struct BoardTimelineRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             entry.author.kind == .agent
-                                ? LocusTheme.accentFill.opacity(0.10) : LocusTheme.surfaceCard,
+                                ? viewColors.accentFill.opacity(0.10) : viewColors.surfaceCard,
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                         )
                         .overlay {
                             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(LocusTheme.separator, lineWidth: 1)
+                                .stroke(viewColors.separator, lineWidth: 1)
                                 .accessibilityHidden(true)
                         }
                 }
@@ -324,14 +345,14 @@ struct BoardTimelineRow: View {
                     }
                 }
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .frame(width: 24)
                 .accessibilityHidden(true)
                 (Text(entry.author.name).fontWeight(.semibold)
                     + Text(entry.author.kind == .agent ? " · Agent" : "")
                     + Text(" · \(entry.text) · \(time)"))
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
@@ -347,6 +368,10 @@ struct BoardTimelineRow: View {
 /// Type-ahead card creation at the bottom of a column. Focus stays in the
 /// field after a card is added, so a list can be typed out in one go.
 struct BoardQuickAddField: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let column: BoardColumn
     let onAdd: (String, BoardColumn) -> Bool
 
@@ -357,7 +382,7 @@ struct BoardQuickAddField: View {
         HStack(spacing: 6) {
             Image(systemName: "plus")
                 .imageScale(.small)
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityHidden(true)
             TextField("Add a card", text: $text)
                 .textFieldStyle(.plain)
@@ -374,12 +399,12 @@ struct BoardQuickAddField: View {
         .padding(.horizontal, 9)
         .frame(minHeight: 30)
         .background(
-            focused ? LocusTheme.surfaceCard : LocusTheme.textPrimary.opacity(0.04),
+            focused ? viewColors.surfaceCard : viewColors.textPrimary.opacity(0.04),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(focused ? LocusTheme.signalDeep : LocusTheme.separator, lineWidth: 1)
+                .stroke(focused ? viewColors.signalDeep : viewColors.separator, lineWidth: 1)
                 .accessibilityHidden(true)
         }
         .contentShape(Rectangle())
@@ -397,22 +422,30 @@ struct BoardQuickAddField: View {
 }
 
 struct BoardCountBadge: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let count: Int
     let total: Int
 
     var body: some View {
         Text(count == total ? "\(total)" : "\(count)/\(total)")
             .font(.locus(size: 10, weight: .semibold).monospacedDigit())
-            .foregroundStyle(LocusTheme.textSecondary)
+            .foregroundStyle(viewColors.textSecondary)
             .padding(.horizontal, 6)
             .frame(minWidth: 20, minHeight: 18)
-            .background(LocusTheme.textPrimary.opacity(0.07), in: Capsule())
+            .background(viewColors.textPrimary.opacity(0.07), in: Capsule())
             .fixedSize()
             .accessibilityLabel(count == total ? "\(total) cards" : "\(count) of \(total) cards match")
     }
 }
 
 struct BoardPriorityBadge: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let priority: BoardPriority
 
     var body: some View {
@@ -424,7 +457,7 @@ struct BoardPriorityBadge: View {
                     .foregroundStyle(priority.tint)
                 Text(priority.title)
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
             }
             .padding(.horizontal, 6)
             .frame(minHeight: 18)
@@ -437,6 +470,10 @@ struct BoardPriorityBadge: View {
 }
 
 struct BoardLabelPill: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let label: String
 
     var body: some View {
@@ -447,7 +484,7 @@ struct BoardLabelPill: View {
                 .accessibilityHidden(true)
             Text(label)
                 .font(.locus(size: 10, weight: .medium))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .lineLimit(1)
         }
         .padding(.horizontal, 6)
@@ -468,6 +505,10 @@ struct BoardLabelPill: View {
 
 /// Small primary or secondary button face for board actions.
 struct BoardButtonLabel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     var symbol: String?
     var prominent = false
@@ -483,19 +524,19 @@ struct BoardButtonLabel: View {
         }
         .font(.locus(size: 11, weight: .semibold))
         .foregroundStyle(
-            prominent ? LocusTheme.brandInk
-                : destructive ? LocusTheme.dangerForeground : LocusTheme.textPrimary
+            prominent ? viewColors.brandInk
+                : destructive ? viewColors.dangerForeground : viewColors.textPrimary
         )
         .padding(.horizontal, 12)
         .frame(minHeight: 28)
         .background(
-            prominent ? LocusTheme.accentFill : LocusTheme.surfaceCard,
+            prominent ? viewColors.accentFill : viewColors.surfaceCard,
             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
         )
         .overlay {
             if !prominent {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(LocusTheme.separator, lineWidth: 1)
+                    .stroke(viewColors.separator, lineWidth: 1)
                     .accessibilityHidden(true)
             }
         }
@@ -506,6 +547,10 @@ struct BoardButtonLabel: View {
 /// Empty and unavailable states. Small copy uses `textSecondary` so it
 /// passes the 1x contrast audit, unlike `InspectorPlaceholder`.
 struct BoardMessage<Actions: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let symbol: String
     let title: String
     let detail: String
@@ -516,16 +561,16 @@ struct BoardMessage<Actions: View>: View {
         VStack(spacing: 8) {
             Image(systemName: symbol)
                 .font(.locus(size: 20))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .accessibilityHidden(true)
             Text(title)
                 .font(.locus(size: 12, weight: .semibold))
-                .foregroundStyle(LocusTheme.textPrimary)
+                .foregroundStyle(viewColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Text(detail)
                 .font(.locus(size: 10))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             actions()

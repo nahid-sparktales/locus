@@ -80,6 +80,10 @@ enum ResponseWritingDrafts {
 }
 
 struct ResponseWritingView<Original: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let part: ResponsePart
     let sourceItemID: String?
     let workspacePath: String
@@ -109,7 +113,7 @@ struct ResponseWritingView<Original: View>: View {
             HStack(spacing: 8) {
                 Text(part.writingTitle).font(.locus(size: 13, weight: .semibold))
                 if draft != nil && !showsOriginal {
-                    Text("Edited").font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    Text("Edited").font(.locus(size: 11)).foregroundStyle(viewColors.muted)
                 }
                 Spacer()
                 Button(copied ? "Copied" : "Copy") { copyVisible() }
@@ -142,7 +146,7 @@ struct ResponseWritingView<Original: View>: View {
             } else { original() }
             if let error {
                 HStack {
-                    Text(error).foregroundStyle(LocusTheme.coral).textSelection(.enabled)
+                    Text(error).foregroundStyle(viewColors.coral).textSelection(.enabled)
                     Button("Retry") { edit() }
                 }
                 .font(.locus(size: 11))
@@ -232,6 +236,10 @@ struct ResponseWritingView<Original: View>: View {
 }
 
 private struct ResponseWritingDraftContent: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var store: NotesStore
     let editing: Bool
     var selectionStore: TranscriptSelectionStore?
@@ -253,7 +261,7 @@ private struct ResponseWritingDraftContent: View {
                     Button { proxy.toggleUnderline() } label: { Image(systemName: "underline") }
                         .accessibilityLabel("Underline")
                     Spacer()
-                    Text(store.hasUnsavedChanges ? "Saving…" : "Saved").foregroundStyle(LocusTheme.muted)
+                    Text(store.hasUnsavedChanges ? "Saving…" : "Saved").foregroundStyle(viewColors.muted)
                 }
                 .buttonStyle(.locus()).font(.locus(size: 11))
                 RichNotesEditor(store: store, proxy: proxy, accessibilityLabel: "Edit writing draft", identifierPrefix: "message.writing.draft")
@@ -270,11 +278,11 @@ private struct ResponseWritingDraftContent: View {
                 }
             } else {
                 Text("This draft is in Notebook Trash or was deleted. The original answer is still available.")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
             }
             if let error = store.saveError {
                 HStack {
-                    Text(error).foregroundStyle(LocusTheme.coral)
+                    Text(error).foregroundStyle(viewColors.coral)
                     Button("Retry save") { try? store.flush() }
                 }.font(.locus(size: 11))
             }

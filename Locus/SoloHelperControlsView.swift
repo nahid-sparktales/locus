@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct SoloHelperControlsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var helpers: SoloCollaborationModel
     let sessionID: String
     let runID: String
@@ -25,17 +29,17 @@ struct SoloHelperControlsView: View {
             HStack {
                 Text(helper.label).font(.locus(size: 11, weight: .semibold))
                 Spacer()
-                Text(helper.state.capitalized).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                Text(helper.state.capitalized).font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
             }
             if helper.runID != runID {
                 Text("Earlier turn")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .accessibilityIdentifier("soloHelper.earlierTurn.\(helper.id)")
             }
             Text(helper.goal).font(.locus(size: 10)).lineLimit(3)
             if let reason = helper.reason, !reason.isEmpty {
-                Text(reason).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                Text(reason).font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
             }
             if isParentRunning {
                 TextField("Instruction for this helper", text: Binding(
@@ -71,12 +75,12 @@ struct SoloHelperControlsView: View {
                 .disabled(helpers.pending.contains(key))
             } else {
                 Text("Continue the parent task to work with this helper again.")
-                    .font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                    .font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
             }
             if let error = helpers.errors[key] {
-                Text(error).font(.locus(size: 10)).foregroundStyle(LocusTheme.warningForeground)
+                Text(error).font(.locus(size: 10)).foregroundStyle(viewColors.warningForeground)
             } else if let receipt = helpers.receipts[key] {
-                Text(receipt).font(.locus(size: 10)).foregroundStyle(LocusTheme.inkSoft)
+                Text(receipt).font(.locus(size: 10)).foregroundStyle(viewColors.inkSoft)
             }
         }
         .padding(8)

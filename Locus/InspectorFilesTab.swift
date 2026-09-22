@@ -12,6 +12,10 @@ struct InspectorFilesTab: View {
 }
 
 private struct WorkspaceBrowserFilesContent: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var workspaceFiles: WorkspaceFileModel
     @ObservedObject var browser: WorkspaceBrowserModel
@@ -23,7 +27,7 @@ private struct WorkspaceBrowserFilesContent: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if browser.workspace.isEmpty {
                         Text("Waiting for the workspace…")
-                            .foregroundStyle(LocusTheme.muted).padding()
+                            .foregroundStyle(viewColors.muted).padding()
                     } else if browser.isSearching {
                         searchContent
                     } else {
@@ -40,7 +44,7 @@ private struct WorkspaceBrowserFilesContent: View {
     private var header: some View {
         VStack(spacing: 8) {
             HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(LocusTheme.muted)
+                Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
                 TextField("Search workspace", text: $browser.query)
                     .textFieldStyle(.plain)
                     .accessibilityIdentifier("files.search")
@@ -53,14 +57,14 @@ private struct WorkspaceBrowserFilesContent: View {
             .font(.locus(size: 11))
             .padding(.horizontal, 10)
             .frame(height: 32)
-            .background(LocusTheme.white.opacity(0.72))
+            .background(viewColors.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 8).stroke(LocusTheme.line, lineWidth: 1) }
+            .overlay { RoundedRectangle(cornerRadius: 8).stroke(viewColors.line, lineWidth: 1) }
 
             HStack(spacing: 8) {
                 Text(countLabel)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityIdentifier("files.count")
                 Spacer()
                 Menu {
@@ -81,11 +85,11 @@ private struct WorkspaceBrowserFilesContent: View {
                     .accessibilityLabel("Reveal workspace in Finder")
                     .accessibilityIdentifier("files.reveal")
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var countLabel: String {
@@ -112,13 +116,13 @@ private struct WorkspaceBrowserFilesContent: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Searching workspace · \(browser.searchExamined) items checked")
-            }.font(.locus(size: 9)).foregroundStyle(LocusTheme.muted).padding(8)
+            }.font(.locus(size: 9)).foregroundStyle(viewColors.muted).padding(8)
         } else if case .failed(let error) = browser.searchState {
             failure(error) { browser.refresh() }
         } else if browser.searchPaused {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Search paused after \(browser.searchResults.count) matches. More files may match.")
-                    .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 Button("Continue searching") { browser.continueSearch() }.buttonStyle(.locus())
             }.padding(8)
         } else if browser.searchResults.isEmpty {
@@ -128,7 +132,7 @@ private struct WorkspaceBrowserFilesContent: View {
         }
         if !browser.searchWarnings.isEmpty {
             Text("Some folders could not be searched: " + browser.searchWarnings.joined(separator: ", "))
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.warningForeground).padding(8)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.warningForeground).padding(8)
         }
     }
 
@@ -138,7 +142,7 @@ private struct WorkspaceBrowserFilesContent: View {
         case .entry(let entry): fileRow(entry, index: index, depth: row.depth, search: false)
         case .loading:
             HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading files…") }
-                .font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                .font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                 .padding(.leading, CGFloat(row.depth) * 14 + 8).padding(.vertical, 8)
         case .failure(let path, let error):
             failure(error) { browser.loadDirectory(path) }.padding(.leading, CGFloat(row.depth) * 14)
@@ -148,7 +152,7 @@ private struct WorkspaceBrowserFilesContent: View {
                     message: "This workspace has no visible files or folders. Use File visibility to include hidden files.",
                     identifier: "files.empty")
             } else {
-                Text("Empty folder").font(.locus(size: 9)).foregroundStyle(LocusTheme.muted)
+                Text("Empty folder").font(.locus(size: 9)).foregroundStyle(viewColors.muted)
                     .padding(.leading, CGFloat(row.depth) * 14 + 8).padding(.vertical, 6)
             }
         case .more(let path, let remaining):
@@ -161,7 +165,7 @@ private struct WorkspaceBrowserFilesContent: View {
     private func failure(_ message: String, retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Could not load files", systemImage: "exclamationmark.triangle")
-            Text(message).foregroundStyle(LocusTheme.muted)
+            Text(message).foregroundStyle(viewColors.muted)
             Button("Retry", action: retry).buttonStyle(.locus())
         }.font(.locus(size: 9)).padding(8)
     }
@@ -172,12 +176,12 @@ private struct WorkspaceBrowserFilesContent: View {
                 HStack(spacing: 7) {
                     Image(systemName: entry.isDirectory && browser.expanded.contains(entry.path) ? "chevron.down" : "chevron.right")
                         .font(.locus(size: 8)).opacity(entry.isDirectory ? 1 : 0).frame(width: 8)
-                    Image(systemName: entry.symbol).font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                    Image(systemName: entry.symbol).font(.locus(size: 11)).foregroundStyle(viewColors.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.name).font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink).lineLimit(1).truncationMode(.middle)
+                            .foregroundStyle(viewColors.ink).lineLimit(1).truncationMode(.middle)
                         if search {
-                            Text(entry.path).font(.locus(size: 8)).foregroundStyle(LocusTheme.muted)
+                            Text(entry.path).font(.locus(size: 8)).foregroundStyle(viewColors.muted)
                                 .lineLimit(1).truncationMode(.head)
                         }
                     }
@@ -196,14 +200,14 @@ private struct WorkspaceBrowserFilesContent: View {
                     Image(systemName: entry.contextAction == .context ? "plus.circle" : "paperclip")
                         .font(.locus(size: 10)).frame(width: 24, height: 28)
                 }
-                .buttonStyle(.locus()).foregroundStyle(LocusTheme.muted)
+                .buttonStyle(.locus()).foregroundStyle(viewColors.muted)
                 .help(title).accessibilityLabel(title + " " + entry.name)
             }
         }
         .padding(.leading, CGFloat(depth) * 14 + 4)
         .padding(.trailing, 4)
         .frame(minHeight: search ? 42 : 32)
-        .background(browser.selectedPath == entry.path ? LocusTheme.white : Color.clear)
+        .background(browser.selectedPath == entry.path ? viewColors.white : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .contextMenu {
             Button(entry.isDirectory ? "Open folder" : "Open") { model.openWorkspaceBrowserEntry(entry) }
@@ -229,10 +233,10 @@ private struct WorkspaceBrowserFilesContent: View {
                             ?? "Line \(location.line)"
                     )
                     .font(.locus(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .padding(.horizontal, 6)
                     .frame(height: 20)
-                    .background(LocusTheme.signalDeep.opacity(0.12))
+                    .background(viewColors.signalDeep.opacity(0.12))
                     .clipShape(Capsule())
                 }
                 Spacer()
@@ -246,7 +250,7 @@ private struct WorkspaceBrowserFilesContent: View {
                         .font(.locus(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .help("Open in the file viewer")
                 .accessibilityLabel("Open \(path) in the file viewer")
                 .accessibilityIdentifier("files.preview.expand")
@@ -257,7 +261,7 @@ private struct WorkspaceBrowserFilesContent: View {
                         .font(.locus(size: 9, weight: .semibold))
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityLabel("Close preview")
                 .accessibilityIdentifier("files.preview.close")
             }
@@ -278,9 +282,9 @@ private struct WorkspaceBrowserFilesContent: View {
                     .padding(.bottom, 12)
             }
         }
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 }

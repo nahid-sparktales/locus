@@ -79,7 +79,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .plan: detail = "Open this chat’s plan, outputs, and sources in a popup"
         case .agent: detail = "Selected agent: trigger, access, chats, and activity"
         case .notes: detail = "Editable notes shared at the scope you choose"
-        case .calendar: detail = "Events from Calendar, Google, and Microsoft accounts"
+        case .calendar: detail = "Built-in calendar with connected account overlays"
         case .board: detail = "Kanban cards you and your agents plan, move, and discuss"
         case .agents: detail = "Workspace instructions in AGENTS.md"
         case .runs: detail = "This chat’s saved executions, progress, and failures"

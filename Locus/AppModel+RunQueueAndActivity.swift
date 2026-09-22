@@ -849,6 +849,11 @@ extension AppModel {
             resume(session)
         }
         guard currentSessionID == session.id else { return }
+        if agentWorldOwnsPresentations, session.belongsToWorkspace(agentWorld.workspace),
+           let profileID = savedAgentProfileID(for: session.id),
+           agentWorld.residents.contains(where: { $0.id == profileID.uuidString }) {
+            agentWorld.showConversation(session.id, profileID: profileID.uuidString)
+        }
         activity.markActivitySeen(run)
         activity.activityCenterPresented = false
         sessionCatalog.revealSession(session)

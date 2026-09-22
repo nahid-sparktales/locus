@@ -69,6 +69,10 @@ enum InteractiveAnswerPresentation: Equatable {
 }
 
 private struct InteractiveAnswerCard<Original: View>: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     let summary: String
     let html: String
@@ -124,7 +128,7 @@ private struct InteractiveAnswerCard<Original: View>: View {
         // registry slot, its web content process and its watchdog until the
         // budget evicted it. Registry admission follows the card's lifetime.
         .onDisappear { host.detach() }
-        .sheet(isPresented: $enlarged) {
+        .locusSheet(isPresented: $enlarged) {
             InteractiveAnswerSheet(title: title, html: html)
         }
     }
@@ -177,7 +181,7 @@ private struct InteractiveAnswerCard<Original: View>: View {
         VStack(spacing: 10) {
             Text(message)
                 .font(.locus(size: 12))
-                .foregroundStyle(LocusTheme.textSecondary)
+                .foregroundStyle(viewColors.textSecondary)
                 .multilineTextAlignment(.center)
             action()
                 .buttonStyle(.locus(.card))
@@ -185,7 +189,7 @@ private struct InteractiveAnswerCard<Original: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LocusTheme.surfaceStructural)
+        .background(viewColors.surfaceStructural)
     }
 
     private var actions: some View {
@@ -200,7 +204,7 @@ private struct InteractiveAnswerCard<Original: View>: View {
             if let saveStatus {
                 Text(saveStatus)
                     .font(.locus(size: 11))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .lineLimit(1)
                     .accessibilityIdentifier("message.interactiveAnswer.saveStatus")
             }
@@ -237,6 +241,10 @@ private struct InteractiveAnswerCard<Original: View>: View {
 /// "Open larger": the same fragment in a second sealed host at the maximum
 /// height, in a sheet the person dismisses with Close or Escape.
 private struct InteractiveAnswerSheet: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let title: String
     let html: String
 
@@ -261,7 +269,7 @@ private struct InteractiveAnswerSheet: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
                     .font(.locus(size: 15, weight: .semibold))
-                    .foregroundStyle(LocusTheme.textPrimary)
+                    .foregroundStyle(viewColors.textPrimary)
                     .lineLimit(2)
                 Spacer()
                 Button("Close") { dismiss() }
@@ -277,7 +285,7 @@ private struct InteractiveAnswerSheet: View {
                         if mode == .loading {
                             Text("Loading interactive content…")
                                 .font(.locus(size: 12))
-                                .foregroundStyle(LocusTheme.textSecondary)
+                                .foregroundStyle(viewColors.textSecondary)
                         }
                         if host.webView != nil {
                             InteractiveAnswerWebView(host: host, height: InteractiveAnswerWebView.heightRange.upperBound)
@@ -288,7 +296,7 @@ private struct InteractiveAnswerSheet: View {
                     VStack(spacing: 10) {
                         Text("This interactive content stopped.")
                             .font(.locus(size: 12))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                         Button("Reload") { host.reload() }
                             .buttonStyle(.locus(.card))
                             .font(.locus(size: 12))
@@ -296,17 +304,17 @@ private struct InteractiveAnswerSheet: View {
                 case .unavailable, .summaryOnly:
                     Text("Interactive content unavailable")
                         .font(.locus(size: 12))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                 }
             }
             .frame(maxWidth: .infinity)
             .frame(height: InteractiveAnswerWebView.heightRange.upperBound)
-            .background(LocusTheme.surfaceStructural)
+            .background(viewColors.surfaceStructural)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .padding(18)
         .frame(minWidth: 720, idealWidth: 900, minHeight: 720 + 90)
-        .background(LocusTheme.surfacePanel)
+        .background(viewColors.surfacePanel)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message.interactiveAnswer.sheet")
         .task { host.start() }

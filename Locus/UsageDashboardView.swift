@@ -161,6 +161,10 @@ enum UsageWindow: String, CaseIterable, Identifiable {
 }
 
 struct UsageDashboardView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -170,7 +174,7 @@ struct UsageDashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(LocusTheme.line)
+            Divider().overlay(viewColors.line)
             if let summary = providerAccounts.usageSummary {
                 content(summary)
             } else {
@@ -179,13 +183,13 @@ struct UsageDashboardView: View {
                         .controlSize(.small)
                     Text("Reading the run store…")
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(width: 780, height: 620)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .onAppear {
             providerAccounts.refreshUsageSummary(since: window.since)
             Task { await providerAccounts.refreshActiveChatGPTUsage() }
@@ -205,7 +209,7 @@ struct UsageDashboardView: View {
                     + "Local Ollama runs are free. This is not a bill."
                 )
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             }
             Spacer()
             Picker("Window", selection: $window) {
@@ -264,7 +268,7 @@ struct UsageDashboardView: View {
                                 .formatted(.currency(code: "USD"))
                         )
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     }
                 }
             }
@@ -310,11 +314,11 @@ struct UsageDashboardView: View {
             if let observedAt = usage.observedAt {
                 Text("Updated " + Date(timeIntervalSince1970: observedAt).formatted(.relative(presentation: .named)))
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             Text("Subscription limits are reported by the provider and are kept separate from API and local cost estimates below.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
         }
     }
 
@@ -348,17 +352,17 @@ struct UsageDashboardView: View {
             Text(caption.uppercased())
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(value)
                 .font(.locus(size: 17, weight: .bold))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityIdentifier(id)
     }
@@ -367,7 +371,7 @@ struct UsageDashboardView: View {
         Text(title)
             .font(.locus(size: 8, weight: .bold))
             .tracking(0.8)
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
     }
 
     private func expensiveRuns(_ runs: [UsageSummary.ExpensiveRun]) -> some View {
@@ -383,24 +387,24 @@ struct UsageDashboardView: View {
                             .font(.locus(size: 10, weight: .semibold))
                         Text(run.state)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                         Spacer()
                         Text(
                             Date(timeIntervalSince1970: run.createdAt)
                                 .formatted(.relative(presentation: .named))
                         )
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         Text(run.estimatedCost.formatted(.currency(code: "USD")))
                             .font(.locus(size: 10, weight: .bold))
                     }
                     .padding(.horizontal, 11)
                     .frame(height: 34)
-                    .background(LocusTheme.white)
+                    .background(viewColors.white)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(LocusTheme.line, lineWidth: 1)
+                            .stroke(viewColors.line, lineWidth: 1)
                     }
                     .contentShape(Rectangle())
                 }
@@ -420,12 +424,12 @@ struct UsageDashboardView: View {
                     if row.local {
                         Text("local · $0")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     Spacer()
                     Text("\(row.samples) calls")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(
                         row.local
                             ? Double.zero.formatted(.currency(code: "USD"))
@@ -443,7 +447,7 @@ struct UsageDashboardView: View {
             sectionLabel("BY MODEL")
             Text("Token counts from team-run job attempts. Dollar estimates exist only where a run's agent had rates.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             tableCard(rows) { row in
                 HStack {
                     Text(row.model.nilIfEmpty ?? "unknown model")
@@ -451,11 +455,11 @@ struct UsageDashboardView: View {
                         .lineLimit(1)
                     Text(row.provider)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Spacer()
                     Text("\(row.attempts) jobs")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(
                         "\((row.promptTokens + row.completionTokens).formatted(.number.notation(.compactName))) tok"
                     )
@@ -482,7 +486,7 @@ struct UsageDashboardView: View {
                     Spacer()
                     Text("\(row.runs) runs")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(row.estimatedCost.formatted(.currency(code: "USD")))
                         .font(.locus(size: 10, weight: .semibold))
                         .frame(width: 82, alignment: .trailing)
@@ -497,7 +501,7 @@ struct UsageDashboardView: View {
             if solo.turns == 0 {
                 Text("No solo turns recorded in this window yet.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             } else {
                 HStack(spacing: 12) {
                     Text("\(solo.turns) turns")
@@ -507,7 +511,7 @@ struct UsageDashboardView: View {
                         + "\(solo.completionTokens.formatted(.number.notation(.compactName))) reply tokens"
                     )
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 }
                 .accessibilityIdentifier("usage.solo")
             }
@@ -519,7 +523,7 @@ struct UsageDashboardView: View {
                     + "is unknown, so solo rows show tokens, never dollars."
                 )
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             }
         }
     }
@@ -534,15 +538,15 @@ struct UsageDashboardView: View {
                     .padding(.horizontal, 11)
                     .frame(height: 32)
                 if index < rows.count - 1 {
-                    Divider().overlay(LocusTheme.line.opacity(0.6))
+                    Divider().overlay(viewColors.line.opacity(0.6))
                 }
             }
         }
-        .background(LocusTheme.white)
+        .background(viewColors.white)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
     }
 

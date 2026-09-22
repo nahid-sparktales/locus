@@ -4,6 +4,10 @@ import SwiftUI
 /// after the root delegates and has no team controls or writer UI. Any inherited
 /// tool approval still appears in the normal composer permission panel.
 struct SoloSwarmPanelView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     let runID: String
@@ -28,21 +32,21 @@ struct SoloSwarmPanelView: View {
         VStack(alignment: .leading, spacing: compact ? 6 : 10) {
             HStack(spacing: 8) {
                 Image(systemName: isSuccessful ? "checkmark.circle.fill" : "circle.hexagongrid.fill")
-                    .foregroundStyle(isSuccessful ? LocusTheme.success : LocusTheme.signalDeep)
+                    .foregroundStyle(isSuccessful ? viewColors.success : viewColors.signalDeep)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("SOLO WORKERS")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(summaryText(now: now))
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                 }
                 Spacer()
                 if modelCalls > 0 || delegatedTokens > 0 {
                     Text("\(modelCalls) calls · \(delegatedTokens.formatted()) tok")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             if !compact {
@@ -52,20 +56,20 @@ struct SoloSwarmPanelView: View {
                         Image(systemName: activity.state == .completed
                             ? "checkmark.circle.fill" : "circle.dotted")
                             .foregroundStyle(activity.state == .completed
-                                ? LocusTheme.success : LocusTheme.signalDeep)
+                                ? viewColors.success : viewColors.signalDeep)
                             .frame(width: 13)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(activity.agentName)
                                 .font(.locus(size: 9, weight: .semibold))
                             Text(activity.goal)
                                 .font(.locus(size: 8))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .foregroundStyle(viewColors.inkSoft)
                                 .lineLimit(2)
                             Text([activity.provider, activity.model,
                                   activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
                                 .filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.locus(size: 7, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -77,7 +81,7 @@ struct SoloSwarmPanelView: View {
         .locusCard(radius: 10)
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.28), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.28), lineWidth: 1)
         }
     }
 
@@ -134,6 +138,10 @@ struct SoloSwarmPanelView: View {
 /// the conversation directly below the request carrying the same run id, so
 /// planning and execution never displace the message composer.
 struct TeamRunBoardView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @EnvironmentObject private var landingFlow: LandingFlowModel
@@ -178,7 +186,7 @@ struct TeamRunBoardView: View {
                     Text("TEAM JOBS")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.7)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     ForEach(visibleActivities) { activity in
                         activityRow(activity, now: now)
                     }
@@ -190,7 +198,7 @@ struct TeamRunBoardView: View {
                 Label(explanation, systemImage: state == .paused
                     ? "pause.circle.fill" : "info.circle.fill")
                     .font(.locus(size: 9))
-                    .foregroundStyle(state == .paused ? LocusTheme.warning : LocusTheme.inkSoft)
+                    .foregroundStyle(state == .paused ? viewColors.warning : viewColors.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(12)
             }
@@ -222,7 +230,7 @@ struct TeamRunBoardView: View {
                         }
                         Text(terminalSummary)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 8)
@@ -231,7 +239,7 @@ struct TeamRunBoardView: View {
                     Image(systemName: "chevron.down")
                         .font(.locus(size: 8, weight: .bold))
                 }
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
@@ -256,19 +264,19 @@ struct TeamRunBoardView: View {
                 Text("TEAM RUN")
                     .font(.locus(size: 8, weight: .bold))
                     .tracking(0.8)
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Text(teamName).font(.locus(size: 12, weight: .bold))
             }
             Spacer()
             if isActive, teamRunLive.teamModelCalls > 0 || teamRunLive.teamMeteredTokens > 0 {
                 Text("\(teamRunLive.teamModelCalls) calls · \(teamRunLive.teamMeteredTokens.formatted()) tokens")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             if isActive, let startedAt = model.activeWorkStartedAt {
                 Text(elapsedText(max(now.timeIntervalSince(startedAt), 0)))
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             Text(state.title)
                 .font(.locus(size: 8, weight: .bold))
@@ -288,7 +296,7 @@ struct TeamRunBoardView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(request)
                 .font(.locus(size: 9))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .lineLimit(3)
             HStack(spacing: 5) {
                 ForEach(Array(phases.enumerated()), id: \.offset) { index, phase in
@@ -298,10 +306,10 @@ struct TeamRunBoardView: View {
                             .foregroundStyle(phaseColor(index))
                         Text(phase)
                             .font(.locus(size: 7, weight: index == currentPhase ? .bold : .regular))
-                            .foregroundStyle(index <= currentPhase ? LocusTheme.inkSoft : LocusTheme.muted)
+                            .foregroundStyle(index <= currentPhase ? viewColors.inkSoft : viewColors.muted)
                             .lineLimit(1)
                         if index < phases.count - 1 {
-                            Rectangle().fill(index < currentPhase ? LocusTheme.success : LocusTheme.line)
+                            Rectangle().fill(index < currentPhase ? viewColors.success : viewColors.line)
                                 .frame(maxWidth: .infinity, maxHeight: 1)
                         }
                     }
@@ -315,15 +323,15 @@ struct TeamRunBoardView: View {
             if activity.depth > 0 {
                 Image(systemName: "arrow.turn.down.right")
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .padding(.leading, CGFloat((activity.depth - 1) * 12))
             }
             Image(systemName: activity.state == .completed
                 ? "checkmark.circle.fill"
                 : activity.state == .paused ? "pause.circle.fill" : "circle.dotted")
                 .foregroundStyle(activity.state == .completed
-                    ? LocusTheme.success
-                    : activity.state == .paused ? LocusTheme.warning : LocusTheme.signalDeep)
+                    ? viewColors.success
+                    : activity.state == .paused ? viewColors.warning : viewColors.signalDeep)
                 .frame(width: 13)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
@@ -334,18 +342,18 @@ struct TeamRunBoardView: View {
                     if activity.writerPosition != nil {
                         Text("· \(activity.agentName)")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                 }
                 Text([activity.provider, activity.model,
                       activity.executionEngine.replacingOccurrences(of: "_", with: " ")]
                     .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(1)
                 Text(activity.output.isEmpty ? activity.goal : activity.output)
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .lineLimit(3)
             }
             Spacer(minLength: 0)
@@ -355,7 +363,7 @@ struct TeamRunBoardView: View {
                     : Double(activity.elapsedMilliseconds) / 1_000
                 Text(elapsedText(seconds))
                     .font(.locus(size: 7, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
         }
         .accessibilityIdentifier("teamBoard.agentTree.\(activity.nodeID ?? activity.id)")
@@ -372,12 +380,12 @@ struct TeamRunBoardView: View {
                 if run.checkpoint?.state["fallback_action"]?.string == "run_with_locus" {
                     Button("Run with Locus") { model.runOrchestrationWithLocus(run) }
                         .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
+                        .tint(viewColors.ink)
                         .accessibilityIdentifier("teamBoard.runWithLocus")
                 } else {
                     Button("Resume") { model.resumeOrchestration(run) }
                         .buttonStyle(.borderedProminent)
-                        .tint(LocusTheme.ink)
+                        .tint(viewColors.ink)
                         .accessibilityIdentifier("teamBoard.resume")
                 }
                 Button("Discard", role: .destructive) { model.discardOrchestration(run.id) }
@@ -392,14 +400,14 @@ struct TeamRunBoardView: View {
                 if presentation.canStop {
                     Button("Stop", role: .destructive) { model.cancelOrchestration(activeID) }
                         .buttonStyle(.locus())
-                        .foregroundStyle(LocusTheme.coral)
+                        .foregroundStyle(viewColors.coral)
                         .accessibilityIdentifier("teamBoard.stop")
                 }
             }
             if state == .completed, landingFlow.taskHasChanges, isActive {
                 Button("Review & Land") { landingFlow.prepareReviewAndLand() }
                     .buttonStyle(.borderedProminent)
-                    .tint(LocusTheme.ink)
+                    .tint(viewColors.ink)
             }
             Spacer()
             Button("Open Team Runs") { model.openTeamRun(runID) }
@@ -460,8 +468,8 @@ struct TeamRunBoardView: View {
             : index == currentPhase ? "circle.inset.filled" : "circle"
     }
     private func phaseColor(_ index: Int) -> Color {
-        index < currentPhase || state == .completed ? LocusTheme.success
-            : index == currentPhase ? stateColor : LocusTheme.lineStrong
+        index < currentPhase || state == .completed ? viewColors.success
+            : index == currentPhase ? stateColor : viewColors.lineStrong
     }
     private var stateSymbol: String {
         switch state {
@@ -475,11 +483,11 @@ struct TeamRunBoardView: View {
     }
     private var stateColor: Color {
         switch state {
-        case .completed: LocusTheme.success
-        case .interrupted where presentation.canRecover: LocusTheme.warning
-        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
-        case .paused, .waitingPermission, .waitingComputer, .waitingDispatchApproval: LocusTheme.warning
-        default: LocusTheme.signalDeep
+        case .completed: viewColors.success
+        case .interrupted where presentation.canRecover: viewColors.warning
+        case .failed, .interrupted, .cancelled, .discarded: viewColors.coral
+        case .paused, .waitingPermission, .waitingComputer, .waitingDispatchApproval: viewColors.warning
+        default: viewColors.signalDeep
         }
     }
     private var statusExplanation: String? {
@@ -521,6 +529,10 @@ struct TeamRunBoardView: View {
 /// dispatcher is building a plan. It reports observable stages and validation
 /// diagnostics without presenting provider reasoning or raw structured output.
 struct TeamDispatchProgressView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -547,7 +559,7 @@ struct TeamDispatchProgressView: View {
                     Text("DISPATCHER PLANNING")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .accessibilityIdentifier("teamDispatch.progress")
                     Text(teamRunLive.activeOrchestrationTeam?.name ?? "Team run")
                         .font(.locus(size: 12, weight: .bold))
@@ -556,7 +568,7 @@ struct TeamDispatchProgressView: View {
                 if startedAt != nil {
                     Text(duration(elapsed))
                         .font(.locus(size: 9, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(13)
@@ -567,18 +579,18 @@ struct TeamDispatchProgressView: View {
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.locus(size: 13, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(dispatcherName)
                             .font(.locus(size: 11, weight: .semibold))
                         Text(dispatcherRoute)
                             .font(.locus(size: 8, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                             .lineLimit(2)
                         Text(stageDetail)
                             .font(.locus(size: 10))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .lineLimit(4)
                     }
                 }
@@ -586,11 +598,11 @@ struct TeamDispatchProgressView: View {
                 if let reason = teamRunLive.dispatcherValidationReason, !reason.isEmpty {
                     Label(reason, systemImage: "arrow.triangle.2.circlepath")
                         .font(.locus(size: 9, weight: .medium))
-                        .foregroundStyle(LocusTheme.warning)
+                        .foregroundStyle(viewColors.warning)
                         .lineLimit(3)
                         .padding(9)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(LocusTheme.warning.opacity(0.08))
+                        .background(viewColors.warning.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .accessibilityIdentifier("teamDispatch.validationReason")
                 }
@@ -609,7 +621,7 @@ struct TeamDispatchProgressView: View {
                     stageRow("Show the plan for your approval", complete: false)
                 }
                 .padding(9)
-                .background(LocusTheme.paperDeep.opacity(0.65))
+                .background(viewColors.paperDeep.opacity(0.65))
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 if !requestSummary.isEmpty {
@@ -617,10 +629,10 @@ struct TeamDispatchProgressView: View {
                         Text("REQUEST")
                             .font(.locus(size: 7, weight: .bold))
                             .tracking(0.7)
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                         Text(requestSummary)
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .lineLimit(3)
                     }
                 }
@@ -632,7 +644,7 @@ struct TeamDispatchProgressView: View {
             HStack {
                 Text("No agents or jobs begin until you approve the completed plan once.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 Spacer()
                 if let runID = model.orchestrationRunID {
                     Button("Stop", role: .destructive) {
@@ -640,7 +652,7 @@ struct TeamDispatchProgressView: View {
                     }
                     .buttonStyle(.locus())
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.coral)
+                    .foregroundStyle(viewColors.coral)
                     .accessibilityIdentifier("teamDispatch.stop")
                 }
             }
@@ -649,7 +661,7 @@ struct TeamDispatchProgressView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.45), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.45), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .accessibilityElement(children: .contain)
@@ -659,11 +671,11 @@ struct TeamDispatchProgressView: View {
         HStack(spacing: 7) {
             Image(systemName: complete ? "checkmark.circle.fill" : "circle.dotted")
                 .font(.locus(size: 9))
-                .foregroundStyle(complete ? LocusTheme.success : LocusTheme.signalDeep)
+                .foregroundStyle(complete ? viewColors.success : viewColors.signalDeep)
                 .frame(width: 12)
             Text(title)
                 .font(.locus(size: 9, weight: complete ? .medium : .regular))
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
         }
     }
 
@@ -717,6 +729,10 @@ struct TeamDispatchProgressView: View {
 /// releases the complete dependency graph; individual agents and jobs do not
 /// ask for additional dispatch approval.
 struct TeamDispatchApprovalPromptView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -742,7 +758,7 @@ struct TeamDispatchApprovalPromptView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.55), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.55), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .focusable()
@@ -781,24 +797,24 @@ struct TeamDispatchApprovalPromptView: View {
             Text("TEAM PLAN READY")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
                 .accessibilityIdentifier("teamDispatch.approval")
             HStack(spacing: 7) {
                 Image(systemName: "person.2.fill")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                 Text("\(plan.jobs.count) jobs")
                     .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .frame(height: 18)
-                    .background(LocusTheme.paperDeep)
+                    .background(viewColors.paperDeep)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text("Approve this complete plan once?")
                     .font(.locus(size: 12, weight: .bold))
             }
             Text("The listed jobs and their read-only helpers can run after one approval. Agents that change files cannot delegate. Tool actions still follow your shared approval policy.")
                 .font(.locus(size: 8))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -808,7 +824,7 @@ struct TeamDispatchApprovalPromptView: View {
             if !plan.summary.isEmpty {
                 Text(plan.summary)
                     .font(.locus(size: 10, weight: .medium))
-                    .foregroundStyle(LocusTheme.inkSoft)
+                    .foregroundStyle(viewColors.inkSoft)
                     .lineLimit(3)
             }
 
@@ -817,23 +833,23 @@ struct TeamDispatchApprovalPromptView: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text("\(index + 1).")
                             .font(.locus(size: 9, design: .monospaced))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 5) {
                                 Text(agentName(for: job))
                                     .font(.locus(size: 9, weight: .semibold))
                                 Text("· \(jobLabel(job))")
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             }
                             Text(job.goal)
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.inkSoft)
+                                .foregroundStyle(viewColors.inkSoft)
                                 .lineLimit(2)
                             if !job.dependencies.isEmpty {
                                 Text("After: \(job.dependencies.joined(separator: ", "))")
                                     .font(.locus(size: 7, design: .monospaced))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                             }
                         }
                         Spacer(minLength: 0)
@@ -868,7 +884,7 @@ struct TeamDispatchApprovalPromptView: View {
                 }
                 Text("This approval covers only narrower read-only children beneath the listed specialist goals and within this provider roster and cost ceiling.")
                     .font(.locus(size: 8))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("teamDispatch.swarmScope")
             }
@@ -878,11 +894,11 @@ struct TeamDispatchApprovalPromptView: View {
                     Text("APPROVED PROVIDERS")
                         .font(.locus(size: 7, weight: .bold))
                         .tracking(0.5)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     ForEach(roster) { provider in
                         Text("\(provider.agentName) · \(provider.provider) · \(provider.model)\(provider.readOnly ? " · read only" : " · writer")")
                             .font(.locus(size: 7, design: .monospaced))
-                            .foregroundStyle(LocusTheme.inkSoft)
+                            .foregroundStyle(viewColors.inkSoft)
                             .lineLimit(1)
                     }
                 }
@@ -897,7 +913,7 @@ struct TeamDispatchApprovalPromptView: View {
             .accessibilityIdentifier("teamDispatch.openRuns")
         }
         .padding(10)
-        .background(LocusTheme.paperDeep.opacity(0.65))
+        .background(viewColors.paperDeep.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
@@ -939,41 +955,41 @@ struct TeamDispatchApprovalPromptView: View {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text("\(index + 1).")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
                     Text(detail)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.horizontal, 5)
                         .frame(height: 15)
                         .overlay {
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
+                                .stroke(viewColors.line, lineWidth: 1)
                         }
                 }
                 if isSelected {
                     Text("↵")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(minHeight: 42)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -990,10 +1006,10 @@ struct TeamDispatchApprovalPromptView: View {
     private func budgetPill(_ text: String) -> some View {
         Text(text)
             .font(.locus(size: 7, design: .monospaced))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .padding(.horizontal, 6)
             .frame(height: 17)
-            .background(LocusTheme.white.opacity(0.75))
+            .background(viewColors.white.opacity(0.75))
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 
@@ -1059,6 +1075,10 @@ struct TeamDispatchApprovalPromptView: View {
 /// decides whether the plan gets implemented. ↑/↓ move the selection, 1–3
 /// answer directly, ↵ confirms, esc cancels.
 struct PlanApprovalPromptView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
 
     @State private var selection = 0
@@ -1081,7 +1101,7 @@ struct PlanApprovalPromptView: View {
         .locusCard(radius: 13)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(LocusTheme.signalDeep.opacity(0.55), lineWidth: 1)
+                .stroke(viewColors.signalDeep.opacity(0.55), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 22, y: 9)
         .focusable()
@@ -1125,21 +1145,21 @@ struct PlanApprovalPromptView: View {
             Text("PLAN READY")
                 .font(.locus(size: 8, weight: .bold))
                 .tracking(0.8)
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             HStack(spacing: 7) {
                 Image(systemName: "list.bullet.clipboard")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .accessibilityHidden(true)
                 Text("\(planSteps.count) steps")
                     .font(.locus(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 6)
                     .frame(height: 18)
-                    .background(LocusTheme.paperDeep)
+                    .background(viewColors.paperDeep)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 Text("Do you want to implement this plan?")
                     .font(.locus(size: 12, weight: .bold))
-                    .foregroundStyle(LocusTheme.ink)
+                    .foregroundStyle(viewColors.ink)
             }
         }
     }
@@ -1150,7 +1170,7 @@ struct PlanApprovalPromptView: View {
             ScrollView { stepContents }
         }
         .frame(maxHeight: 180)
-        .background(LocusTheme.paperDeep.opacity(0.65))
+        .background(viewColors.paperDeep.opacity(0.65))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .accessibilityIdentifier("planApproval.steps")
     }
@@ -1159,16 +1179,16 @@ struct PlanApprovalPromptView: View {
         VStack(alignment: .leading, spacing: 5) {
             if planSteps.isEmpty {
                 Text("Review the plan in the conversation above before starting work.")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.textSecondary)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.textSecondary)
             }
             ForEach(Array(planSteps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 7) {
                     Text("\(index + 1).")
                         .font(.locus(size: 10, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(step)
                         .font(.locus(size: 10, weight: .medium))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -1215,42 +1235,42 @@ struct PlanApprovalPromptView: View {
             HStack(spacing: 8) {
                 Text(isSelected ? "❯" : " ")
                     .font(.locus(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(LocusTheme.signalDeep)
+                    .foregroundStyle(viewColors.signalDeep)
                     .frame(width: 10)
                 Text("\(index + 1).")
                     .font(.locus(size: 10, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.locus(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                     Text(detail)
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 if let keyCap {
                     Text(keyCap)
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .padding(.horizontal, 5)
                         .frame(height: 15)
                         .overlay {
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .stroke(LocusTheme.line, lineWidth: 1)
+                                .stroke(viewColors.line, lineWidth: 1)
                         }
                 }
                 if isSelected {
                     Text("↵")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(minHeight: 42)
-            .background(isSelected ? LocusTheme.paperDeep : Color.clear)
+            .background(isSelected ? viewColors.paperDeep : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }

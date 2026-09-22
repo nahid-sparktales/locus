@@ -4,6 +4,10 @@ import SwiftUI
 /// The shared crew ledger lives in the workspace and uses the native chat
 /// renderer and editor. Agent World embeds this same surface.
 struct AgentCrewChatView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var model: AgentCrewChatModel
     @EnvironmentObject private var appModel: AppModel
     var allowsInteraction = true
@@ -38,7 +42,7 @@ struct AgentCrewChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .locusWorkspaceBackground()
-        .foregroundStyle(LocusTheme.ink)
+        .foregroundStyle(viewColors.ink)
         .onAppear {
             model.refresh()
             if presentedWorkspace == nil { presentedWorkspace = model.workspace }
@@ -58,20 +62,20 @@ struct AgentCrewChatView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Crew Chat").font(.locus(size: 12, weight: .semibold))
                 Label(projectName, systemImage: "folder.fill")
-                    .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted).lineLimit(1)
+                    .font(.locus(size: 10)).foregroundStyle(viewColors.muted).lineLimit(1)
             }
             Spacer()
             if model.pendingReplyCount > 0 {
                 Label("\(model.pendingReplyCount) working", systemImage: "ellipsis.bubble")
-                    .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
             } else {
-                Text("Shared with Agent World").font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                Text("Shared with Agent World").font(.locus(size: 10)).foregroundStyle(viewColors.muted)
             }
         }
         .padding(.leading, sidebarVisible ? 20 : 76).padding(.trailing, 18)
         .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
-        .overlay(alignment: .bottom) { Rectangle().fill(LocusTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
 
     private var members: some View {
@@ -83,12 +87,12 @@ struct AgentCrewChatView: View {
                         composerFocused = true
                     } label: {
                         HStack(spacing: 6) {
-                            Circle().fill(member.available ? LocusTheme.success : LocusTheme.muted).frame(width: 5, height: 5)
+                            Circle().fill(member.available ? viewColors.success : viewColors.muted).frame(width: 5, height: 5)
                             Text("@\(member.name)").lineLimit(1)
                         }
                         .font(.locus(size: 10, weight: .medium))
                         .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(LocusTheme.ink.opacity(0.045), in: Capsule())
+                        .background(viewColors.ink.opacity(0.045), in: Capsule())
                     }
                     .buttonStyle(.locus()).disabled(!allowsInteraction)
                     .help(member.availabilityReason ?? "Mention \(member.name) · \(member.role)")
@@ -107,7 +111,7 @@ struct AgentCrewChatView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("What should the crew work on?").font(.locus(size: 22, weight: .semibold))
                             Text("Ask a question or give the crew a task. Mention an agent to choose who responds.")
-                                .font(.locus(size: 13)).foregroundStyle(LocusTheme.muted)
+                                .font(.locus(size: 13)).foregroundStyle(viewColors.muted)
                         }.padding(.vertical, 40)
                     }
                     ForEach(model.messages) { message in
@@ -158,7 +162,7 @@ struct AgentCrewChatView: View {
         VStack(spacing: 8) {
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.locus(size: 11)).foregroundStyle(LocusTheme.coral)
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.coral)
                     .textSelection(.enabled).frame(maxWidth: 740, alignment: .leading)
                     .accessibilityIdentifier("crewChat.error")
             }
@@ -175,7 +179,7 @@ struct AgentCrewChatView: View {
                     .disabled(!allowsInteraction)
                 HStack(spacing: 10) {
                     Label("Automatic", systemImage: "sparkles")
-                        .font(.locus(size: 10, weight: .medium)).foregroundStyle(LocusTheme.inkSoft)
+                        .font(.locus(size: 10, weight: .medium)).foregroundStyle(viewColors.inkSoft)
                         .help("Agents decide whether to answer directly or use their available tools.")
                     Spacer()
                     if model.isSending {
@@ -202,10 +206,10 @@ struct AgentCrewChatView: View {
         VStack(alignment: .leading, spacing: 4) {
             if !model.routingPreview.recipients.isEmpty {
                 Text("To: " + model.routingPreview.recipients.map(\.name).joined(separator: ", "))
-                    .font(.locus(size: 10, weight: .medium)).foregroundStyle(LocusTheme.muted)
+                    .font(.locus(size: 10, weight: .medium)).foregroundStyle(viewColors.muted)
             }
             ForEach(Array(model.routingPreview.issues.enumerated()), id: \.offset) { _, issue in
-                Text(issue).font(.locus(size: 10)).foregroundStyle(LocusTheme.warning)
+                Text(issue).font(.locus(size: 10)).foregroundStyle(viewColors.warning)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -240,6 +244,10 @@ private struct CrewTranscriptScrollBridge: NSViewRepresentable {
 }
 
 private struct CrewTranscriptMessage: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var appModel: AppModel
     let message: AgentCrewChatMessage
     let blocks: [ChatBlock]
@@ -258,7 +266,7 @@ private struct CrewTranscriptMessage: View {
                     Text(message.authorName).font(.locus(size: 12, weight: .semibold))
                     if message.status.isPending {
                         Text(message.status == .needsAttention ? "Needs attention" : message.status == .queued ? "Queued" : "Working")
-                            .font(.locus(size: 10)).foregroundStyle(LocusTheme.muted)
+                            .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
                     }
                     Spacer()
                 }
@@ -274,7 +282,7 @@ private struct CrewTranscriptMessage: View {
                     onOpenWorkspaceReference: appModel.openWorkspaceReference, showsConversationActions: false)
             }
             if let detail = message.statusDetail, !detail.isEmpty {
-                Text(detail).font(.locus(size: 11)).foregroundStyle(LocusTheme.muted)
+                Text(detail).font(.locus(size: 11)).foregroundStyle(viewColors.muted)
             }
             if message.role == .agent, message.sessionID != nil {
                 HStack(spacing: 12) {
@@ -288,6 +296,10 @@ private struct CrewTranscriptMessage: View {
 }
 
 struct CrewChatSidebarEntry: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let selected: Bool
 
@@ -296,25 +308,25 @@ struct CrewChatSidebarEntry: View {
             HStack(spacing: 8) {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.locus(size: 12, weight: .semibold))
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .frame(width: 25, height: 25)
-                    .background(LocusTheme.accentAction.opacity(selected ? 0.12 : 0.06),
+                    .background(viewColors.accentAction.opacity(selected ? 0.12 : 0.06),
                                 in: RoundedRectangle(cornerRadius: 7))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Crew Chat")
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineLimit(1)
                     Text("Shared conversation")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.locus(size: 8, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 22)
                     .accessibilityHidden(true)
             }
@@ -323,7 +335,7 @@ struct CrewChatSidebarEntry: View {
             .padding(.leading, 23)
             .padding(.trailing, 4)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(selected ? LocusTheme.accentAction.opacity(0.09) : Color.clear)
+            .background(selected ? viewColors.accentAction.opacity(0.09) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
         }

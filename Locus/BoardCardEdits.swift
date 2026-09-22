@@ -8,6 +8,7 @@ struct BoardCardDraft: Equatable {
     var details = ""
     var labels = ""
     var assignee = ""
+    var agentIDs: [UUID] = []
 
     init() {}
 
@@ -16,6 +17,7 @@ struct BoardCardDraft: Equatable {
         details = card.details
         labels = card.labels.joined(separator: ", ")
         assignee = card.assignee ?? ""
+        agentIDs = card.agentIDs ?? []
     }
 
     static func labels(from text: String) -> [String] {
@@ -81,6 +83,7 @@ struct BoardCardEdits {
         if draft.details == baseline.details { draft.details = fresh.details }
         if draft.labels == baseline.labels { draft.labels = fresh.labels }
         if draft.assignee == baseline.assignee { draft.assignee = fresh.assignee }
+        if draft.agentIDs == baseline.agentIDs { draft.agentIDs = fresh.agentIDs }
         baseline = fresh
     }
 
@@ -92,7 +95,8 @@ struct BoardCardEdits {
             title: draft.title != baseline.title ? draft.title : nil,
             details: draft.details != baseline.details ? draft.details : nil,
             labels: draft.labels != baseline.labels ? BoardCardDraft.labels(from: draft.labels) : nil,
-            assignee: draft.assignee != baseline.assignee ? .some(draft.assignee) : nil
+            assignee: draft.assignee != baseline.assignee ? .some(draft.assignee) : nil,
+            agentIDs: draft.agentIDs != baseline.agentIDs ? draft.agentIDs : nil
         )
         if let saved = store.cards.first(where: { $0.id == cardID }) { load(saved) }
     }

@@ -353,6 +353,10 @@ private final class SidebarHitTestDiagnosticView: NSView {
 /// Cross-session transcript results observe their child model at the smallest
 /// owning boundary, so result updates do not invalidate the whole sidebar or AppModel.
 private struct TranscriptHitsSection: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let snapshot: SessionCatalogSnapshot
     @ObservedObject var transcriptSearch: TranscriptSearchModel
     let navigationDisabled: Bool
@@ -372,7 +376,7 @@ private struct TranscriptHitsSection: View {
                     Text(transcriptSearch.transcriptSearchIndexing
                         ? "Indexing conversations…" : "Searching…")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, SidebarMetrics.rowInset)
@@ -384,7 +388,7 @@ private struct TranscriptHitsSection: View {
                !transcriptSearch.transcriptSearchIndexing {
                 Text("No matching messages")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, SidebarMetrics.rowInset)
                     .padding(.vertical, 6)
@@ -401,7 +405,7 @@ private struct TranscriptHitsSection: View {
                 HStack(spacing: 5) {
                     Image(systemName: hit.role == "user" ? "person" : "sparkle")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                     Text(hit.title?.nilIfEmpty ?? "Untitled chat")
                         .font(.locus(size: 9, weight: .semibold))
                         .lineLimit(1)
@@ -411,11 +415,11 @@ private struct TranscriptHitsSection: View {
                             .formatted(.relative(presentation: .named))
                     )
                     .font(.locus(size: 7))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 }
                 Text(highlightedSnippet(hit))
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
@@ -440,7 +444,7 @@ private struct TranscriptHitsSection: View {
                   let range = Range(stringRange, in: text)
             else { continue }
             text[range].font = .system(size: 9, weight: .bold)
-            text[range].foregroundColor = LocusTheme.signalDeep
+            text[range].foregroundColor = viewColors.signalDeep
         }
         return text
     }
@@ -469,6 +473,10 @@ enum SidebarIconMetrics {
 }
 
 struct SessionSidebarView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -578,7 +586,7 @@ struct SessionSidebarView: View {
                                     if group.chats.isEmpty && sidebarGroup.rootFolders.isEmpty {
                                         Text("No chats yet")
                                             .font(.locus(size: 9))
-                                            .foregroundStyle(LocusTheme.muted)
+                                            .foregroundStyle(viewColors.muted)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .padding(.leading, 42)
                                             .padding(.vertical, 7)
@@ -658,7 +666,7 @@ struct SessionSidebarView: View {
         .background {
             // Content remains below the traffic lights, while its structural
             // material fills the otherwise mismatched title-bar corner.
-            LocusTheme.surfaceStructural
+            viewColors.surfaceStructural
                 .ignoresSafeArea(.container, edges: .top)
         }
         .overlay(alignment: .trailing) {
@@ -810,7 +818,7 @@ struct SessionSidebarView: View {
 
             Text("Locus")
                 .font(.locus(size: 14, weight: .bold))
-                .foregroundStyle(LocusTheme.ink)
+                .foregroundStyle(viewColors.ink)
                 .accessibilityIdentifier("sidebar.brand")
 
             Spacer(minLength: 4)
@@ -822,7 +830,7 @@ struct SessionSidebarView: View {
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.locus(size: 13, weight: .medium))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 28, height: 28)
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -910,14 +918,14 @@ struct SessionSidebarView: View {
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.paper.opacity(0.75))
+                    .foregroundStyle(viewColors.paper.opacity(0.75))
             }
             .font(.locus(size: 11, weight: .semibold))
-            .foregroundStyle(LocusTheme.paper)
+            .foregroundStyle(viewColors.paper)
             .padding(.horizontal, SidebarMetrics.rowInset)
             .frame(maxWidth: .infinity)
             .frame(height: 36)
-            .background(LocusTheme.ink)
+            .background(viewColors.ink)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
@@ -938,34 +946,34 @@ struct SessionSidebarView: View {
             Image(systemName: activityCenter.activityCenterPresented ? "bell.fill" : "bell")
                 .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(activityCenter.activityCenterPresented
-                    ? LocusTheme.accentAction : LocusTheme.inkSoft)
+                    ? viewColors.accentAction : viewColors.inkSoft)
                 .frame(width: 36, height: 36)
                 .background(activityCenter.activityCenterPresented
-                    ? LocusTheme.signal.opacity(0.12)
-                    : LocusTheme.white.opacity(0.82))
+                    ? viewColors.signal.opacity(0.12)
+                    : viewColors.white.opacity(0.82))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(LocusTheme.line, lineWidth: 1)
+                        .stroke(viewColors.line, lineWidth: 1)
                 }
                 .overlay(alignment: .topTrailing) {
                     if activityCenter.activityNeedsAttentionCount > 0 {
                         Text("\(activityCenter.activityNeedsAttentionCount)")
                             .font(.locus(size: 7, weight: .bold, design: .monospaced))
-                            .foregroundStyle(LocusTheme.dangerForeground)
+                            .foregroundStyle(viewColors.dangerForeground)
                             .frame(minWidth: 14, minHeight: 14)
-                            .background(LocusTheme.surfaceCard)
+                            .background(viewColors.surfaceCard)
                             .overlay {
-                                Capsule().stroke(LocusTheme.dangerForeground.opacity(0.35), lineWidth: 1)
+                                Capsule().stroke(viewColors.dangerForeground.opacity(0.35), lineWidth: 1)
                             }
                             .clipShape(Capsule())
                             .offset(x: 4, y: -4)
                             .accessibilityIdentifier("sidebar.activity.badge")
                     } else if activityCenter.unreadResultCount > 0 {
                         Circle()
-                            .fill(LocusTheme.accentAction)
+                            .fill(viewColors.accentAction)
                             .frame(width: 8, height: 8)
-                            .overlay { Circle().stroke(LocusTheme.surfaceCard, lineWidth: 2) }
+                            .overlay { Circle().stroke(viewColors.surfaceCard, lineWidth: 2) }
                             .offset(x: 2, y: -2)
                             .accessibilityIdentifier("sidebar.activity.unread")
                     }
@@ -1003,7 +1011,7 @@ struct SessionSidebarView: View {
                     .font(.locus(size: 10, weight: .semibold))
                 Spacer(minLength: 4)
             }
-            .foregroundStyle(LocusTheme.inkSoft)
+            .foregroundStyle(viewColors.inkSoft)
             .padding(.horizontal, SidebarMetrics.rowInset)
             .frame(height: 30)
             .contentShape(Rectangle())
@@ -1033,15 +1041,15 @@ struct SessionSidebarView: View {
                 Spacer(minLength: 4)
             }
             .font(.locus(size: 11, weight: .semibold))
-            .foregroundStyle(LocusTheme.inkSoft)
+            .foregroundStyle(viewColors.inkSoft)
             .padding(.horizontal, SidebarMetrics.rowInset)
             .frame(maxWidth: .infinity)
             .frame(height: 36)
-            .background(LocusTheme.white.opacity(0.82))
+            .background(viewColors.white.opacity(0.82))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         .buttonStyle(.locus())
@@ -1073,7 +1081,7 @@ struct SessionSidebarView: View {
             } label: {
                 Image(systemName: "magnifyingglass")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(searchExpanded ? LocusTheme.ink : LocusTheme.muted)
+                    .foregroundStyle(searchExpanded ? viewColors.ink : viewColors.muted)
                     .frame(width: 22, height: 22)
                     .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
@@ -1086,7 +1094,7 @@ struct SessionSidebarView: View {
                 Button { model.presentNewAgent() } label: {
                     Image(systemName: "plus")
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.locus(.icon))
@@ -1103,7 +1111,7 @@ struct SessionSidebarView: View {
                 } label: {
                     Image(systemName: "folder.badge.plus")
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(width: 22, height: 22)
                         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
@@ -1121,7 +1129,7 @@ struct SessionSidebarView: View {
             Image(systemName: "magnifyingglass")
                 .font(.locus(size: 11, weight: .medium))
                 .frame(width: SidebarMetrics.iconColumn)
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             TextField(model.sidebarDestination == .agents ? "Search agents and chats" : "Search sessions", text: Binding(
                 get: { snapshot.searchQuery },
                 set: { sessionCatalog.setSearchQuery($0) }
@@ -1138,18 +1146,18 @@ struct SessionSidebarView: View {
                     Image(systemName: "xmark.circle.fill")
                 }
                 .buttonStyle(.locus())
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .accessibilityLabel("Clear session search")
                 .accessibilityIdentifier("sidebar.search.clear")
             }
         }
         .padding(.horizontal, SidebarMetrics.rowInset)
         .frame(height: 32)
-        .background(LocusTheme.white.opacity(0.72))
+        .background(viewColors.white.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 4)
@@ -1285,14 +1293,14 @@ struct SessionSidebarView: View {
         VStack(spacing: 9) {
             Image(systemName: "bubble.left")
                 .font(.locus(size: 18))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
             Text(snapshot.searchQuery.isEmpty
                 ? "No saved sessions yet" : "No matching sessions")
                 .font(.locus(size: 10, weight: .semibold))
             if snapshot.searchQuery.isEmpty {
                 Text("Start a conversation and it will appear here.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .multilineTextAlignment(.center)
             }
         }
@@ -1324,7 +1332,7 @@ struct SessionSidebarView: View {
         .padding(.top, 11)
         .padding(.bottom, 12)
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -1367,7 +1375,7 @@ struct SessionSidebarView: View {
         } label: {
             Image(systemName: "gearshape")
                 .font(.locus(size: 12, weight: .medium))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
@@ -1421,31 +1429,31 @@ struct SessionSidebarView: View {
                 Image(systemName: "folder")
                     .font(.locus(size: 11, weight: .medium))
                     .frame(width: SidebarMetrics.iconColumn)
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityHidden(true)
                     .accessibilityIdentifier("sidebar.workspaceIcon")
                 VStack(alignment: .leading, spacing: 1) {
                     Text(URL(fileURLWithPath: model.workspacePath).lastPathComponent)
                         .font(.locus(size: 10, weight: .semibold))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineLimit(1)
                     Text("Workspace")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.locus(size: 8, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             .padding(.horizontal, SidebarMetrics.rowInset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 40)
-            .background(LocusTheme.white.opacity(0.72))
+            .background(viewColors.white.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(LocusTheme.line, lineWidth: 1)
+                    .stroke(viewColors.line, lineWidth: 1)
             }
         }
         // .borderlessButton centres a custom label like an NSPopUpButton title,
@@ -1462,6 +1470,10 @@ struct SessionSidebarView: View {
     /// footer's workspace menu chooses the folder. Tasks stay in the sidebar
     /// list, where their activity and settings live.
     private struct AgentSelectionMenu: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
         @EnvironmentObject private var model: AppModel
         @EnvironmentObject private var agentTeams: AgentTeamsModel
         @State private var isPresented = false
@@ -1496,9 +1508,9 @@ struct SessionSidebarView: View {
         private func agentTile(side: CGFloat, glyph: CGFloat) -> some View {
             Image(locusSymbol: LocusSymbol.robot)
                 .font(.locus(size: glyph, weight: .semibold))
-                .foregroundStyle(LocusTheme.accentAction)
+                .foregroundStyle(viewColors.accentAction)
                 .frame(width: side, height: side)
-                .background(LocusTheme.accentAction.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                .background(viewColors.accentAction.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityHidden(true)
         }
 
@@ -1509,32 +1521,35 @@ struct SessionSidebarView: View {
                 isPresented.toggle()
             } label: {
                 HStack(spacing: 9) {
-                    agentTile(side: 27, glyph: 13)
-                        .accessibilityIdentifier("sidebar.agentIcon")
+                    if let profile = selectedProfile {
+                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 27)
+                    } else {
+                        agentTile(side: 27, glyph: 13).accessibilityIdentifier("sidebar.agentIcon")
+                    }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(selectedName)
                             .font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         Text(selectedContext)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: 48)
-                .background(LocusTheme.white.opacity(0.72))
+                .background(viewColors.white.opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isPresented ? LocusTheme.accentAction.opacity(0.4) : LocusTheme.line,
+                        .stroke(isPresented ? viewColors.accentAction.opacity(0.4) : viewColors.line,
                                 lineWidth: 1)
                 }
             }
@@ -1555,16 +1570,16 @@ struct SessionSidebarView: View {
                     Spacer()
                     Text("\(profiles.count)")
                         .font(.locus(size: 10, design: .monospaced))
-                        .foregroundStyle(LocusTheme.textSecondary)
+                        .foregroundStyle(viewColors.textSecondary)
                         .accessibilityLabel(countLabel)
                 }
                 .padding(.horizontal, 16).padding(.top, 15).padding(.bottom, 12)
                 searchField
                 if filteredProfiles.isEmpty { emptyState } else { profileList }
-                Rectangle().fill(LocusTheme.line).frame(height: 1)
+                Rectangle().fill(viewColors.line).frame(height: 1)
                 Text("Choose an agent to open its chats.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 8)
                 HStack(spacing: 8) {
@@ -1573,7 +1588,7 @@ struct SessionSidebarView: View {
                         model.presentNewAgent()
                     } label: {
                         Label("New agent", systemImage: "plus")
-                            .foregroundStyle(LocusTheme.accentAction)
+                            .foregroundStyle(viewColors.accentAction)
                     }
                     .accessibilityIdentifier("agent.menu.new")
                     Spacer()
@@ -1588,7 +1603,7 @@ struct SessionSidebarView: View {
                 .padding(.horizontal, 14).padding(.bottom, 13)
             }
             .frame(width: 320)
-            .background(LocusTheme.surfaceCard)
+            .background(viewColors.surfaceCard)
             .onAppear { searchFocused = true }
             .onChange(of: query) { focusedProfileID = filteredProfiles.first?.id }
             .onMoveCommand { direction in
@@ -1600,7 +1615,7 @@ struct SessionSidebarView: View {
         private var searchField: some View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .accessibilityHidden(true)
                 // The field editor swallows arrow keys before a move command
                 // reaches the popover, so the field steers the list itself.
@@ -1614,13 +1629,13 @@ struct SessionSidebarView: View {
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.locus(.icon))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityLabel("Clear agent search")
                 }
             }
             .font(.locus(size: 11))
             .padding(10)
-            .background(LocusTheme.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            .background(viewColors.paperDeep.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12).padding(.bottom, 10)
         }
 
@@ -1649,29 +1664,29 @@ struct SessionSidebarView: View {
             let focused = focusedProfileID == profile.id
             return Button { choose(profile) } label: {
                 HStack(spacing: 9) {
-                    agentTile(side: 28, glyph: 12)
+                    AgentAvatarView(profileID: profile.id, name: profile.name, size: 28)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(profile.name)
                             .font(.locus(size: 11, weight: .medium))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         Text(Self.subtitle(profile))
                             .font(.locus(size: 9))
-                            .foregroundStyle(LocusTheme.textSecondary)
+                            .foregroundStyle(viewColors.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 2)
                     if selected {
                         Image(systemName: "checkmark")
                             .font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.accentAction)
+                            .foregroundStyle(viewColors.accentAction)
                             .accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, 9)
                 .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-                .background(focused ? LocusTheme.paperDeep.opacity(0.7)
-                    : selected ? LocusTheme.accentAction.opacity(0.07) : Color.clear,
+                .background(focused ? viewColors.paperDeep.opacity(0.7)
+                    : selected ? viewColors.accentAction.opacity(0.07) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
             }
@@ -1690,7 +1705,7 @@ struct SessionSidebarView: View {
                     ? "Create an agent with its own instructions, access, and triggers."
                     : "Try an agent name, role, or model.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.textSecondary)
+                    .foregroundStyle(viewColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1730,7 +1745,7 @@ struct SessionSidebarView: View {
                 .lineLimit(1)
         }
         .font(.locus(size: 8))
-        .foregroundStyle(LocusTheme.ink)
+        .foregroundStyle(viewColors.ink)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("sidebar.agentStatus")
         .help("Connection to the local Locus service. Each agent’s status appears beside its name.")
@@ -1747,15 +1762,19 @@ struct SessionSidebarView: View {
 
     private func runtimeColor(_ phase: RuntimePhase) -> Color {
         switch phase {
-        case .starting, .recovering: LocusTheme.warning
-        case .online: LocusTheme.success
-        case .unavailable: LocusTheme.coral
+        case .starting, .recovering: viewColors.warning
+        case .online: viewColors.success
+        case .unavailable: viewColors.coral
         }
     }
 
 }
 
 private struct SidebarResizeHandle: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var workspaceLayout: WorkspaceLayoutModel
     @State private var dragStartWidth: CGFloat?
@@ -1764,7 +1783,7 @@ private struct SidebarResizeHandle: View {
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(LocusTheme.line)
+                .fill(viewColors.line)
                 .frame(width: 1)
             Rectangle()
                 .fill(Color.clear)
@@ -1815,6 +1834,10 @@ private struct SidebarResizeHandle: View {
 }
 
 struct TeamProgressPopover: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -1845,11 +1868,11 @@ struct TeamProgressPopover: View {
                     if let issue = model.selectedTeamRouteIssue {
                         Label(issue, systemImage: "exclamationmark.triangle.fill")
                             .font(.locus(size: 9, weight: .medium))
-                            .foregroundStyle(LocusTheme.coral)
+                            .foregroundStyle(viewColors.coral)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(LocusTheme.coral.opacity(0.08))
+                            .background(viewColors.coral.opacity(0.08))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .accessibilityIdentifier("teamProgress.routeIssue")
                     }
@@ -1865,14 +1888,14 @@ struct TeamProgressPopover: View {
             footer
         }
         .frame(width: 370)
-        .background(LocusTheme.panel)
+        .background(viewColors.panel)
         .accessibilityIdentifier("teamProgress.popover")
     }
 
     private var header: some View {
         HStack(spacing: 9) {
             Image(systemName: "person.2.fill")
-                .foregroundStyle(LocusTheme.signalDeep)
+                .foregroundStyle(viewColors.signalDeep)
             VStack(alignment: .leading, spacing: 2) {
                 Text(agentTeams.selectedAgentTeam?.name ?? "Team")
                     .font(.locus(size: 12, weight: .bold))
@@ -1908,18 +1931,18 @@ struct TeamProgressPopover: View {
                         .font(.locus(size: 10, weight: .semibold))
                     Text(dispatcherRouteLine(activity: activity, profile: dispatcher))
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(dispatcherDetail(activity: activity))
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.inkSoft)
+                        .foregroundStyle(viewColors.inkSoft)
                         .lineLimit(4)
                 }
                 Spacer(minLength: 6)
                 if startedAt != nil && runIsActive {
                     Text(duration(elapsed))
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
             }
             if model.orchestrationState == .dispatching,
@@ -1931,17 +1954,17 @@ struct TeamProgressPopover: View {
                     systemImage: "clock.badge.exclamationmark"
                 )
                 .font(.locus(size: 8, weight: .medium))
-                .foregroundStyle(LocusTheme.warning)
+                .foregroundStyle(viewColors.warning)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("teamProgress.dispatcherSlow")
             }
         }
         .padding(10)
-        .background(LocusTheme.white.opacity(0.75))
+        .background(viewColors.white.opacity(0.75))
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(LocusTheme.line, lineWidth: 1)
+                .stroke(viewColors.line, lineWidth: 1)
         }
         .accessibilityIdentifier("teamProgress.dispatcher")
     }
@@ -1953,14 +1976,14 @@ struct TeamProgressPopover: View {
                 Spacer()
                 Text("\(completedJobs)/\(teamRunLive.agentActivities.count)")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
             }
             if teamRunLive.agentActivities.isEmpty {
                 Text(model.orchestrationState == nil
                     ? "No run yet. Send a task with this team selected."
                     : "Jobs appear here after the dispatcher returns a plan.")
                     .font(.locus(size: 9))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(teamRunLive.agentActivities) { activity in
@@ -1973,13 +1996,13 @@ struct TeamProgressPopover: View {
                                 .font(.locus(size: 9, weight: .semibold))
                             Text("\(activity.provider) · \(activity.model)")
                                 .font(.locus(size: 8, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .lineLimit(1)
                         }
                         Spacer()
                         Text(activity.state.title)
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                 }
             }
@@ -1994,7 +2017,7 @@ struct TeamProgressPopover: View {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(profile.specialtyTitle)
                         .font(.locus(size: 8, weight: .semibold))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .frame(width: 72, alignment: .leading)
                     Text(profile.model)
                         .font(.locus(size: 8, design: .monospaced))
@@ -2017,7 +2040,7 @@ struct TeamProgressPopover: View {
                 }
                 .buttonStyle(.locus())
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.coral)
+                .foregroundStyle(viewColors.coral)
                 .accessibilityIdentifier("teamProgress.stop")
             }
             Button("Open Runs") {
@@ -2033,7 +2056,7 @@ struct TeamProgressPopover: View {
             .accessibilityIdentifier("teamProgress.openRuns")
         }
         .font(.locus(size: 8, design: .monospaced))
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(viewColors.muted)
         .padding(12)
     }
 
@@ -2074,7 +2097,7 @@ struct TeamProgressPopover: View {
     }
 
     private var progressStateColor: Color {
-        if model.selectedTeamRouteIssue != nil { return LocusTheme.coral }
+        if model.selectedTeamRouteIssue != nil { return viewColors.coral }
         return dispatcherColor(model.orchestrationState)
     }
 
@@ -2110,7 +2133,7 @@ struct TeamProgressPopover: View {
         Text(title)
             .font(.locus(size: 8, weight: .bold))
             .tracking(0.7)
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
     }
 
     private func dispatcherSymbol(_ state: TeamRunState?) -> String {
@@ -2126,12 +2149,12 @@ struct TeamProgressPopover: View {
 
     private func dispatcherColor(_ state: TeamRunState?) -> Color {
         switch state {
-        case .completed: LocusTheme.success
-        case .failed, .interrupted, .cancelled, .discarded: LocusTheme.coral
+        case .completed: viewColors.success
+        case .failed, .interrupted, .cancelled, .discarded: viewColors.coral
         case .waitingPermission, .waitingComputer, .waitingDispatchApproval, .paused:
-            LocusTheme.warning
-        case .queued, .dispatching, .running, .reviewing: LocusTheme.signalDeep
-        case nil: LocusTheme.muted
+            viewColors.warning
+        case .queued, .dispatching, .running, .reviewing: viewColors.signalDeep
+        case nil: viewColors.muted
         }
     }
 
@@ -2192,6 +2215,10 @@ private func handleChatSidebarDrop(
 }
 
 private struct ChatSidebarDropTarget: ViewModifier {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     let targetFolderID: String?
     let index: Int?
@@ -2203,7 +2230,7 @@ private struct ChatSidebarDropTarget: ViewModifier {
             .overlay(alignment: .top) {
                 if targeted {
                     Capsule()
-                        .fill(LocusTheme.signalDeep)
+                        .fill(viewColors.signalDeep)
                         .frame(height: 2)
                         .padding(.horizontal, 5)
                         .transition(.opacity)
@@ -2223,6 +2250,10 @@ private struct ChatSidebarDropTarget: ViewModifier {
 }
 
 private struct ChatFolderBranchView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2254,19 +2285,19 @@ private struct ChatFolderBranchView: View {
                         .frame(width: 10)
                     Image(systemName: expanded ? "folder.fill" : "folder")
                         .font(.locus(size: 11, weight: .medium))
-                        .foregroundStyle(isDropTarget ? LocusTheme.signalDeep : LocusTheme.muted)
+                        .foregroundStyle(isDropTarget ? viewColors.signalDeep : viewColors.muted)
                     Text(folder.name)
                         .font(.locus(size: 10, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text("\(node.chats.count)")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
-                .foregroundStyle(LocusTheme.inkSoft)
+                .foregroundStyle(viewColors.inkSoft)
                 .padding(.horizontal, 8)
                 .frame(height: 30)
-                .background(isDropTarget ? LocusTheme.signal.opacity(0.18) : Color.clear)
+                .background(isDropTarget ? viewColors.signal.opacity(0.18) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .contentShape(Rectangle())
             }
@@ -2314,7 +2345,7 @@ private struct ChatFolderBranchView: View {
             .overlay(alignment: .bottom) {
                 if isDropTarget {
                     Capsule()
-                        .fill(LocusTheme.signalDeep)
+                        .fill(viewColors.signalDeep)
                         .frame(height: 2)
                         .padding(.horizontal, 8)
                         .accessibilityHidden(true)
@@ -2352,6 +2383,10 @@ private struct ChatFolderBranchView: View {
 }
 
 private struct WorkspaceGroupRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     @FocusState private var newChatFocused: Bool
@@ -2368,7 +2403,7 @@ private struct WorkspaceGroupRow: View {
             Button(action: onToggle) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.locus(size: 8, weight: .bold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 16, height: 28)
                     .contentShape(Rectangle())
             }
@@ -2379,7 +2414,7 @@ private struct WorkspaceGroupRow: View {
                 HStack(spacing: 7) {
                     Image(systemName: group.isOther ? "tray.full" : "folder.fill")
                         .font(.locus(size: SidebarIconMetrics.workspaceSymbolSize, weight: .medium))
-                        .foregroundStyle(active ? LocusTheme.signalDeep : LocusTheme.muted)
+                        .foregroundStyle(active ? viewColors.signalDeep : viewColors.muted)
                         .frame(
                             width: SidebarIconMetrics.workspaceIconSize,
                             height: SidebarIconMetrics.workspaceIconSize
@@ -2387,17 +2422,17 @@ private struct WorkspaceGroupRow: View {
                         .accessibilityIdentifier("workspace.group.icon.\(group.id)")
                     Text(group.title)
                         .font(.locus(size: 10, weight: .medium))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineLimit(1)
                     Text("\(group.chats.count)")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityLabel("\(group.chats.count) \(group.chats.count == 1 ? "chat" : "chats")")
                     Spacer(minLength: 3)
                     if !group.isAvailable {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.locus(size: 8))
-                            .foregroundStyle(LocusTheme.warning)
+                            .foregroundStyle(viewColors.warning)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2413,7 +2448,7 @@ private struct WorkspaceGroupRow: View {
                     Image(systemName: "plus")
                         .font(.locus(size: 9, weight: .bold))
                         .foregroundStyle(
-                            isHovering || newChatFocused ? LocusTheme.muted : Color.clear
+                            isHovering || newChatFocused ? viewColors.muted : Color.clear
                         )
                         .frame(width: 24, height: 26)
                         .contentShape(Rectangle())
@@ -2428,7 +2463,7 @@ private struct WorkspaceGroupRow: View {
         }
         .padding(.horizontal, 5)
         .frame(height: 34)
-        .background(active ? LocusTheme.paperDeep.opacity(0.62) : Color.clear)
+        .background(active ? viewColors.paperDeep.opacity(0.62) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
@@ -2437,6 +2472,10 @@ private struct WorkspaceGroupRow: View {
 }
 
 private struct SectionLabel: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let text: String
     init(_ text: String) { self.text = text }
 
@@ -2444,7 +2483,7 @@ private struct SectionLabel: View {
         Text(text.uppercased())
             .font(.locus(size: 8, weight: .bold))
             .tracking(1.2)
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.top, 8)
@@ -2453,6 +2492,10 @@ private struct SectionLabel: View {
 }
 
 private struct SessionRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     let session: SessionSummary
     let isActive: Bool
     let teamState: TeamRunState?
@@ -2469,26 +2512,26 @@ private struct SessionRow: View {
                 if session.isAgentChat && showsAgentIcon {
                     Image(locusSymbol: LocusSymbol.robot)
                         .font(.locus(size: 9, weight: .semibold))
-                        .foregroundStyle(LocusTheme.signalDeep)
+                        .foregroundStyle(viewColors.signalDeep)
                         .accessibilityHidden(true)
                 }
                 if session.isAgentEventChat && !showsAgentIcon {
                     Image(systemName: "bolt.horizontal")
                         .font(.locus(size: 9))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .help("Automated runs continue in this conversation")
                         .accessibilityLabel("Receives automated work")
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
                         .font(.locus(size: 10, weight: isActive ? .medium : .regular))
-                        .foregroundStyle(LocusTheme.ink)
+                        .foregroundStyle(viewColors.ink)
                         .lineLimit(1)
                     if isRunning || teamState != nil {
                         HStack(spacing: 4) {
                             if isRunning {
                                 Circle()
-                                    .fill(LocusTheme.signalDeep)
+                                    .fill(viewColors.signalDeep)
                                     .frame(width: 5, height: 5)
                                 if let startedAt {
                                     Text(startedAt, style: .timer)
@@ -2503,7 +2546,7 @@ private struct SessionRow: View {
                             }
                         }
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityIdentifier("session.\(session.id).activity")
                     }
                 }
@@ -2511,22 +2554,22 @@ private struct SessionRow: View {
                 if session.isPinned {
                     Image(systemName: "pin.fill")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 if session.isArchived {
                     Image(systemName: "archivebox.fill")
                         .font(.locus(size: 8))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 if isActive {
                     Circle()
-                        .fill(LocusTheme.accentAction)
+                        .fill(viewColors.accentAction)
                         .frame(width: 5, height: 5)
                 }
             }
             .padding(.horizontal, 8)
             .frame(height: showsActivity ? 38 : 30)
-            .background(isActive ? LocusTheme.paperDeep.opacity(0.56) : Color.clear)
+            .background(isActive ? viewColors.paperDeep.opacity(0.56) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -2537,11 +2580,11 @@ private struct SessionRow: View {
 
     private func statusColor(_ state: TeamRunState) -> Color {
         switch state {
-        case .completed: LocusTheme.success
-        case .failed: LocusTheme.coral
-        case .interrupted: LocusTheme.warning
-        case .waitingPermission, .waitingComputer: LocusTheme.warning
-        default: LocusTheme.signalDeep
+        case .completed: viewColors.success
+        case .failed: viewColors.coral
+        case .interrupted: viewColors.warning
+        case .waitingPermission, .waitingComputer: viewColors.warning
+        default: viewColors.signalDeep
         }
     }
 
@@ -2579,6 +2622,10 @@ enum AgentSidebarFilter: String, CaseIterable, Identifiable {
 /// Observe both definition stores at the hierarchy boundary so a new agent
 /// appears immediately, even before its first conversation is available.
 private struct AgentSidebarSection: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var schedule: ScheduleModel
@@ -2619,7 +2666,7 @@ private struct AgentSidebarSection: View {
                     .font(.locus(size: 8, design: .monospaced))
                     .accessibilityLabel("1 group chat")
             }
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .padding(.horizontal, 9)
             .padding(.bottom, 5)
             .accessibilityElement(children: .combine)
@@ -2655,7 +2702,7 @@ private struct AgentSidebarSection: View {
                             Image(systemName: "chevron.down").font(.locus(size: 7, weight: .semibold))
                         }
                         .font(.locus(size: 9, weight: .medium))
-                        .foregroundStyle(filter == .all ? LocusTheme.muted : LocusTheme.accentAction)
+                        .foregroundStyle(filter == .all ? viewColors.muted : viewColors.accentAction)
                     }
                     .menuStyle(.button)
                     .buttonStyle(.locus())
@@ -2665,7 +2712,7 @@ private struct AgentSidebarSection: View {
                     Spacer()
                     Text("\(visible.count)")
                         .font(.locus(size: 8, design: .monospaced))
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                         .accessibilityLabel("\(visible.count) agents")
                 }
                 .padding(.horizontal, 9)
@@ -2791,7 +2838,7 @@ private struct AgentSidebarSection: View {
                             Text(showingAllChatIDs.contains(agent.id)
                                 ? "Show recent chats" : "Show all \(agent.tasks.count) chats")
                                 .font(.locus(size: 9, weight: .medium))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .frame(height: 26)
                                 .padding(.horizontal, 8)
@@ -2807,7 +2854,7 @@ private struct AgentSidebarSection: View {
                         } label: {
                             Label("Start a conversation", systemImage: "plus.bubble")
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 8)
                                 .frame(height: 30)
@@ -2819,7 +2866,7 @@ private struct AgentSidebarSection: View {
                 }
                 .padding(.leading, 32)
                 .overlay(alignment: .leading) {
-                    Rectangle().fill(LocusTheme.line.opacity(0.7)).frame(width: 1)
+                    Rectangle().fill(viewColors.line.opacity(0.7)).frame(width: 1)
                         .padding(.leading, 22).padding(.vertical, 3)
                 }
                 .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
@@ -2838,7 +2885,7 @@ private struct AgentSidebarSection: View {
             } else {
                 Image(locusSymbol: LocusSymbol.robot)
                     .font(.locus(size: 22))
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .padding(.bottom, 3)
                 Text(isFiltered ? "No matching agents" : unavailable ? "Agents unavailable" : "Your own agents")
                     .font(.locus(size: 11, weight: .semibold))
@@ -2848,7 +2895,7 @@ private struct AgentSidebarSection: View {
                         ? "Reconnect to load your agents and their activity."
                         : "Give an agent a name, model, and instructions. Its chats and automatic work stay together.")
                     .font(.locus(size: 10))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 if isFiltered {
@@ -2869,9 +2916,9 @@ private struct AgentSidebarSection: View {
                     Button { model.presentNewAgent() } label: {
                         Label("Create an agent", systemImage: "plus")
                             .font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.accentAction)
+                            .foregroundStyle(viewColors.accentAction)
                             .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(LocusTheme.accentAction.opacity(0.1), in: Capsule())
+                            .background(viewColors.accentAction.opacity(0.1), in: Capsule())
                     }
                     .buttonStyle(.locus())
                     .accessibilityIdentifier("sidebar.empty.newAgent")
@@ -2891,6 +2938,10 @@ private struct AgentSidebarSection: View {
 /// publishes only on those stores, so a row that watched AppModel alone kept
 /// drawing the state the agent had before the click.
 private struct AgentGroupRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel
     @ObservedObject var automation: EventAutomationModel
@@ -2936,7 +2987,7 @@ private struct AgentGroupRow: View {
                 Image(systemName: "chevron.right")
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                     .font(.locus(size: 8, weight: .bold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 20, height: 40)
                     .contentShape(Rectangle())
             }
@@ -2947,21 +2998,25 @@ private struct AgentGroupRow: View {
 
             Button(action: select) {
                 HStack(spacing: 8) {
+                    if let profileID = agent.profileID {
+                        AgentAvatarView(profileID: profileID, name: agent.name, size: 28)
+                    } else {
                     Image(locusSymbol: LocusSymbol.robot)
                         .font(.locus(size: 12, weight: .semibold))
-                        .foregroundStyle(showsWarning ? LocusTheme.warning : LocusTheme.accentAction)
+                        .foregroundStyle(showsWarning ? viewColors.warning : viewColors.accentAction)
                         .frame(width: 25, height: 25)
-                        .background(LocusTheme.accentAction.opacity(selected ? 0.12 : 0.06),
+                        .background(viewColors.accentAction.opacity(selected ? 0.12 : 0.06),
                                     in: RoundedRectangle(cornerRadius: 7))
                         .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(agent.name)
                             .font(.locus(size: 10, weight: .semibold))
-                            .foregroundStyle(LocusTheme.ink)
+                            .foregroundStyle(viewColors.ink)
                             .lineLimit(1)
                         HStack(spacing: 4) {
                             if agent.runningChatCount > 0 {
-                                Circle().fill(LocusTheme.accentAction).frame(width: 4, height: 4)
+                                Circle().fill(viewColors.accentAction).frame(width: 4, height: 4)
                             } else if agent.sourceNeedsAttention || status != .active {
                                 Image(systemName: agent.sourceNeedsAttention ? "exclamationmark.circle.fill" : Self.statusSymbol(status))
                                     .font(.locus(size: 7))
@@ -2972,7 +3027,7 @@ private struct AgentGroupRow: View {
                             Text("\(agent.totalChatCount) \(agent.totalChatCount == 1 ? "chat" : "chats")")
                         }
                         .font(.locus(size: 8))
-                        .foregroundStyle(showsWarning ? LocusTheme.warning : LocusTheme.muted)
+                        .foregroundStyle(showsWarning ? viewColors.warning : viewColors.muted)
                         .lineLimit(1)
                     }
                     Spacer(minLength: 0)
@@ -2992,7 +3047,7 @@ private struct AgentGroupRow: View {
             Menu { agentActions } label: {
                 Image(systemName: "ellipsis")
                     .font(.locus(size: 10, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .frame(width: 22, height: 32)
                     .contentShape(Rectangle())
             }
@@ -3004,7 +3059,7 @@ private struct AgentGroupRow: View {
             .accessibilityIdentifier("agent.\(agent.accessibilityID).actions")
         }
         .padding(.trailing, 4)
-        .background(selected ? LocusTheme.accentAction.opacity(0.09) : Color.clear)
+        .background(selected ? viewColors.accentAction.opacity(0.09) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(Rectangle())
         .contextMenu { agentActions }

@@ -20,6 +20,10 @@ private enum BrowserSettingsRoute: String, Hashable {
 }
 
 struct BrowserSettingsView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var browser: BrowserService
     @Binding var draft: AppSettings
@@ -46,7 +50,7 @@ struct BrowserSettingsView: View {
                         .accessibilityIdentifier("settings.browser.modelCards")
                     Text("Enabled records can be returned as raw values to the active model, including hosted providers. Passwords are limited to the open site's exact origin. Enabling payment cards also lets the model complete checkout; security codes are never stored.")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
 
                 Section("Your browser data") {
@@ -85,7 +89,7 @@ struct BrowserSettingsView: View {
                         ? "History, downloads, cookies, and site data are kept only for this workspace."
                         : "History and download activity stay in memory and disappear when Locus quits.")
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
 
                 Section {
@@ -105,7 +109,7 @@ struct BrowserSettingsView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
+            .background(viewColors.surfaceCanvas)
             .accessibilityIdentifier("settings.browser.root")
             .navigationDestination(for: BrowserSettingsRoute.self) { route in
                 destination(route)
@@ -177,11 +181,11 @@ struct BrowserSettingsView: View {
                     Text(route.title)
                     Text(summary)
                         .font(.caption)
-                        .foregroundStyle(LocusTheme.textTertiary)
+                        .foregroundStyle(viewColors.textTertiary)
                 }
             } icon: {
                 Image(systemName: symbol)
-                    .foregroundStyle(LocusTheme.accentAction)
+                    .foregroundStyle(viewColors.accentAction)
                     .frame(width: 24)
             }
             .padding(.vertical, 3)
@@ -225,7 +229,7 @@ struct BrowserSettingsView: View {
             }
             Text("The selected viewport stays exact while the canvas scales to fit, keeping page layout and agent coordinates stable.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
             HStack(spacing: 10) {
                 ProviderLogo(name: "Google", size: 24)
                 Picker("Search in Google opens in", selection: $draft.webSearchDestinationRaw) {
@@ -238,7 +242,7 @@ struct BrowserSettingsView: View {
                 .accessibilityIdentifier("settings.browser.webInspector")
             Text("Web Inspector can read the current page's cookies and storage. Leave it off unless you are debugging.")
                 .font(.caption)
-                .foregroundStyle(LocusTheme.textTertiary)
+                .foregroundStyle(viewColors.textTertiary)
         }
     }
 }
@@ -267,6 +271,10 @@ private struct BrowserVaultUnavailableView: View {
 }
 
 private struct BrowserPasswordManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserPasswordRecord?
     @State private var error = ""
@@ -293,10 +301,10 @@ private struct BrowserPasswordManager: View {
                                     VStack(alignment: .leading) {
                                         Text(password.displayOrigin).fontWeight(.medium)
                                         Text(password.username.isEmpty ? "No username" : password.username)
-                                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                                            .font(.caption).foregroundStyle(viewColors.textTertiary)
                                     }
                                     Spacer()
-                                    Text("••••••••").foregroundStyle(LocusTheme.textTertiary)
+                                    Text("••••••••").foregroundStyle(viewColors.textTertiary)
                                     Button("Edit") { editor = password }.buttonStyle(.borderless)
                                     Button("Delete", role: .destructive) {
                                         do { try vault.removePassword(password.id) }
@@ -314,7 +322,7 @@ private struct BrowserPasswordManager: View {
                         }
                         Section {
                             Text("Suggestions appear after an eligible field is focused. Model access follows the saved Browser setting and is limited to this website's exact origin.")
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                         }
                     }
                 }
@@ -323,7 +331,7 @@ private struct BrowserPasswordManager: View {
             }
         }
         .task { if !vault.isReady { await vault.load() } }
-        .sheet(item: $editor) { record in
+        .locusSheet(item: $editor) { record in
             BrowserPasswordEditor(record: record) { value in
                 do { try vault.save(value); editor = nil }
                 catch { self.error = error.localizedDescription }
@@ -336,6 +344,10 @@ private struct BrowserPasswordManager: View {
 }
 
 private struct BrowserPasswordEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserPasswordRecord
     let save: (BrowserPasswordRecord) -> Void
@@ -349,7 +361,7 @@ private struct BrowserPasswordEditor: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .frame(width: 440, height: 250)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent).disabled(record.origin.isEmpty || record.password.isEmpty) }
@@ -360,6 +372,10 @@ private struct BrowserPasswordEditor: View {
 }
 
 private struct BrowserContactManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserContactRecord?
     @State private var error = ""
@@ -383,7 +399,7 @@ private struct BrowserContactManager: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(contact.fullName.isEmpty ? contact.label : contact.fullName).fontWeight(.medium)
-                                        Text(contact.summary).font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                                        Text(contact.summary).font(.caption).foregroundStyle(viewColors.textTertiary)
                                     }
                                     Spacer()
                                     Button("Edit") { editor = contact }.buttonStyle(.borderless)
@@ -403,7 +419,7 @@ private struct BrowserContactManager: View {
             }
         }
         .task { if !vault.isReady { await vault.load() } }
-        .sheet(item: $editor) { record in
+        .locusSheet(item: $editor) { record in
             BrowserContactEditor(record: record) { value in
                 do { try vault.save(value); editor = nil }
                 catch { self.error = error.localizedDescription }
@@ -416,6 +432,10 @@ private struct BrowserContactManager: View {
 }
 
 private struct BrowserContactEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserContactRecord
     let save: (BrowserContactRecord) -> Void
@@ -439,7 +459,7 @@ private struct BrowserContactEditor: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .frame(width: 500, height: 520)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent) }
@@ -449,6 +469,10 @@ private struct BrowserContactEditor: View {
 }
 
 private struct BrowserCardManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserPaymentCardRecord?
     @State private var error = ""
@@ -470,11 +494,11 @@ private struct BrowserCardManager: View {
                         Section {
                             ForEach(vault.cards) { card in
                                 HStack {
-                                    Image(systemName: "creditcard.fill").foregroundStyle(LocusTheme.textTertiary)
+                                    Image(systemName: "creditcard.fill").foregroundStyle(viewColors.textTertiary)
                                     VStack(alignment: .leading) {
                                         Text(card.nickname).fontWeight(.medium)
                                         Text("\(card.maskedNumber) · \(String(format: "%02d", card.expirationMonth))/\(card.expirationYear)")
-                                            .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                                            .font(.caption).foregroundStyle(viewColors.textTertiary)
                                     }
                                     Spacer()
                                     Button("Edit") { editor = card }.buttonStyle(.borderless)
@@ -489,7 +513,7 @@ private struct BrowserCardManager: View {
                         }
                         Section {
                             Label("Locus never asks for or stores CVC, CVV, or CID security codes.", systemImage: "lock.shield")
-                                .foregroundStyle(LocusTheme.textTertiary)
+                                .foregroundStyle(viewColors.textTertiary)
                         }
                     }
                 }
@@ -498,7 +522,7 @@ private struct BrowserCardManager: View {
             }
         }
         .task { if !vault.isReady { await vault.load() } }
-        .sheet(item: $editor) { record in
+        .locusSheet(item: $editor) { record in
             BrowserCardEditor(record: record, contacts: vault.contacts) { value in
                 do { try vault.save(value); editor = nil }
                 catch { self.error = error.localizedDescription }
@@ -511,6 +535,10 @@ private struct BrowserCardManager: View {
 }
 
 private struct BrowserCardEditor: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserPaymentCardRecord
     let contacts: [BrowserContactRecord]
@@ -536,11 +564,11 @@ private struct BrowserCardEditor: View {
                 }
             }
             Label("Security codes are intentionally never accepted or stored.", systemImage: "checkmark.shield")
-                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                .font(.caption).foregroundStyle(viewColors.textTertiary)
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .frame(width: 480, height: 360)
         .safeAreaInset(edge: .bottom) {
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Save") { save(record) }.buttonStyle(.borderedProminent).disabled(!record.isValid) }
@@ -563,6 +591,10 @@ private enum BrowserHistoryRange: String, CaseIterable, Identifiable {
 }
 
 private struct BrowserHistoryManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @ObservedObject private var store: BrowserActivityStore
     let sessionID: String
@@ -596,10 +628,10 @@ private struct BrowserHistoryManager: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.title.isEmpty ? entry.host : entry.title).lineLimit(1)
-                        Text(entry.url).font(.caption).foregroundStyle(LocusTheme.textTertiary).lineLimit(1)
+                        Text(entry.url).font(.caption).foregroundStyle(viewColors.textTertiary).lineLimit(1)
                     }
                     Spacer()
-                    Text(entry.visitedAt, style: .relative).font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    Text(entry.visitedAt, style: .relative).font(.caption).foregroundStyle(viewColors.textTertiary)
                     Button("Open") {
                         _ = browser.userNavigate(entry.url, sessionID: sessionID)
                     }.buttonStyle(.borderless)
@@ -621,6 +653,10 @@ private struct BrowserHistoryManager: View {
 }
 
 private struct BrowserDownloadManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @ObservedObject private var store: BrowserActivityStore
     @Binding var draft: AppSettings
@@ -647,7 +683,7 @@ private struct BrowserDownloadManager: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .background(LocusTheme.surfaceCanvas)
+            .background(viewColors.surfaceCanvas)
             .frame(height: draft.resolvedBrowserDownloadDestination == .custom ? 190 : 150)
             List {
                 ForEach(store.downloads) { download in
@@ -656,7 +692,7 @@ private struct BrowserDownloadManager: View {
                             Image(systemName: icon(for: download.state))
                             Text(download.fileName).lineLimit(1)
                             Spacer()
-                            Text(download.state.rawValue.capitalized).font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                            Text(download.state.rawValue.capitalized).font(.caption).foregroundStyle(viewColors.textTertiary)
                         }
                         if download.state == .running { ProgressView(value: download.progress) }
                         HStack {
@@ -719,6 +755,10 @@ private struct BrowserDownloadManager: View {
 }
 
 private struct BrowserSiteDataManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @State private var records: [BrowserWebsiteDataRecord] = []
     @State private var selected = Set<BrowserDataType>(BrowserDataType.allCases)
@@ -742,13 +782,13 @@ private struct BrowserSiteDataManager: View {
             }
             Section("Stored by site") {
                 if loading { ProgressView() }
-                else if records.isEmpty { Text("No website data in this profile.").foregroundStyle(LocusTheme.textTertiary) }
+                else if records.isEmpty { Text("No website data in this profile.").foregroundStyle(viewColors.textTertiary) }
                 ForEach(records) { record in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(record.displayName)
                             Text("\(record.dataTypes.count) data type\(record.dataTypes.count == 1 ? "" : "s")")
-                                .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                                .font(.caption).foregroundStyle(viewColors.textTertiary)
                         }
                         Spacer()
                         Button("Remove", role: .destructive) {
@@ -760,7 +800,7 @@ private struct BrowserSiteDataManager: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .task { await reload() }
         .alert("Clear selected browser data?", isPresented: $confirmClear) {
             Button("Cancel", role: .cancel) {}
@@ -776,6 +816,10 @@ private struct BrowserSiteDataManager: View {
 }
 
 private struct BrowserPermissionManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @Binding var draft: AppSettings
     @State private var origin = "https://"
@@ -793,7 +837,7 @@ private struct BrowserPermissionManager: View {
                     }
                 }
                 Text("File selection is always user-only. Camera and microphone still require the macOS system prompt when allowed here.")
-                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
             }
             Section("Add site override") {
                 LocusFormTextField("Site origin", text: $origin, prompt: Text("https://example.com"))
@@ -805,13 +849,13 @@ private struct BrowserPermissionManager: View {
                 }.disabled(URL(string: origin)?.host == nil)
             }
             Section("Site overrides") {
-                if browser.permissionStore.overrides.isEmpty { Text("No site-specific overrides.").foregroundStyle(LocusTheme.textTertiary) }
+                if browser.permissionStore.overrides.isEmpty { Text("No site-specific overrides.").foregroundStyle(viewColors.textTertiary) }
                 ForEach(browser.permissionStore.overrides) { rule in
                     HStack {
                         Image(systemName: rule.kind.symbol).frame(width: 22)
                         VStack(alignment: .leading) {
                             Text(rule.origin)
-                            Text("\(rule.kind.title): \(rule.decision.title)").font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                            Text("\(rule.kind.title): \(rule.decision.title)").font(.caption).foregroundStyle(viewColors.textTertiary)
                         }
                         Spacer()
                         Button("Remove", role: .destructive) { browser.permissionStore.remove(rule) }
@@ -821,7 +865,7 @@ private struct BrowserPermissionManager: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
     }
 
     private func permissionBinding(_ kind: BrowserPermissionKind) -> Binding<String> {
@@ -856,6 +900,10 @@ private struct BrowserPermissionManager: View {
 }
 
 private struct BrowserImportManager: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @ObservedObject var browser: BrowserService
     @State private var kind = BrowserImportKind.passwords
     @State private var choosingFile = false
@@ -869,7 +917,7 @@ private struct BrowserImportManager: View {
                 Picker("Data type", selection: $kind) { ForEach(BrowserImportKind.allCases) { Text($0.title).tag($0) } }
                 Button("Choose File…") { choosingFile = true }
                 Text("Locus validates and previews user-selected CSV, vCard, or JSON files. It does not inspect installed browser profiles and never imports payment cards.")
-                    .font(.caption).foregroundStyle(LocusTheme.textTertiary)
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
             }
             if let preview {
                 Section("Preview — \(fileName)") {
@@ -883,11 +931,11 @@ private struct BrowserImportManager: View {
                         .disabled(preview.count == 0)
                 }
             }
-            if !error.isEmpty { Section { Text(error).foregroundStyle(LocusTheme.dangerForeground) } }
+            if !error.isEmpty { Section { Text(error).foregroundStyle(viewColors.dangerForeground) } }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background(LocusTheme.surfaceCanvas)
+        .background(viewColors.surfaceCanvas)
         .fileImporter(
             isPresented: $choosingFile,
             allowedContentTypes: [.commaSeparatedText, .json, .vCard, .plainText],

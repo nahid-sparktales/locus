@@ -259,7 +259,7 @@ extension AppModel {
         }
     }
 
-    /// Read or mutate the user's EventKit calendars for the requesting agent.
+    /// Read or mutate built-in and connected calendars for the requesting agent.
     /// The native app owns authorization and provider credentials; the runtime
     /// sees only opaque event/calendar identifiers and the requested fields.
     @discardableResult
@@ -537,8 +537,8 @@ extension AppModel {
         ])
     }
 
-    /// Calendar is present whenever the native app is present. EventKit still
-    /// enforces the user's system permission before any request can succeed.
+    /// Built-in Calendar is always available. EventKit enforces system permission
+    /// separately for connected calendar overlays.
     func sendCalendarCapability(to transport: BackendService) {
         _ = transport.send([
             "type": "set_calendar_control",

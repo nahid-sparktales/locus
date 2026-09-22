@@ -7,7 +7,7 @@ struct TaskCapsulePresentation: ViewModifier {
     var openTask: ((String) -> Void)? = nil
     var onDismiss: (() -> Void)? = nil
     func body(content: Content) -> some View {
-        content.sheet(isPresented: Binding(get: { enabled && capsules.isPresented }, set: { if enabled { capsules.isPresented = $0 } }), onDismiss: { if enabled { onDismiss?() } }) { TaskCapsuleView(model: capsules, openTask: openTask) }
+        content.locusSheet(isPresented: Binding(get: { enabled && capsules.isPresented }, set: { if enabled { capsules.isPresented = $0 } }), onDismiss: { if enabled { onDismiss?() } }) { TaskCapsuleView(model: capsules, openTask: openTask) }
     }
 }
 

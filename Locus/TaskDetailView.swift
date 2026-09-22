@@ -83,6 +83,10 @@ struct TaskRestorePreview: Decodable {
 
 /// A projection of existing task owners. Loading this view never dispatches work.
 struct TaskDetailView: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     var sessionID: String? = nil
@@ -118,7 +122,7 @@ struct TaskDetailView: View {
                     if !compact { Button("Done") { dismiss() } }
                 }
                 if let error { Text(error).foregroundStyle(.secondary).textSelection(.enabled) }
-                if let notice { Text(notice).foregroundStyle(LocusTheme.textSecondary).accessibilityIdentifier("task.notice") }
+                if let notice { Text(notice).foregroundStyle(viewColors.textSecondary).accessibilityIdentifier("task.notice") }
                 if loading && snapshot == nil { ProgressView("Loading task…") }
                 if let snapshot {
                     Text(snapshot.request).font(.headline).textSelection(.enabled)
@@ -126,7 +130,7 @@ struct TaskDetailView: View {
                           systemImage: snapshot.verificationState == "passed" ? "checkmark.circle" : "circle.dotted")
                         .accessibilityIdentifier("task.status")
                     if !snapshot.blocker.isEmpty {
-                        Text(snapshot.blocker).foregroundStyle(LocusTheme.warning).textSelection(.enabled)
+                        Text(snapshot.blocker).foregroundStyle(viewColors.warning).textSelection(.enabled)
                     }
                     controls(snapshot)
                     if let plan = snapshot.plan {
@@ -162,7 +166,7 @@ struct TaskDetailView: View {
                             }
                             ForEach(Array(snapshot.reviews.enumerated()), id: \.offset) { _, review in
                                 if review["current"]?.boolean == false {
-                                    Text("Files changed after this review. A fresh review is required.").foregroundStyle(LocusTheme.warning)
+                                    Text("Files changed after this review. A fresh review is required.").foregroundStyle(viewColors.warning)
                                 }
                                 if case .array(let findings) = review["reviews"] {
                                     ForEach(Array(findings.enumerated()), id: \.offset) { _, finding in
@@ -241,8 +245,8 @@ struct TaskDetailView: View {
             }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: compact ? 240 : 560, minHeight: compact ? 200 : 560)
-        .background(LocusTheme.surfaceCanvas)
-        .foregroundStyle(LocusTheme.textPrimary)
+        .background(viewColors.surfaceCanvas)
+        .foregroundStyle(viewColors.textPrimary)
         .buttonStyle(.locus())
         .accessibilityIdentifier("task.detail")
         .task(id: taskSession) { snapshot = nil; preview = nil; selectedFiles = []; selectedRestorePaths = []; notice = nil; showRestorationHistory = false; visibleFileCount = 100; await refresh() }
@@ -318,7 +322,7 @@ struct TaskDetailView: View {
                 Text(value.label).font(.headline).accessibilityIdentifier("task.usage")
                 Text("\(value.subscription_entries) subscription requests · \(value.local_entries) local operations · \(value.unknown_entries) unknown charges")
                     .font(.caption).foregroundStyle(.secondary)
-                if value.pending_entries > 0 { Text("Unsettled requests: \(value.pending_entries)").foregroundStyle(LocusTheme.warning) }
+                if value.pending_entries > 0 { Text("Unsettled requests: \(value.pending_entries)").foregroundStyle(viewColors.warning) }
                 if let elapsed = value.elapsed_seconds {
                     Text("Elapsed: \(Duration.seconds(elapsed).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated)))").font(.caption)
                 }
@@ -406,7 +410,7 @@ struct TaskDetailView: View {
                         if selected { selectedRestorePaths.insert(entry.path) } else { selectedRestorePaths.remove(entry.path) }
                     })).font(.headline).disabled(entry.status != "ready" || loading)
                         .accessibilityIdentifier("task.restoreFile.\(entry.path)")
-                    if let reason = entry.reason { Text(reason).foregroundStyle(LocusTheme.warning) }
+                    if let reason = entry.reason { Text(reason).foregroundStyle(viewColors.warning) }
                     if let diff = entry.diff {
                         ScrollView(.horizontal) { Text(diff).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
                     } else if entry.status == "ready" { Text("Binary content or file permissions will return to the recorded state.").font(.caption) }

@@ -3,6 +3,10 @@ import SwiftUI
 /// What actually changed on disk, from the workspace's git status — not what
 /// the current conversation happened to touch.
 struct InspectorChangesTab: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gitWorkspace: GitWorkspaceModel
     @State private var newBranchPresented = false
@@ -93,7 +97,7 @@ struct InspectorChangesTab: View {
                 .font(.locus(size: 10))
                 .lineLimit(1...3)
                 .padding(8)
-                .background(LocusTheme.paperDeep.opacity(0.6))
+                .background(viewColors.paperDeep.opacity(0.6))
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .accessibilityIdentifier("changes.commitMessage")
 
@@ -111,7 +115,7 @@ struct InspectorChangesTab: View {
                         }
                     }
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                 }
                 .buttonStyle(.locus())
                 .disabled(gitWorkspace.stagedChangeCount == 0 && !gitWorkspace.isDraftingCommitMessage)
@@ -122,13 +126,13 @@ struct InspectorChangesTab: View {
 
                 Text("\(gitWorkspace.stagedChangeCount) staged")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
 
                 Button("Commit") {
                     gitWorkspace.commitStaged()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(LocusTheme.ink)
+                .tint(viewColors.ink)
                 .controlSize(.small)
                 .disabled(
                     gitWorkspace.stagedChangeCount == 0
@@ -140,7 +144,7 @@ struct InspectorChangesTab: View {
         }
         .padding(10)
         .overlay(alignment: .top) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -153,7 +157,7 @@ struct InspectorChangesTab: View {
                     Text("WORKING TREE")
                         .font(.locus(size: 8, weight: .bold))
                         .tracking(0.8)
-                        .foregroundStyle(LocusTheme.muted)
+                        .foregroundStyle(viewColors.muted)
                 }
                 Text(gitWorkspace.gitChangeSummary)
                     .font(.locus(size: 11, weight: .bold))
@@ -167,7 +171,7 @@ struct InspectorChangesTab: View {
             if gitWorkspace.lastGitRefreshFailed {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.locus(size: 9, weight: .semibold))
-                    .foregroundStyle(LocusTheme.warning)
+                    .foregroundStyle(viewColors.warning)
                     .help("The last refresh failed — this list may be stale")
                     .accessibilityLabel("Change list may be stale")
                     .accessibilityIdentifier("changes.staleWarning")
@@ -181,7 +185,7 @@ struct InspectorChangesTab: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.locus())
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .help("Refresh from git")
             .accessibilityLabel("Refresh changes")
             .accessibilityIdentifier("changes.refresh")
@@ -193,7 +197,7 @@ struct InspectorChangesTab: View {
                     .accessibilityHidden(true)
             }
             .buttonStyle(.locus())
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .help("Reveal workspace in Finder")
             .accessibilityLabel("Reveal workspace in Finder")
             .accessibilityIdentifier("changes.reveal")
@@ -201,7 +205,7 @@ struct InspectorChangesTab: View {
         .padding(.horizontal, 14)
         .frame(height: 52)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LocusTheme.line).frame(height: 1)
+            Rectangle().fill(viewColors.line).frame(height: 1)
         }
     }
 
@@ -215,7 +219,7 @@ struct InspectorChangesTab: View {
                 Text(gitWorkspace.gitBranch ?? "detached HEAD")
             }
             .font(.locus(size: 8, weight: .bold))
-            .foregroundStyle(LocusTheme.muted)
+            .foregroundStyle(viewColors.muted)
             .help("Detached HEAD — check out a branch from a terminal to switch here")
             .accessibilityIdentifier("changes.branch")
         } else {
@@ -244,7 +248,7 @@ struct InspectorChangesTab: View {
                         .font(.locus(size: 6, weight: .bold))
                 }
                 .font(.locus(size: 8, weight: .bold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
@@ -268,7 +272,7 @@ struct InspectorChangesTab: View {
             if gitWorkspace.gitAhead > 0 || gitWorkspace.gitBehind > 0 {
                 Text("↑\(gitWorkspace.gitAhead) ↓\(gitWorkspace.gitBehind)")
                     .font(.locus(size: 8, design: .monospaced))
-                    .foregroundStyle(LocusTheme.muted)
+                    .foregroundStyle(viewColors.muted)
                     .help("\(gitWorkspace.gitAhead) to push, \(gitWorkspace.gitBehind) to pull")
                     .accessibilityIdentifier("changes.sync.counts")
             }
@@ -316,7 +320,7 @@ struct InspectorChangesTab: View {
                 .font(.locus(size: 10, weight: .semibold))
         }
         .buttonStyle(.locus())
-        .foregroundStyle(LocusTheme.muted)
+        .foregroundStyle(viewColors.muted)
         .help(help)
         .accessibilityLabel(help)
         .accessibilityIdentifier(identifier)
@@ -337,6 +341,10 @@ struct InspectorChangesTab: View {
 /// One changed file: status marker, path, line counts, stage/discard actions,
 /// and its diff inline.
 private struct GitChangeRow: View {
+    @Environment(\.locusOceanTheme) private var usesWorldTheme
+    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gitWorkspace: GitWorkspaceModel
     let change: GitChange
@@ -363,13 +371,13 @@ private struct GitChangeRow: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(change.name)
                                 .font(.locus(size: 10, weight: .semibold))
-                                .foregroundStyle(LocusTheme.ink)
+                                .foregroundStyle(viewColors.ink)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             if !change.directory.isEmpty {
                                 Text(change.directory)
                                     .font(.locus(size: 8))
-                                    .foregroundStyle(LocusTheme.muted)
+                                    .foregroundStyle(viewColors.muted)
                                     .lineLimit(1)
                                     .truncationMode(.head)
                             }
@@ -380,11 +388,11 @@ private struct GitChangeRow: View {
                         if !showsActions, let summary = change.changeSummary {
                             Text(summary)
                                 .font(.locus(size: 8, design: .monospaced))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         Image(systemName: isSelected ? "chevron.up" : "chevron.down")
                             .font(.locus(size: 8, weight: .semibold))
-                            .foregroundStyle(LocusTheme.muted)
+                            .foregroundStyle(viewColors.muted)
                     }
                     .contentShape(Rectangle())
                 }
@@ -401,7 +409,7 @@ private struct GitChangeRow: View {
             .onHover { isHovering = $0 }
 
             if isSelected {
-                Divider().overlay(LocusTheme.line)
+                Divider().overlay(viewColors.line)
                 Group {
                     if change.staged, change.unstaged {
                         diffScopePicker
@@ -421,20 +429,20 @@ private struct GitChangeRow: View {
                             ProgressView().controlSize(.small)
                             Text("Reading the diff…")
                                 .font(.locus(size: 9))
-                                .foregroundStyle(LocusTheme.muted)
+                                .foregroundStyle(viewColors.muted)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
                     }
                 }
-                .background(LocusTheme.ink.opacity(0.04))
+                .background(viewColors.ink.opacity(0.04))
             }
         }
-        .background(isSelected ? LocusTheme.white : Color.clear)
+        .background(isSelected ? viewColors.white : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? LocusTheme.line : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? viewColors.line : Color.clear, lineWidth: 1)
         }
         .contextMenu {
             Button("Reveal in Finder") { model.revealInFinder(change.path) }
@@ -477,7 +485,7 @@ private struct GitChangeRow: View {
                     HStack(spacing: 6) {
                         Text(hunk.header)
                             .font(.locus(size: 8, design: .monospaced))
-                            .foregroundStyle(LocusTheme.blue)
+                            .foregroundStyle(viewColors.blue)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             // Keep the list marker on one leaf. Applying it to
@@ -511,7 +519,7 @@ private struct GitChangeRow: View {
                     }
                     .padding(.horizontal, 10)
                     .frame(height: 26)
-                    .background(LocusTheme.paperDeep.opacity(0.5))
+                    .background(viewColors.paperDeep.opacity(0.5))
                     .focusable()
 
                     DiffTextView(
@@ -520,7 +528,7 @@ private struct GitChangeRow: View {
                     )
                 }
                 if position < parsed.hunks.count - 1 {
-                    Divider().overlay(LocusTheme.line.opacity(0.6))
+                    Divider().overlay(viewColors.line.opacity(0.6))
                 }
             }
         }
@@ -536,7 +544,7 @@ private struct GitChangeRow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 9, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
         }
@@ -580,7 +588,7 @@ private struct GitChangeRow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.locus(size: 10, weight: .semibold))
-                .foregroundStyle(LocusTheme.muted)
+                .foregroundStyle(viewColors.muted)
                 .frame(width: 18, height: 18)
                 .contentShape(Rectangle())
         }
@@ -592,10 +600,10 @@ private struct GitChangeRow: View {
 
     private var markerColor: Color {
         switch change.status {
-        case .added, .untracked: LocusTheme.diffAdded
-        case .deleted: LocusTheme.diffRemoved
-        case .unmerged: LocusTheme.warning
-        default: LocusTheme.blue
+        case .added, .untracked: viewColors.diffAdded
+        case .deleted: viewColors.diffRemoved
+        case .unmerged: viewColors.warning
+        default: viewColors.blue
         }
     }
 }
