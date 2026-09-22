@@ -1,0 +1,5 @@
+interface:
+  display_name: "Scientific Agent Skills"
+
+policy:
+  allow_implicit_invocation: false

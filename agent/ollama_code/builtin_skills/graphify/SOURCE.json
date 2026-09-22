@@ -1,0 +1,10 @@
+{
+  "provider": "Graphify",
+  "repository": "https://github.com/Graphify-Labs/graphify",
+  "commit": "20a20d30d8e7eef77675651f0199d87f913bd3e7",
+  "upstream_path": "graphify/skill-agents.md",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Universal upstream agent skill and references; Locus runtime/dependency guidance added."
+}

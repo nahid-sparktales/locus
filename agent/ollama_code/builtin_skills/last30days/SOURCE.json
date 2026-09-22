@@ -1,0 +1,10 @@
+{
+  "provider": "Last 30 Days",
+  "repository": "https://github.com/mvanhorn/last30days-skill",
+  "commit": "349ca444b4fda466e74d471dffa2aff36bb997f1",
+  "upstream_path": "skills/last30days",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Locus entrypoint routes to the complete upstream contract and bundled research scripts; no credentials or services are preconfigured."
+}

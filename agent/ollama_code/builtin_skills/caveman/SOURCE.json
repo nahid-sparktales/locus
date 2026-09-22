@@ -1,0 +1,10 @@
+{
+  "provider": "Caveman",
+  "repository": "https://github.com/JuliusBrussee/caveman",
+  "commit": "2fd153c67988e980fb0b2455c90832159a6a5a25",
+  "upstream_path": "skills/caveman",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Upstream skill and supporting resources; Locus explicit-invocation metadata."
+}

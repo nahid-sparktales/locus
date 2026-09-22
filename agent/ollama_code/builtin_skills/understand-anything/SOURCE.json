@@ -1,0 +1,10 @@
+{
+  "provider": "Understand Anything",
+  "repository": "https://github.com/Egonex-AI/Understand-Anything",
+  "commit": "6df3065f1d8ddc2ce3615314d1d493f36d6b1c80",
+  "upstream_path": "understand-anything-plugin",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Locus router for all nine upstream modes; complete plugin source retained; builds happen in a writable workspace on use."
+}

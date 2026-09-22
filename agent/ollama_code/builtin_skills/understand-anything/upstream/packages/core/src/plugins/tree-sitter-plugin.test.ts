@@ -1,0 +1,419 @@
+import { describe, it, expect, beforeAll } from "vitest";
+import { TreeSitterPlugin } from "./tree-sitter-plugin.js";
+
+describe("TreeSitterPlugin", () => {
+  let plugin: TreeSitterPlugin;
+
+  beforeAll(async () => {
+    plugin = new TreeSitterPlugin();
+    await plugin.init();
+  });
+
+  describe("analyzeFile", () => {
+    it("should extract function declarations from TypeScript", () => {
+      const code = `
+function greet(name: string): string {
+  return "Hello " + name;
+}
+
+function add(a: number, b: number): number {
+  return a + b;
+}
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.functions).toHaveLength(2);
+      expect(result.functions[0].name).toBe("greet");
+      expect(result.functions[0].params).toEqual(["name"]);
+      expect(result.functions[0].returnType).toBe("string");
+      expect(result.functions[0].lineRange[0]).toBeGreaterThan(0);
+
+      expect(result.functions[1].name).toBe("add");
+      expect(result.functions[1].params).toEqual(["a", "b"]);
+      expect(result.functions[1].returnType).toBe("number");
+    });
+
+    it("should extract arrow functions assigned to variables", () => {
+      const code = `
+const multiply = (a: number, b: number): number => a * b;
+const log = (msg: string) => { console.log(msg); };
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.functions).toHaveLength(2);
+      expect(result.functions[0].name).toBe("multiply");
+      expect(result.functions[0].params).toEqual(["a", "b"]);
+      expect(result.functions[0].returnType).toBe("number");
+
+      expect(result.functions[1].name).toBe("log");
+      expect(result.functions[1].params).toEqual(["msg"]);
+    });
+
+    it("should extract class declarations with methods and properties", () => {
+      const code = `
+class Calculator {
+  private value: number;
+  public name: string;
+
+  constructor(initial: number) {
+    this.value = initial;
+  }
+
+  add(n: number): number {
+    return this.value + n;
+  }
+
+  subtract(n: number): number {
+    return this.value - n;
+  }
+}
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.classes).toHaveLength(1);
+      const cls = result.classes[0];
+      expect(cls.name).toBe("Calculator");
+      expect(cls.methods).toContain("constructor");
+      expect(cls.methods).toContain("add");
+      expect(cls.methods).toContain("subtract");
+      expect(cls.properties).toContain("value");
+      expect(cls.properties).toContain("name");
+      expect(cls.lineRange[0]).toBeGreaterThan(0);
+    });
+
+    it("should extract import statements with specifiers and source", () => {
+      const code = `
+import { foo, bar } from './utils';
+import * as path from 'path';
+import type { MyType } from './types';
+import defaultExport from './module';
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.imports).toHaveLength(4);
+
+      expect(result.imports[0].source).toBe("./utils");
+      expect(result.imports[0].specifiers).toEqual(["foo", "bar"]);
+      expect(result.imports[0].lineNumber).toBeGreaterThan(0);
+
+      expect(result.imports[1].source).toBe("path");
+      expect(result.imports[1].specifiers).toEqual(["* as path"]);
+
+      expect(result.imports[2].source).toBe("./types");
+      expect(result.imports[2].specifiers).toEqual(["MyType"]);
+
+      expect(result.imports[3].source).toBe("./module");
+      expect(result.imports[3].specifiers).toEqual(["defaultExport"]);
+    });
+
+    it("should extract export names", () => {
+      const code = `
+export function greet(name: string): string {
+  return "Hello " + name;
+}
+
+export const add = (a: number, b: number): number => a + b;
+
+export class Logger {}
+
+const helper = () => true;
+export { helper };
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      const exportNames = result.exports.map((e) => e.name);
+      expect(exportNames).toContain("greet");
+      expect(exportNames).toContain("add");
+      expect(exportNames).toContain("Logger");
+      expect(exportNames).toContain("helper");
+      expect(result.exports.length).toBe(4);
+    });
+
+    it("should extract default exports", () => {
+      const code = `
+export default class AppController {}
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("AppController");
+
+      const exportNames = result.exports.map((e) => e.name);
+      expect(exportNames).toContain("default");
+    });
+
+    it("should handle export with aliases", () => {
+      const code = `
+const originalName = () => true;
+export { originalName as renamedExport };
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      const exportNames = result.exports.map((e) => e.name);
+      expect(exportNames).toContain("renamedExport");
+    });
+
+    it("should handle arrow functions without parameters", () => {
+      const code = `
+const noParams = () => { return 42; };
+const withReturn = () => "hello";
+`;
+      const result = plugin.analyzeFile("test.ts", code);
+
+      expect(result.functions).toHaveLength(2);
+      expect(result.functions[0].name).toBe("noParams");
+      expect(result.functions[0].params).toEqual([]);
+      expect(result.functions[1].name).toBe("withReturn");
+      expect(result.functions[1].params).toEqual([]);
+    });
+
+    it("should extract functions from JavaScript files", () => {
+      const code = `
+function hello() {
+  return "world";
+}
+
+const double = (x) => x * 2;
+`;
+      const result = plugin.analyzeFile("test.js", code);
+
+      expect(result.functions).toHaveLength(2);
+      expect(result.functions[0].name).toBe("hello");
+      expect(result.functions[0].params).toEqual([]);
+
+      expect(result.functions[1].name).toBe("double");
+      expect(result.functions[1].params).toEqual(["x"]);
+    });
+
+    it("should handle a comprehensive TypeScript file", () => {
+      const code = `
+import { EventEmitter } from 'events';
+import type { Config } from './config';
+
+export interface Options {
+  timeout: number;
+}
+
+export class Server extends EventEmitter {
+  private port: number;
+
+  constructor(port: number) {
+    super();
+    this.port = port;
+  }
+
+  start(): void {
+    console.log("Starting on port " + this.port);
+  }
+
+  stop(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+export function createServer(port: number): Server {
+  return new Server(port);
+}
+
+export const DEFAULT_PORT = 3000;
+`;
+      const result = plugin.analyzeFile("server.ts", code);
+
+      expect(result.imports.length).toBeGreaterThanOrEqual(2);
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].methods).toContain("constructor");
+      expect(result.classes[0].methods).toContain("start");
+      expect(result.classes[0].methods).toContain("stop");
+      expect(result.classes[0].properties).toContain("port");
+
+      expect(result.functions.some((f) => f.name === "createServer")).toBe(true);
+
+      const exportNames = result.exports.map((e) => e.name);
+      expect(exportNames).toContain("Server");
+      expect(exportNames).toContain("createServer");
+    });
+  });
+
+  describe("resolveImports", () => {
+    it("should resolve relative imports to absolute paths", () => {
+      const code = `
+import { foo } from './utils';
+import { bar } from '../shared/helpers';
+import * as path from 'path';
+`;
+      const result = plugin.resolveImports("/project/src/index.ts", code);
+
+      expect(result).toHaveLength(3);
+
+      // Relative imports should be resolved
+      expect(result[0].source).toBe("./utils");
+      expect(result[0].resolvedPath).toContain("utils");
+      expect(result[0].specifiers).toEqual(["foo"]);
+
+      expect(result[1].source).toBe("../shared/helpers");
+      expect(result[1].resolvedPath).toContain("shared");
+      expect(result[1].specifiers).toEqual(["bar"]);
+
+      // External packages keep their original path
+      expect(result[2].source).toBe("path");
+      expect(result[2].resolvedPath).toBe("path");
+      expect(result[2].specifiers).toEqual(["* as path"]);
+    });
+  });
+
+  describe("extractCallGraph", () => {
+    it("should extract function calls within functions", () => {
+      const code = `
+function greet(name: string): string {
+  return formatMessage("Hello " + name);
+}
+
+function formatMessage(msg: string): string {
+  return msg.trim();
+}
+
+function main() {
+  const result = greet("World");
+  console.log(result);
+}
+`;
+      const result = plugin.extractCallGraph!("test.ts", code);
+
+      expect(result.length).toBeGreaterThan(0);
+
+      const greetCall = result.find(
+        (e) => e.caller === "main" && e.callee === "greet",
+      );
+      expect(greetCall).toBeDefined();
+
+      const formatCall = result.find(
+        (e) => e.caller === "greet" && e.callee === "formatMessage",
+      );
+      expect(formatCall).toBeDefined();
+    });
+  });
+
+  describe("analyzeFileFull", () => {
+    const code = `
+import { helper } from "./helper";
+
+export function greet(name: string): string {
+  return formatMessage("Hello " + name);
+}
+
+function formatMessage(msg: string): string {
+  return msg.trim();
+}
+
+export class Greeter {
+  greet(name: string): string {
+    return greet(name);
+  }
+}
+`;
+
+    it("produces exactly the same output as analyzeFile + extractCallGraph", () => {
+      const separate = {
+        structure: plugin.analyzeFile("test.ts", code),
+        callGraph: plugin.extractCallGraph!("test.ts", code),
+      };
+      const full = plugin.analyzeFileFull("test.ts", code);
+
+      expect(full).toEqual(separate);
+      // Guard against vacuous equality — both sides must be non-trivial
+      expect(full.structure.functions.length).toBeGreaterThan(0);
+      expect(full.structure.classes.length).toBeGreaterThan(0);
+      expect(full.structure.imports.length).toBeGreaterThan(0);
+      expect(full.callGraph.length).toBeGreaterThan(0);
+    });
+
+    it("is stable across repeated calls (cached parser reuse)", () => {
+      const first = plugin.analyzeFileFull("test.ts", code);
+      const second = plugin.analyzeFileFull("test.ts", code);
+      expect(second).toEqual(first);
+    });
+
+    it("returns empty results for unsupported extensions", () => {
+      const full = plugin.analyzeFileFull("styles.xyz", "body { color: red; }");
+      expect(full.structure).toEqual({
+        functions: [],
+        classes: [],
+        imports: [],
+        exports: [],
+      });
+      expect(full.callGraph).toEqual([]);
+    });
+
+    it("returns fresh arrays per call — mutating one result cannot leak into the next", () => {
+      const first = plugin.analyzeFileFull("styles.xyz", "whatever");
+      first.structure.functions.push({
+        name: "injected",
+        lineRange: [1, 1],
+        params: [],
+      });
+      first.callGraph.push({ caller: "a", callee: "b", lineNumber: 1 });
+
+      const second = plugin.analyzeFileFull("styles.xyz", "whatever");
+      expect(second.structure.functions).toEqual([]);
+      expect(second.callGraph).toEqual([]);
+    });
+  });
+
+  describe("analyzeFileStrict", () => {
+    it("distinguishes unsupported syntax and parse errors from valid empty files", () => {
+      expect(plugin.analyzeFileStrict("test.xyz", "function f() {}").status).toBe("unsupported");
+      expect(plugin.analyzeFileStrict("test.ts", "class Broken {").status).toBe("failed");
+      const empty = plugin.analyzeFileStrict("test.ts", "// intentionally empty\n");
+      expect(empty.status).toBe("succeeded");
+      expect(empty.structure?.functions).toEqual([]);
+    });
+
+    it("uses the same extractor and preserves evidence of unextracted members", () => {
+      const code = "class A { run() {} callback = () => {}; }";
+      const strict = plugin.analyzeFileStrict("test.ts", code);
+      expect(strict.status).toBe("succeeded");
+      expect(strict.structure).toEqual(plugin.analyzeFile("test.ts", code));
+      expect(strict.structure?.classes[0].methods).toEqual(["run"]);
+      expect(strict.symbolEvidence?.coverage.gaps).toContainEqual(expect.objectContaining({ scope: { kind: "class", name: "A" }, name: "callback" }));
+    });
+
+    it.each(["test.js", "test.jsx", "test.ts", "test.tsx"])("exposes unresolved computed and escaped names in %s", (filePath) => {
+      for (const code of [
+        'class A { ["r" + "un"]() {} keep() {} }',
+        String.raw`class A { r\u0075n() {} keep() {} }`,
+        String.raw`class A { "r\u0075n"() {} keep() {} }`,
+        'class A { keep() {} }; A.prototype["r" + "un"] = function() {};',
+        'class A { keep() {} }; A.prototype[key] ||= function() {};',
+        'class A { keep() {} }; ({method: A.prototype[key]} = obj);',
+        String.raw`class A { keep() {} }; A.prototype.r\u0075n = function() {};`,
+        'class A { keep() {} }; Object.defineProperty(A.prototype, "r" + "un", { value() {} });',
+        'class A { keep() {} }; Reflect.defineProperty(A.prototype, "r" + "un", { value() {} });',
+        'const define = Object.defineProperty; define(A.prototype, key, { value() {} });',
+        'const { defineProperty: define } = Object; define(A.prototype, key, { value() {} });',
+        'Object["define" + "Property"](A.prototype, key, { value() {} });',
+        'Reflect.set(A.prototype, "r" + "un", function() {});',
+        'Object.assign(A.prototype, descriptors);',
+      ]) {
+        const result = plugin.analyzeFileStrict(filePath, code);
+        expect(result.status).toBe("succeeded");
+        expect([...(result.symbolEvidence?.effects ?? []), ...(result.symbolEvidence?.coverage.gaps ?? [])].length).toBeGreaterThan(0);
+      }
+      expect(plugin.analyzeFileStrict(filePath, String.raw`function keep(r\u0075n) { return r\u0075n; }`)
+        .symbolEvidence?.effects).toEqual([]);
+      expect(plugin.analyzeFileStrict(filePath, 'class A { keep() { return this["x" + "y"]; } }')
+        .symbolEvidence?.effects).toEqual([]);
+    });
+  });
+
+  describe("plugin metadata", () => {
+    it("should have correct name", () => {
+      expect(plugin.name).toBe("tree-sitter");
+    });
+
+    it("should support typescript and javascript", () => {
+      expect(plugin.languages).toContain("typescript");
+      expect(plugin.languages).toContain("javascript");
+    });
+  });
+});

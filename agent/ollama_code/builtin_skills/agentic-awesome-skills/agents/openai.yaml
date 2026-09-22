@@ -1,0 +1,5 @@
+interface:
+  display_name: "Agentic Awesome Skills"
+
+policy:
+  allow_implicit_invocation: false

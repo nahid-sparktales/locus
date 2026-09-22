@@ -162,6 +162,15 @@ or observation workflows.
 | GSD (six native Locus routers) | `bdcaab2c752d9a33a1a1ca9acf3a3c81fb991815` | MIT |
 | Matt Pocock Grill Me and Grilling | `068b6e0c62393147daf03530149cdce209c93da8` | MIT |
 | [Agent Dispatcher](https://github.com/nahid-sparktales/agent-dispatcher) | Catalog `2.2.0`; bundled file hashes in `SOURCE.json` | MIT |
+| [Ponytail](https://github.com/DietrichGebert/ponytail) | `e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156` | MIT |
+| [Graphify](https://github.com/Graphify-Labs/graphify) | `20a20d30d8e7eef77675651f0199d87f913bd3e7` | MIT |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | `2fd153c67988e980fb0b2455c90832159a6a5a25` | MIT |
+| [Understand Anything](https://github.com/Egonex-AI/Understand-Anything) | `6df3065f1d8ddc2ce3615314d1d493f36d6b1c80` | MIT |
+| [Last 30 Days](https://github.com/mvanhorn/last30days-skill) | `349ca444b4fda466e74d471dffa2aff36bb997f1` | MIT |
+| [I Have ADHD](https://github.com/ayghri/i-have-adhd) | `839872f9d1cd634fed642b4589ce7226199cc15f` | MIT |
+| [Agentic Awesome Skills](https://github.com/sickn33/agentic-awesome-skills) | `c585de4848835abe9d753442621c58473fb8bb1e` | MIT; per-skill licenses retained |
+| [Scientific Agent Skills](https://github.com/K-Dense-AI/scientific-agent-skills) | `49c6e97775eaa18ba791bebe23162a70ae601c18` | MIT; per-skill licenses retained |
+| [Diagram Design](https://github.com/cathrynlavery/diagram-design) | `dc1ace47b99a419e42d01a03cb6ace5346efa8ae` | MIT |
 | Context Mode and Claude Mem | design references only | Elastic-2.0 / AGPL-3.0 |
 
 License texts are retained at
@@ -172,6 +181,16 @@ License texts are retained at
 `ThirdPartyLicenses/builtin-skills-matt-pocock/`, and alongside each bundled
 upstream skill inside the agent runtime. Context Mode and Claude Mem code,
 services, hooks, workers, and databases are not distributed by Locus.
+
+The nine community additions also retain their root licenses in
+`ThirdPartyLicenses/builtin-skills-<skill-name>/` and in each runtime skill folder.
+Agentic Awesome Skills and Scientific Agent Skills use one explicit library
+entry each, with searchable catalogs and pinned offline ZIP archives. Individual
+licenses remain beside the archived skills. Their four Anthropic document skills
+per library are link-only catalog entries because their licenses prohibit
+redistribution; their contents are not included in the archives. Unpacking a
+skill does not install dependencies or run it. Graphify's CLI and Understand
+Anything's Node/pnpm dependencies are checked and set up separately when used.
 
 Agent Dispatcher is copyright © 2026 Nahid Masad. Its canonical role
 templates, guides, recipes, and context helpers are adapted for Locus. The

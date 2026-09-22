@@ -1,0 +1,10 @@
+{
+  "provider": "Ponytail",
+  "repository": "https://github.com/DietrichGebert/ponytail",
+  "commit": "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156",
+  "upstream_path": "skills/ponytail",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Upstream skill and supporting resources; Locus explicit-invocation metadata."
+}

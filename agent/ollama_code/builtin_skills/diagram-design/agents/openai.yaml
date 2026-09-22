@@ -1,0 +1,5 @@
+interface:
+  display_name: "Diagram Design"
+
+policy:
+  allow_implicit_invocation: false

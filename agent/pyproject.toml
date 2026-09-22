@@ -40,6 +40,12 @@ dev = ["pytest>=8.0", "pip-audit>=2.9,<3", "ruff>=0.12", "Pillow>=12.3"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Keep pinned upstream helpers unchanged; lint the Locus library adapters normally.
+extend-exclude = [
+    "ollama_code/builtin_skills/last30days/scripts",
+    "ollama_code/builtin_skills/diagram-design/scripts",
+    "ollama_code/builtin_skills/understand-anything/upstream",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
@@ -63,7 +69,12 @@ include = ["ollama_code*"]
 
 [tool.setuptools.package-data]
 # Include nested role guides, their references, and bundled helper scripts in wheels.
-ollama_code = ["builtin_skills/**/*"]
+ollama_code = [
+    "builtin_skills/**/*",
+    "builtin_skills/understand-anything/upstream/.claude-plugin/*",
+    "builtin_skills/understand-anything/upstream/packages/tree-sitter-swift-wasm/.swift-grammar-pin",
+    "builtin_skills/last30days/.skillignore",
+]
 
 # Deliberately no [tool.pytest.ini_options] here: a second pytest config in this
 # directory made `cd agent && pytest` treat `agent` as the rootdir, which is a

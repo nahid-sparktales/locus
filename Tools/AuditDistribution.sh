@@ -260,20 +260,38 @@ skills_root="${runtime}/source/ollama_code/builtin_skills"
     exit 1
 }
 python3 - "${skills_root}" <<'PY'
+import hashlib
 import json
 import pathlib
 import sys
 
 for source in pathlib.Path(sys.argv[1]).glob("*/SOURCE.json"):
-    if json.loads(source.read_text()).get("activation") != "explicit":
+    metadata = json.loads(source.read_text())
+    if metadata.get("activation") != "explicit":
         raise SystemExit("error: a bundled skill can activate without explicit user selection")
+    if expected := metadata.get("archive_sha256"):
+        archive = source.parent / "library.zip"
+        catalog = source.parent / "catalog.json"
+        if not archive.is_file() or hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
+            raise SystemExit(f"error: missing or changed skill library archive: {source.parent.name}")
+        if not catalog.is_file() or json.loads(catalog.read_text()).get("commit") != metadata["commit"]:
+            raise SystemExit(f"error: missing or mismatched skill library catalog: {source.parent.name}")
 PY
 for skill in \
     frontend-design \
     vercel-react-best-practices \
     systematic-debugging \
     test-driven-development \
-    verification-before-completion
+    verification-before-completion \
+    ponytail \
+    graphify \
+    caveman \
+    understand-anything \
+    last30days \
+    i-have-adhd \
+    agentic-awesome-skills \
+    scientific-agent-skills \
+    diagram-design
 do
     [[ -f "${skills_root}/${skill}/SKILL.md" \
         && -f "${skills_root}/${skill}/SOURCE.json" ]] || {

@@ -1,0 +1,19 @@
+{
+  "provider": "Scientific Agent Skills",
+  "repository": "https://github.com/K-Dense-AI/scientific-agent-skills",
+  "commit": "49c6e97775eaa18ba791bebe23162a70ae601c18",
+  "upstream_path": "skills",
+  "license": "MIT; individual licenses retained in archive",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Locus library router, offline archive, local search and selective extraction; restricted entries are link-only.",
+  "bundled_skill_count": 162,
+  "catalog_skill_count": 166,
+  "archive_sha256": "fe83d941e6930efe575ffa1b43cd9dd7e468289965bac96a25883c09c2d1f53a",
+  "excluded_skills": [
+    "docx",
+    "pdf",
+    "pptx",
+    "xlsx"
+  ]
+}

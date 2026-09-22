@@ -1,0 +1,5 @@
+interface:
+  display_name: "Understand Anything"
+
+policy:
+  allow_implicit_invocation: false

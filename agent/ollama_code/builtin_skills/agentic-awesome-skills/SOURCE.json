@@ -1,0 +1,19 @@
+{
+  "provider": "Agentic Awesome Skills",
+  "repository": "https://github.com/sickn33/agentic-awesome-skills",
+  "commit": "c585de4848835abe9d753442621c58473fb8bb1e",
+  "upstream_path": "skills",
+  "license": "MIT; individual licenses retained in archive",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Locus library router, offline archive, local search and selective extraction; restricted entries are link-only. Three internal CLAUDE.md symlinks materialized as regular files; restricted document aliases omitted.",
+  "bundled_skill_count": 2440,
+  "catalog_skill_count": 2444,
+  "archive_sha256": "f752dd352f58d30f60a07288f22a74be82a3334383ebfb2e307b378171dedf01",
+  "excluded_skills": [
+    "docx-official",
+    "pdf-official",
+    "pptx-official",
+    "xlsx-official"
+  ]
+}

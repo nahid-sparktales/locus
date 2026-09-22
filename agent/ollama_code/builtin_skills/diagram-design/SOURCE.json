@@ -1,0 +1,10 @@
+{
+  "provider": "Diagram Design",
+  "repository": "https://github.com/cathrynlavery/diagram-design",
+  "commit": "dc1ace47b99a419e42d01a03cb6ace5346efa8ae",
+  "upstream_path": "skills/diagram-design",
+  "license": "MIT",
+  "license_file": "LICENSE",
+  "activation": "explicit",
+  "adaptation": "Upstream skill and supporting resources; Locus explicit-invocation metadata."
+}

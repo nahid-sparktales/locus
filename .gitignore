@@ -18,6 +18,8 @@ xcuserdata/
 *.dSYM
 *.xcarchive
 *.zip
+!agent/ollama_code/builtin_skills/agentic-awesome-skills/library.zip
+!agent/ollama_code/builtin_skills/scientific-agent-skills/library.zip
 .release-*/
 .releasebuild-*/
 artifacts/

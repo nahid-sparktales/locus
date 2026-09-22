@@ -1,0 +1,5 @@
+interface:
+  display_name: "Ponytail"
+
+policy:
+  allow_implicit_invocation: false
