@@ -4,6 +4,12 @@
 
 ### Added
 
+- The Local Line gains Marineford-area and New World islands, Sabaody, Zunesha,
+  and a flying pink dragon around Wano, with packaged generation provenance.
+- Captain’s Quarters opens across the browser preview, with a searchable crew
+  and the ship deck; native quarters provide more room for chat and tools.
+- Architecture reports and a runtime rescue lab guide document the workspace.
+
 - Agent Dispatcher routes Work, Plan, and Grill chats to relevant specialists
   by default, with conversation controls, saved roles, and guides loaded as
   needed. Just Chat keeps its existing behavior.
@@ -14,6 +20,11 @@
   the main window. Card handoffs create a draft chat in the board's workspace.
 
 ### Fixed
+
+- Calm Belts align across the Red Line, island docks face their shores, and
+  ships use the mountain entrance instead of crossing the Calm Belt.
+- Selecting a map resident follows their ship without opening a conversation;
+  Captain’s Quarters owns the conversation and workspace controls.
 
 - Dispatcher source inspection can find files in plain workspace folders when
   ripgrep is unavailable, while preserving file exclusions and bounded reads.

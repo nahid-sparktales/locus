@@ -22,6 +22,7 @@ struct WorkspaceView: View {
     let showSidebar: () -> Void
     var presentsAgentOverview = true
     var openAgentOverview: (() -> Void)? = nil
+    var compactHeader = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,9 +79,9 @@ struct WorkspaceView: View {
                 .foregroundStyle(viewColors.inkSoft)
             Spacer()
         }
-        .padding(.leading, sidebarVisible ? 20 : 76)
-        .padding(.trailing, 18)
-        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
+        .padding(.leading, compactHeader ? 12 : sidebarVisible ? 20 : 76)
+        .padding(.trailing, compactHeader ? 10 : 18)
+        .frame(height: compactHeader ? 42 : WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
     }
@@ -161,7 +162,7 @@ struct WorkspaceView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compactHeader ? 8 : 12) {
             if !sidebarVisible {
                 HeaderIconButton(
                     symbol: "sidebar.left",
@@ -177,7 +178,7 @@ struct WorkspaceView: View {
             VStack(alignment: .leading, spacing: 3) {
                 WorkspaceSessionTitle(sessionID: model.currentSessionID)
 
-                HStack(spacing: 5) {
+                if !compactHeader { HStack(spacing: 5) {
                     Image(systemName: "folder.fill")
                         .font(.locus(size: 7, weight: .medium))
                         .accessibilityHidden(true)
@@ -200,11 +201,12 @@ struct WorkspaceView: View {
                 .foregroundStyle(viewColors.muted)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("workspace.breadcrumb")
-            }
+                }
+            }.lineLimit(1)
 
             Spacer()
 
-            if model.sidebarDestination == .agents,
+            if !compactHeader, model.sidebarDestination == .agents,
                let profileID = model.savedAgentProfileID(for: model.currentSessionID),
                let profile = agentTeams.agentProfiles.first(where: { $0.id == profileID }) {
                 Button {
@@ -258,7 +260,7 @@ struct WorkspaceView: View {
 
             if model.showContextUsageInHeader {
                 ContextUsageChip()
-                    .environmentObject(model)
+                    .environmentObject(model).fixedSize().lineLimit(1)
             }
 
             if model.activeTaskRecord != nil, landingFlow.taskHasChanges {
@@ -327,9 +329,9 @@ struct WorkspaceView: View {
         }
         // When the sidebar is absent this column begins at the window edge.
         // Keep its restore control beyond the native traffic-light cluster.
-        .padding(.leading, sidebarVisible ? 20 : 76)
-        .padding(.trailing, 18)
-        .frame(height: WorkspaceLayoutMetrics.toolbarHeight)
+        .padding(.leading, compactHeader ? 12 : sidebarVisible ? 20 : 76)
+        .padding(.trailing, compactHeader ? 10 : 18)
+        .frame(height: compactHeader ? 42 : WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) {
             Rectangle().fill(viewColors.line).frame(height: 1)
@@ -2139,7 +2141,7 @@ struct ScheduleEditorView: View {
                     .accessibilityLabel("Time zone")
                     .accessibilityIdentifier("scheduleEditor.timezone")
                 Button("Use local") { draft.timezone = TimeZone.current.identifier }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.locus(.quiet))
                     .font(.locus(size: 9))
                     .help("Use \(TimeZone.current.identifier)")
                     .accessibilityIdentifier("scheduleEditor.localTimezone")

@@ -8,7 +8,7 @@ import type { AgentStatus, Point } from './state.ts';
 import type { Placement } from './theme.ts';
 import type { ResidentMotion } from './residentMotion.ts';
 
-export const MAX_WORK_ISLANDS = 14;
+export const MAX_WORK_ISLANDS = 16;
 export type WorkIsland = Point & { radius: number; marker?: Point & { y: number } };
 export type IslandWorker = { id: string; status: AgentStatus; motion: ResidentMotion; home: Placement; harbor?: number };
 

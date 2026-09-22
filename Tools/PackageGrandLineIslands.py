@@ -109,7 +109,7 @@ def package(state_dirs: list[Path], *, require_complete: bool = False, check_onl
     provenance['tasks'] = original_tasks + [
         task for _, names, _ in present
         for task in sorted((task for task in new_tasks if task['asset'] in names),
-                           key=lambda task: (task['asset'], 0 if task['stage'] == 'reference' else 1))
+                           key=lambda task: (task['asset'], 0 if task['stage'] in ('reference', 'preview') else 1))
     ]
     assert [task['id'] for task in provenance['tasks'][:36]] == original_ids
     total = 648 + sum(credits for _, _, credits in present)

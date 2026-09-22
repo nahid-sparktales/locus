@@ -1,0 +1,9 @@
+sequenceDiagram
+    participant n0 as Scheduled agent controls
+    participant n1 as Schedule API
+    participant n2 as Schedule and occurrence records
+    Note over n0: Start#58; Request the selected scheduled agent’s history page. #91;Confirmed#93;
+    n0->>n1: Resolve the schedule history route and call the history projection. #124; Read the selected agent history page. #91;Confirmed#93;
+    n1->>n2: Join occurrences with run and workflow states, scoped to this agent. #124; Fetch occurrences with current run/workflow states scoped to the selected schedule. #91;Confirmed#93;
+    n2->>n1: Return the rows, status counts and next-page cursor. #124; Return paginated history, status counts and workflow links. #91;Confirmed#93;
+    n1->>n0: Decode the history and update the inspector snapshot. #124; Return history for the inspector snapshot. #91;Confirmed#93;

@@ -48,6 +48,8 @@ export function stationObstacles(home: Placement): CircleObstacle[] {
 
 type Edge = { to: number; distance: number };
 export type NavigationMap = {
+  minZ?: number;
+  maxZ?: number;
   bodyRadius: number;
   /** Traversable map radius after allowing for the resident's body. */
   radius: number;
@@ -57,7 +59,7 @@ export type NavigationMap = {
   nodes: readonly Point[];
   edges: readonly (readonly Edge[])[];
 };
-export type NavigationInput = { radius: number; bodyRadius?: number; obstacles?: readonly CircleObstacle[]; wanderPoints?: readonly Point[] };
+export type NavigationInput = { sailingBounds?: { minZ: number; maxZ: number }; radius: number; bodyRadius?: number; obstacles?: readonly CircleObstacle[]; wanderPoints?: readonly Point[] };
 
 function pointClearsCircles(point: Point, circles: readonly CircleObstacle[]): boolean {
   return circles.every(obstacle => {
@@ -77,6 +79,7 @@ function segmentClearsCircles(from: Point, to: Point, circles: readonly CircleOb
 export function pointIsWalkable(point: Point, map: NavigationMap): boolean {
   const radius = map.radius + EPSILON;
   return Number.isFinite(point.x) && Number.isFinite(point.z) && point.x * point.x + point.z * point.z <= radius * radius
+    && point.z >= (map.minZ ?? -Infinity) - EPSILON && point.z <= (map.maxZ ?? Infinity) + EPSILON
     && pointClearsCircles(point, map.obstacles);
 }
 export function segmentIsWalkable(from: Point, to: Point, map: NavigationMap): boolean {
@@ -86,6 +89,7 @@ export function segmentIsWalkable(from: Point, to: Point, map: NavigationMap): b
   const radius = map.radius + EPSILON;
   return Number.isFinite(from.x) && Number.isFinite(from.z) && Number.isFinite(to.x) && Number.isFinite(to.z)
     && from.x * from.x + from.z * from.z <= radius * radius && to.x * to.x + to.z * to.z <= radius * radius
+    && Math.min(from.z, to.z) >= (map.minZ ?? -Infinity) - EPSILON && Math.max(from.z, to.z) <= (map.maxZ ?? Infinity) + EPSILON
     && segmentClearsCircles(from, to, map.obstacles);
 }
 
@@ -98,6 +102,11 @@ export function createNavigation(input: NavigationInput): NavigationMap {
   const obstacles = (input.obstacles ?? []).filter(item => Number.isFinite(item.x) && Number.isFinite(item.z) && Number.isFinite(item.radius) && item.radius > 0)
     .map(item => ({ ...item, radius: item.radius + bodyRadius + 0.06 }));
   const map: NavigationMap = { radius, bodyRadius, obstacles, wanderPoints: [], nodes: [], edges: [] };
+  const bounds = input.sailingBounds;
+  if (bounds && Number.isFinite(bounds.minZ) && Number.isFinite(bounds.maxZ) && bounds.maxZ - bounds.minZ > bodyRadius * 2 + 0.12) {
+    map.minZ = bounds.minZ + bodyRadius + 0.06;
+    map.maxZ = bounds.maxZ - bodyRadius - 0.06;
+  }
   const proposed = input.wanderPoints ?? Array.from({ length: 16 }, (_, index) => ({ x: Math.sin(index * TAU / 16) * radius * 0.5, z: Math.cos(index * TAU / 16) * radius * 0.5 }));
   map.wanderPoints = proposed.filter(point => pointIsWalkable(point, map)).map(copyPoint);
   const nodes: Point[] = map.wanderPoints.map(copyPoint);
@@ -125,6 +134,7 @@ export function createNavigation(input: NavigationInput): NavigationMap {
 export function themeNavigation(theme: Theme, homes: readonly Placement[] = theme.layout.stations): NavigationMap {
   return createNavigation({
     radius: theme.layout.radius,
+    sailingBounds: theme.environment === 'ocean' ? theme.layout.sailingBounds : undefined,
     bodyRadius: theme.environment === 'ocean' ? 1.35 : RESIDENT_RADIUS,
     obstacles: [
       ...theme.layout.obstacles,
@@ -439,8 +449,9 @@ export function resolveResidentSpacing(
       const goal = state.route.at(-1);
       const occupiedGoal = goal && ordered.some(peer => peer.id !== state.id && distance(goal, resolved.get(peer.id) ?? before.get(peer.id) ?? peer) < clearance);
       // Ambient destinations are optional. A few ships can otherwise wait
-      // forever for one another's neighboring waypoint to become free.
-      if (state.intent === 'wander' && state.trafficBlockedFor! >= 3 && occupiedGoal) {
+      // forever for one another's neighboring waypoint to become free. Also
+      // release optional routes when opposing traffic blocks a narrow passage.
+      if (state.intent === 'wander' && state.trafficBlockedFor! >= 3 && (occupiedGoal || state.trafficBlockedFor! >= 6)) {
         resolved.set(state.id, { ...state, x: start.x, z: start.z, heading: start.heading, walking: false,
           route: [], routeIndex: 0, pauseRemaining: 0, trafficBlockedFor: undefined });
         continue;

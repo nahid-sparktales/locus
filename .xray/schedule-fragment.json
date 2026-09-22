@@ -1,0 +1,1465 @@
+{
+  "evidence": [
+    {
+      "id": "schedule_editor",
+      "path": "Locus/WorkspaceView.swift",
+      "line_start": 2267,
+      "line_end": 2294,
+      "kind": "source",
+      "note": "Create Agent calls save; validation and in-progress state can disable the button.",
+      "sha256": "2a04026f05e8d616f6afb4e1049a467fccbe86f7288a9b8591e259828db23ef4"
+    },
+    {
+      "id": "schedule_editor_save",
+      "path": "Locus/WorkspaceView.swift",
+      "line_start": 2504,
+      "line_end": 2527,
+      "kind": "call",
+      "note": "The editor submits the prepared draft to ScheduleModel.saveSchedule and displays a save failure.",
+      "sha256": "2a04026f05e8d616f6afb4e1049a467fccbe86f7288a9b8591e259828db23ef4"
+    },
+    {
+      "id": "schedule_ui_create",
+      "path": "Locus/ScheduleModel.swift",
+      "line_start": 123,
+      "line_end": 193,
+      "kind": "call",
+      "note": "Save validates the draft, optionally includes a workflow, POSTs or PATCHes the schedule, then updates the list and refreshes session metadata.",
+      "sha256": "085852abb8735bfff8a5a2e8389101725ebe3daf0aafc174daf5719d83863c44"
+    },
+    {
+      "id": "schedule_ui_checks",
+      "path": "Locus/AppModel+RunQueueAndActivity.swift",
+      "line_start": 209,
+      "line_end": 279,
+      "kind": "source",
+      "note": "Draft and existing-task checks require available workspace, model, team and account as applicable; intervals are bounded.",
+      "sha256": "59f3d7f74a872f1017867eaf6acb9f1da16662032c1ea2cc7b09ff81e3bbda8e"
+    },
+    {
+      "id": "schedule_wiring",
+      "path": "Locus/AppModel.swift",
+      "line_start": 1187,
+      "line_end": 1209,
+      "kind": "call",
+      "note": "AppModel configures ScheduleModel with the backend, validation, refresh, queued-run admission and workflow capability closures.",
+      "sha256": "3c51cee40c4b24982933c4f9d93c5540be7b285b6f2642abfe2615c8ccb6c0e5"
+    },
+    {
+      "id": "schedule_routes",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 1039,
+      "line_end": 1067,
+      "kind": "route",
+      "note": "Registers create, list, update, dispatch, occurrence and history endpoints.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_registration",
+      "path": "agent/ollama_code/api/__init__.py",
+      "line_start": 29,
+      "line_end": 57,
+      "kind": "call",
+      "note": "The domain route registry includes the schedules module and invokes its register_routes function.",
+      "sha256": "0c4dd62b2a80a6a4a5fd7a6e44fcab8a9faa81bc2f8745e56b8eb3779491a281"
+    },
+    {
+      "id": "schedule_api_create",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 819,
+      "line_end": 847,
+      "kind": "call",
+      "note": "Creation checks capability gates, persists a validated schedule, creates its dedicated chat and removes the schedule if chat creation fails.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_workspace",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 32,
+      "line_end": 68,
+      "kind": "source",
+      "note": "Disabled API capabilities reject the request; workspace must exist, and worktree schedules require a Git workspace.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_recurrence",
+      "path": "agent/ollama_code/schedules.py",
+      "line_start": 37,
+      "line_end": 65,
+      "kind": "source",
+      "note": "Recurrence validation supports once, daily, weekdays, weekly and bounded intervals.",
+      "sha256": "77599e6c42b4bbc53cc437cd7999e87b656d0f05e8b9e3959e7c385adf735dc2"
+    },
+    {
+      "id": "schedule_normalize",
+      "path": "agent/ollama_code/schedules.py",
+      "line_start": 68,
+      "line_end": 110,
+      "kind": "source",
+      "note": "Schedule validation checks fields, runner, provider/account, model, timezone and a future next occurrence.",
+      "sha256": "77599e6c42b4bbc53cc437cd7999e87b656d0f05e8b9e3959e7c385adf735dc2"
+    },
+    {
+      "id": "schedule_insert",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 3223,
+      "line_end": 3274,
+      "kind": "call",
+      "note": "RunStore validates schedule/workflow data and inserts schedule configuration and next-run time, then returns the saved row.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "schedule_chat",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 285,
+      "line_end": 368,
+      "kind": "call",
+      "note": "Schedule creation or dispatch reuses a dedicated session or creates one, persists schedule-linked metadata and returns it.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_tick",
+      "path": "agent/ollama_code/runtime_automation.py",
+      "line_start": 14,
+      "line_end": 34,
+      "kind": "call",
+      "note": "Runtime tick scans due enabled schedules at a five-second minimum cadence, gated by controller presence or keep-running configuration, dispatches and queues returned runs.",
+      "sha256": "09323b1f43d2020fe0ce58310a3e3a86f497469a5d71df8896fbb7bed1290011"
+    },
+    {
+      "id": "schedule_runtime_loop",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 407,
+      "line_end": 436,
+      "kind": "call",
+      "note": "Runtime coordinator invokes automation tick unless paused/in maintenance, respects execution limits and waiting states, and preserves a single writer per workspace.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_claim",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 569,
+      "line_end": 638,
+      "kind": "call",
+      "note": "Dispatch holds a schedule lock, claims an occurrence, prepares the dedicated session and skips when that chat has an active run.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_atomic",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 3386,
+      "line_end": 3505,
+      "kind": "call",
+      "note": "Occurrence claim uses an immediate transaction, deterministic due-occurrence IDs, and advances cadence before outside work.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "schedule_workflow_dispatch",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 642,
+      "line_end": 687,
+      "kind": "call",
+      "note": "When workflow capability and stored workflow are present, schedule dispatch calls start_execution, associates occurrence state/run and returns the result.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_workflow_start",
+      "path": "agent/ollama_code/api/automation_workflows.py",
+      "line_start": 304,
+      "line_end": 327,
+      "kind": "call",
+      "note": "Creates an execution snapshot, advances to its next action, queues an agent action and synchronizes origin status.",
+      "sha256": "a6615030579007299074a91e1c366aca289a47df040d20462bce12a235442144"
+    },
+    {
+      "id": "schedule_workflow_agent",
+      "path": "agent/ollama_code/api/automation_workflows.py",
+      "line_start": 173,
+      "line_end": 262,
+      "kind": "call",
+      "note": "A run_agent action creates a deterministic run ID, queues the run with schedule metadata, binds it to the workflow step and returns it.",
+      "sha256": "a6615030579007299074a91e1c366aca289a47df040d20462bce12a235442144"
+    },
+    {
+      "id": "schedule_workflow_advance",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 2791,
+      "line_end": 2821,
+      "kind": "call",
+      "note": "Workflow advancement prepares an agent prompt, marks awaiting_run and returns the first agent action.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "schedule_plain_dispatch",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 689,
+      "line_end": 752,
+      "kind": "call",
+      "note": "Non-workflow schedules queue a run, persist occurrence linkage and return; failures record an error and selected workspace errors pause the schedule.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_skip",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 371,
+      "line_end": 415,
+      "kind": "call",
+      "note": "Busy chats record skipped occurrences; a one-time slot is rearmed, and idle-check plus queue reservation is atomic in the store.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_finish",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 3507,
+      "line_end": 3551,
+      "kind": "call",
+      "note": "Occurrence updates persist state, chat/run links and errors; skipped overlaps do not overwrite the schedule last-run/error summary.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "schedule_admission",
+      "path": "agent/ollama_code/runtime_automation.py",
+      "line_start": 102,
+      "line_end": 198,
+      "kind": "call",
+      "note": "Queued run loads saved route/profile/account configuration, waits for missing prerequisites, applies provisioned permissions, builds a user_message and enqueues it.",
+      "sha256": "09323b1f43d2020fe0ce58310a3e3a86f497469a5d71df8896fbb7bed1290011"
+    },
+    {
+      "id": "schedule_worker_transport",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 121,
+      "line_end": 171,
+      "kind": "call",
+      "note": "Supervisor starts or reuses a worker, resumes the dedicated session and opens its /ws/chat transport.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_enqueue",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 232,
+      "line_end": 238,
+      "kind": "call",
+      "note": "Supervisor stores queued command intent and private command configuration.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_send",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 437,
+      "line_end": 453,
+      "kind": "call",
+      "note": "Coordinator applies runtime configuration, marks the queued command sent/running and sends it to the worker.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_send_transport",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 200,
+      "line_end": 204,
+      "kind": "call",
+      "note": "Supervisor send serializes the command over the worker WebSocket.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_worker_turn",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2541,
+      "line_end": 2593,
+      "kind": "call",
+      "note": "User-message handling selects saved-profile, team or normal turn handling, persists pending input and starts the turn with an acknowledgement.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "schedule_profile_turn",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 410,
+      "line_end": 430,
+      "kind": "call",
+      "note": "Saved-profile turn enters its profile boundary and calls the ordinary user-turn function.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "schedule_core_turn",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 703,
+      "line_end": 717,
+      "kind": "call",
+      "note": "User-turn execution invokes AgentCore.run_turn with text, permission decision callback and tool eligibility.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "schedule_waits",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 264,
+      "line_end": 292,
+      "kind": "call",
+      "note": "Worker events persist approval/native-tool decisions and set waiting_approval or waiting_for_locus; turn completion releases the active command and events are published.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_disconnect",
+      "path": "agent/ollama_code/runtime.py",
+      "line_start": 376,
+      "line_end": 387,
+      "kind": "call",
+      "note": "When the controller disconnects, workers lacking keep-running are interrupted and paused.",
+      "sha256": "b88e1132362603d78eee47dc37c45101142e5c5fe50df1038dbc72ce7bd4d34e"
+    },
+    {
+      "id": "schedule_ui_policy",
+      "path": "Locus/WorkspaceView.swift",
+      "line_start": 2247,
+      "line_end": 2264,
+      "kind": "source",
+      "note": "Schedule editor explains permission policy and that requests requiring approval pause the run.",
+      "sha256": "2a04026f05e8d616f6afb4e1049a467fccbe86f7288a9b8591e259828db23ef4"
+    },
+    {
+      "id": "schedule_desktop_fallback",
+      "path": "Locus/ScheduleModel.swift",
+      "line_start": 282,
+      "line_end": 312,
+      "kind": "call",
+      "note": "Legacy desktop scheduling polls every 30 seconds but is bypassed when the independent runtime is enabled.",
+      "sha256": "085852abb8735bfff8a5a2e8389101725ebe3daf0aafc174daf5719d83863c44"
+    },
+    {
+      "id": "schedule_history_ui",
+      "path": "Locus/AgentInspectorModel.swift",
+      "line_start": 279,
+      "line_end": 292,
+      "kind": "call",
+      "note": "Inspector selects schedule history endpoint and decodes the returned history page.",
+      "sha256": "3b2c632ce4bc615adb620c5b322ad06654a0be4f6d88793d4bd9a880bd568fe6"
+    },
+    {
+      "id": "schedule_history_display",
+      "path": "Locus/AgentInspectorModel.swift",
+      "line_start": 263,
+      "line_end": 275,
+      "kind": "source",
+      "note": "Loaded inspector results update the published snapshot/cache; failed refresh retains the last saved information.",
+      "sha256": "3b2c632ce4bc615adb620c5b322ad06654a0be4f6d88793d4bd9a880bd568fe6"
+    },
+    {
+      "id": "schedule_history_api",
+      "path": "agent/ollama_code/api/schedules.py",
+      "line_start": 967,
+      "line_end": 987,
+      "kind": "call",
+      "note": "History endpoint returns the schedule-scoped history page; occurrence detail returns execution links and delivery/execution state.",
+      "sha256": "da80725ab7a57a7ccce71b21e91240cdbd418feb035e26f839c36c1d73669bf7"
+    },
+    {
+      "id": "schedule_history_query",
+      "path": "agent/ollama_code/agent_inspector_store.py",
+      "line_start": 16,
+      "line_end": 85,
+      "kind": "call",
+      "note": "History joins schedule occurrences to run and workflow execution state, scopes by agent ID and returns paginated rows/counts.",
+      "sha256": "394011979c51c31fe1917d07f1669eb9e6755c83b7311cfc40252a7fd2761c66"
+    },
+    {
+      "id": "schedule_sqlite",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 206,
+      "line_end": 215,
+      "kind": "call",
+      "note": "RunStore opens SQLite with foreign-key enforcement for record operations.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "schedule_capability_gate",
+      "path": "agent/ollama_code/capabilities.py",
+      "line_start": 11,
+      "line_end": 35,
+      "kind": "config",
+      "note": "durable_runs and automation_workflows_v1 have named environment gates; actual deployed values were not inspected.",
+      "sha256": "4d80da5f0cd360742f3db6e0809d469e401812fbbb2d24f3ee3d96f6caa3ec3e"
+    },
+    {
+      "id": "schedule_workflow_followup",
+      "path": "agent/ollama_code/runtime_automation.py",
+      "line_start": 69,
+      "line_end": 92,
+      "kind": "call",
+      "note": "Runtime watches workflow run terminal states, calls complete_step with result/error and queues any following run.",
+      "sha256": "09323b1f43d2020fe0ce58310a3e3a86f497469a5d71df8896fbb7bed1290011"
+    },
+    {
+      "id": "schedule_workflow_sync",
+      "path": "agent/ollama_code/api/automation_workflows.py",
+      "line_start": 265,
+      "line_end": 301,
+      "kind": "call",
+      "note": "Workflow origin synchronization updates the schedule occurrence; synchronization failure is best effort and does not repeat an action.",
+      "sha256": "a6615030579007299074a91e1c366aca289a47df040d20462bce12a235442144"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "schedule_ui",
+      "name": "Scheduled agent controls",
+      "kind": "component",
+      "description": "Create or edit a recurring agent, choose its workspace/model/cadence, and inspect its saved history.",
+      "simple_label": "Scheduled agent controls",
+      "code_label": "Scheduled agent controls",
+      "files": [
+        "Locus/WorkspaceView.swift",
+        "Locus/ScheduleModel.swift",
+        "Locus/AgentInspectorModel.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_editor",
+        "schedule_editor_save",
+        "schedule_ui_create",
+        "schedule_history_ui"
+      ]
+    },
+    {
+      "id": "schedule_api",
+      "name": "Schedule API",
+      "kind": "route",
+      "description": "Validates schedule configuration, maintains a dedicated chat, claims due occurrences and exposes run history.",
+      "simple_label": "Schedule API",
+      "code_label": "Schedule API",
+      "files": [
+        "agent/ollama_code/api/schedules.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_routes",
+        "schedule_api_create",
+        "schedule_claim",
+        "schedule_history_api"
+      ]
+    },
+    {
+      "id": "schedule_records",
+      "name": "Schedule and occurrence records",
+      "kind": "component",
+      "description": "RunStore operations persist schedules, claim each occurrence and relate history to runs and workflows in SQLite.",
+      "simple_label": "Schedule and occurrence records",
+      "code_label": "Schedule and occurrence records",
+      "files": [
+        "agent/ollama_code/runstore.py",
+        "agent/ollama_code/agent_inspector_store.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_insert",
+        "schedule_atomic",
+        "schedule_finish",
+        "schedule_history_query",
+        "schedule_sqlite"
+      ]
+    },
+    {
+      "id": "scheduler",
+      "name": "Due-time coordinator",
+      "kind": "worker",
+      "description": "Checks enabled schedules and queues due work when a desktop controller or keep-running policy allows it; also advances workflow steps.",
+      "simple_label": "Due-time coordinator",
+      "code_label": "Due-time coordinator",
+      "files": [
+        "agent/ollama_code/runtime_automation.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_admission",
+        "schedule_workflow_followup"
+      ]
+    },
+    {
+      "id": "schedule_workflow",
+      "name": "Scheduled workflow execution",
+      "kind": "component",
+      "description": "Snapshots a stored workflow and turns its next agent step into a durable run while synchronizing schedule history.",
+      "simple_label": "Scheduled workflow execution",
+      "code_label": "Scheduled workflow execution",
+      "files": [
+        "agent/ollama_code/api/automation_workflows.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_start",
+        "schedule_workflow_agent",
+        "schedule_workflow_sync"
+      ]
+    },
+    {
+      "id": "schedule_runtime",
+      "name": "Background runtime supervisor",
+      "kind": "worker",
+      "description": "Admits queued work to session workers, applies saved configuration, sends commands and records waiting/completion events.",
+      "simple_label": "Background runtime supervisor",
+      "code_label": "Background runtime supervisor",
+      "files": [
+        "agent/ollama_code/runtime.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_runtime_loop",
+        "schedule_worker_transport",
+        "schedule_enqueue",
+        "schedule_send",
+        "schedule_waits"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "schedule_due_dispatch",
+      "from": "scheduler",
+      "to": "schedule_api",
+      "type": "function_call",
+      "reason": "Dispatch the due enabled schedule when controller/keep-running eligibility permits.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_claim"
+      ]
+    },
+    {
+      "id": "schedule_claim_slot",
+      "from": "schedule_api",
+      "to": "schedule_records",
+      "type": "function_call",
+      "reason": "Claim an occurrence before creating outside work.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_claim",
+        "schedule_atomic"
+      ]
+    },
+    {
+      "id": "schedule_claim_result",
+      "from": "schedule_records",
+      "to": "schedule_api",
+      "type": "return",
+      "reason": "Return schedule, occurrence and whether this caller owns the claim.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_atomic",
+        "schedule_claim"
+      ]
+    },
+    {
+      "id": "schedule_start_workflow",
+      "from": "schedule_api",
+      "to": "schedule_workflow",
+      "type": "function_call",
+      "reason": "For a stored workflow with capability enabled, start its execution.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_dispatch",
+        "schedule_workflow_start"
+      ]
+    },
+    {
+      "id": "schedule_queue_workflow_run",
+      "from": "schedule_workflow",
+      "to": "schedule_records",
+      "type": "function_call",
+      "reason": "Create/advance workflow state, queue the agent step and bind its run.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_start",
+        "schedule_workflow_agent",
+        "schedule_workflow_advance"
+      ]
+    },
+    {
+      "id": "schedule_queued_workflow_result",
+      "from": "schedule_records",
+      "to": "schedule_workflow",
+      "type": "return",
+      "reason": "Return the saved run and bound workflow execution.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_agent"
+      ]
+    },
+    {
+      "id": "schedule_workflow_result",
+      "from": "schedule_workflow",
+      "to": "schedule_api",
+      "type": "return",
+      "reason": "Return workflow action/execution and any queued run to schedule dispatch.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_start",
+        "schedule_workflow_agent",
+        "schedule_workflow_dispatch"
+      ]
+    },
+    {
+      "id": "schedule_dispatch_result",
+      "from": "schedule_api",
+      "to": "scheduler",
+      "type": "return",
+      "reason": "Return the linked occurrence and queued run; coordinator queues returned work.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_dispatch",
+        "schedule_tick"
+      ]
+    },
+    {
+      "id": "schedule_enqueue_runtime",
+      "from": "scheduler",
+      "to": "schedule_runtime",
+      "type": "function_call",
+      "reason": "Resolve saved model/profile/account requirements and enqueue a user message for the schedule session.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_admission",
+        "schedule_enqueue"
+      ]
+    },
+    {
+      "id": "schedule_start_agent",
+      "from": "schedule_runtime",
+      "to": "agent_api",
+      "type": "websocket",
+      "reason": "Apply worker configuration and send the queued user_message over /ws/chat.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_worker_transport",
+        "schedule_send_transport",
+        "schedule_send",
+        "schedule_worker_turn"
+      ]
+    },
+    {
+      "id": "schedule_invoke_engine",
+      "from": "agent_api",
+      "to": "chat_engine",
+      "type": "function_call",
+      "reason": "A supported solo/profile user-message branch starts a user turn, which invokes AgentCore.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_worker_turn",
+        "schedule_profile_turn",
+        "schedule_core_turn"
+      ]
+    },
+    {
+      "id": "schedule_create_request",
+      "from": "schedule_ui",
+      "to": "schedule_api",
+      "type": "http_request",
+      "reason": "Create Agent submits POST /api/schedules after draft validation.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_editor",
+        "schedule_editor_save",
+        "schedule_ui_create",
+        "schedule_routes"
+      ]
+    },
+    {
+      "id": "schedule_persist_definition",
+      "from": "schedule_api",
+      "to": "schedule_records",
+      "type": "function_call",
+      "reason": "Validate and persist the schedule including recurrence and optional workflow.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_api_create",
+        "schedule_insert"
+      ]
+    },
+    {
+      "id": "schedule_definition_result",
+      "from": "schedule_records",
+      "to": "schedule_api",
+      "type": "return",
+      "reason": "Return the saved definition so the API can ensure its dedicated chat.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_insert",
+        "schedule_api_create"
+      ]
+    },
+    {
+      "id": "schedule_create_response",
+      "from": "schedule_api",
+      "to": "schedule_ui",
+      "type": "http_response",
+      "reason": "Return the schedule; update its UI list, close the editor and refresh chat metadata.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_api_create",
+        "schedule_ui_create"
+      ]
+    },
+    {
+      "id": "schedule_history_request",
+      "from": "schedule_ui",
+      "to": "schedule_api",
+      "type": "http_request",
+      "reason": "Read the selected agent history page.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_ui",
+        "schedule_routes"
+      ]
+    },
+    {
+      "id": "schedule_history_read",
+      "from": "schedule_api",
+      "to": "schedule_records",
+      "type": "function_call",
+      "reason": "Fetch occurrences with current run/workflow states scoped to the selected schedule.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_api",
+        "schedule_history_query"
+      ]
+    },
+    {
+      "id": "schedule_history_result",
+      "from": "schedule_records",
+      "to": "schedule_api",
+      "type": "return",
+      "reason": "Return paginated history, status counts and workflow links.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_query",
+        "schedule_history_api"
+      ]
+    },
+    {
+      "id": "schedule_history_response",
+      "from": "schedule_api",
+      "to": "schedule_ui",
+      "type": "http_response",
+      "reason": "Return history for the inspector snapshot.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_api",
+        "schedule_history_ui",
+        "schedule_history_display"
+      ]
+    },
+    {
+      "id": "schedule_uses_database",
+      "from": "schedule_records",
+      "to": "run_store",
+      "type": "database_access",
+      "reason": "Schedule and history operations execute against RunStore SQLite connections.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_sqlite",
+        "schedule_insert",
+        "schedule_history_query"
+      ]
+    },
+    {
+      "id": "schedule_runtime_ticks",
+      "from": "schedule_runtime",
+      "to": "scheduler",
+      "type": "function_call",
+      "reason": "Invoke automation tick while runtime is not paused or in maintenance.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_runtime_loop"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "schedule_recurring_run",
+      "title": "When a recurring agent becomes due",
+      "trigger": "An enabled schedule reaches its next run time while the runtime is eligible to run it.",
+      "summary": "The coordinator claims a due slot, reuses the agent\u2019s conversation, queues a stored workflow\u2019s first agent step and hands it to the conversation engine. This trace stops at agent execution; history retrieval and workflow follow-up calls were inspected separately.",
+      "status": "partial",
+      "steps": [
+        {
+          "node": "scheduler",
+          "action": "Find an enabled due schedule. Continue only when a desktop controller is present or this automation may keep running.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_tick",
+            "schedule_runtime_loop"
+          ]
+        },
+        {
+          "node": "schedule_api",
+          "action": "Lock the schedule and request its due occurrence.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_claim"
+          ],
+          "edge": "schedule_due_dispatch"
+        },
+        {
+          "node": "schedule_records",
+          "action": "Claim one occurrence transactionally and calculate the following run time.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_atomic"
+          ],
+          "edge": "schedule_claim_slot"
+        },
+        {
+          "node": "schedule_api",
+          "action": "Reuse the dedicated chat; skip this occurrence if it is busy, and verify its execution location.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_claim",
+            "schedule_chat",
+            "schedule_skip"
+          ],
+          "edge": "schedule_claim_result"
+        },
+        {
+          "node": "schedule_workflow",
+          "action": "For a stored workflow with workflow support enabled, snapshot it and advance toward its first agent step.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_workflow_dispatch",
+            "schedule_workflow_start"
+          ],
+          "edge": "schedule_start_workflow"
+        },
+        {
+          "node": "schedule_records",
+          "action": "Prepare the agent action, save a queued run and bind it to the workflow step.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_workflow_agent",
+            "schedule_workflow_advance"
+          ],
+          "edge": "schedule_queue_workflow_run"
+        },
+        {
+          "node": "schedule_workflow",
+          "action": "Return the queued run and updated execution record.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_workflow_agent"
+          ],
+          "edge": "schedule_queued_workflow_result"
+        },
+        {
+          "node": "schedule_api",
+          "action": "Record the schedule occurrence and return the queued agent run.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_workflow_dispatch"
+          ],
+          "edge": "schedule_workflow_result"
+        },
+        {
+          "node": "scheduler",
+          "action": "Resolve the saved model/account/profile and build this run\u2019s user message; missing prerequisites wait for attention.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_tick",
+            "schedule_admission"
+          ],
+          "edge": "schedule_dispatch_result"
+        },
+        {
+          "node": "schedule_runtime",
+          "action": "Queue the command, then admit it when a worker and execution slot are available.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_admission",
+            "schedule_enqueue",
+            "schedule_runtime_loop"
+          ],
+          "edge": "schedule_enqueue_runtime"
+        },
+        {
+          "node": "agent_api",
+          "action": "Apply runtime configuration and accept the user message through the session worker\u2019s chat transport.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_worker_transport",
+            "schedule_send",
+            "schedule_worker_turn"
+          ],
+          "edge": "schedule_start_agent"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Start the solo/profile agent turn using the same conversation engine as an interactive task.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_profile_turn",
+            "schedule_core_turn"
+          ],
+          "edge": "schedule_invoke_engine"
+        }
+      ],
+      "gaps": [
+        "The trace covers the first solo/profile agent step of a stored workflow. Later workflow conditions, approvals, team execution and complete end-to-end outcome reconciliation are not traced here.",
+        "Runtime follow-up calls and history queries are evidenced, but actual completion, delivery of notifications and deployed availability were not exercised."
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_atomic",
+        "schedule_workflow_dispatch",
+        "schedule_workflow_agent",
+        "schedule_admission",
+        "schedule_send",
+        "schedule_core_turn"
+      ]
+    },
+    {
+      "id": "schedule_create",
+      "title": "Create a recurring agent",
+      "trigger": "Choose Create Agent in the schedule editor with a valid configuration.",
+      "summary": "The desktop sends a schedule definition, the backend persists its recurrence and dedicated chat, and the saved agent appears in the UI.",
+      "status": "complete",
+      "steps": [
+        {
+          "node": "schedule_ui",
+          "action": "Validate and submit the schedule editor.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_editor",
+            "schedule_editor_save",
+            "schedule_ui_create"
+          ]
+        },
+        {
+          "node": "schedule_api",
+          "action": "Check enabled capabilities and validate the schedule workspace.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_api_create",
+            "schedule_workspace"
+          ],
+          "edge": "schedule_create_request"
+        },
+        {
+          "node": "schedule_records",
+          "action": "Normalize recurrence and persist the definition with its next run time.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_insert",
+            "schedule_normalize",
+            "schedule_recurrence"
+          ],
+          "edge": "schedule_persist_definition"
+        },
+        {
+          "node": "schedule_api",
+          "action": "Ensure the agent has a dedicated conversation; remove the definition if that cannot be created.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_api_create",
+            "schedule_chat"
+          ],
+          "edge": "schedule_definition_result"
+        },
+        {
+          "node": "schedule_ui",
+          "action": "Update the schedule list, close the editor and refresh the sidebar\u2019s session metadata.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_ui_create"
+          ],
+          "edge": "schedule_create_response"
+        }
+      ],
+      "gaps": [],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_editor_save",
+        "schedule_ui_create",
+        "schedule_api_create",
+        "schedule_insert",
+        "schedule_chat"
+      ]
+    },
+    {
+      "id": "schedule_history",
+      "title": "Inspect a recurring agent\u2019s run history",
+      "trigger": "Load the selected scheduled agent in the inspector.",
+      "summary": "The inspector requests agent-scoped history, and the backend joins occurrences to execution status before returning a bounded page.",
+      "status": "complete",
+      "steps": [
+        {
+          "node": "schedule_ui",
+          "action": "Request the selected scheduled agent\u2019s history page.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_history_ui"
+          ]
+        },
+        {
+          "node": "schedule_api",
+          "action": "Resolve the schedule history route and call the history projection.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_routes",
+            "schedule_history_api"
+          ],
+          "edge": "schedule_history_request"
+        },
+        {
+          "node": "schedule_records",
+          "action": "Join occurrences with run and workflow states, scoped to this agent.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_history_query"
+          ],
+          "edge": "schedule_history_read"
+        },
+        {
+          "node": "schedule_api",
+          "action": "Return the rows, status counts and next-page cursor.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_history_query",
+            "schedule_history_api"
+          ],
+          "edge": "schedule_history_result"
+        },
+        {
+          "node": "schedule_ui",
+          "action": "Decode the history and update the inspector snapshot.",
+          "confidence": "confirmed",
+          "evidence": [
+            "schedule_history_ui",
+            "schedule_history_display"
+          ],
+          "edge": "schedule_history_response"
+        }
+      ],
+      "gaps": [],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_ui",
+        "schedule_history_api",
+        "schedule_history_query",
+        "schedule_history_display"
+      ]
+    }
+  ],
+  "views": [
+    {
+      "id": "schedule_recurring_run_view",
+      "title": "When a recurring agent becomes due",
+      "kind": "sequence",
+      "level": "simple",
+      "nodes": [
+        "scheduler",
+        "schedule_api",
+        "schedule_records",
+        "schedule_workflow",
+        "schedule_runtime",
+        "agent_api",
+        "chat_engine"
+      ],
+      "edges": [
+        "schedule_due_dispatch",
+        "schedule_claim_slot",
+        "schedule_claim_result",
+        "schedule_start_workflow",
+        "schedule_queue_workflow_run",
+        "schedule_queued_workflow_result",
+        "schedule_workflow_result",
+        "schedule_dispatch_result",
+        "schedule_enqueue_runtime",
+        "schedule_start_agent",
+        "schedule_invoke_engine"
+      ],
+      "flow": "schedule_recurring_run",
+      "description": "The coordinator claims a due slot, reuses the agent\u2019s conversation, queues a stored workflow\u2019s first agent step and hands it to the conversation engine. This trace stops at agent execution; history retrieval and workflow follow-up calls were inspected separately.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_atomic",
+        "schedule_workflow_dispatch",
+        "schedule_workflow_agent",
+        "schedule_admission",
+        "schedule_send",
+        "schedule_core_turn"
+      ]
+    },
+    {
+      "id": "schedule_create_view",
+      "title": "Create a recurring agent",
+      "kind": "sequence",
+      "level": "simple",
+      "nodes": [
+        "schedule_ui",
+        "schedule_api",
+        "schedule_records"
+      ],
+      "edges": [
+        "schedule_create_request",
+        "schedule_persist_definition",
+        "schedule_definition_result",
+        "schedule_create_response"
+      ],
+      "flow": "schedule_create",
+      "description": "The desktop sends a schedule definition, the backend persists its recurrence and dedicated chat, and the saved agent appears in the UI.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_editor_save",
+        "schedule_ui_create",
+        "schedule_api_create",
+        "schedule_insert",
+        "schedule_chat"
+      ]
+    },
+    {
+      "id": "schedule_history_view",
+      "title": "Inspect a recurring agent\u2019s run history",
+      "kind": "sequence",
+      "level": "simple",
+      "nodes": [
+        "schedule_ui",
+        "schedule_api",
+        "schedule_records"
+      ],
+      "edges": [
+        "schedule_history_request",
+        "schedule_history_read",
+        "schedule_history_result",
+        "schedule_history_response"
+      ],
+      "flow": "schedule_history",
+      "description": "The inspector requests agent-scoped history, and the backend joins occurrences to execution status before returning a bounded page.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_history_ui",
+        "schedule_history_api",
+        "schedule_history_query",
+        "schedule_history_display"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "recurring_agents",
+      "title": "Run recurring agents",
+      "description": "Schedule agent work once or on a recurring timetable, continue each agent\u2019s dedicated conversation, and inspect saved run history. Runtime/account availability and permission requests can delay or pause work.",
+      "nodes": [
+        "schedule_ui",
+        "schedule_api",
+        "schedule_records",
+        "scheduler",
+        "schedule_workflow",
+        "schedule_runtime"
+      ],
+      "flows": [
+        "schedule_recurring_run",
+        "schedule_create",
+        "schedule_history"
+      ],
+      "priority": "primary",
+      "selection_reason": "Shows how work starts from time rather than a chat message, and explains durable recurrence, background admission and saved history.",
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_editor",
+        "schedule_recurrence",
+        "schedule_chat",
+        "schedule_tick",
+        "schedule_waits",
+        "schedule_history_query"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "Locus/ScheduleModel.swift",
+      "role": "core",
+      "reason": "Owns saving, listing and legacy desktop dispatch of scheduled agents.",
+      "nodes": [
+        "schedule_ui"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_ui_create",
+        "schedule_desktop_fallback"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/api/schedules.py",
+      "role": "core",
+      "reason": "Creates agent conversations, claims schedule dispatches and exposes history.",
+      "nodes": [
+        "schedule_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_api_create",
+        "schedule_claim",
+        "schedule_history_api"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/runtime_automation.py",
+      "role": "core",
+      "reason": "Finds due schedules and converts queued runs into runtime commands.",
+      "nodes": [
+        "scheduler"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_admission"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/schedules.py",
+      "role": "important",
+      "reason": "Defines accepted recurrence rules and computes next occurrences.",
+      "nodes": [
+        "schedule_records"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_recurrence",
+        "schedule_normalize"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/runstore.py",
+      "role": "core",
+      "reason": "Persists definitions, occurrence claims and workflow/run links.",
+      "nodes": [
+        "schedule_records"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_insert",
+        "schedule_atomic",
+        "schedule_finish"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/runtime.py",
+      "role": "core",
+      "reason": "Controls worker admission, transport, waiting states and controller-disconnect behavior.",
+      "nodes": [
+        "schedule_runtime"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_runtime_loop",
+        "schedule_send",
+        "schedule_waits",
+        "schedule_disconnect"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/api/automation_workflows.py",
+      "role": "important",
+      "reason": "Converts a workflow agent step into a durable run and synchronizes origin state.",
+      "nodes": [
+        "schedule_workflow"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workflow_agent",
+        "schedule_workflow_sync"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "schedule_change_rules",
+      "goal": "Change which recurrence patterns an agent can use",
+      "paths": [
+        "agent/ollama_code/schedules.py",
+        "Locus/AppModel+RunQueueAndActivity.swift"
+      ],
+      "nodes": [
+        "schedule_records",
+        "schedule_ui"
+      ],
+      "explanation": "Keep recurrence validation/calculation and the desktop\u2019s draft checks consistent; callers depend on the saved next-run time.",
+      "impact": [
+        "scheduler",
+        "schedule_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_recurrence",
+        "schedule_normalize",
+        "schedule_ui_checks",
+        "schedule_atomic"
+      ]
+    },
+    {
+      "id": "schedule_change_overlap",
+      "goal": "Change how overlapping scheduled runs are handled",
+      "paths": [
+        "agent/ollama_code/api/schedules.py",
+        "agent/ollama_code/runstore.py"
+      ],
+      "nodes": [
+        "schedule_api",
+        "schedule_records"
+      ],
+      "explanation": "The dispatcher skips a busy conversation and uses durable occurrence claims. Changing overlap behavior affects cadence, history and the one-time rearm path.",
+      "impact": [
+        "scheduler",
+        "schedule_runtime"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_claim",
+        "schedule_skip",
+        "schedule_atomic"
+      ]
+    },
+    {
+      "id": "schedule_change_background",
+      "goal": "Change when scheduled work can keep running",
+      "paths": [
+        "agent/ollama_code/runtime_automation.py",
+        "agent/ollama_code/runtime.py"
+      ],
+      "nodes": [
+        "scheduler",
+        "schedule_runtime"
+      ],
+      "explanation": "Due dispatch and worker admission both check controller presence or keep-running policy; waiting states and workspace concurrency also affect admission.",
+      "impact": [
+        "schedule_api",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_runtime_loop",
+        "schedule_disconnect"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "schedule_availability",
+      "title": "When recurring work can run",
+      "text": "The independent runtime checks due schedules at a five-second minimum cadence while it is active. Dispatch requires a connected controller or keep-running permission for the automation. The legacy desktop coordinator checks every 30 seconds and is disabled when the independent runtime is enabled. This establishes code paths, not that a particular machine\u2019s runtime is installed, awake or provisioned.",
+      "nodes": [
+        "scheduler",
+        "schedule_runtime",
+        "schedule_ui"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_tick",
+        "schedule_runtime_loop",
+        "schedule_desktop_fallback",
+        "schedule_disconnect"
+      ]
+    },
+    {
+      "id": "schedule_limits",
+      "title": "What can stop a scheduled run",
+      "text": "Schedule creation requires a valid future recurrence, an available workspace, and a configured model/account; worktree execution requires a Git workspace. A busy dedicated chat causes a skipped occurrence, with one-time slots rearmed. Missing account/profile prerequisites wait for attention, and runtime approval/native-tool requests enter waiting states. Stored workflows take their workflow path; older definitions use the direct queued-run path.",
+      "nodes": [
+        "schedule_api",
+        "schedule_records",
+        "scheduler",
+        "schedule_runtime"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_workspace",
+        "schedule_normalize",
+        "schedule_skip",
+        "schedule_admission",
+        "schedule_waits",
+        "schedule_workflow_dispatch",
+        "schedule_plain_dispatch"
+      ]
+    },
+    {
+      "id": "schedule_history_explained",
+      "title": "Where recurring work is remembered",
+      "text": "Each scheduled agent has a persistent dedicated chat. Occurrences are separately linked to runs/workflow executions, and the inspector requests a paginated history scoped to that schedule. Workflow origin synchronization is best effort; the execution record remains authoritative. A saved history row does not establish that every requested external effect succeeded.",
+      "nodes": [
+        "schedule_api",
+        "schedule_records",
+        "schedule_ui",
+        "schedule_workflow"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "schedule_chat",
+        "schedule_history_ui",
+        "schedule_history_query",
+        "schedule_workflow_sync"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "area": "Recurring agents",
+      "confidence": "confirmed",
+      "explanation": "Read targeted ranges in 15 implementation files covering desktop creation, recurrence validation, durable claims, stored-workflow first-step admission, runtime eligibility, permission waits and history retrieval. No application, scheduler or provider was executed.",
+      "evidence": [
+        "schedule_ui_create",
+        "schedule_atomic",
+        "schedule_workflow_agent",
+        "schedule_admission",
+        "schedule_history_query"
+      ],
+      "uninspected": [
+        "Live runtime installation and enabled capability/account settings",
+        "Complete multi-step workflow branches and team-run execution",
+        "Actual provider responses, notifications and external effects",
+        "All recurrence edge cases and recovery paths; source was inspected but tests were not run"
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "schedule_live_availability",
+      "area": "Runtime availability",
+      "question": "Is the user\u2019s actual runtime installed, running and provisioned to execute this schedule when the desktop is closed?",
+      "reason": "Source contains controller/keep-running, account/profile and maintenance gates. Private state and live services were deliberately not read or exercised.",
+      "next_step": "If operational confirmation is needed, inspect the app\u2019s runtime and scheduled-agent status with the user\u2019s intended schedule.",
+      "nodes": [
+        "scheduler",
+        "schedule_runtime"
+      ],
+      "evidence": [
+        "schedule_tick",
+        "schedule_admission",
+        "schedule_runtime_loop",
+        "schedule_disconnect"
+      ]
+    },
+    {
+      "id": "schedule_outcome_boundary",
+      "area": "Scheduled workflow completion",
+      "question": "How does each configured later step finish, and what exact result appears for the user?",
+      "reason": "First-agent-step admission and history read paths are traced. Follow-up reconciliation calls were located, but their complete execution-state transitions and notifications were outside the bounded inspection.",
+      "next_step": "Focus on the chosen agent\u2019s workflow and trace completion events through run state, workflow advancement and inspector presentation.",
+      "nodes": [
+        "schedule_workflow",
+        "schedule_records",
+        "schedule_runtime"
+      ],
+      "evidence": [
+        "schedule_workflow_followup",
+        "schedule_workflow_sync",
+        "schedule_history_query",
+        "schedule_waits"
+      ]
+    }
+  ]
+}

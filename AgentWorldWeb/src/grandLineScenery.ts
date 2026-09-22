@@ -1,3 +1,4 @@
+import { zuneshaPose, momonosukePose, moveCompanion } from './grandLineCompanions.ts';
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
@@ -16,7 +17,7 @@ import { createOceanWater } from './oceanWater';
 import { LaboonCompanion } from './laboonInteraction';
 import type { Point } from './state';
 
-import { islandArtworkRotation, GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
+import { MARY_GEOISE, islandShoreDistance, islandArtworkRotation, GRAND_LINE_LANDMARKS, GRAND_LINE_SKY_ISLAND, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
 export { GRAND_LINE_LANDMARKS, GRAND_LINE_ISLAND_MODELS, GRAND_LINE_HARBORS, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_HOME_NAMES, GRAND_LINE_STATIONS, GRAND_LINE_OBSTACLES, GRAND_LINE_WANDER_POINTS, GRAND_LINE_LABOON_POSITION } from './grandLineGeography';
 
 type XYZ = [number, number, number];
@@ -115,6 +116,14 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   };
 
   const oceanWater = createOceanWater(scene, root, GRAND_LINE_LANDMARKS);
+  const zunesha = new TransformNode('zunesha-walking-elephant', scene); zunesha.parent = root;
+  moveCompanion(zunesha, zuneshaPose(0));
+  models.add('creature_zunesha', { parent: zunesha, width: 7.2, depth: 9.5, height: 13,
+    floor: 0, animated: true });
+  const momo = new TransformNode('momonosuke-flying-dragon', scene); momo.parent = root;
+  moveCompanion(momo, momonosukePose(0));
+  models.add('creature_momonosuke', { parent: momo, width: 2.5, depth: 3.5, height: 1.7,
+    floor: 0, animated: true });
 
   function island(index: number, grassColor: string, sandColor: string): TransformNode {
     const { x, z, radius, id } = GRAND_LINE_LANDMARKS[index];
@@ -305,10 +314,23 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       tube('reverse-mountain-whitewater', [[-29.12, 5.3, sign * 5.89], [-26.50, 2.75, sign * 3.88], [-25.53, 0.14, sign * 1.55]], 0.055, foam, root, 7);
     }
   }
+  // The palace sits on the continental ridge, not on a ship-accessible island.
+  const holyLand = new TransformNode(MARY_GEOISE.id, scene);
+  holyLand.parent = root; holyLand.position.set(MARY_GEOISE.x, 0, MARY_GEOISE.z);
+  if (models.has('island_mary_geoise')) {
+    models.add('island_mary_geoise', { parent: holyLand, width: 4.2, depth: 4.2,
+      height: theme.heights.island_mary_geoise, floor: MARY_GEOISE.floor });
+  } else {
+    cylinder('holy-land-terrace', 4.2, 4.0, 0.4, [0, MARY_GEOISE.floor, 0], cliff, 24, holyLand);
+    box('holy-land-palace', [2.5, 1.5, 1.9], [0, MARY_GEOISE.floor + 0.95, 0], white, holyLand);
+    sphere('holy-land-dome', [1.7, 1.3, 1.7], [0, MARY_GEOISE.floor + 2.1, 0], leafLight, holyLand);
+  }
+  label(MARY_GEOISE.name, MARY_GEOISE.subtitle, [MARY_GEOISE.x, MARY_GEOISE.floor + 0.2, MARY_GEOISE.z - 3.5], 5.4);
   label('Recurse Mountain', 'ENTER THE LOCAL LINE', [-29, 0.05, 1.90], 5.6);
   label('Thread Line', 'ONE THREAD CONNECTS EVERY PORT', [-33.5, 0.02, -20], 6.6, true);
   label('RAM Belt', 'HERE BE SEED KINGS', [-4, -0.04, -24], 7, true);
   label('RAM Belt', 'QUIET WATERS. PLENTY OF MEMORY.', [-4, -0.04, 24], 7, true);
+  label('Calm Belt', 'AMAZON LILY  ·  WINDLESS WATERS', [-60, -0.04, -24], 7, true);
   label('Local Line', 'OPEN WEIGHTS  ·  OPEN SEAS', [0, -0.03, 0.5], 10.7, true);
 
   for (const landmark of GRAND_LINE_LANDMARKS) {
@@ -319,7 +341,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     owner.name = landmark.id;
     if (detailed) {
       owner.parent = root; owner.position.set(landmark.x, 0, landmark.z);
-      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: -0.12, rotation: islandArtworkRotation(landmark.id) });
+      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: landmark.id === 'long-ring-long-land' ? -0.40 : -0.12, rotation: islandArtworkRotation(landmark.id) });
     }
     if (landmark.id === 'twin-cape') {
       const whale = new TransformNode('laboon', scene); whale.parent = root;
@@ -482,13 +504,13 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     }
     const harbor = GRAND_LINE_HARBORS.find(item => item.id === landmark.id)!;
     const pier = new TransformNode(`${landmark.id}-harbor-pier`, scene); pier.parent = owner;
-    const shoreDistance = landmark.radius * (harbor.direction.x ? 1 : 0.80);
+    const shoreDistance = islandShoreDistance(landmark.radius);
     pier.position.set(harbor.direction.x * (shoreDistance + 0.24), 0, harbor.direction.z * (shoreDistance + 0.24));
     pier.rotation.y = Math.atan2(harbor.direction.x, harbor.direction.z);
     // A longer jetty reaches the broadside berth without changing ship routes.
     // Its fixed end leaves bow clearance; the boarding plank appears only at rest.
     const jettyEnd = landmark.radius + 2.35 - (shoreDistance + 0.24) - 1.45;
-    const jettyStart = -0.49, jettyLength = jettyEnd - jettyStart;
+    const jettyStart = -0.80, jettyLength = jettyEnd - jettyStart;
     box('harbor-timber-deck', [0.65, 0.12, jettyLength], [0, 0.56, (jettyStart + jettyEnd) / 2], wood, pier);
     for (let z = jettyStart + 0.06; z < jettyEnd; z += 0.145) box('harbor-deck-plank', [0.67, 0.04, 0.018], [0, 0.63, z], sand, pier);
     box('harbor-berthing-head', [1.46, 0.13, 0.32], [0, 0.56, jettyEnd - 0.16], wood, pier);
@@ -514,7 +536,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   }
 
   // JAXa's impossible upward current leads to the sky island and Shandora's golden bell.
-  const sky = new TransformNode('skypiea-cloud-island', scene); sky.parent = root; sky.position.set(-6.624, 6.0, -22.01);
+  const sky = new TransformNode('skypiea-cloud-island', scene); sky.parent = root; sky.position.set(GRAND_LINE_SKY_ISLAND.x, GRAND_LINE_SKY_ISLAND.y, GRAND_LINE_SKY_ISLAND.z);
   if (models.has('island_skypiea')) {
     models.add('island_skypiea', { parent: sky, width: 4.1, depth: 3.1, height: 4.2, floor: -0.50 });
   } else {
@@ -528,8 +550,9 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
   sphere('golden-bell-clapper', [0.10, 0.16, 0.10], [0, 0.88, 0], navy, sky);
   palm(sky, 0.80, -0.17, 1.22, 0.15);
   }
-  tube('knock-up-stream', [[-6.624, -0.05, -22.01], [-6.574, 2, -21.91], [-6.774, 3.8, -22.01], [-6.624, 6, -22.01]], 0.20, mat('knock-up-stream-water', '#96e8e1', 0.2, 0.50));
-  label('SkypiAI', 'LOCAL DREAMS, SKY-HIGH IDEAS', [-6.624, 6.40, -23.71], 4.3);
+  const { x: skyX, z: skyZ } = GRAND_LINE_SKY_ISLAND;
+  tube('knock-up-stream', [[skyX, -0.05, skyZ], [skyX + 0.05, 2, skyZ + 0.1], [skyX - 0.15, 3.8, skyZ], [skyX, 6, skyZ]], 0.20, mat('knock-up-stream-water', '#96e8e1', 0.2, 0.50));
+  label('SkypiAI', 'LOCAL DREAMS, SKY-HIGH IDEAS', [skyX, 6.40, skyZ - 1.7], 4.3);
 
   // Two Seed Kings guard the windless waters; their silhouettes never enter the shipping lanes.
   for (const [x, z, sign] of [[-16.56, -25, 1], [16.56, 25.2, -1]]) {
@@ -599,6 +622,8 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       laboon?.update(elapsed, reducedMotion);
       waterfallMist?.update(elapsed, reducedMotion);
       oceanWater.update(elapsed, reducedMotion);
+      moveCompanion(zunesha, zuneshaPose(elapsed, reducedMotion));
+      moveCompanion(momo, momonosukePose(elapsed, reducedMotion));
       for (const item of drifting) item.node.position.y = item.y + (reducedMotion ? 0 : Math.sin(elapsed * 0.34 + item.phase) * item.amount);
     },
     dispose() {

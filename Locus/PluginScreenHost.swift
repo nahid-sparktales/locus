@@ -238,7 +238,7 @@ struct PluginScreenHost: NSViewRepresentable {
                   let action = PluginScreenMessage.decode(message.body, screen: screen.screen) else { return }
             switch action {
             case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
-            case .selectAgent(let id): model?.openAgentProfile(id)
+            case .selectAgent(let id): model?.chooseResident(id)
             case .preferences(let theme): model?.setTheme(theme)
             case .residentStyle(let style): model?.setResidentStyle(style)
             case .openAttention(let id): model?.openAttention(id)

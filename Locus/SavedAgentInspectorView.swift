@@ -426,7 +426,7 @@ private struct SavedAgentOverviewContent: View {
                                 .foregroundStyle(ink).padding(5).background(canvas, in: Circle())
                         }
                 }
-                .buttonStyle(.plain).fixedSize()
+                .buttonStyle(.locus(.card)).fixedSize()
                 .contextMenu {
                     Button("Choose picture…") { choosingPicture = true }
                     if agentTeams.agentAvatarData[profile.id] != nil {

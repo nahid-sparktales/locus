@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "diagrams": {
+    "diagrams/architecture_simple.mmd": "cc829c19ae8d57762b33b030e9fbe0ce1d4da7627cb7b964ee3a4903df8db781",
+    "diagrams/architecture_simple.txt": "eaaa07db0e27d49d5b4b6efd9eeb308cb309403c4ffcd52d9e4787f9efe85e52",
+    "diagrams/chat_work_flow.mmd": "931b178369f6b248f2f75c33dce4cce7fa85ff213f681e5b4c173bbbb461d611",
+    "diagrams/chat_work_flow.txt": "d0821548b857c8fe5e6f74d8967ea68a7ce8e334a4b6adaede6244a298682d7e",
+    "diagrams/team_delegation.mmd": "055857de830e9ea441207aa5b4f425ff4759f1cc621484f63436624a4f67782c",
+    "diagrams/team_delegation.txt": "4a4fd0cff92b0ad77e3eb6e88fd04d1030f928fbae81cd1047ae247ee434e586",
+    "diagrams/schedule_recurring_run_view.mmd": "b3deca715d45ae03d4230351179af652dee22ee51de45335e653e64b6b445e6d",
+    "diagrams/schedule_recurring_run_view.txt": "8827ac9ff79ee5c95986d354aec09e5a267ea9278518e2de62e8c29b6cb1aeb0",
+    "diagrams/schedule_create_view.mmd": "cee68d378653760e3bd24586567d18a0e06ccbf75f8ad821187898f9b2310ea8",
+    "diagrams/schedule_create_view.txt": "3e8c0b138aaac469a6a20d80d1e2d67c1a4d9da1d3008a2240f9bd233e2158cd",
+    "diagrams/schedule_history_view.mmd": "cced479fdb8482bf1159654f13253a96bf021885bb6acd736f1d567f4f5db7f8",
+    "diagrams/schedule_history_view.txt": "47832f46565f0f0aa52dec558ab324cea07e4d828d8219d66e8a49258b785638"
+  }
+}

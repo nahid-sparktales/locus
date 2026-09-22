@@ -20,4 +20,5 @@ await build({
 });
 await copyFile(path.join(root, 'index.html'), path.join(output, 'index.html'));
 await copyFile(path.join(root, 'src/style.css'), path.join(output, 'static/world.css'));
+await copyFile(path.join(root, 'assets/captain-deck.webp'), path.join(output, 'static/captain-deck.webp'));
 console.log('Agent World built. Packaged themes preserved.');

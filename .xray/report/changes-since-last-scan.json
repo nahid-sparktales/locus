@@ -1,0 +1,107 @@
+{
+  "project": "Locus",
+  "baseline_available": true,
+  "current_digest": "6e73c2b1d0b7e5048caa0a8577d10919366d5c1ce11a8d5becb384aaa7f629c9",
+  "previous_digest": "e5e3a3808e20a83483ddfb8ca55994889bee2ec919e5903f896baf3f683069d2",
+  "source_files": {
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "newly_measured": [],
+    "no_longer_measured": []
+  },
+  "model_changes": {
+    "capabilities": {
+      "added": [],
+      "removed": [],
+      "changed": []
+    },
+    "nodes": {
+      "added": [],
+      "removed": [],
+      "changed": [
+        {
+          "id": "agent_api",
+          "label": "Local agent API and transport",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "chat_engine",
+          "label": "Agent conversation engine",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "desktop",
+          "label": "Locus desktop workspace",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "local_store",
+          "label": "Local conversation transcripts",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "model_provider",
+          "label": "Selected AI provider",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "run_store",
+          "label": "Run records and checkpoints",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "schedule_runtime",
+          "label": "Background runtime supervisor",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "team_engine",
+          "label": "Team coordinator",
+          "fields": [
+            "technologies"
+          ]
+        },
+        {
+          "id": "tool_execution",
+          "label": "Permission checks and tools",
+          "fields": [
+            "technologies"
+          ]
+        }
+      ]
+    },
+    "edges": {
+      "added": [],
+      "removed": [],
+      "changed": []
+    },
+    "flows": {
+      "added": [],
+      "removed": [],
+      "changed": []
+    },
+    "changes": {
+      "added": [],
+      "removed": [],
+      "changed": []
+    }
+  },
+  "walkthroughs_to_recheck": [],
+  "note": "Recorded model changes describe the analysis, not proven behavior changes. File comparisons cover saved fingerprints; uninspected source and live behavior remain outside this comparison.",
+  "analysis_sections_changed": []
+}

@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant n0 as Due-time coordinator
+    participant n1 as Schedule API
+    participant n2 as Schedule and occurrence records
+    participant n3 as Scheduled workflow execution
+    participant n4 as Background runtime supervisor
+    participant n5 as Local agent API and transport
+    participant n6 as Agent conversation engine
+    Note over n0: Start#58; Find an enabled due schedule. Continue only when a desktop controller is present or this automation may keep running. #91;Confirmed#93;
+    n0->>n1: Lock the schedule and request its due occurrence. #124; Dispatch the due enabled schedule when controller/keep-running eligibility permits. #91;Confirmed#93;
+    n1->>n2: Claim one occurrence transactionally and calculate the following run time. #124; Claim an occurrence before creating outside work. #91;Confirmed#93;
+    n2->>n1: Reuse the dedicated chat#59; skip this occurrence if it is busy, and verify its execution location. #124; Return schedule, occurrence and whether this caller owns the claim. #91;Confirmed#93;
+    n1->>n3: For a stored workflow with workflow support enabled, snapshot it and advance toward its first agent step. #124; For a stored workflow with capability enabled, start its execution. #91;Confirmed#93;
+    n3->>n2: Prepare the agent action, save a queued run and bind it to the workflow step. #124; Create/advance workflow state, queue the agent step and bind its run. #91;Confirmed#93;
+    n2->>n3: Return the queued run and updated execution record. #124; Return the saved run and bound workflow execution. #91;Confirmed#93;
+    n3->>n1: Record the schedule occurrence and return the queued agent run. #124; Return workflow action/execution and any queued run to schedule dispatch. #91;Confirmed#93;
+    n1->>n0: Resolve the saved model/account/profile and build this run’s user message#59; missing prerequisites wait for attention. #124; Return the linked occurrence and queued run#59; coordinator queues returned work. #91;Confirmed#93;
+    n0->>n4: Queue the command, then admit it when a worker and execution slot are available. #124; Resolve saved model/profile/account requirements and enqueue a user message for the schedule session. #91;Confirmed#93;
+    n4->>n5: Apply runtime configuration and accept the user message through the session worker’s chat transport. #124; Apply worker configuration and send the queued user_message over /ws/chat. #91;Confirmed#93;
+    n5->>n6: Start the solo/profile agent turn using the same conversation engine as an interactive task. #124; A supported solo/profile user-message branch starts a user turn, which invokes AgentCore. #91;Confirmed#93;
+    Note over n0: Partial flow - unresolved boundaries remain

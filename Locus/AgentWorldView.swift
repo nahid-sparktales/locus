@@ -71,12 +71,12 @@ private struct AgentWorldHub: View {
                 Color.black.opacity(0.48).ignoresSafeArea()
                     .accessibilityHidden(true)
                 AgentWorldSurface(model: model, appModel: appModel, isQuarters: true)
-                    .frame(maxWidth: 1440, maxHeight: 1000)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18)
-                        .stroke(AgentWorldPalette(ocean: model.theme == "grand-line").line, lineWidth: 1))
+                        .stroke(AgentWorldPalette(ocean: model.theme == "grand-line", deck: model.usesWoodQuarters).line, lineWidth: 1))
                     .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
-                    .padding(20)
+                    .padding(10)
                     .onExitCommand { model.quartersPresented = false }
                     .accessibilityIdentifier("agentWorld.quarters")
             }
@@ -138,11 +138,10 @@ private struct AgentWorldSurface: View {
     var isQuarters = false
     @State private var search = ""
     @State private var showsResidents = true
-    @State private var showsWorld = true
+    @State private var showsDeckWorkspace = true
     @State private var showsActivity = false
     @State private var deckPage: DeckPage = .agents
     @State private var boardCard: BoardCard?
-    @State private var availableWidth: CGFloat = 1280
     private enum DeckPage { case agents, board, calendar }
     private var ocean: Bool { model.theme == "grand-line" }
     private var palette: AgentWorldPalette { .init(ocean: ocean, deck: isQuarters && model.usesWoodQuarters) }
@@ -166,7 +165,7 @@ private struct AgentWorldSurface: View {
                 if showsResidents || model.graphicsError != nil {
                     residentsPanel.clipShape(RoundedRectangle(cornerRadius: isQuarters ? 12 : 0))
                 }
-                if !isQuarters && (showsWorld || !model.conversationPresented || model.quartersPresented) { worldCanvas }
+                if !isQuarters { worldCanvas }
                 if isQuarters {
                     VStack(spacing: 0) {
                         deckNavigation
@@ -175,10 +174,13 @@ private struct AgentWorldSurface: View {
                         else { quartersWelcome }
                     }.frame(minWidth: 450, maxWidth: .infinity, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                } else if model.conversationPresented && (isQuarters || !model.quartersPresented) {
-                    agentWorkspace
                 }
-            }.padding(isQuarters && ocean ? 16 : 0)
+            }
+            .padding(isQuarters && ocean ? 10 : 0)
+            // Preserve drafts, scroll positions and browser tabs while revealing the deck.
+            .opacity(!isQuarters || showsDeckWorkspace ? 1 : 0)
+            .allowsHitTesting(!isQuarters || showsDeckWorkspace)
+            .accessibilityHidden(isQuarters && !showsDeckWorkspace)
         }
         .foregroundStyle(palette.ink)
         .background {
@@ -190,25 +192,14 @@ private struct AgentWorldSurface: View {
                 }.allowsHitTesting(false).accessibilityHidden(true)
             } else { palette.paper }
         }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.onAppear { availableWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, width in
-                        availableWidth = width
-                        if model.conversationPresented && width < 1340 { showsWorld = false }
-                        if isQuarters && model.conversationPresented && !model.profilePresented && width < 1100 { showsResidents = false }
-                    }
-            }
-        }
-        .onChange(of: model.conversationPresented) { _, presented in
-            if !presented { showsWorld = true }
-            else if availableWidth < 1340 { showsWorld = false }
-        }
         .onChange(of: model.profilePresented) { _, presented in
-            if isQuarters && !presented && model.conversationPresented && availableWidth < 1100 { showsResidents = false }
+            if isQuarters && !presented && model.conversationPresented { showsResidents = false }
         }
-        .onChange(of: model.selection) { _, _ in if isQuarters { deckPage = .agents } }
-        .onChange(of: model.selectedSessionID) { _, _ in if isQuarters { deckPage = .agents } }
+        .onAppear {
+            if isQuarters && model.conversationPresented && !model.profilePresented { showsResidents = false }
+        }
+        .onChange(of: model.selection) { _, _ in if isQuarters { deckPage = .agents; showsDeckWorkspace = true } }
+        .onChange(of: model.selectedSessionID) { _, _ in if isQuarters { deckPage = .agents; showsDeckWorkspace = true } }
         .onChange(of: model.activityCenterRequest) { _, _ in
             if isQuarters == model.quartersPresented { showsActivity = true }
         }
@@ -225,7 +216,7 @@ private struct AgentWorldSurface: View {
 
     @ViewBuilder private var agentWorkspace: some View {
         if let appModel {
-            AgentWorldWorkspacePane(world: model, model: appModel, title: workspaceTitle)
+            AgentWorldWorkspacePane(world: model, model: appModel, title: workspaceTitle, onRequestChatSpace: { showsResidents = false })
                 .frame(minWidth: 450, idealWidth: 620, maxWidth: .infinity)
         } else {
             ContentUnavailableView("Connect to Locus", systemImage: "bubble.left.and.bubble.right",
@@ -240,8 +231,9 @@ private struct AgentWorldSurface: View {
                 .help(showsResidents ? "Hide crew list" : "Show crew list")
                 .accessibilityLabel(showsResidents ? "Hide crew list" : "Show crew list")
                 .accessibilityIdentifier("agentWorld.quarters.toggleCrew")
-            Button { deckPage = .agents; model.dismissConversation() } label: { Label("Crew overview", systemImage: "person.3") }
-                .buttonStyle(AgentWorldChromeButtonStyle(selected: deckPage == .agents))
+            Button { deckPage = .agents; model.dismissConversation() } label: { Label("Crew", systemImage: "person.3") }
+                .buttonStyle(AgentWorldChromeButtonStyle(selected: deckPage == .agents && !model.conversationPresented))
+                .accessibilityLabel("Crew overview")
             Button { openDeckTool(.board) } label: { Label("Task board", systemImage: "rectangle.split.3x1") }
                 .buttonStyle(AgentWorldChromeButtonStyle(selected: deckPage == .board))
                 .accessibilityIdentifier("agentWorld.quarters.board")
@@ -259,7 +251,7 @@ private struct AgentWorldSurface: View {
                             }
                         }
                     }
-                } label: { Label("Settings", systemImage: "gearshape") }
+                } label: { Image(systemName: "gearshape") }
                     .menuStyle(.borderlessButton).fixedSize().font(.locus(size: 12))
                     .accessibilityLabel("Captain’s Quarters settings")
                     .accessibilityIdentifier("agentWorld.quarters.settings")
@@ -273,7 +265,7 @@ private struct AgentWorldSurface: View {
             } label: { Label("More", systemImage: "ellipsis") }
                 .menuStyle(.borderlessButton).fixedSize().font(.locus(size: 12))
                 .accessibilityLabel("Connections and more tools")
-        }.padding(.horizontal, 16).padding(.vertical, 12)
+        }.padding(.horizontal, 12).padding(.vertical, 6)
             .background(palette.panel.opacity(isQuarters && ocean ? 0.93 : 1)).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
     }
 
@@ -292,12 +284,8 @@ private struct AgentWorldSurface: View {
                 .font(.locus(size: 16, weight: .medium)).foregroundStyle(ocean ? palette.warning : palette.muted)
             VStack(alignment: .leading, spacing: 4) {
                 Text(isQuarters ? workspaceTitle : model.projectName)
-                    .font(.locus(size: isQuarters ? 21 : 14, weight: .semibold, design: isQuarters && ocean ? .serif : .default))
+                    .font(.locus(size: isQuarters ? 18 : 14, weight: .semibold, design: isQuarters && ocean ? .serif : .default))
                     .lineLimit(1).truncationMode(.middle)
-                if isQuarters {
-                    Text("\(model.projectName) · Your crew and their work")
-                        .font(.locus(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                }
             }.frame(minWidth: 60, alignment: .leading)
             Spacer(minLength: 10)
             if !isQuarters { Menu {
@@ -334,23 +322,22 @@ private struct AgentWorldSurface: View {
                 .disabled(model.activeScreen?.screen.capabilities.contains("world.preferences") != true)
                 .accessibilityIdentifier("agentWorld.appearance")
             }
-            if model.conversationPresented && !isQuarters {
+            if isQuarters {
                 Button {
-                    if !showsWorld && availableWidth < 1020 { showsResidents = false }
-                    showsWorld.toggle()
+                    showsDeckWorkspace.toggle()
+                    if !showsDeckWorkspace { NSApp.keyWindow?.makeFirstResponder(nil) }
                 } label: {
-                    Image(systemName: showsWorld ? "arrow.up.left.and.arrow.down.right" : "globe")
+                    Label(showsDeckWorkspace ? "Hide workspace" : "Show workspace", systemImage: showsDeckWorkspace ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
-                .buttonStyle(AgentWorldChromeButtonStyle())
-                .help(showsWorld ? "Expand \(workspaceTitle)" : "Show the world beside your workspace")
-                .accessibilityLabel(showsWorld ? "Expand workspace" : "Show world")
-                .accessibilityIdentifier("agentWorld.toggleWorld")
+                .buttonStyle(AgentWorldChromeButtonStyle(selected: !showsDeckWorkspace))
+                .help("Reveal the deck without closing your conversation or tools")
+                .accessibilityIdentifier("agentWorld.quarters.toggleWorkspace")
             }
             Button(action: model.createAgent) { Label("New Agent", systemImage: "plus") }
                 .buttonStyle(AgentWorldChromeButtonStyle())
                 .disabled(!model.canCreateAgent)
                 .accessibilityIdentifier("agentWorld.newAgent")
-            Button { deckPage = .agents; model.openSharedChat() } label: { Label("Crew Chat", systemImage: "bubble.left.and.bubble.right") }
+            Button { showsDeckWorkspace = true; deckPage = .agents; model.openSharedChat() } label: { Label("Crew Chat", systemImage: "bubble.left.and.bubble.right") }
                 .buttonStyle(AgentWorldChromeButtonStyle(selected: model.sharedChatPresented))
                 .disabled(!model.canInteract || appModel == nil)
                 .accessibilityIdentifier("agentWorld.crewChat")
@@ -372,7 +359,7 @@ private struct AgentWorldSurface: View {
             }
         }
         .font(.locus(size: 11, weight: .medium))
-        .controlSize(.small).padding(.horizontal, isQuarters ? 24 : 18).frame(height: isQuarters ? 94 : 56)
+        .controlSize(.small).padding(.horizontal, isQuarters ? 24 : 18).frame(height: isQuarters ? 54 : 56)
         .background {
             if isQuarters && ocean { palette.paper.opacity(0.78) }
             else { palette.panel }
@@ -396,17 +383,6 @@ private struct AgentWorldSurface: View {
 
     private var residentsPanel: some View {
         VStack(spacing: 0) {
-            if isQuarters, let appModel {
-                VStack(spacing: 5) {
-                    compactResidentAction("Manage Accounts", icon: "person.crop.circle") { appModel.presentSettings(.accounts) }
-                    compactResidentAction("Manage Plugins", icon: "puzzlepiece.extension") { appModel.presentSettings(.extensions) }
-                    compactResidentAction("Manage Agents", icon: "gearshape.2") {
-                        openManagement(.agents)
-                    }
-                    compactResidentAction("Connections", icon: "point.3.connected.trianglepath.dotted") { openManagement(.sources) }
-                }.padding(12)
-                Rectangle().fill(palette.line).frame(height: 1)
-            }
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Agents").font(.locus(size: 17, weight: .semibold))
@@ -459,6 +435,16 @@ private struct AgentWorldSurface: View {
                     .fixedSize(horizontal: false, vertical: true).padding(12)
             }
             VStack(spacing: 5) {
+                if isQuarters, let appModel {
+                    Menu {
+                        Button("Manage Accounts") { appModel.presentSettings(.accounts) }
+                        Button("Manage Plugins") { appModel.presentSettings(.extensions) }
+                        Button("Manage Agents") { openManagement(.agents) }
+                        Button("Connections") { openManagement(.sources) }
+                    } label: { Label("Crew settings", systemImage: "gearshape") }
+                        .menuStyle(.borderlessButton).font(.locus(size: 12)).padding(8)
+                        .accessibilityLabel("Crew settings")
+                }
                 compactResidentAction("Crew Chat", icon: "bubble.left.and.bubble.right") { deckPage = .agents; model.openSharedChat() }
                     .disabled(!model.canInteract || appModel == nil)
                     .accessibilityIdentifier("agentWorld.residents.crewChat")
@@ -481,7 +467,7 @@ private struct AgentWorldSurface: View {
             }.font(.locus(size: 8)).foregroundStyle(palette.muted).padding(.horizontal, 12).padding(.vertical, 9)
                 .background(palette.paper.opacity(0.5))
         }
-        .frame(minWidth: 215, idealWidth: 238, maxWidth: 290)
+        .frame(minWidth: 205, idealWidth: 220, maxWidth: isQuarters ? 240 : 290)
         .background(palette.panel.opacity(isQuarters && ocean ? 0.94 : 1))
         .accessibilityIdentifier("agentWorld.residents")
     }
@@ -490,7 +476,7 @@ private struct AgentWorldSurface: View {
         let selected = model.selection == resident.id
         let placement = model.residentPlacements[resident.id]
         return VStack(spacing: 0) {
-            Button { deckPage = .agents; model.openAgentProfile(resident.id) } label: {
+            Button { deckPage = .agents; model.chooseResident(resident.id) } label: {
                 HStack(alignment: .top, spacing: 8) {
                     if let id = UUID(uuidString: resident.id), let appModel {
                         AgentWorldResidentPortrait(world: model, resident: resident, agentTeams: appModel.agentTeamsModel, profileID: id)
@@ -523,12 +509,12 @@ private struct AgentWorldSurface: View {
                 .padding(9).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.locus(.card))
-            .help(resident.detail ?? "Open \(resident.name)’s overview, chats, and automations")
+            .help(isQuarters ? "Open \(resident.name)’s overview, chats, and automations" : "Follow \(resident.name)’s ship")
             .accessibilityLabel("\(resident.name), \(placement.map { "\($0.ship), \($0.home), " } ?? "")\(resident.role), \(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))")
             .accessibilityIdentifier("agentWorld.resident.\(resident.id)")
             HStack(spacing: 7) {
                 Button { deckPage = .agents; model.newConversation(for: resident.id) } label: {
-                    Label("New chat", systemImage: "plus.bubble")
+                    Label(isQuarters ? "Chat" : "New chat", systemImage: "plus.bubble").lineLimit(1)
                 }
                 .buttonStyle(.locus(.quiet)).disabled(!model.canStartConversation(for: resident.id))
                 .accessibilityLabel("New chat with \(resident.name)")
@@ -582,7 +568,7 @@ private struct AgentWorldSurface: View {
                     Label(ocean ? "WELCOME ABOARD" : "YOUR WORKSPACE", systemImage: ocean ? "sun.max" : "person.3")
                         .font(.locus(size: 11, weight: .semibold)).tracking(2).foregroundStyle(palette.warning)
                     Text(ocean ? "All hands on deck" : "Your agents")
-                        .font(.system(size: 30, weight: .semibold, design: ocean ? .serif : .default))
+                        .font(.locus(size: 30, weight: .semibold, design: ocean ? .serif : .default))
                     Text("Choose a crewmate to open their overview, or start a chat with tools at your side.")
                         .font(.locus(size: 13)).foregroundStyle(palette.inkSoft).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 16) {
@@ -623,7 +609,7 @@ private struct AgentWorldSurface: View {
                                 .font(.locus(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(palette.warning)
+                        Image(systemName: "chevron.right").font(.locus(size: 11)).foregroundStyle(palette.warning)
                     }
                     HStack(spacing: 6) {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 6, height: 6)
@@ -631,7 +617,7 @@ private struct AgentWorldSurface: View {
                             .font(.locus(size: 12, weight: .medium)).foregroundStyle(palette.inkSoft)
                     }
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).help("Open \(resident.name)’s overview")
+            }.buttonStyle(.locus(.card)).help("Open \(resident.name)’s overview")
             Rectangle().fill(palette.line).frame(height: 1)
             HStack {
                 Button("Overview") { model.openAgentProfile(resident.id) }

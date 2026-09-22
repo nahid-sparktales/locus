@@ -1,0 +1,304 @@
+{
+  "query": "board",
+  "matched": [
+    "calendar_board"
+  ],
+  "nodes": [
+    {
+      "id": "desktop",
+      "name": "Locus desktop workspace",
+      "kind": "frontend",
+      "description": "Native SwiftUI workspace owns visible panels, user input and local tools.",
+      "simple_label": "Locus desktop workspace",
+      "code_label": "Locus/LocusApp.swift",
+      "files": [
+        "Locus/LocusApp.swift",
+        "Locus/InspectorView.swift",
+        "Locus/BackendService.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_menu",
+        "root_inspector",
+        "root_transport"
+      ]
+    },
+    {
+      "id": "calendar_board",
+      "name": "Calendar and workspace board",
+      "kind": "frontend",
+      "description": "Native panels show permissioned EventKit calendars and workspace-scoped planning cards.",
+      "simple_label": "Calendar and workspace board",
+      "code_label": "Locus/InspectorCalendarTab.swift",
+      "files": [
+        "Locus/InspectorCalendarTab.swift",
+        "Locus/InspectorBoardTab.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_calendar",
+        "root_calendar_create",
+        "root_board"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "root_open_planning",
+      "from": "desktop",
+      "to": "calendar_board",
+      "type": "function_call",
+      "reason": "Open Calendar or Board",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_calendar",
+        "root_board"
+      ]
+    }
+  ],
+  "flows": [],
+  "capabilities": [
+    {
+      "id": "board",
+      "title": "Plan work on a shared board",
+      "description": "Use workspace-scoped cards, open their details and create or organize work through the Board panel.",
+      "nodes": [
+        "calendar_board"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "A user-facing planning surface whose full persistence and agent-tool path can be explored separately.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_board"
+      ],
+      "coverage": "not_traced",
+      "default_flows": [],
+      "default_selected": false
+    }
+  ],
+  "matched_capabilities": [
+    "board"
+  ],
+  "evidence": [
+    {
+      "id": "root_menu",
+      "path": "Locus/LocusApp.swift",
+      "line_start": 145,
+      "line_end": 207,
+      "kind": "source",
+      "note": "Menu handlers open the library, changes, terminal, saved sessions and inspector destinations.",
+      "sha256": "428c14273e21bfeffd51e7220ae83b90fd14ffc390d0d0a2aaa352a90528a676"
+    },
+    {
+      "id": "root_inspector",
+      "path": "Locus/InspectorView.swift",
+      "line_start": 26,
+      "line_end": 70,
+      "kind": "source",
+      "note": "Inspector switch constructs file, changes, terminal, browser, simulator, calendar, board, run and model-router panels.",
+      "sha256": "2905b59019ac0a206defd128129e28896b2e32374f75e14ecdddc03d7f8c2b4a"
+    },
+    {
+      "id": "root_transport",
+      "path": "Locus/BackendService.swift",
+      "line_start": 45,
+      "line_end": 90,
+      "kind": "source",
+      "note": "BackendService sets up authenticated WebSocket transport with either chat or runtime path; the latter uses an event cursor.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "root_calendar",
+      "path": "Locus/InspectorCalendarTab.swift",
+      "line_start": 56,
+      "line_end": 90,
+      "kind": "source",
+      "note": "Calendar access requests and checks EventKit permission before retrieving calendars.",
+      "sha256": "cf6a4f5b4db87b4f25408663cb9583d68ce2d17ccad89bde68894af2a6fd4d25"
+    },
+    {
+      "id": "root_calendar_create",
+      "path": "Locus/InspectorCalendarTab.swift",
+      "line_start": 149,
+      "line_end": 179,
+      "kind": "source",
+      "note": "Calendar creation validates access/title/dates, selects a writable calendar and saves through EventKit.",
+      "sha256": "cf6a4f5b4db87b4f25408663cb9583d68ce2d17ccad89bde68894af2a6fd4d25"
+    },
+    {
+      "id": "root_board",
+      "path": "Locus/InspectorBoardTab.swift",
+      "line_start": 26,
+      "line_end": 92,
+      "kind": "source",
+      "note": "Board shows workspace-scoped cards, opens detail/create sheets and dispatches changes through its store.",
+      "sha256": "e68257c591f3d9dfb959849926d6db8496604fd7fe779631b87b6bce4e093496"
+    },
+    {
+      "id": "chat_e_worker",
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "line_start": 47,
+      "line_end": 90,
+      "kind": "source",
+      "note": "Chooses an attached independent-runtime worker when enabled, otherwise starts a child worker; the walkthrough follows the latter branch.",
+      "sha256": "2198209e916b410c2311868eba121191df975db01f75a2e92a77f80f0bdd32f7"
+    },
+    {
+      "id": "chat_e_provider_branch",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 2133,
+      "line_end": 2158,
+      "kind": "source",
+      "note": "Managed ChatGPT and Claude Plan use a separate turn path; other providers use the classic response loop.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_client",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 348,
+      "line_end": 359,
+      "kind": "source",
+      "note": "Creates an Ollama client and replaces it for the remote API provider branch.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "team_writer_run",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2074,
+      "line_end": 2134,
+      "kind": "source",
+      "note": "Each writer runs AgentCore.run_turn with the current permission decision function, bounded model calls and tool access; the coordinator collects output and accounts for usage.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_review_guard",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1853,
+      "line_end": 1894,
+      "kind": "source",
+      "note": "Review waits for required verdicts, compares workspace state before and after review, and records review evidence. Missing verdicts or changing files pause the run.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_finish",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1067,
+      "line_end": 1112,
+      "kind": "source",
+      "note": "The server runs synthesis, refuses a result changed since review, streams the dispatcher answer, records its completion checkpoint, and emits task-change and orchestration completion events.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "root_live_setup",
+      "area": "Configured environment",
+      "question": "Which accounts, runtimes, integrations and native permissions are enabled on a real installation?",
+      "reason": "Only repository source was inspected; no app, user data, accounts, devices or remote services were opened.",
+      "next_step": "Inspect the relevant settings and one focused capability in an explicitly scoped live check.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "chat_runtime_provider_scope",
+      "area": "Other chat execution branches",
+      "question": "Which provider and worker transport are active for a particular user request?",
+      "reason": "The code supports direct child and independent-runtime worker transports plus several provider families. No saved credentials, runtime state or running app were inspected.",
+      "next_step": "For a focused follow-up, inspect the chosen route and its relevant adapter/relay using non-secret configuration and then trace that branch.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "evidence": [
+        "chat_e_worker",
+        "chat_e_provider_branch",
+        "chat_e_client"
+      ]
+    },
+    {
+      "id": "team_live_behavior",
+      "area": "Live team execution",
+      "question": "Does the selected team complete a real task with its configured providers and permissions?",
+      "reason": "Only static source was inspected; no Locus run, provider response, or current team configuration was read.",
+      "next_step": "Use a disposable project and a representative team to verify plan review, a permitted coding change, reviewer output and final task changes.",
+      "nodes": [
+        "team_engine",
+        "chat_engine",
+        "desktop"
+      ],
+      "evidence": [
+        "team_writer_run",
+        "team_review_guard",
+        "team_finish"
+      ]
+    }
+  ],
+  "omitted": {
+    "matches": 0,
+    "neighbor_nodes": 0,
+    "edges_between_selected_nodes": 0,
+    "flows": 0,
+    "evidence": 0,
+    "uncertainties": 0,
+    "capabilities": 0
+  },
+  "note": "Connections show possible change impact, not proof that a change will break a caller. Check freshness before answering. Evidence query_omitted counts describe excerpts, not the original search's completeness; retrieve the full record by evidence ID from the canonical model or graph.json when needed.",
+  "capability": {
+    "id": "board",
+    "title": "Plan work on a shared board",
+    "description": "Use workspace-scoped cards, open their details and create or organize work through the Board panel.",
+    "nodes": [
+      "calendar_board"
+    ],
+    "flows": [],
+    "priority": "secondary",
+    "selection_reason": "A user-facing planning surface whose full persistence and agent-tool path can be explored separately.",
+    "confidence": "confirmed",
+    "evidence": [
+      "root_inspector",
+      "root_board"
+    ],
+    "coverage": "not_traced",
+    "default_flows": [],
+    "default_selected": false
+  },
+  "focus_note": "This capability has no recorded flow. Inspect its entry points and trace the behavior before explaining its steps.",
+  "freshness": {
+    "current": true,
+    "changed": [],
+    "missing": [],
+    "added": [],
+    "removed": [],
+    "unverifiable": [],
+    "affected_evidence": [],
+    "affected": {
+      "nodes": [],
+      "edges": [],
+      "flows": [],
+      "views": [],
+      "sections": [],
+      "changes": [],
+      "dependencies": [],
+      "stack": [],
+      "findings": [],
+      "capabilities": []
+    },
+    "inventory_truncated": false,
+    "warnings": [],
+    "scope": "Recorded source files and discovered path inventory only; uninspected content and production state are unknown."
+  },
+  "model_status": "ready"
+}

@@ -102,8 +102,10 @@ test('a full fleet sails without collisions and returns to its own berths when w
   let states = homes.map((home, index) => ({ ...createResidentMotion(ids[index], home), speed: 0.52 }));
   const travel = states.map(() => 0);
   const minimumSeparation = sea.bodyRadius * 2 + 0.08;
-  // Three minutes of ambient sailing, then three minutes of returning to work.
-  for (let tick = 0; tick < 7200; tick++) {
+  // Three minutes of sailing, then enough time to cross the expanded two-sided
+  // sea at the actual ship speed, including the passage through the ridge.
+  const returnTicks = Math.ceil(theme.layout.radius * 3 / 0.52 / MAX_MOTION_DT);
+  for (let tick = 0; tick < 3600 + returnTicks; tick++) {
     const status = tick < 3600 ? 'idle' : 'working';
     const proposed = states.map((state, index) => stepResidentMotion(state, { home: homes[index], status, dt: MAX_MOTION_DT, rosterIDs: ids }, sea));
     const next = resolveResidentSpacing(proposed, states, sea);
@@ -240,5 +242,17 @@ test('work, queued work, attention and failures return ships to their own island
       assert.equal(state.phase, 'at_station');
       assert.ok(Math.abs(Math.atan2(Math.sin(state.heading - shipBerthHeading(home)), Math.cos(state.heading - shipBerthHeading(home)))) < 0.00001);
     }
+  }
+});
+
+test('only valid ocean bounds constrain navigation and account for hull clearance', () => {
+  const layout = { radius: 30, sailingBounds: { minZ: -12, maxZ: 12 }, obstacles: [], props: [] };
+  const sea = themeNavigation(parseTheme({ version: 1, id: 'sea', environment: 'ocean', layout }));
+  assert.equal(pointIsWalkable({ x: 0, z: 10.5 }, sea), true);
+  assert.equal(pointIsWalkable({ x: 0, z: 11 }, sea), false);
+  const campus = parseTheme({ version: 1, id: 'land', layout: { ...layout, radius: 24 } });
+  assert.equal(campus.layout.sailingBounds, undefined);
+  for (const bounds of [{ minZ: 12, maxZ: -12 }, { minZ: -40, maxZ: 12 }, { minZ: -1, maxZ: 1 }, { minZ: NaN, maxZ: 12 }, { minZ: -12, maxZ: Infinity }]) {
+    assert.equal(parseTheme({ version: 1, id: 'sea', environment: 'ocean', layout: { ...layout, sailingBounds: bounds } }).layout.sailingBounds, undefined);
   }
 });

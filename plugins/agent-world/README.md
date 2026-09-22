@@ -37,11 +37,12 @@ and recovery actions. The snail communicator opens that same Activity Center.
 
 When work starts, ships reserve the nearest free island by navigable sailing
 distance. Existing reservations survive queued and attention states, and release
-on completion. All fourteen Local Line islands can host work. A mint glow follows
+on completion. All sixteen Local Line islands can host work. A mint glow follows
 working ships until docking, then the island shoreline and beacon light up.
 Decorative rendezvous never divert working ships. Reduced motion keeps signals
-static. The four near-bank island models face across the channel; Alabatcha sits
-farther left, with more water separating it from Elbatch.
+static. The Marineford triangle sits beside the Thread Line: Mary Geoise above the ridge,
+Marineford at its foot, Sabaody southeast, Impel Down north, Enies Lobby southeast,
+and Amazon Lily farther northeast. All three new models are bundled for offline use.
 
 Meet your saved agents in **Orbital Locus Outpost**, or set sail in **The Local Line**
 with a separate ship for each agent. Chat and assign work through a native
@@ -110,10 +111,9 @@ Credentials, model calls, transcripts, and tool approvals stay in native Locus.
 The screen receives no API keys. The local world makes no network requests.
 
 Each theme's `provenance.json` records asset provenance and credit accounting.
-The Local Line totals **648 Meshy credits**, including its initial ship pass and
-higher-detail replacements; Outpost totals **209**, for **857 credits** across
-both worlds before shared artwork. The Meshy 7 Ultra Ping Ping adds **44**,
-for a combined **901 credits**. Its shared ledger is in `ui/assets/provenance.json`. Opening or using the plugin spends no Meshy credits. Source and
+The Local Line totals **1,800 Meshy credits**, including ship references and
+replacements, islands, cliffs, and companions. Outpost totals **209** and the
+Meshy 7 Ultra Ping Ping adds **44**, for a combined **2,053 credits**. Its shared ledger is in `ui/assets/provenance.json`. Opening or using the plugin spends no Meshy credits. Source and
 development documentation are in the Locus repository's `AgentWorldWeb` directory
 and `Docs/AgentWorld.md`.
 
@@ -133,3 +133,15 @@ The Local Line is unofficial One Piece fan art based on user-supplied references
 One Piece and the original reference designs belong to their respective rights holders.
 The Local Line uses playful AI-inspired display names; the stable `grand-line` theme
 ID and original asset filenames are retained for saved-setting compatibility.
+
+The map places Paradise (including Alabasta and Jaya/Skypiea) on the right of
+the Red Line and the New World on the left. A new Sabaody archipelago joins
+Marineford, Impel Down, Enies Lobby, Amazon Lily, and Mary Geoise. Front docks
+connect to the shore, and a turning whirlpool marks Marineford's current.
+Zunesha walks beyond the western islands with Zou on his back; a little pink
+Momonosuke flies around Wano. Reduced motion keeps these companions still.
+
+Dressrosa, Punk Hazard, Hachinosu, and Long Ring Long Land add four visitable
+islands for 60 additional Meshy credits, included in the lifetime total above.
+Their 15,000-face Smart Topology meshes use Meshy 7.1 textures. All twenty
+harbors have connected front docks and share the same navigation geometry.

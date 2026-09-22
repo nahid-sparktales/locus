@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant n0 as Locus desktop workspace
+    participant n1 as Local agent API and transport
+    participant n2 as Agent conversation engine
+    participant n3 as Selected AI provider
+    participant n4 as Permission checks and tools
+    participant n5 as Local conversation transcripts
+    Note over n0: Start#58; Submit a Work request in an ordinary conversation, using the direct child-worker branch with an Ollama model selected. #91;Confirmed#93;
+    n0->>n1: Receive the user_message on the authenticated local chat socket and validate its route. #124; On the direct-child branch, send the selected worker a user_message through the authenticated /ws/chat connection. #91;Confirmed#93;
+    n1->>n2: Accept the turn, retain its input, load Work context and choose the classic provider loop. #124; Resolve the ordinary message handler, save pending input and run AgentCore with the service permission decider. #91;Confirmed#93;
+    n2->>n3: Send the conversation and available tools to the selected Ollama endpoint for a streamed answer. #124; Send the current conversation and allowed tool schemas through tracked_chat to the selected Ollama client. #91;Confirmed#93;
+    n3->>n2: Forward text as it arrives and inspect the completed response for requested actions. #124; Return streamed text through callbacks and the completed response with optional tool calls. #91;Confirmed#93;
+    n2->>n4: When the model requests a tool, check permission and execute the allowed action#59; a denial returns an explanation. #124; If a tool is proposed in Work mode, check permission and dispatch its implementation. #91;Confirmed#93;
+    n4->>n2: Add the tool result to the conversation and repeat the model/tool loop until it can finish#59; skip the tool branch when no action was requested. #124; Return the tool output or denial/error text so the model can use it in the next iteration. #91;Confirmed#93;
+    n2->>n5: Append conversation records throughout the turn, including assistant replies and tool output. #124; Append user, assistant and tool records to the local session transcript. #91;Confirmed#93;
+    n5->>n2: Resume after persistence and publish the terminal reason when output processing is finished. #124; Return after append#59; ordinary transcript errors are swallowed while strict writes can raise. #91;Confirmed#93;
+    n2->>n1: Relay progress throughout the turn#59; send turn_done only after the worker future finishes. #124; Emit progress during generation and a final turn_done#59; ChatService queues these for the WebSocket event pump. #91;Confirmed#93;
+    n1->>n0: Display streamed text in the active conversation, finalize its blocks and clear the busy state on turn_done. #124; Forward queued events#59; the active conversation accumulates tokens and finalizes the reply on completion. #91;Confirmed#93;

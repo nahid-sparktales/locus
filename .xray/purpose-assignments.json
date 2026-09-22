@@ -1,0 +1,386 @@
+[
+  {
+    "scope": {
+      "path": "Locus",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The recorded native source templates include this application tree across Locus and LocusX; excluded wallet-prefixed files are individually registered by the wallet source template. This classifies repository product code, not the active edition.",
+    "evidence": [
+      "root_edition_sources",
+      "root_edition_targets",
+      "purpose_native_wallet_sources"
+    ]
+  },
+  {
+    "scope": {
+      "path": "agent/ollama_code",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The Python manifest packages ollama_code and resolves the backend server/runtime entrypoints into it.",
+    "evidence": [
+      "root_backend_packages",
+      "purpose_python_package"
+    ]
+  },
+  {
+    "scope": {
+      "path": "agent/tests",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "Pytest registers this suite, and the contributor guide separately identifies its live subdirectory as manual smoke tests; no tests were run.",
+    "evidence": [
+      "purpose_python_tests",
+      "purpose_python_manual_tests"
+    ]
+  },
+  {
+    "scope": {
+      "path": "LocusTests",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "Native unit-test targets register these source files for common and wallet-edition tests.",
+    "evidence": [
+      "purpose_native_unit_tests"
+    ]
+  },
+  {
+    "scope": {
+      "path": "LocusUITests",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "Native UI-testing targets register this source directory.",
+    "evidence": [
+      "purpose_native_ui_tests"
+    ]
+  },
+  {
+    "scope": {
+      "path": "LocusWalletChainTests",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "The Xcode project registers this directory as a dedicated test bundle.",
+    "evidence": [
+      "purpose_native_chain_tests"
+    ]
+  },
+  {
+    "scope": {
+      "path": "AgentWorldWeb/src",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The renderer package identifies this implementation as its local plugin renderer, and its build starts at src/main.ts and includes the source stylesheet.",
+    "evidence": [
+      "purpose_world_renderer",
+      "purpose_world_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "AgentWorldWeb/index.html",
+      "kind": "file"
+    },
+    "category": "product",
+    "rationale": "The renderer build copies this page into the plugin UI.",
+    "evidence": [
+      "purpose_world_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "AgentWorldWeb/tests",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "The package test command selects the measured TypeScript test files under this directory.",
+    "evidence": [
+      "purpose_world_commands"
+    ]
+  },
+  {
+    "scope": {
+      "path": "AgentWorldWeb/build.mjs",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The package build command invokes this renderer bundling tool.",
+    "evidence": [
+      "purpose_world_commands"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletConnectionsRuntime",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "LocusX registers this native runtime tree plus its browser resources; this does not establish live wallet use.",
+    "evidence": [
+      "purpose_native_wallet_sources",
+      "purpose_wallet_resources"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletRecoveryService",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The recovery application target explicitly registers this source tree.",
+    "evidence": [
+      "purpose_native_recovery"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletSignerService",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The signer XPC service target explicitly registers this source tree.",
+    "evidence": [
+      "purpose_native_signer"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletSignerCore/src/lib.rs",
+      "kind": "file"
+    },
+    "category": "product",
+    "rationale": "The signer crate declares a library and the native signer target builds and links that library.",
+    "evidence": [
+      "purpose_signer_library",
+      "purpose_signer_library_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletConnectionsWeb/src/index.js",
+      "kind": "file"
+    },
+    "category": "product",
+    "rationale": "The wallet browser build explicitly compiles this source into the app resource bundle.",
+    "evidence": [
+      "purpose_wallet_browser_build",
+      "purpose_wallet_resources"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletSignerCore/fuzz/fuzz_targets",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "The separate cargo-fuzz package registers these fuzz targets; a target explicitly imports their common helper module.",
+    "evidence": [
+      "purpose_signer_fuzz",
+      "purpose_signer_fuzz_shared"
+    ]
+  },
+  {
+    "scope": {
+      "path": "WalletFuzzHost",
+      "kind": "subtree"
+    },
+    "category": "tests",
+    "rationale": "The dedicated fuzz host target is marked for fuzz execution and skipped from install; its fixture source is also registered by the native unit tests.",
+    "evidence": [
+      "purpose_fuzz_host",
+      "purpose_native_unit_tests"
+    ]
+  },
+  {
+    "scope": {
+      "path": "RuntimeHelper/main.swift",
+      "kind": "file"
+    },
+    "category": "product",
+    "rationale": "The registered app build compiles this source into its shipped runtime helper.",
+    "evidence": [
+      "purpose_runtime_helper_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "DocumentExtractor/main.swift",
+      "kind": "file"
+    },
+    "category": "product",
+    "rationale": "The registered app build compiles this source into its shipped document extractor.",
+    "evidence": [
+      "purpose_document_helper_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "SimulatorBridge",
+      "kind": "subtree"
+    },
+    "category": "product",
+    "rationale": "The app build explicitly compiles both measured bridge sources into helper executables.",
+    "evidence": [
+      "purpose_simulator_helper_build"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/Fixtures/EVM/StatefulAssets.sol",
+      "kind": "file"
+    },
+    "category": "tests",
+    "rationale": "The fixture documentation identifies this source as a development verification input; registration does not imply the scenario ran or passed.",
+    "evidence": [
+      "purpose_wallet_fixtures"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/Fixtures/SuiLocalSigner/src/main.rs",
+      "kind": "file"
+    },
+    "category": "tests",
+    "rationale": "The fixture documentation identifies this as a test-only signer executable excluded from product targets.",
+    "evidence": [
+      "purpose_wallet_fixtures"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/BuildRuntimeHelper.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The application target registers this build or packaging helper.",
+    "evidence": [
+      "purpose_native_helpers"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/BuildDocumentExtractor.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The application target registers this build or packaging helper.",
+    "evidence": [
+      "purpose_native_helpers"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/BuildSimulatorBridge.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The application target registers this build or packaging helper.",
+    "evidence": [
+      "purpose_native_helpers"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/BundleBackend.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The application target registers this build or packaging helper.",
+    "evidence": [
+      "purpose_native_helpers"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/CleanStaleBuildProducts.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "The application target registers this build or packaging helper.",
+    "evidence": [
+      "purpose_native_helpers"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/StageBackendEdition.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "Backend build documentation registers this tool for edition-specific packaging.",
+    "evidence": [
+      "purpose_backend_staging"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/ReviewabilityReport.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI invokes this repository review or package verification tool.",
+    "evidence": [
+      "purpose_ci_tools"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/VerifyAgentWorldPackage.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI invokes this repository review or package verification tool.",
+    "evidence": [
+      "purpose_ci_tools"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/AuditDesignSystem.sh",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI invokes this source audit or generated-manifest verification tool.",
+    "evidence": [
+      "purpose_ci_audits"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/AuditTransportSecurity.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI invokes this source audit or generated-manifest verification tool.",
+    "evidence": [
+      "purpose_ci_audits"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/ProtocolManifest.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI invokes this source audit or generated-manifest verification tool.",
+    "evidence": [
+      "purpose_ci_audits"
+    ]
+  },
+  {
+    "scope": {
+      "path": "Tools/RunLocusUIMatrix.py",
+      "kind": "file"
+    },
+    "category": "developer_tools",
+    "rationale": "CI uses this runner to orchestrate the native UI verification matrix.",
+    "evidence": [
+      "purpose_ci_ui_runner"
+    ]
+  }
+]

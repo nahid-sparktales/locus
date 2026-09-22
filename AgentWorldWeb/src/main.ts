@@ -1,4 +1,5 @@
-import { GRAND_LINE_LANDMARKS } from './grandLineGeography';
+import { createCaptainsQuarters } from './captainsQuarters';
+import { GRAND_LINE_LANDMARKS, GRAND_LINE_MAP_RADIUS, GRAND_LINE_CALM_BELT, MARY_GEOISE } from './grandLineGeography';
 import { OutpostWorld } from './world';
 import { SnailAlert } from './snailAlert';
 import { centerEntries } from './snailAlertState';
@@ -45,6 +46,7 @@ let standaloneResidentsOpen = false;
 let lastPlacements = '';
 const knownPlacements = new Map<string, { agentID: string; ship: string; home: string }>();
 const snailAlert = new SnailAlert(el('snail-alert'), toggleActivityCenter);
+const quarters = createCaptainsQuarters(() => snapshot.agents, id => world?.getAgentHome(id), selectAgent);
 
 const send = (message: WorldMessage): void => { try { bridge?.postMessage(message); } catch { el('live-label').textContent = 'Connection unavailable'; } };
 const announce = (message: string): void => { el('screen-reader-status').textContent = message; };
@@ -114,6 +116,7 @@ function renderActivity(): void {
   el('new-agent').title = demo ? 'Agent creation is available in Locus' : snapshot.canCreateAgent ? 'Create an agent in this world' : 'Agent creation is unavailable in this world';
   el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
   el('agent-controls-title').textContent = ocean ? 'Captain’s Quarters' : 'Agent workspace';
+  el('quarters-open').hidden = !demo || !ocean;
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
   el('agent-controls-name').textContent = selected?.name ?? (ocean ? 'Choose a captain or manage your fleet' : 'Manage your agents');
   el('attention-count').textContent = String(attention.length);
@@ -213,7 +216,7 @@ function selectAgent(id: string): void {
   renderRoster();
   send({ version: 1, type: 'selectAgent', agentID: id });
   announce(`${agent.name} selected. ${STATUS_META[agent.status].label}.`);
-  if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. In Locus, this opens their overview, chats, and automations beside the world.`);
+  if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. The camera follows their ship. In Locus, Captain’s Quarters also has chats and tools.`);
 }
 
 function updateWorldAgents(): void {
@@ -379,12 +382,22 @@ function renderVoyageChart(): void {
   const ns = 'http://www.w3.org/2000/svg';
   chart.setAttribute('aria-label', 'Island positions and relative sizes across the Local Line archipelago.');
   chart.replaceChildren();
+  const span = GRAND_LINE_MAP_RADIUS * 2;
+  const chartX = (x: number) => (GRAND_LINE_MAP_RADIUS - x) / span * 192;
+  const chartZ = (z: number) => (z + GRAND_LINE_MAP_RADIUS) / span * 94;
+  for (const sign of [-1, 1]) {
+    const belt = document.createElementNS(ns, 'rect'); belt.setAttribute('class', 'chart-belt');
+    belt.setAttribute('x', '0'); belt.setAttribute('width', '192');
+    belt.setAttribute('y', String(chartZ(sign < 0 ? -GRAND_LINE_CALM_BELT.outer : GRAND_LINE_CALM_BELT.inner)));
+    belt.setAttribute('height', String((GRAND_LINE_CALM_BELT.outer - GRAND_LINE_CALM_BELT.inner) / span * 94));
+    chart.append(belt);
+  }
   const cliffs = document.createElementNS(ns, 'path');
-  cliffs.setAttribute('class', 'chart-land'); cliffs.setAttribute('d', 'M12 0h8v39h-8zM12 55h8v39h-8z'); chart.append(cliffs);
-  for (const island of GRAND_LINE_LANDMARKS) {
+  cliffs.setAttribute('class', 'chart-land'); cliffs.setAttribute('d', `M${chartX(-27)} 0h${4 / span * 192}v${chartZ(-4)}h${-4 / span * 192}zM${chartX(-27)} ${chartZ(4)}h${4 / span * 192}V94h${-4 / span * 192}z`); chart.append(cliffs);
+  for (const island of [...GRAND_LINE_LANDMARKS, MARY_GEOISE]) {
     const port = document.createElementNS(ns, 'ellipse'); port.setAttribute('class', 'chart-port');
-    port.setAttribute('cx', String((island.x + 34) / 68 * 192)); port.setAttribute('cy', String((34 - island.z) / 68 * 94));
-    port.setAttribute('rx', String(island.radius / 68 * 192)); port.setAttribute('ry', String(island.radius / 68 * 94));
+    port.setAttribute('cx', String(chartX(island.x))); port.setAttribute('cy', String(chartZ(island.z)));
+    port.setAttribute('rx', String(island.radius / span * 192)); port.setAttribute('ry', String(island.radius / span * 94));
     const title = document.createElementNS(ns, 'title'); title.textContent = island.name; port.append(title); chart.append(port);
   }
 }
@@ -507,8 +520,10 @@ el('shared-chat').addEventListener('click', () => {
   if (demo) showNote('Crew Chat connects your agents in Locus. This preview does not open a real chat or send messages.');
   else send({ version: 1, type: 'openSharedChat' });
 });
+el('quarters-open').addEventListener('click', () => quarters.open());
 el('agent-controls').addEventListener('click', () => {
-  if (demo) showNote(`In Locus, the agent workspace contains the selected agent’s conversation, tools and controls.`);
+  if (demo && ocean) quarters.open();
+  else if (demo) showNote(`In Locus, the agent workspace contains the selected agent’s conversation, tools and controls.`);
   else send({ version: 1, type: 'openAgentControls', ...(snapshot.selectedAgentID ? { agentID: snapshot.selectedAgentID } : {}) });
 });
 el('activity-close').addEventListener('click', () => setActivityCenterOpen(false));

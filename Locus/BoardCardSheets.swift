@@ -721,8 +721,8 @@ struct AgentMentionPicker: View {
                     ForEach(selectedIDs, id: \.self) { id in
                         HStack(spacing: 5) {
                             Text("@" + (teams.agentProfiles.first { $0.id == id }?.name ?? "Unavailable agent"))
-                            Button { selectedIDs.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.system(size: 9)) }
-                                .buttonStyle(.plain).accessibilityLabel("Remove agent tag")
+                            Button { selectedIDs.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.locus(size: 9)) }
+                                .buttonStyle(.locus(.card)).accessibilityLabel("Remove agent tag")
                         }.font(.locus(size: 11, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 6)
                             .background(viewColors.signalDeep.opacity(0.13), in: Capsule())
                     }
@@ -745,9 +745,9 @@ struct AgentMentionPicker: View {
                                         AgentAvatarView(profileID: profile.id, name: profile.name, size: 24)
                                         Text("@" + profile.name).font(.locus(size: 12))
                                         Spacer()
-                                        Image(systemName: "plus").font(.system(size: 11))
+                                        Image(systemName: "plus").font(.locus(size: 11))
                                     }.padding(6).contentShape(Rectangle())
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(.locus(.card))
                             }
                         }
                     }.frame(height: min(CGFloat(matches.count) * 38, 152))

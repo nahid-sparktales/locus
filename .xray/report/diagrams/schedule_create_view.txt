@@ -1,0 +1,13 @@
+Create a recurring agent (Simple; Confirmed)
+
+[n0] Scheduled agent controls
+[n1] Schedule API
+[n2] Schedule and occurrence records
+
+1. Start at [n0]: Validate and submit the schedule editor. [Confirmed]
+2. [n0] -> [n1] : Check enabled capabilities and validate the schedule workspace. | Create Agent submits POST /api/schedules after draft validation. [Confirmed] (Scheduled agent controls -> Schedule API)
+3. [n1] -> [n2] : Normalize recurrence and persist the definition with its next run time. | Validate and persist the schedule including recurrence and optional workflow. [Confirmed] (Schedule API -> Schedule and occurrence records)
+4. [n2] -> [n1] : Ensure the agent has a dedicated conversation; remove the definition if that cannot be created. | Return the saved definition so the API can ensure its dedicated chat. [Confirmed] (Schedule and occurrence records -> Schedule API)
+5. [n1] -> [n0] : Update the schedule list, close the editor and refresh the sidebar?s session metadata. | Return the schedule; update its UI list, close the editor and refresh chat metadata. [Confirmed] (Schedule API -> Scheduled agent controls)
+
+Links: -> confirmed; --~-> likely; --?-> unclear.

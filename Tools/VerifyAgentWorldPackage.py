@@ -32,12 +32,18 @@ EXTRA_SHIP_NAMES = {"ship_mihawk_coffin", "ship_garp_battleship", "ship_marine_p
 MOUNTAIN_NAMES = {"scenery_reverse_mountain"}
 CREATURE_NAMES = {"creature_laboon", "creature_sea_king"}
 NEW_WORLD_ISLAND_NAMES = {"island_elbaf", "island_egghead"}
+MARINEFORD_ISLAND_NAMES = {"island_mary_geoise", "island_impel_down", "island_amazon_lily"}
+SABAODY_ZUNESHA_NAMES = {"island_sabaody_archipelago", "creature_zunesha", "creature_momonosuke"}
+BUDGET_ISLAND_NAMES = {"island_dressrosa", "island_punk_hazard", "island_hachinosu", "island_long_ring_long_land"}
 GRAND_LINE_CAMPAIGNS = (
     ("islands_and_cliffs", ISLAND_NAMES, 546),
     ("extra_ships", EXTRA_SHIP_NAMES, 117),
     ("reverse_mountain", MOUNTAIN_NAMES, 39),
     ("sea_creatures", CREATURE_NAMES, 78),
     ("new_world_islands", NEW_WORLD_ISLAND_NAMES, 78),
+    ("marineford_landmarks", MARINEFORD_ISLAND_NAMES, 117),
+    ("sabaody_and_companions", SABAODY_ZUNESHA_NAMES, 117),
+    ("budget_island_expansion", BUDGET_ISLAND_NAMES, 60),
 )
 NEW_MODEL_NAMES = set().union(*(names for _, names, _ in GRAND_LINE_CAMPAIGNS))
 GRAND_LINE_ASSET_NAMES = {"ship_" + name for name in SHIP_NAMES} | NEW_MODEL_NAMES
@@ -272,16 +278,27 @@ def verify_grand_line_history(theme: dict, provenance: dict, *, require_complete
         for name in names:
             history = [task for task in tasks if task["asset"] == name]
             stages = {task["stage"]: task for task in history}
-            assert len(history) == 2 and set(stages) == {"reference", "model"}, f"Incomplete reference/model history: {name}"
-            for stage, credits in (("reference", 9), ("model", 30)):
+            preview_stage = "preview" if name in BUDGET_ISLAND_NAMES else "reference"
+            assert len(history) == 2 and set(stages) == {preview_stage, "model"}, f"Incomplete generation history: {name}"
+            costs = (("preview", 5), ("model", 10)) if name in BUDGET_ISLAND_NAMES else (("reference", 9), ("model", 30))
+            for stage, credits in costs:
                 assert stages[stage]["reserved_credits"] == stages[stage]["consumed_credits"] == credits
-            assert stages["reference"]["ai_model"] == "nano-banana-pro"
-            assert stages["model"]["ai_model"] == "meshy-7"
             settings = stages["model"]["settings"]
-            assert settings["target_polycount"] == 40000 and settings["should_texture"] is True and settings["enable_pbr"] is True
-            assert settings["input_task_id"] == references[name]["task_id"] == stages["reference"]["id"]
+            if name in BUDGET_ISLAND_NAMES:
+                assert stages["preview"]["ai_model"] == "meshy-t2"
+                preview_settings = stages["preview"]["settings"]
+                assert preview_settings["mode"] == "preview" and preview_settings["model_type"] == "smart-topology"
+                assert preview_settings["target_polycount"] == 15000
+                assert stages["model"]["ai_model"] == "meshy-7.1"
+                assert settings["mode"] == "refine" and settings["enable_pbr"] is True
+                assert settings["preview_task_id"] == references[name]["task_id"] == stages["preview"]["id"]
+            else:
+                assert stages["reference"]["ai_model"] == "nano-banana-pro"
+                assert stages["model"]["ai_model"] == "meshy-7"
+                assert settings["target_polycount"] == 40000 and settings["should_texture"] is True and settings["enable_pbr"] is True
+                assert settings["input_task_id"] == references[name]["task_id"] == stages["reference"]["id"]
             assert assets[name]["source_task_id"] == stages["model"]["id"]
-            assert assets[name]["reference_task_id"] == stages["reference"]["id"]
+            assert assets[name]["reference_task_id"] == stages[preview_stage]["id"]
             assert assets[name]["path"] == theme["assets"][name]
             assert assets[name]["geometry_unchanged"] is True
             for key in ("source_sha256", "sha256", "geometry_sha256"):

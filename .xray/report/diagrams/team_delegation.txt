@@ -1,0 +1,27 @@
+Team task: plan, specialist evidence, coding and review (Simple; Confirmed)
+
+[n0] Locus desktop workspace
+[n1] Local agent API and transport
+[n2] Team coordinator
+[n3] Read-only specialists
+[n4] Agent conversation engine
+[n5] Configured reviewers
+[n6] Managed task checkout
+[n7] Run history and checkpoints
+
+[n0] -> [n1] : The session worker receives a user_message with the selected team manifest. [Confirmed] (Locus desktop workspace -> Local agent API and transport)
+[n1] -> [n2] : The runtime handler dispatches a team manifest to _run_team_turn. [Confirmed] (Local agent API and transport -> Team coordinator)
+[n2] -> [n0] : Via the chat service, dispatch_plan_ready presents a validated plan and puts the desktop into waiting for plan approval. [Confirmed] (Team coordinator -> Locus desktop workspace)
+[n0] -> [n2] : dispatch_decision travels back through the runtime service; a run decision is revalidated before specialist work begins. [Confirmed] (Locus desktop workspace -> Team coordinator)
+[n2] -> [n3] : The coordinator submits dependency-ready read-only specialist waves within the concurrency budget. [Confirmed] (Team coordinator -> Read-only specialists)
+[n3] -> [n2] : Structured outputs, evidence and failures return to the coordinator for the writer prompt and final handoff. [Confirmed] (Read-only specialists -> Team coordinator)
+[n2] -> [n4] : Bounded ordered coding jobs call the shared AgentCore with the writer profile and svc.decide permission function. [Confirmed] (Team coordinator -> Agent conversation engine)
+[n4] -> [n2] : The team wrapper reads the shared core result, output and metering, then prepares the diff and verification evidence. [Confirmed] (Agent conversation engine -> Team coordinator)
+[n2] -> [n5] : When reviewers are configured, the coordinator asks them to assess the current diff and verification evidence. [Confirmed] (Team coordinator -> Configured reviewers)
+[n5] -> [n2] : Review results return to the completion/repair gate; missing verdicts, changed files or unresolved findings keep the run from a clean handoff. [Confirmed] (Configured reviewers -> Team coordinator)
+[n2] -> [n0] : The dispatcher handoff and task-change/completion events are emitted; the desktop updates the visible team run. [Confirmed] (Team coordinator -> Locus desktop workspace)
+[n2] -> [n6] : Managed isolation conditionally creates a detached checkout before dispatch in a Git workspace. [Confirmed] (Team coordinator -> Managed task checkout)
+[n6] -> [n2] : The checkout record returns and the run core enters its execution path before planning and writing. [Confirmed] (Managed task checkout -> Team coordinator)
+[n2] -> [n7] : The team path persists admission metadata and recoverable dispatch/completion checkpoints in the shared RunStore SQLite database. [Confirmed] (Team coordinator -> Run history and checkpoints)
+
+Links: -> confirmed; --~-> likely; --?-> unclear.

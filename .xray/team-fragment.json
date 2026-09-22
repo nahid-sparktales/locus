@@ -1,0 +1,1187 @@
+{
+  "evidence": [
+    {
+      "id": "team_select",
+      "path": "Locus/ComposerView.swift",
+      "line_start": 1607,
+      "line_end": 1625,
+      "kind": "source",
+      "note": "The team picker button calls selectAgentTeam for the chosen team.",
+      "sha256": "928046fb777acdf52af0a0a56d624ffeccb993078c1a34712db7f91d740921e9"
+    },
+    {
+      "id": "team_send",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 145,
+      "line_end": 158,
+      "kind": "source",
+      "note": "A selected team or team/agent mention chooses teamManifest for a non-Ask ordinary message; a failed manifest stops sending.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "team_payload",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 413,
+      "line_end": 437,
+      "kind": "source",
+      "note": "The outgoing user_message carries the selected team manifest and mode.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "team_transport",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 528,
+      "line_end": 548,
+      "kind": "source",
+      "note": "The prepared request is sent through the session worker service; failed delivery preserves retry handling.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "team_manifest",
+      "path": "Locus/AppModel+TeamOps.swift",
+      "line_start": 45,
+      "line_end": 83,
+      "kind": "source",
+      "note": "Team resolution validates member routes and requires hosted-account routing consent before producing a manifest.",
+      "sha256": "ffd370d8daa8ee50795fab10d57561fe2707f76fe30d596328d10ea7d8e52a63"
+    },
+    {
+      "id": "team_manifest_policy",
+      "path": "Locus/AppModel+TeamOps.swift",
+      "line_start": 152,
+      "line_end": 198,
+      "kind": "source",
+      "note": "Desktop manifests include managed-worktree preference, optional parallel writers, preview approval, swarm policy and budgets.",
+      "sha256": "ffd370d8daa8ee50795fab10d57561fe2707f76fe30d596328d10ea7d8e52a63"
+    },
+    {
+      "id": "team_approval_send",
+      "path": "Locus/AppModel+TeamOps.swift",
+      "line_start": 516,
+      "line_end": 544,
+      "kind": "source",
+      "note": "The user decision is sent as dispatch_decision; run, redispatch, and cancellation have separate handling.",
+      "sha256": "ffd370d8daa8ee50795fab10d57561fe2707f76fe30d596328d10ea7d8e52a63"
+    },
+    {
+      "id": "team_admission",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2552,
+      "line_end": 2592,
+      "kind": "source",
+      "note": "The message handler selects _run_team_turn for a team manifest and starts the worker turn; accepted delivery receives an acknowledgement.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_start",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 821,
+      "line_end": 847,
+      "kind": "source",
+      "note": "Team run entry validates the manifest and records its request, workspace, execution path, team and initial dispatching state.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_workspace",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 858,
+      "line_end": 875,
+      "kind": "source",
+      "note": "A team requesting managed isolation creates a task checkout only when there is no current task and the workspace is Git; execution moves into that checkout.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_checkout",
+      "path": "agent/ollama_code/worktrees.py",
+      "line_start": 297,
+      "line_end": 363,
+      "kind": "source",
+      "note": "TaskCheckoutStore creates a detached Git worktree, copies the starting source state and configured includes, records a private baseline, and returns the checkout.",
+      "sha256": "44611bce1bc45f970437de69fd852de62f76900320a7840c7902098d11e2f832"
+    },
+    {
+      "id": "team_prepare",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 850,
+      "line_end": 898,
+      "kind": "source",
+      "note": "Preparation validates the manifest, emits dispatching state, builds or reuses a dispatch plan, supports fallback dispatching, and resolves its scorecard.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_approval",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 898,
+      "line_end": 964,
+      "kind": "source",
+      "note": "Preview mode requests a plan decision. Cancel stops; redispatch regenerates; run revalidates the selected plan and budget before running specialists.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_approval_bridge",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 1588,
+      "line_end": 1625,
+      "kind": "source",
+      "note": "The service emits dispatch_plan_ready and waits for a future that answer_dispatch resolves, keeping a recoverable checkpoint.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "id": "team_approval_handler",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2630,
+      "line_end": 2641,
+      "kind": "source",
+      "note": "The runtime accepts run, redispatch or cancel dispatch decisions and resolves the waiting service decision.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_approval_ui",
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "line_start": 442,
+      "line_end": 449,
+      "kind": "source",
+      "note": "The desktop enters waitingDispatchApproval when dispatch_plan_ready arrives and gives the event to the live team model.",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "id": "team_live_plan",
+      "path": "Locus/TeamRunLiveModel.swift",
+      "line_start": 132,
+      "line_end": 137,
+      "kind": "source",
+      "note": "The live team model decodes the pending dispatch plan for presentation.",
+      "sha256": "29259c95f5b28d82f09c0c01440bcbd34091ce434cf8d38689ed7147b2aa1738"
+    },
+    {
+      "id": "team_specialists",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 2026,
+      "line_end": 2078,
+      "kind": "source",
+      "note": "The Locus-managed path gathers bounded workspace evidence, schedules ready specialist dependency waves, and collects structured results; read-only child expansion is conditional on swarm policy.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_specialist_calls",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 2239,
+      "line_end": 2266,
+      "kind": "source",
+      "note": "Specialist waves use a bounded ThreadPoolExecutor and collect completed results; failed jobs are recorded as result evidence.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_specialist_scope",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 2306,
+      "line_end": 2333,
+      "kind": "source",
+      "note": "Specialist model calls receive read-only evidence and no mutation, MCP, extension or computer tools; workspace text is explicitly treated as untrusted data.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_specialist_results",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 2350,
+      "line_end": 2389,
+      "kind": "source",
+      "note": "The specialist response is parsed into output, evidence, uncertainties and child requests, emitted as a completed result, and returned to the coordinator.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_writer_sequence",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 978,
+      "line_end": 1002,
+      "kind": "source",
+      "note": "After preparation the server runs prepared coding jobs, then collects the workspace diff and latest assistant output for review.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_writer_run",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2074,
+      "line_end": 2134,
+      "kind": "source",
+      "note": "Each writer runs AgentCore.run_turn with the current permission decision function, bounded model calls and tool access; the coordinator collects output and accounts for usage.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_writer_scope",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2248,
+      "line_end": 2277,
+      "kind": "source",
+      "note": "Writer configuration applies its access ceiling to MCP policy and installs its behavior, identity and assigned-scope/non-delegation role contract. This excerpt does not independently prove every downstream permission check.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_review",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 1342,
+      "line_end": 1369,
+      "kind": "source",
+      "note": "Configured reviewers receive the baseline-relative diff and verification evidence; the method returns no reviews when no reviewers are required.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_review_guard",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1853,
+      "line_end": 1894,
+      "kind": "source",
+      "note": "Review waits for required verdicts, compares workspace state before and after review, and records review evidence. Missing verdicts or changing files pause the run.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_repair",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1952,
+      "line_end": 1962,
+      "kind": "source",
+      "note": "Unresolved or malformed review findings remain review-required; the repair loop returns only when no revision remains and pauses if repair or call allowances are exhausted.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_synthesis",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 1399,
+      "line_end": 1431,
+      "kind": "source",
+      "note": "The final handoff is based on the request, plan, specialist results, writer results, review results and diff. It distinguishes applying an isolated checkout from finishing the team run; a budget fallback skips the final model call.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_finish",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1067,
+      "line_end": 1112,
+      "kind": "source",
+      "note": "The server runs synthesis, refuses a result changed since review, streams the dispatcher answer, records its completion checkpoint, and emits task-change and orchestration completion events.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_finish_ui",
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "line_start": 475,
+      "line_end": 499,
+      "kind": "source",
+      "note": "The desktop routes agent job results to the live team model and updates terminal team state when orchestration_completed arrives.",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "id": "team_parallel_branch",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 1412,
+      "line_end": 1435,
+      "kind": "source",
+      "note": "Parallel writers are a conditional branch requiring parallel_writers, managed worktrees, an existing task and multiple dependency-ready coding jobs.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "team_role_validation",
+      "path": "agent/ollama_code/orchestration.py",
+      "line_start": 2638,
+      "line_end": 2668,
+      "kind": "source",
+      "note": "Dispatch validation requires write-capable profiles for coding jobs and read-only profiles for non-writer jobs, validates reviewer roles and rejects dependency cycles.",
+      "sha256": "f45fed2f28bf67ab445b1910d5ec2cebb63d86119fc79617d2101cac08b2e2e5"
+    },
+    {
+      "id": "team_runstore_sqlite",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 151,
+      "line_end": 185,
+      "kind": "source",
+      "note": "RunStore is a thread-safe SQLite facade shared by control and worker services, with a default agent-runs.sqlite3 database and migration/read-only handling.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "team_runstore_schema",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 229,
+      "line_end": 295,
+      "kind": "source",
+      "note": "SQLite schema separates runs, run events, job attempts and checkpoints; these are orchestration records rather than chat JSONL transcripts.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "team_runstore_start",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 987,
+      "line_end": 1034,
+      "kind": "source",
+      "note": "start_run accepts team/session/workspace metadata and inserts or updates the corresponding SQLite runs record under a lock.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "team_runstore_checkpoint",
+      "path": "agent/ollama_code/runstore.py",
+      "line_start": 1339,
+      "line_end": 1356,
+      "kind": "source",
+      "note": "checkpoint serializes sanitized state into the SQLite checkpoints table tied to its run ID and sequence.",
+      "sha256": "495694ae717062085e455e5cbf089c6cbb7381307efe403274c372953f46ee6a"
+    },
+    {
+      "id": "team_checkpoint_bridge",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 561,
+      "line_end": 573,
+      "kind": "source",
+      "note": "The service checkpoint method delegates to RunStore.checkpoint and emits an orchestration checkpoint event.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "team_engine",
+      "name": "Team coordinator",
+      "kind": "component",
+      "description": "TeamOrchestrator and _run_team_turn turn a validated team request into a plan, bounded jobs, reviews and a final handoff.",
+      "simple_label": "Team coordinator",
+      "code_label": "TeamOrchestrator / _run_team_turn",
+      "files": [
+        "agent/ollama_code/orchestration.py",
+        "agent/ollama_code/server.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_prepare",
+        "team_approval",
+        "team_writer_sequence",
+        "team_finish"
+      ]
+    },
+    {
+      "id": "team_specialists",
+      "name": "Read-only specialists",
+      "kind": "worker",
+      "description": "Structured specialist calls process bounded workspace and dependency evidence; optional child waves are constrained by the selected swarm policy.",
+      "simple_label": "Read-only specialists",
+      "code_label": "_run_pre_writer_jobs / _call_agent",
+      "files": [
+        "agent/ollama_code/orchestration.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_specialists",
+        "team_specialist_scope",
+        "team_specialist_results"
+      ]
+    },
+    {
+      "id": "team_reviewers",
+      "name": "Configured reviewers",
+      "kind": "worker",
+      "description": "Read-only reviewer calls assess the diff and supplied verification evidence; review count and unchanged-workspace checks gate completion when reviewers are configured.",
+      "simple_label": "Configured reviewers",
+      "code_label": "TeamOrchestrator.review",
+      "files": [
+        "agent/ollama_code/orchestration.py",
+        "agent/ollama_code/server.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_review",
+        "team_review_guard"
+      ]
+    },
+    {
+      "id": "team_workspace",
+      "name": "Managed task checkout",
+      "kind": "storage",
+      "description": "TaskCheckoutStore creates a detached Git worktree and a recorded private baseline when managed isolation is requested for a Git project.",
+      "simple_label": "Managed task checkout",
+      "code_label": "TaskCheckoutStore",
+      "files": [
+        "agent/ollama_code/worktrees.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_workspace",
+        "team_checkout"
+      ]
+    },
+    {
+      "id": "run_store",
+      "name": "Run records and checkpoints",
+      "kind": "database",
+      "description": "Shared RunStore SQLite persistence for orchestration run metadata, ordered events, job attempts and recoverable checkpoints. This is separate from chat transcript JSONL files.",
+      "simple_label": "Run history and checkpoints",
+      "code_label": "RunStore / agent-runs.sqlite3",
+      "files": [
+        "agent/ollama_code/runstore.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_runstore_sqlite",
+        "team_runstore_schema",
+        "team_runstore_start",
+        "team_runstore_checkpoint",
+        "team_checkpoint_bridge",
+        "team_start"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "team_request",
+      "from": "desktop",
+      "to": "agent_api",
+      "type": "event",
+      "reason": "The session worker receives a user_message with the selected team manifest.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_send",
+        "team_payload",
+        "team_transport",
+        "team_admission"
+      ]
+    },
+    {
+      "id": "team_start_coordinator",
+      "from": "agent_api",
+      "to": "team_engine",
+      "type": "function_call",
+      "reason": "The runtime handler dispatches a team manifest to _run_team_turn.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_admission",
+        "team_start"
+      ]
+    },
+    {
+      "id": "team_preview",
+      "from": "team_engine",
+      "to": "desktop",
+      "type": "event",
+      "reason": "Via the chat service, dispatch_plan_ready presents a validated plan and puts the desktop into waiting for plan approval.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_approval",
+        "team_approval_bridge",
+        "team_approval_ui",
+        "team_live_plan"
+      ]
+    },
+    {
+      "id": "team_approved_plan",
+      "from": "desktop",
+      "to": "team_engine",
+      "type": "event",
+      "reason": "dispatch_decision travels back through the runtime service; a run decision is revalidated before specialist work begins.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_approval_send",
+        "team_approval_handler",
+        "team_approval_bridge",
+        "team_approval"
+      ]
+    },
+    {
+      "id": "team_dispatch_specialists",
+      "from": "team_engine",
+      "to": "team_specialists",
+      "type": "function_call",
+      "reason": "The coordinator submits dependency-ready read-only specialist waves within the concurrency budget.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_specialists",
+        "team_specialist_calls",
+        "team_specialist_scope"
+      ]
+    },
+    {
+      "id": "team_specialist_evidence",
+      "from": "team_specialists",
+      "to": "team_engine",
+      "type": "return",
+      "reason": "Structured outputs, evidence and failures return to the coordinator for the writer prompt and final handoff.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_specialist_results",
+        "team_specialists"
+      ]
+    },
+    {
+      "id": "team_run_writer",
+      "from": "team_engine",
+      "to": "chat_engine",
+      "type": "function_call",
+      "reason": "Bounded ordered coding jobs call the shared AgentCore with the writer profile and svc.decide permission function.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_writer_sequence",
+        "team_writer_run",
+        "team_writer_scope"
+      ]
+    },
+    {
+      "id": "team_writer_result",
+      "from": "chat_engine",
+      "to": "team_engine",
+      "type": "return",
+      "reason": "The team wrapper reads the shared core result, output and metering, then prepares the diff and verification evidence.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_writer_run",
+        "team_writer_sequence"
+      ]
+    },
+    {
+      "id": "team_request_review",
+      "from": "team_engine",
+      "to": "team_reviewers",
+      "type": "function_call",
+      "reason": "When reviewers are configured, the coordinator asks them to assess the current diff and verification evidence.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_review",
+        "team_review_guard"
+      ]
+    },
+    {
+      "id": "team_review_verdicts",
+      "from": "team_reviewers",
+      "to": "team_engine",
+      "type": "return",
+      "reason": "Review results return to the completion/repair gate; missing verdicts, changed files or unresolved findings keep the run from a clean handoff.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_review",
+        "team_review_guard",
+        "team_repair"
+      ]
+    },
+    {
+      "id": "team_handoff",
+      "from": "team_engine",
+      "to": "desktop",
+      "type": "event",
+      "reason": "The dispatcher handoff and task-change/completion events are emitted; the desktop updates the visible team run.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_synthesis",
+        "team_finish",
+        "team_finish_ui"
+      ]
+    },
+    {
+      "id": "team_isolate",
+      "from": "team_engine",
+      "to": "team_workspace",
+      "type": "function_call",
+      "reason": "Managed isolation conditionally creates a detached checkout before dispatch in a Git workspace.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_workspace",
+        "team_checkout"
+      ]
+    },
+    {
+      "id": "team_checkout_path",
+      "from": "team_workspace",
+      "to": "team_engine",
+      "type": "return",
+      "reason": "The checkout record returns and the run core enters its execution path before planning and writing.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_checkout",
+        "team_workspace"
+      ]
+    },
+    {
+      "id": "team_record_run",
+      "from": "team_engine",
+      "to": "run_store",
+      "type": "database_access",
+      "reason": "The team path persists admission metadata and recoverable dispatch/completion checkpoints in the shared RunStore SQLite database.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_start",
+        "team_approval_bridge",
+        "team_finish",
+        "team_runstore_start",
+        "team_runstore_checkpoint",
+        "team_checkpoint_bridge"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "team_delegate_work",
+      "title": "Give a coding task to a team",
+      "trigger": "Choose a team in the composer and send a Work message. This representative path uses the Locus-managed engine, ordered coding jobs and a plan containing specialists and a reviewer.",
+      "summary": "Locus validates the team, presents its plan, collects read-only specialist evidence, runs permission-controlled coding jobs, checks configured review results, and returns a reviewable handoff. Managed checkout creation is conditional. Complete means the scoped source path is traced, not that a live run has passed.",
+      "status": "complete",
+      "steps": [
+        {
+          "node": "desktop",
+          "action": "Choose a team and submit the task; build a valid manifest with provider-routing consent and configured limits.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_select",
+            "team_send",
+            "team_manifest",
+            "team_manifest_policy"
+          ]
+        },
+        {
+          "node": "agent_api",
+          "action": "Receive the team-bearing message through the session worker transport.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_payload",
+            "team_transport",
+            "team_admission"
+          ],
+          "edge": "team_request"
+        },
+        {
+          "node": "team_engine",
+          "action": "Record the run, optionally enter a managed Git checkout, and prepare a validated dispatch plan.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_start",
+            "team_workspace",
+            "team_prepare"
+          ],
+          "edge": "team_start_coordinator"
+        },
+        {
+          "node": "desktop",
+          "action": "Present the plan and wait for the user to run it, request a new plan, or cancel.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_approval_bridge",
+            "team_approval_ui",
+            "team_live_plan"
+          ],
+          "edge": "team_preview"
+        },
+        {
+          "node": "team_engine",
+          "action": "Accept a Run decision and revalidate the chosen plan and its limits.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_approval_send",
+            "team_approval_handler",
+            "team_approval"
+          ],
+          "edge": "team_approved_plan"
+        },
+        {
+          "node": "team_specialists",
+          "action": "Execute dependency-ready read-only specialist waves with bounded workspace evidence.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_specialists",
+            "team_specialist_calls",
+            "team_specialist_scope"
+          ],
+          "edge": "team_dispatch_specialists"
+        },
+        {
+          "node": "team_engine",
+          "action": "Collect specialist results and use them to prepare ordered coding assignments.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_specialist_results",
+            "team_specialists",
+            "team_writer_sequence"
+          ],
+          "edge": "team_specialist_evidence"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Run each coding job through the shared agent core with its profile, permission function and model-call allowance.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_writer_run",
+            "team_writer_scope"
+          ],
+          "edge": "team_run_writer"
+        },
+        {
+          "node": "team_engine",
+          "action": "Collect coding output and usage, then gather the current diff and verification evidence.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_writer_run",
+            "team_writer_sequence"
+          ],
+          "edge": "team_writer_result"
+        },
+        {
+          "node": "team_reviewers",
+          "action": "Have configured reviewers assess the diff and verification evidence.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_review",
+            "team_review_guard"
+          ],
+          "edge": "team_request_review"
+        },
+        {
+          "node": "team_engine",
+          "action": "Check reviewer verdicts and unchanged files; repair/re-review when required within the remaining budget, then synthesize the handoff.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_review_guard",
+            "team_repair",
+            "team_synthesis",
+            "team_finish"
+          ],
+          "edge": "team_review_verdicts"
+        },
+        {
+          "node": "desktop",
+          "action": "Show the handoff, per-agent completion state and task changes.",
+          "confidence": "confirmed",
+          "evidence": [
+            "team_finish",
+            "team_finish_ui"
+          ],
+          "edge": "team_handoff"
+        }
+      ],
+      "gaps": [],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_send",
+        "team_manifest",
+        "team_admission",
+        "team_prepare",
+        "team_approval",
+        "team_specialists",
+        "team_specialist_scope",
+        "team_writer_run",
+        "team_review",
+        "team_review_guard",
+        "team_finish",
+        "team_finish_ui"
+      ]
+    }
+  ],
+  "views": [
+    {
+      "id": "team_delegation",
+      "title": "Team task: plan, specialist evidence, coding and review",
+      "kind": "sequence",
+      "level": "simple",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "team_engine",
+        "team_specialists",
+        "chat_engine",
+        "team_reviewers",
+        "team_workspace",
+        "run_store"
+      ],
+      "edges": [
+        "team_request",
+        "team_start_coordinator",
+        "team_preview",
+        "team_approved_plan",
+        "team_dispatch_specialists",
+        "team_specialist_evidence",
+        "team_run_writer",
+        "team_writer_result",
+        "team_request_review",
+        "team_review_verdicts",
+        "team_handoff",
+        "team_isolate",
+        "team_checkout_path",
+        "team_record_run"
+      ],
+      "flow": "team_delegate_work",
+      "description": "Representative ordered Locus-managed team path. Plan review is explicit; specialist and reviewer calls are read-only. Workspace isolation is conditional and final application to the source checkout is outside this trace.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_send",
+        "team_manifest",
+        "team_admission",
+        "team_prepare",
+        "team_approval",
+        "team_specialists",
+        "team_specialist_scope",
+        "team_writer_run",
+        "team_review",
+        "team_review_guard",
+        "team_finish",
+        "team_finish_ui",
+        "team_workspace",
+        "team_checkout"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "delegate_work",
+      "title": "Delegate work to a team",
+      "description": "Choose specialist profiles and a team to plan a task, gather independent evidence, assign coding jobs, and produce a reviewed handoff with visible run progress.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "team_engine",
+        "team_specialists",
+        "chat_engine",
+        "team_reviewers",
+        "team_workspace",
+        "run_store"
+      ],
+      "flows": [
+        "team_delegate_work"
+      ],
+      "priority": "primary",
+      "selection_reason": "This is a distinct visible execution route that adds coordination, role boundaries, optional workspace isolation and review to the ordinary chat engine, so it broadens the default tour beyond a single assistant conversation.",
+      "confidence": "confirmed",
+      "evidence": [
+        "team_select",
+        "team_send",
+        "team_manifest",
+        "team_approval",
+        "team_specialists",
+        "team_writer_run",
+        "team_review",
+        "team_finish"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "Locus/ComposerView.swift",
+      "role": "important",
+      "reason": "Offers the team choice in the composer.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_select"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "role": "core",
+      "reason": "Chooses team dispatch and transports its manifest.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_send",
+        "team_payload",
+        "team_transport"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+TeamOps.swift",
+      "role": "important",
+      "reason": "Validates team/provider routes, serializes policy and sends plan decisions.",
+      "nodes": [
+        "desktop",
+        "team_engine"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_manifest",
+        "team_manifest_policy",
+        "team_approval_send"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "role": "important",
+      "reason": "Turns team events into desktop run state.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_approval_ui",
+        "team_finish_ui"
+      ]
+    },
+    {
+      "path": "Locus/TeamRunLiveModel.swift",
+      "role": "important",
+      "reason": "Maintains the pending dispatch plan and live per-agent presentation.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_live_plan"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/server.py",
+      "role": "core",
+      "reason": "Routes team requests and runs writer, review, repair and handoff stages.",
+      "nodes": [
+        "agent_api",
+        "team_engine",
+        "chat_engine"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_admission",
+        "team_start",
+        "team_workspace",
+        "team_approval_handler",
+        "team_writer_sequence",
+        "team_writer_run",
+        "team_writer_scope",
+        "team_review_guard",
+        "team_repair",
+        "team_finish",
+        "team_parallel_branch"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/chat_service.py",
+      "role": "core",
+      "reason": "Brokers plan decisions and recoverable waiting checkpoints.",
+      "nodes": [
+        "agent_api",
+        "team_engine"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_approval_bridge",
+        "team_checkpoint_bridge"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/orchestration.py",
+      "role": "core",
+      "reason": "Defines team validation, scheduling, read-only jobs and synthesis.",
+      "nodes": [
+        "team_engine",
+        "team_specialists",
+        "team_reviewers"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_prepare",
+        "team_approval",
+        "team_specialists",
+        "team_specialist_calls",
+        "team_specialist_scope",
+        "team_specialist_results",
+        "team_review",
+        "team_synthesis",
+        "team_role_validation"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/worktrees.py",
+      "role": "important",
+      "reason": "Creates and records managed Git task checkouts.",
+      "nodes": [
+        "team_workspace"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_checkout"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/runstore.py",
+      "role": "core",
+      "reason": "Stores orchestration run metadata, events, job attempts and checkpoints in SQLite, separately from chat transcripts.",
+      "nodes": [
+        "run_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_runstore_sqlite",
+        "team_runstore_schema",
+        "team_runstore_start",
+        "team_runstore_checkpoint"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "team_change_coordination",
+      "goal": "Change how a team divides and reviews work",
+      "paths": [
+        "agent/ollama_code/orchestration.py",
+        "agent/ollama_code/server.py",
+        "Locus/AppModel+TeamOps.swift"
+      ],
+      "nodes": [
+        "team_engine",
+        "team_specialists",
+        "team_reviewers"
+      ],
+      "explanation": "Plan validation and dependency scheduling live in the orchestrator; writer budgets, review/repair and completion live in the server; the desktop constructs the team policy and sends plan decisions.",
+      "impact": [
+        "desktop",
+        "chat_engine",
+        "team_workspace",
+        "run_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_manifest_policy",
+        "team_approval",
+        "team_specialists",
+        "team_role_validation",
+        "team_writer_run",
+        "team_review_guard",
+        "team_repair"
+      ]
+    },
+    {
+      "id": "team_change_isolation",
+      "goal": "Change where delegated coding work runs",
+      "paths": [
+        "agent/ollama_code/worktrees.py",
+        "agent/ollama_code/server.py"
+      ],
+      "nodes": [
+        "team_workspace",
+        "team_engine"
+      ],
+      "explanation": "Checkout creation records the private baseline; the team runner conditionally enters it and separately chooses ordered or parallel writers. Source-workspace integration needs its own trace before changing apply behavior.",
+      "impact": [
+        "chat_engine",
+        "run_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_checkout",
+        "team_workspace",
+        "team_parallel_branch"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "area": "Team delegation and reviewable handoff",
+      "confidence": "confirmed",
+      "explanation": "Static source trace covers composer selection, manifest and consent checks, session-worker message dispatch, plan approval, Locus-managed specialist waves, ordered writer calls, configured review gates, optional managed checkout creation, and completion events. No Locus application or service was executed. Shared run metadata and checkpoints were traced into RunStore SQLite, separately from chat transcript storage.",
+      "evidence": [
+        "team_send",
+        "team_manifest",
+        "team_admission",
+        "team_prepare",
+        "team_approval",
+        "team_specialists",
+        "team_specialist_scope",
+        "team_writer_run",
+        "team_review",
+        "team_review_guard",
+        "team_finish",
+        "team_finish_ui",
+        "team_select",
+        "team_workspace",
+        "team_checkout",
+        "team_writer_scope",
+        "team_runstore_sqlite",
+        "team_runstore_schema",
+        "team_runstore_start",
+        "team_runstore_checkpoint",
+        "team_checkpoint_bridge"
+      ],
+      "uninspected": [
+        "Live model/provider responses and end-to-end task success",
+        "Full downstream tool/permission enforcement and operating-system isolation",
+        "Parallel-writer merge/conflict path and hosted OpenAI Responses multi-agent path",
+        "Recovery, capsules and final Apply-to-source behavior"
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "team_live_behavior",
+      "area": "Live team execution",
+      "question": "Does the selected team complete a real task with its configured providers and permissions?",
+      "reason": "Only static source was inspected; no Locus run, provider response, or current team configuration was read.",
+      "next_step": "Use a disposable project and a representative team to verify plan review, a permitted coding change, reviewer output and final task changes.",
+      "nodes": [
+        "team_engine",
+        "chat_engine",
+        "desktop"
+      ],
+      "evidence": [
+        "team_writer_run",
+        "team_review_guard",
+        "team_finish"
+      ]
+    },
+    {
+      "id": "team_alternate_routes",
+      "area": "Alternative delegation engines and writer layouts",
+      "question": "Do hosted delegation and parallel-writer integration preserve the same boundaries on all error/recovery paths?",
+      "reason": "The main trace follows the Locus-managed ordered path. Branch entrypoints exist but their full execution, conflict and recovery behavior was not traced.",
+      "next_step": "Focus separately on the selected engine, parallel writer worktree integration, or resume/retry behavior before claiming full coverage.",
+      "nodes": [
+        "team_engine",
+        "team_specialists",
+        "team_workspace"
+      ],
+      "evidence": [
+        "team_specialists",
+        "team_parallel_branch"
+      ]
+    },
+    {
+      "id": "team_permission_depth",
+      "area": "Writer permission enforcement",
+      "question": "How are every writer tool and provider-native execution route restricted by the active access ceiling?",
+      "reason": "The team wrapper passes the permission function, configures the profile and MCP ceiling, and states a non-delegation contract. The complete downstream enforcement stack is outside this bounded team trace.",
+      "next_step": "Trace AgentCore, tool policy and native-provider execution for each active permission mode.",
+      "nodes": [
+        "team_engine",
+        "chat_engine"
+      ],
+      "evidence": [
+        "team_writer_run",
+        "team_writer_scope"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "team_roles_and_results",
+      "title": "How team work differs from ordinary chat",
+      "text": "A team adds a dispatcher, dependency-aware read-only specialist calls, coding assignments, and configured reviewers around the shared agent core. The desktop validates routes and consent, then previews one complete dispatch plan. Specialists and reviewers receive evidence through model calls without mutation tools; writers use the ordinary permission decision function with their profile and call budget. Managed Git worktrees are conditional, so selecting a team alone does not guarantee isolation. Review findings can trigger a bounded repair cycle or leave the run paused; the handoff describes applying an isolated checkout as a separate action.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "team_engine",
+        "team_specialists",
+        "chat_engine",
+        "team_reviewers",
+        "team_workspace",
+        "run_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "team_manifest",
+        "team_manifest_policy",
+        "team_approval",
+        "team_specialist_scope",
+        "team_writer_run",
+        "team_writer_scope",
+        "team_workspace",
+        "team_review_guard",
+        "team_repair",
+        "team_synthesis"
+      ]
+    }
+  ]
+}

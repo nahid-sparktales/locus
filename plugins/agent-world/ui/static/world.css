@@ -366,3 +366,31 @@ body[data-native-chrome=true] .snail-alert-badge{top:6px}
 .laboon-companion[data-dancing='true'] .laboon-notes { animation: laboon-song 1.4s ease-in-out infinite alternate; }
 @keyframes laboon-song { from { transform: translateY(2px) rotate(-4deg); opacity: .65; } to { transform: translateY(-3px) rotate(4deg); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .laboon-notes { animation: none !important; } }
+
+/* Busy ships announce themselves without selection; quiet ships keep the sea clear. */
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-inner{position:relative;padding:9px 12px 9px 48px;border-radius:10px;border-color:var(--activity-edge);background:var(--activity-paper);box-shadow:0 5px 20px #03182766,0 0 16px var(--activity-glow)}
+body[data-environment=ocean] .agent-label{--activity-edge:#edc775;--activity-paper:#513c1cf5;--activity-glow:#f2c46628}
+body[data-environment=ocean] .agent-label[data-status=queued]{--activity-edge:#c6acef;--activity-paper:#352748f5;--activity-glow:#c6acef22}
+body[data-environment=ocean] .agent-label[data-status=needs_attention],body[data-environment=ocean] .agent-label[data-status=failed]{--activity-edge:#ffa98b;--activity-paper:#542e25f5;--activity-glow:#ffa98b33}
+body[data-environment=ocean] .agent-label[data-status=completed]{--activity-edge:#95d7bf;--activity-paper:#193e37f5;--activity-glow:#95d7bf22}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-name{font-size:11px;color:#fff1d6}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-state{font-size:10px;font-weight:600;color:var(--activity-edge);margin-top:5px}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-ship{display:none}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-port{font-size:8px;color:#e6d7ba}
+.agent-label-communicator{position:absolute;left:7px;top:50%;transform:translateY(-50%);width:36px;height:36px;filter:drop-shadow(0 2px 3px #0005)}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-name{max-width:190px}
+body[data-environment=ocean] .agent-label:not([data-status=idle]) .agent-label-port{max-width:190px;overflow:hidden;text-overflow:ellipsis}
+
+/* Standalone Captain's Quarters uses the same deck artwork as native Locus. */
+#captains-quarters{position:fixed;inset:0;width:100vw;height:100dvh;max-width:none;max-height:none;box-sizing:border-box;margin:0;padding:0;border:0;color:#f8ecd4;background:#352519 url('./captain-deck.webp') center/cover no-repeat;font-family:Outpost,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#captains-quarters::backdrop{background:#171510}
+#captains-quarters button{border:1px solid #d4b77770;border-radius:7px;padding:10px 15px;background:#443225;color:#fff1d6;cursor:pointer;font:inherit;font-size:12px}
+#captains-quarters button:hover{background:#664b32}
+#captains-quarters :focus-visible{outline:2px solid #f4d795;outline-offset:3px}
+.quarters-header{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:20px 28px;background:#241a13e8;border-bottom:1px solid #d2b47b55}
+.quarters-header .eyebrow{color:#d6bd8a;font-size:9px;letter-spacing:2px}
+.quarters-header h2{font:28px Georgia,serif;margin:6px 0 0}.quarters-actions{display:flex;gap:10px}
+.quarters-workspace{margin:24px auto;width:calc(100% - 56px);max-width:1320px;max-height:calc(100dvh - 150px);overflow:auto;box-sizing:border-box;padding:26px;border:1px solid #dabd8370;border-radius:12px;background:#2e211be8;box-shadow:0 16px 50px #0006}
+.quarters-intro{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px}.quarters-intro h2{font:25px Georgia,serif;margin:0 0 8px}.quarters-intro p{font-size:12px;color:#d1bd9e;margin:0}.quarters-intro label{font-size:11px;color:#dfcba8;display:grid;gap:7px}.quarters-intro input{font:inherit;padding:10px 12px;border:1px solid #d4b77770;background:#211811;color:#fff1d6;border-radius:6px;min-width:200px}
+.quarters-crew{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}.quarters-card{padding:20px;border:1px solid #bd9d6744;border-radius:8px;background:#f3e1bd0c}.quarters-card h3{font:21px Georgia,serif;margin:0 0 8px}.quarters-card p{font-size:12px;color:#ddcbaa;margin:10px 0}.quarters-status{display:inline-block;font-size:10px;color:#c9dec5;border:1px solid #9bb18c60;padding:4px 8px;border-radius:20px}.quarters-card button{margin-top:8px}
+@media(max-width:650px){.quarters-header{padding:16px;align-items:flex-start}.quarters-header h2{font-size:21px}.quarters-actions{flex-direction:column}.quarters-workspace{width:calc(100% - 24px);margin:12px;padding:18px;max-height:calc(100dvh - 155px)}.quarters-intro{align-items:stretch;flex-direction:column}.quarters-intro input{min-width:0}.quarters-crew{grid-template-columns:1fr}}

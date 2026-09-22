@@ -1,0 +1,18 @@
+flowchart LR
+    n0["Locus desktop workspace"]
+    n1["Local agent API and transport"]
+    n2["Agent conversation engine"]
+    n3["Selected AI provider"]
+    n4["Permission checks and tools"]
+    n5[("Local conversation transcripts")]
+    n6["Team coordinator"]
+    n7["Background runtime supervisor"]
+    n0 -->|"On the direct-child branch, send the selected worker a user_message through the authenticated /ws/chat connection. #91;Confirmed#93;"| n1
+    n1 -->|"Resolve the ordinary message handler, save pending input and run AgentCore with the service permission decider. #91;Confirmed#93;"| n2
+    n2 -->|"Send the current conversation and allowed tool schemas through tracked_chat to the selected Ollama client. #91;Confirmed#93;"| n3
+    n2 -->|"If a tool is proposed in Work mode, check permission and dispatch its implementation. #91;Confirmed#93;"| n4
+    n2 -->|"Append user, assistant and tool records to the local session transcript. #91;Confirmed#93;"| n5
+    n1 -->|"Forward queued events#59; the active conversation accumulates tokens and finalizes the reply on completion. #91;Confirmed#93;"| n0
+    n1 -->|"The runtime handler dispatches a team manifest to _run_team_turn. #91;Confirmed#93;"| n6
+    n6 -->|"Bounded ordered coding jobs call the shared AgentCore with the writer profile and svc.decide permission function. #91;Confirmed#93;"| n2
+    n7 -->|"Apply worker configuration and send the queued user_message over /ws/chat. #91;Confirmed#93;"| n1
