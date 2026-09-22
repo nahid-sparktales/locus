@@ -1,37 +1,58 @@
 import type { CircleObstacle, Placement, SceneryAssetType } from './theme.ts';
 import type { Point } from './state.ts';
 
-/** A winding chain of small archipelagos: varied scale, open central water,
- * and broad passages between destinations. Original order preserves homes. */
+/** The Marineford triangle follows the reference chart across the ridge from the original islands.
+ * Original array order preserves the twelve native captain-home assignments. */
+export const GRAND_LINE_MAP_RADIUS = 84;
+export const GRAND_LINE_CALM_BELT = { inner: 20.8, solid: 23, fade: 25, outer: 27.2, center: 24 } as const;
+export const GRAND_LINE_SAILING_BOUNDS = { minZ: -GRAND_LINE_CALM_BELT.inner, maxZ: GRAND_LINE_CALM_BELT.inner } as const;
+export const MARY_GEOISE = { id: 'mary-geoise', name: 'Mary Geoise', subtitle: 'THE HOLY LAND ABOVE THE RED LINE', x: -29, z: -16, radius: 2.1, floor: 5.6 } as const;
 export const GRAND_LINE_LANDMARKS = [
-  { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -23, z: -12, radius: 1.8, harborFacing: 'east' },
-  { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -18.5, z: 7.5, radius: 2.0, harborFacing: 'south' },
-  { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -13.8, z: -5.8, radius: 2.3, harborFacing: 'north' },
-  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -13, z: 18, radius: 3.2, harborFacing: 'east' },
-  { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -3, z: -6, radius: 3.1, harborFacing: 'south' },
-  { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: 5, z: -14, radius: 1.7, harborFacing: 'east' },
-  { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: 5.5, z: 8.5, radius: 2.8, harborFacing: 'south' },
-  { id: 'marineford', name: 'Machineford', subtitle: 'LOCAL INFERENCE HEADQUARTERS', x: 14, z: -4.2, radius: 2.5, harborFacing: 'west' },
-  { id: 'wano', name: 'Wano Weights', subtitle: 'LAND OF OPEN WEIGHTS', x: 19, z: 14.5, radius: 3.2, harborFacing: 'west' },
+  { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -38, z: 13, radius: 1.8, harborFacing: 'south' },
+  { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -63, z: 15, radius: 2.0, harborFacing: 'south' },
+  { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -73, z: 14, radius: 2.3, harborFacing: 'south' },
+  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -76, z: 0, radius: 3.2, harborFacing: 'east' },
+  { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -52, z: 14, radius: 3.1, harborFacing: 'south' },
+  { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: -65, z: -10, radius: 1.7, harborFacing: 'south' },
+  { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: -39, z: -1, radius: 2.8, harborFacing: 'south' },
+  { id: 'marineford', name: 'Machineford', subtitle: 'LOCAL INFERENCE HEADQUARTERS', x: -36, z: -12, radius: 2.5, harborFacing: 'west' },
+  { id: 'wano', name: 'Wano Weights', subtitle: 'LAND OF OPEN WEIGHTS', x: 19, z: 11, radius: 3.2, harborFacing: 'west' },
   { id: 'whole-cake', name: 'Whole Cache', subtitle: 'SWEET TOKENS, FRESHLY CACHED', x: 26, z: -8, radius: 2.6, harborFacing: 'north' },
   { id: 'laugh-tale', name: 'LoRA Tale', subtitle: 'THE LAST TOKEN IS A TREASURE', x: 28, z: 4.5, radius: 1.2, harborFacing: 'west' },
-  { id: 'jaya', name: 'JAXa', subtitle: 'WHERE IDEAS COMPILE', x: -6.6, z: -21.5, radius: 1.6, harborFacing: 'north' },
-  { id: 'elbaf', name: 'Elbatch', subtitle: 'GIANT CONTEXT. GREATER ADVENTURES.', x: 0.5, z: 24, radius: 3.5, harborFacing: 'south' },
-  { id: 'egghead', name: 'Egghead', subtitle: 'TOMORROW IS ALREADY RUNNING', x: 12, z: -22, radius: 3.0, harborFacing: 'north' },
+  { id: 'jaya', name: 'JAXa', subtitle: 'WHERE IDEAS COMPILE', x: -53, z: 3, radius: 1.6, harborFacing: 'east' },
+  { id: 'elbaf', name: 'Elbatch', subtitle: 'GIANT CONTEXT. GREATER ADVENTURES.', x: 0.5, z: 13, radius: 3.5, harborFacing: 'south' },
+  { id: 'egghead', name: 'Egghead', subtitle: 'TOMORROW IS ALREADY RUNNING', x: 12, z: -14, radius: 3.0, harborFacing: 'north' },
+  { id: 'impel-down', name: 'Impel Down', subtitle: 'GREAT PRISON OF THE CALM BELT', x: -51, z: -14, radius: 2.1, harborFacing: 'north' },
+  { id: 'amazon-lily', name: 'Amazon Lily', subtitle: 'ISLAND OF THE KUJA', x: -72, z: -24, radius: 2.8, harborFacing: 'north' },
+  { id: 'dressrosa', name: 'Dressrosa', subtitle: 'THE KINGDOM OF FLOWERS', x: -8, z: 6, radius: 3.1, harborFacing: 'north' },
+  { id: 'punk-hazard', name: 'Punk Hazard', subtitle: 'FIRE AND ICE', x: -14, z: -10, radius: 2.9, harborFacing: 'north' },
+  { id: 'hachinosu', name: 'Hachinosu', subtitle: 'PIRATE ISLAND', x: 4, z: -6, radius: 2.8, harborFacing: 'north' },
+  { id: 'long-ring-long-land', name: 'Long Ring Long Land', subtitle: 'A LONG WAY ROUND', x: -63, z: 3, radius: 2.5, harborFacing: 'north' },
 ] as const;
 
-/** These four near-bank landmarks face across the channel. Their docks,
- * navigation obstacles and work plazas already face inward and stay fixed. */
+/** Generated island entrances face local +Z. Keep artwork, front docks,
+ * work plazas and boarding planks aligned on the same outward bearing. */
 export function islandArtworkRotation(id: string): number {
-  return ['little-garden', 'alabasta', 'sabaody', 'elbaf'].includes(id) ? Math.PI : 0;
+  const facing = GRAND_LINE_LANDMARKS.find(island => island.id === id)?.harborFacing;
+  const bearing = facing === 'south' ? Math.PI : facing === 'east' ? Math.PI / 2 : facing === 'west' ? -Math.PI / 2 : 0;
+  return bearing;
 }
+
+/** Front depth is identical after rotating the artwork toward any dock. The
+ * timber overlaps the irregular land edge instead of beginning offshore. */
+export const islandShoreDistance = (radius: number): number => radius * 0.72;
+export const GRAND_LINE_SKY_ISLAND = { x: -53.024, y: 6, z: 2.49 } as const;
+export const MARINEFORD_CURRENT = { x: -51, z: -5, radius: 4.2 } as const;
 
 export const GRAND_LINE_ISLAND_MODELS: Record<typeof GRAND_LINE_LANDMARKS[number]['id'], SceneryAssetType> = {
   'twin-cape': 'island_twin_cape', 'little-garden': 'island_little_garden', drum: 'island_drum',
   alabasta: 'island_alabasta', 'water-seven': 'island_water_seven', 'enies-lobby': 'island_enies_lobby',
-  sabaody: 'island_sabaody', marineford: 'island_marineford', wano: 'island_wano',
+  sabaody: 'island_sabaody_archipelago', marineford: 'island_marineford', wano: 'island_wano',
   'whole-cake': 'island_whole_cake', 'laugh-tale': 'island_laugh_tale', jaya: 'island_jaya',
   elbaf: 'island_elbaf', egghead: 'island_egghead',
+  'impel-down': 'island_impel_down', 'amazon-lily': 'island_amazon_lily',
+  dressrosa: 'island_dressrosa', 'punk-hazard': 'island_punk_hazard', hachinosu: 'island_hachinosu',
+  'long-ring-long-land': 'island_long_ring_long_land',
 };
 const HARBOR_DIRECTIONS = { north: { x: 0, z: 1 }, south: { x: 0, z: -1 }, east: { x: 1, z: 0 }, west: { x: -1, z: 0 } } as const;
 export const GRAND_LINE_HARBORS = GRAND_LINE_LANDMARKS.map(landmark => {
@@ -47,7 +68,7 @@ export const GRAND_LINE_HARBORS = GRAND_LINE_LANDMARKS.map(landmark => {
 /** Flat shore work plazas provide verified footing clear of island buildings. */
 export const GRAND_LINE_CREW_PLAZAS = GRAND_LINE_LANDMARKS.map((landmark, index) => {
   const direction = GRAND_LINE_HARBORS[index].direction;
-  const shoreDistance = landmark.radius * (direction.x ? 1 : 0.80);
+  const shoreDistance = islandShoreDistance(landmark.radius);
   const distance = shoreDistance + (landmark.id === 'water-seven' ? 0.15 : -0.10);
   return {
     x: landmark.x + direction.x * distance, z: landmark.z + direction.z * distance,
@@ -55,11 +76,11 @@ export const GRAND_LINE_CREW_PLAZAS = GRAND_LINE_LANDMARKS.map((landmark, index)
     rotation: Math.atan2(direction.x, direction.z), width: 1.50, depth: 0.82,
   };
 });
-// A sector still owns twelve homes. The two new destinations are visitable
+// A sector still owns twelve homes. Additional destinations are visitable
 // harbors, so existing captains keep the same islands and native assignments.
 export const GRAND_LINE_HOME_NAMES: readonly string[] = GRAND_LINE_HARBORS.slice(0, 12).map(harbor => harbor.name);
 export const GRAND_LINE_STATIONS: readonly Placement[] = GRAND_LINE_HARBORS.slice(0, 12).map(({ x, z, rotation }) => ({ x, z, rotation }));
-export const GRAND_LINE_LABOON_POSITION = { x: GRAND_LINE_LANDMARKS[0].x - 1.38, z: GRAND_LINE_LANDMARKS[0].z - 4.96 };
+export const GRAND_LINE_LABOON_POSITION = { x: GRAND_LINE_LANDMARKS[0].x - 3.8, z: GRAND_LINE_LANDMARKS[0].z + 1.5 };
 export const GRAND_LINE_SEA_KING_POSITIONS = [{ x: -16.56, z: -25 }, { x: 16.56, z: 25.2 }] as const;
 export const GRAND_LINE_OBSTACLES: readonly CircleObstacle[] = [
   ...GRAND_LINE_LANDMARKS.map(({ x, z, radius }) => ({ x, z, radius: radius + 0.18 })),
@@ -70,11 +91,11 @@ export const GRAND_LINE_OBSTACLES: readonly CircleObstacle[] = [
 export const GRAND_LINE_WANDER_POINTS: readonly Point[] = [
   ...GRAND_LINE_HARBORS.flatMap(harbor => {
     const offshore = harbor.rotation + Math.PI;
-    return [-0.7, 0, 0.7].map(offset => ({
+    return [-0.5, 0.5].map(offset => ({
       x: harbor.x + Math.sin(offshore + offset) * 3.2,
       z: harbor.z + Math.cos(offshore + offset) * 3.2,
     }));
   }),
   ...GRAND_LINE_HARBORS.slice(12).map(({ x, z }) => ({ x, z })),
-].filter(point => Math.hypot(point.x, point.z) < 32.57 && GRAND_LINE_OBSTACLES.every(obstacle =>
+].filter(point => Math.abs(point.z) < GRAND_LINE_CALM_BELT.inner - 1.43 && Math.hypot(point.x, point.z) < GRAND_LINE_MAP_RADIUS - 1.43 && GRAND_LINE_OBSTACLES.every(obstacle =>
   Math.hypot(point.x - obstacle.x, point.z - obstacle.z) > obstacle.radius + 1.41));

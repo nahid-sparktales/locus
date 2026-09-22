@@ -1,0 +1,17 @@
+{
+  "credit_ceiling": 117,
+  "assets": [
+    {
+      "asset": "island_sabaody_archipelago",
+      "prompt": "Premium hand-painted miniature 3D game diorama, intricate geometry, rich PBR colors, high three-quarter isometric view, whole object isolated on pale gray. Sabaody Archipelago from One Piece: five connected round grassy mangrove islets, colossal thick twisting mangrove trunks rising from exposed roots, broad fluffy emerald canopies, tiny pastel houses and winding paths among roots. Clear open sandy entrance at front center for a dock. A few translucent soap bubbles float among trees. Natural low rocky shoreline, no ocean plane, no text, no people, no boats, no pedestal."
+    },
+    {
+      "asset": "creature_zunesha",
+      "prompt": "Premium hand-painted miniature 3D game creature, intricate sculpted geometry, rich PBR colors. Zunesha from One Piece, ancient colossal elephant carrying the lush green island of Zou on its flat broad back: tiny jungle trees, mossy ruins and a small settlement. Four clearly separated extremely long column-like legs, all four feet visible in neutral standing stance, wrinkled gray-blue skin, huge flapping ears, long curved ivory tusks and a hanging trunk. Entire elephant visible including feet, isolated on pale gray, three-quarter front view. No ocean, no ground base, no pedestal, no text."
+    },
+    {
+      "asset": "creature_momonosuke",
+      "prompt": "Premium hand-painted miniature 3D game creature, rich PBR colors. Momonosuke from One Piece as a cute small pink eastern dragon in flight. Long slender serpentine rosy pink scaled body, pale cream belly, four tiny clawed legs, a friendly expressive dragon face, little golden antler horns, long pale whiskers and fluffy pink mane, tapering curled tail. Wingless Asian dragon, sinuous gently curved horizontal flying pose, whole body visible, three-quarter side view, isolated on pale gray. No wings, no clouds, no base, no people, no text."
+    }
+  ]
+}

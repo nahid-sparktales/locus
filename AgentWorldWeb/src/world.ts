@@ -1,3 +1,4 @@
+import { stepShipCameraFollow } from './shipCameraFollow';
 import { fetchCompressedModel } from './assetBytes';
 import { createNewsCoo } from './newsCoo';
 import { Engine } from '@babylonjs/core/Engines/engine';
@@ -73,6 +74,8 @@ export class OutpostWorld {
   private elapsed = 0;
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   private hoveredID?: string;
+  private followingID?: string;
+  private focusRadius?: number;
   private selectedID?: string;
   private cleanups: (() => void)[] = [];
   private mapRoot: TransformNode;
@@ -108,7 +111,7 @@ export class OutpostWorld {
     this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, .voyage-chart, .view-reset, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback, #fleet-activity, #snail-alert'));
     this.mapRoot = new TransformNode('outpost', this.scene);
     this.navigation = themeNavigation(theme, []);
-    if (theme.environment === 'ocean') this.courierNavigation = createNavigation({ radius: theme.layout.radius, bodyRadius: 0.48, obstacles: theme.layout.obstacles });
+    if (theme.environment === 'ocean') this.courierNavigation = createNavigation({ radius: theme.layout.radius, sailingBounds: theme.layout.sailingBounds, bodyRadius: 0.48, obstacles: theme.layout.obstacles });
 
     this.camera = new ArcRotateCamera('overview-camera', Math.PI / 2 - 0.3, 1.01, 33, new Vector3(0, 0.9, -0.4), this.scene);
     this.camera.lowerRadiusLimit = 14;
@@ -126,11 +129,11 @@ export class OutpostWorld {
     this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
     if (theme.environment === 'ocean') {
       this.camera.lowerRadiusLimit = 13;
-      this.camera.upperRadiusLimit = 84;
+      this.camera.upperRadiusLimit = 180;
       this.camera.wheelPrecision = 10;
       this.camera.panningSensibility = 85;
       this.camera.panningAxis.set(1, 0, 1);
-      this.camera.panningDistanceLimit = 55;
+      this.camera.panningDistanceLimit = 100;
       this.camera.upperBetaLimit = 1.28;
       this.resetView();
     }
@@ -617,6 +620,7 @@ export class OutpostWorld {
 
   setAgents(agents: Agent[], selectedID?: string): void {
     this.selectedID = selectedID;
+    if (this.followingID && !agents.some(agent => agent.id === this.followingID)) this.followingID = undefined;
     const existingByID = new Map(this.residents.map(resident => [resident.id, resident]));
     const sameResidents = agents.length === this.residents.length && agents.every(agent => existingByID.has(agent.id));
     if (sameResidents) {
@@ -747,6 +751,15 @@ export class OutpostWorld {
     }
     const state = document.createElement('span'); state.className = 'agent-label-state'; state.textContent = meta.label;
     inner.append(name, state);
+    if (this.theme.environment === 'ocean' && resident.agent.status !== 'idle') {
+      const source = document.querySelector('.snail-art-placeholder');
+      if (source) {
+        const snail = source.cloneNode(true) as SVGElement;
+        snail.setAttribute('class', 'agent-label-communicator');
+        snail.setAttribute('aria-hidden', 'true');
+        inner.prepend(snail);
+      }
+    }
     const request = this.theme.environment === 'ocean' ? this.attentionRequests.find(item => item.agentID.toLowerCase() === resident.id.toLowerCase()) : undefined;
     if (request) {
       const call = document.createElement('button'); call.type = 'button'; call.tabIndex = -1; call.className = 'den-den-call';
@@ -798,6 +811,7 @@ export class OutpostWorld {
       return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string' || typeof mesh.metadata?.creatureID === 'string'))?.pickedMesh?.metadata;
     };
     const down = (event: PointerEvent) => {
+      if (event.button === 2) { this.followingID = undefined; this.focusRadius = undefined; }
       if (event.button !== 0) return;
       pointerStart = { x: event.clientX, y: event.clientY }; dragged = false;
       this.canvas.focus({ preventScroll: true });
@@ -805,7 +819,7 @@ export class OutpostWorld {
     const move = (event: PointerEvent) => {
       if (pointerStart) {
         dragged ||= !isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
-        if (dragged) { this.setHovered(undefined); this.canvas.style.cursor = 'grabbing'; }
+        if (dragged) { this.followingID = undefined; this.focusRadius = undefined; this.setHovered(undefined); this.canvas.style.cursor = 'grabbing'; }
         return;
       }
       const target = pick(event);
@@ -824,6 +838,9 @@ export class OutpostWorld {
       else if (click && target?.actorID) this.callbacks.onSelect(target.actorID);
     };
     const cancel = () => { pointerStart = undefined; dragged = false; this.setHovered(undefined); };
+    const wheel = () => { this.focusRadius = undefined; };
+    this.canvas.addEventListener('wheel', wheel, { passive: true });
+    this.cleanups.push(() => this.canvas.removeEventListener('wheel', wheel));
     this.canvas.addEventListener('pointerdown', down); this.canvas.addEventListener('pointermove', move); this.canvas.addEventListener('pointerup', up);
     this.canvas.addEventListener('pointerleave', cancel); this.canvas.addEventListener('pointercancel', cancel);
     listen('blur', cancel);
@@ -890,7 +907,7 @@ export class OutpostWorld {
         resident.label.dataset.workGlow = String(resident.workGlow?.update(resident.agent.status, docked, resident.motion, resident.motion.heading, this.elapsed, this.reducedMotion) ?? false);
         const berthState = docked ? resident.agent.status === 'working' ? 'Working ashore' : 'Docked' : atBerth ? 'Docking' : resident.motion.intent === 'station' ? 'Heading to' : 'Sailing near';
         const home = this.getAgentHome(resident.id) ?? 'Home island';
-        const portText = `${berthState} · ${home}${resident.crew ? ` · ${resident.crew.count} crew ashore` : ''}`;
+        const portText = `${berthState} · ${home}`;
         const port = resident.label.querySelector('.agent-label-port');
         if (port && port.textContent !== portText) port.textContent = portText;
         resident.label.dataset.docked = String(docked);
@@ -909,6 +926,11 @@ export class OutpostWorld {
     this.updateSeaActivity();
     this.updateShipEncounters();
     this.updateIslandWorkSignals();
+    const followed = this.residents.find(resident => resident.id === this.followingID);
+    if (followed) {
+      this.focusRadius = stepShipCameraFollow(this.camera, followed.motion, dt, this.reducedMotion, this.focusRadius);
+    }
+    this.canvas.dataset.followingAgent = followed?.id ?? '';
     this.scene.render();
     this.updateLabels();
   };
@@ -937,7 +959,7 @@ export class OutpostWorld {
       const x = projected.x * scaleX, y = projected.y * scaleY;
       const halfWidth = resident.label.offsetWidth / 2;
       const bounds = { left: x - halfWidth, top: y - resident.label.offsetHeight, right: x + halfWidth, bottom: y };
-      const priority = resident.id === this.selectedID ? 0 : resident.id === this.hoveredID ? 1 : resident.agent.status === 'needs_attention' ? 2 : resident.agent.status === 'working' ? 3 : 4;
+      const priority = resident.id === this.selectedID ? 0 : resident.id === this.hoveredID ? 1 : resident.agent.status === 'needs_attention' || resident.agent.status === 'failed' ? 2 : resident.agent.status !== 'idle' ? 3 : 4;
       return { label: resident.label, id: resident.id, projected, x, y, bounds, priority };
     });
     for (const courier of this.couriers.values()) {
@@ -948,7 +970,8 @@ export class OutpostWorld {
     candidates.sort((a, b) => a.priority - b.priority || a.projected.z - b.projected.z || a.id.localeCompare(b.id));
     const occupied = [...overlays];
     for (const { label, projected, x, y, bounds } of candidates) {
-      const visible = projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, occupied);
+      const automatic = this.theme.environment !== 'ocean' || label.dataset.status !== 'idle' || label.classList.contains('selected') || label.classList.contains('hovered');
+      const visible = automatic && projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, occupied);
       if (visible) occupied.push(bounds);
       label.dataset.labelVisible = String(visible);
       label.style.opacity = visible ? '1' : '0';
@@ -1094,8 +1117,11 @@ export class OutpostWorld {
     if (!resident) return;
     this.selectedID = id;
     for (const item of this.residents) this.updateLabel(item);
-    this.camera.setTarget(new Vector3(resident.motion.x, 0.8, resident.motion.z));
-    this.camera.radius = Math.min(this.camera.radius, this.theme.environment === 'ocean' ? 16 : 14);
+    this.followingID = id;
+    this.focusRadius = Math.min(this.camera.radius, this.theme.environment === 'ocean' ? 16 : 14);
+    this.camera.inertialPanningX = 0; this.camera.inertialPanningY = 0;
+    this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0;
+    this.camera.inertialRadiusOffset = 0;
   }
 
   /** A paint/ship preference changes only artwork. The resident, berth, motion,
@@ -1169,6 +1195,7 @@ export class OutpostWorld {
   }
 
   panMap(direction: 'left' | 'right' | 'up' | 'down'): void {
+    this.followingID = undefined; this.focusRadius = undefined;
     const step = Math.max(0.45, this.camera.radius * 0.025);
     const right = new Vector3(-Math.sin(this.camera.alpha), 0, Math.cos(this.camera.alpha));
     const forward = new Vector3(-Math.cos(this.camera.alpha), 0, -Math.sin(this.camera.alpha));
@@ -1180,12 +1207,13 @@ export class OutpostWorld {
   }
 
   resetView(): void {
+    this.followingID = undefined; this.focusRadius = undefined;
     this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0; this.camera.inertialRadiusOffset = 0;
     this.camera.inertialPanningX = 0; this.camera.inertialPanningY = 0;
-    this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -2.5 : 0, 0.9, -0.4));
-    this.camera.alpha = this.theme.environment === 'ocean' ? -Math.PI / 2 : Math.PI / 2 - 0.3;
+    this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -13 : 0, 0.9, this.theme.environment === 'ocean' ? -3 : -0.4));
+    this.camera.alpha = this.theme.environment === 'ocean' ? Math.PI / 2 : Math.PI / 2 - 0.3;
     this.camera.beta = this.theme.environment === 'ocean' ? 0.74 : 1.01;
-    this.camera.radius = this.theme.environment === 'ocean' ? 68 : 33;
+    this.camera.radius = this.theme.environment === 'ocean' ? 160 : 33;
   }
 
   setVisible(visible: boolean): void {

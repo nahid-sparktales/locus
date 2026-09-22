@@ -7,6 +7,7 @@ import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetC
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import type { SceneryAssetType, Theme } from './theme.ts';
+import { ZuneshaStride } from './grandLineCompanions.ts';
 import { WaterfallFlow } from './waterfallFlow.ts';
 
 export type SceneryPlacement = { parent: TransformNode; width: number; depth: number; height: number; floor: number; rotation?: number; footprintRadius?: number; animated?: boolean; interactionID?: 'laboon' };
@@ -18,6 +19,7 @@ export class GrandLineModels {
   private instances: InstalledModel[] = [];
   private installed = new Set<SceneryAssetType>();
   private waterfallFlows: WaterfallFlow[] = [];
+  private elephantStrides: ZuneshaStride[] = [];
   private disposed = false;
   private scene: Scene;
   private shadow: ShadowGenerator;
@@ -105,6 +107,15 @@ export class GrandLineModels {
     }
     this.instances.push(...staged);
     this.installed.add(type);
+    if (type === 'creature_zunesha') {
+      const materials = new Set<PBRMaterial>();
+      for (const mesh of container.meshes) {
+        if (!mesh.getTotalVertices() || !(mesh.material instanceof PBRMaterial) || materials.has(mesh.material)) continue;
+        materials.add(mesh.material);
+        const box = mesh.getBoundingInfo().boundingBox;
+        this.elephantStrides.push(new ZuneshaStride(mesh.material, box.minimum.clone(), box.maximum.subtract(box.minimum)));
+      }
+    }
     if (type === 'scenery_reverse_mountain' || type === 'island_water_seven') {
       for (const material of container.materials) {
         if (material instanceof PBRMaterial) this.waterfallFlows.push(new WaterfallFlow(material));
@@ -114,6 +125,7 @@ export class GrandLineModels {
 
   update(elapsed: number, reducedMotion: boolean): void {
     for (const flow of this.waterfallFlows) flow.update(elapsed, reducedMotion);
+    for (const stride of this.elephantStrides) stride.update(elapsed, reducedMotion);
   }
 
   private release(entries: readonly InstalledModel[]): void {
@@ -129,6 +141,6 @@ export class GrandLineModels {
     this.release(this.instances);
     this.instances = []; this.placements.clear(); this.installed.clear();
     // Materials and their plugins are owned and disposed by the asset container.
-    this.waterfallFlows = [];
+    this.waterfallFlows = []; this.elephantStrides = [];
   }
 }

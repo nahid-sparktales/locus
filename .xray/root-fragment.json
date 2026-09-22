@@ -1,0 +1,1234 @@
+{
+  "evidence": [
+    {
+      "id": "root_readme",
+      "path": "README.md",
+      "line_start": 18,
+      "line_end": 78,
+      "kind": "documentation",
+      "note": "Describes native workspace outcomes, providers, optional companion, and current edition scope. Documentation is a discovery lead, with capabilities checked against code below.",
+      "sha256": "b18585daef6d7c65a204bb70c90c8229b582d50a7f824358a5893aa881cd101a"
+    },
+    {
+      "id": "root_edition_sources",
+      "path": "project.yml",
+      "line_start": 70,
+      "line_end": 86,
+      "kind": "config",
+      "note": "Common Swift sources exclude Wallet-prefixed files; common packages include SwiftTerm and Markdown.",
+      "sha256": "3d42d91a4d4ac3f632316246f1d271b723ae5662c24b0f90a9ccedebf9ae6a57"
+    },
+    {
+      "id": "root_edition_targets",
+      "path": "project.yml",
+      "line_start": 275,
+      "line_end": 304,
+      "kind": "config",
+      "note": "Locus and LocusX targets use different source templates; wallet sources are added to LocusX.",
+      "sha256": "3d42d91a4d4ac3f632316246f1d271b723ae5662c24b0f90a9ccedebf9ae6a57"
+    },
+    {
+      "id": "root_menu",
+      "path": "Locus/LocusApp.swift",
+      "line_start": 145,
+      "line_end": 207,
+      "kind": "source",
+      "note": "Menu handlers open the library, changes, terminal, saved sessions and inspector destinations.",
+      "sha256": "428c14273e21bfeffd51e7220ae83b90fd14ffc390d0d0a2aaa352a90528a676"
+    },
+    {
+      "id": "root_inspector",
+      "path": "Locus/InspectorView.swift",
+      "line_start": 26,
+      "line_end": 70,
+      "kind": "source",
+      "note": "Inspector switch constructs file, changes, terminal, browser, simulator, calendar, board, run and model-router panels.",
+      "sha256": "2905b59019ac0a206defd128129e28896b2e32374f75e14ecdddc03d7f8c2b4a"
+    },
+    {
+      "id": "root_panel_names",
+      "path": "Locus/Models/InspectorModels.swift",
+      "line_start": 18,
+      "line_end": 104,
+      "kind": "source",
+      "note": "Inspector destinations define their user labels and workspace roles.",
+      "sha256": "0fccd01fc43c04b16a61fa1dd091ab74ad546431f7087de28c16295325d95693"
+    },
+    {
+      "id": "root_launch",
+      "path": "Locus/BackendProcess.swift",
+      "line_start": 31,
+      "line_end": 78,
+      "kind": "source",
+      "note": "Native app attaches to an enabled independent runtime or resolves and starts the Python server on a local endpoint; unavailable runtime/port stops launch.",
+      "sha256": "3374f22f6b39f1a579bd91ae1aaef3cb5bf48bbc6377551f2211337de6428f86"
+    },
+    {
+      "id": "root_transport",
+      "path": "Locus/BackendService.swift",
+      "line_start": 45,
+      "line_end": 90,
+      "kind": "source",
+      "note": "BackendService sets up authenticated WebSocket transport with either chat or runtime path; the latter uses an event cursor.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "root_http",
+      "path": "Locus/BackendService.swift",
+      "line_start": 219,
+      "line_end": 238,
+      "kind": "source",
+      "note": "Native HTTP requests send the app authentication header, validate the response and decode JSON.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "root_api",
+      "path": "agent/ollama_code/api/__init__.py",
+      "line_start": 29,
+      "line_end": 58,
+      "kind": "source",
+      "note": "Backend registers domain route modules including sessions, schedules, goals, runtime, providers and extensions.",
+      "sha256": "0c4dd62b2a80a6a4a5fd7a6e44fcab8a9faa81bc2f8745e56b8eb3779491a281"
+    },
+    {
+      "id": "root_server",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2935,
+      "line_end": 2972,
+      "kind": "source",
+      "note": "create_app composes FastAPI, shared chat state, middleware and registered routes.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "root_backend_packages",
+      "path": "agent/pyproject.toml",
+      "line_start": 6,
+      "line_end": 36,
+      "kind": "manifest",
+      "note": "Python backend manifest declares its runtime dependencies; declaration alone does not establish use.",
+      "sha256": "2e541a52dd0221db9f8920a8d8dc8e422ad3d8b847ce8d0382f55caecf73976b"
+    },
+    {
+      "id": "root_workspace",
+      "path": "Locus/AppModel+WorkspaceBrowser.swift",
+      "line_start": 26,
+      "line_end": 62,
+      "kind": "source",
+      "note": "Opening a workspace entry resolves containment and displays file/library preview; adding an entry supplies context or an attachment.",
+      "sha256": "1760aeb252a11140a228c78380c87677eaea53242e096b8c33889faf31f9d6d8"
+    },
+    {
+      "id": "root_browser",
+      "path": "Locus/InspectorBrowserTab.swift",
+      "line_start": 7,
+      "line_end": 32,
+      "kind": "source",
+      "note": "Browser panel uses the current session browser, attaches captures to chat, and exposes browser callbacks.",
+      "sha256": "75bf855f78e7fc504290034a4359dc0f037c82dd57c9ec81c8e81db3a2881916"
+    },
+    {
+      "id": "root_browser_actions",
+      "path": "Locus/InspectorBrowserTab.swift",
+      "line_start": 640,
+      "line_end": 670,
+      "kind": "source",
+      "note": "Browser menu invokes find, capture, history, downloads, tab restore, and console/network display.",
+      "sha256": "75bf855f78e7fc504290034a4359dc0f037c82dd57c9ec81c8e81db3a2881916"
+    },
+    {
+      "id": "root_provider",
+      "path": "agent/ollama_code/api/providers.py",
+      "line_start": 266,
+      "line_end": 319,
+      "kind": "source",
+      "note": "Provider mutation validates the backend provider mode and invokes the local, remote or managed-account branch.",
+      "sha256": "70bea06153da722f131ab0802d69e481e263439deb0431094e2d8c1dac80f78c"
+    },
+    {
+      "id": "root_provider_routes",
+      "path": "agent/ollama_code/api/providers.py",
+      "line_start": 462,
+      "line_end": 479,
+      "kind": "source",
+      "note": "Provider selection and model listing handlers are registered as API routes.",
+      "sha256": "70bea06153da722f131ab0802d69e481e263439deb0431094e2d8c1dac80f78c"
+    },
+    {
+      "id": "root_accounts",
+      "path": "Locus/ProviderAccountsModel.swift",
+      "line_start": 12,
+      "line_end": 35,
+      "kind": "source",
+      "note": "Native provider state separates local models and per-account catalogs/status. No live account data was read.",
+      "sha256": "45598b8e398cab8bc16107e7e3566b357370f232f47239fc257a4cd5d1346bda"
+    },
+    {
+      "id": "root_extension_install",
+      "path": "agent/ollama_code/api/extensions.py",
+      "line_start": 135,
+      "line_end": 151,
+      "kind": "source",
+      "note": "Plugin install handler calls the extension manager under mutation control and refreshes tools/MCP.",
+      "sha256": "94c4910f5b4514f1cf9df481effd3905c7ef0c21e22d6c36a66bb956acd9113e"
+    },
+    {
+      "id": "root_extension_routes",
+      "path": "agent/ollama_code/api/extensions.py",
+      "line_start": 504,
+      "line_end": 556,
+      "kind": "source",
+      "note": "Registered extension routes expose plugin/skill operations and MCP catalog, resources, prompts, tests and connection management.",
+      "sha256": "94c4910f5b4514f1cf9df481effd3905c7ef0c21e22d6c36a66bb956acd9113e"
+    },
+    {
+      "id": "root_goal_ui",
+      "path": "Locus/AppModel+Goals.swift",
+      "line_start": 34,
+      "line_end": 93,
+      "kind": "source",
+      "note": "Goal editor records chosen execution mode, provider and team; start/continue gates require an eligible idle chat and available capability.",
+      "sha256": "913d08c28bdfe9ba7ad02989e03e1a05a21d7d88a7cacc8f7c69559605d7832a"
+    },
+    {
+      "id": "root_goal_api",
+      "path": "agent/ollama_code/api/goals.py",
+      "line_start": 47,
+      "line_end": 80,
+      "kind": "source",
+      "note": "Goal creation binds to an existing chat/workspace and rejects unavailable or active sessions before storing the objective.",
+      "sha256": "21ee2aeb34bc38a7813e600d01a9c2fb9d5e2ba2d5aeca9d6740e43efb3d9b6b"
+    },
+    {
+      "id": "root_work_menu",
+      "path": "Locus/ComposerView.swift",
+      "line_start": 937,
+      "line_end": 952,
+      "kind": "source",
+      "note": "Composer workflow menu opens the goal editor, Task Capsules and team choices.",
+      "sha256": "928046fb777acdf52af0a0a56d624ffeccb993078c1a34712db7f91d740921e9"
+    },
+    {
+      "id": "root_capsules",
+      "path": "agent/ollama_code/api/capsules.py",
+      "line_start": 117,
+      "line_end": 130,
+      "kind": "source",
+      "note": "Registered Task Capsule operations include create, read, update and validation.",
+      "sha256": "0971982593c6d4e69ca46e766860ed0c69133f9e6202ce9878210f64253ca3ec"
+    },
+    {
+      "id": "root_capsule_ui",
+      "path": "Locus/TaskCapsuleView.swift",
+      "line_start": 16,
+      "line_end": 83,
+      "kind": "source",
+      "note": "Task Capsule sheet shows draft/saved plans and refreshes its library.",
+      "sha256": "a1ffcfd477643bf6b8d9963e8b5c5d98bf51f0960225ff8ab11c3ac6ff1fbbba"
+    },
+    {
+      "id": "root_library",
+      "path": "Locus/AppModel+LibraryIntegration.swift",
+      "line_start": 5,
+      "line_end": 46,
+      "kind": "source",
+      "note": "Response outputs link to saved versions; library integration opens documents/outputs for a workspace and supports image-edit attachment when available.",
+      "sha256": "3dcea0a26ea33c2ca12dd29e70fc3f404e7836f825de81c30921408be28b3b1a"
+    },
+    {
+      "id": "root_library_revision",
+      "path": "Locus/AppModel+LibraryIntegration.swift",
+      "line_start": 59,
+      "line_end": 89,
+      "kind": "source",
+      "note": "Output revision attaches a saved version and extracts supported documents, while refusing busy state or an occupied draft.",
+      "sha256": "3dcea0a26ea33c2ca12dd29e70fc3f404e7836f825de81c30921408be28b3b1a"
+    },
+    {
+      "id": "root_calendar",
+      "path": "Locus/InspectorCalendarTab.swift",
+      "line_start": 56,
+      "line_end": 90,
+      "kind": "source",
+      "note": "Calendar access requests and checks EventKit permission before retrieving calendars.",
+      "sha256": "cf6a4f5b4db87b4f25408663cb9583d68ce2d17ccad89bde68894af2a6fd4d25"
+    },
+    {
+      "id": "root_calendar_create",
+      "path": "Locus/InspectorCalendarTab.swift",
+      "line_start": 149,
+      "line_end": 179,
+      "kind": "source",
+      "note": "Calendar creation validates access/title/dates, selects a writable calendar and saves through EventKit.",
+      "sha256": "cf6a4f5b4db87b4f25408663cb9583d68ce2d17ccad89bde68894af2a6fd4d25"
+    },
+    {
+      "id": "root_board",
+      "path": "Locus/InspectorBoardTab.swift",
+      "line_start": 26,
+      "line_end": 92,
+      "kind": "source",
+      "note": "Board shows workspace-scoped cards, opens detail/create sheets and dispatches changes through its store.",
+      "sha256": "e68257c591f3d9dfb959849926d6db8496604fd7fe779631b87b6bce4e093496"
+    },
+    {
+      "id": "root_mobile_settings",
+      "path": "Locus/CompanionSettingsView.swift",
+      "line_start": 17,
+      "line_end": 46,
+      "kind": "source",
+      "note": "Mobile access setting gates pairing; the pair button invokes the native pairing flow.",
+      "sha256": "03ed6dddfa16c58b0235ac87156c4ddf156d4c29503f86f9f4aee7bad116c07a"
+    },
+    {
+      "id": "root_mobile_dispatch",
+      "path": "Locus/AppModel+MobileCompanion.swift",
+      "line_start": 7,
+      "line_end": 17,
+      "kind": "source",
+      "note": "Native pairing handler invokes the companion gateway and captures success or error.",
+      "sha256": "8f6531a267e356128887aac30ba653a76064f7d8d94033f1cb247fe082ea7f80"
+    },
+    {
+      "id": "root_mobile_requests",
+      "path": "Locus/AppModel+MobileCompanion.swift",
+      "line_start": 47,
+      "line_end": 95,
+      "kind": "source",
+      "note": "Native companion request dispatcher handles chat, activity, schedule and approval requests; this is not an end-to-end mobile transport trace.",
+      "sha256": "8f6531a267e356128887aac30ba653a76064f7d8d94033f1cb247fe082ea7f80"
+    },
+    {
+      "id": "root_remote_ui",
+      "path": "Locus/RemoteRuntimesView.swift",
+      "line_start": 71,
+      "line_end": 103,
+      "kind": "source",
+      "note": "Remote runtime view exposes deploy, control and retrieve operations through backend requests.",
+      "sha256": "daeaa894d01779c77f8d5e053c78ec8f721f00c6f09741eaedf232ff4d009922"
+    },
+    {
+      "id": "root_remote_routes",
+      "path": "agent/ollama_code/api/runtime_deploy.py",
+      "line_start": 232,
+      "line_end": 252,
+      "kind": "source",
+      "note": "Registered remote runtime routes support validated connection, snapshot review, deploy, retrieve and apply.",
+      "sha256": "b8c48d6bc20bfe2ea51a55590d6de3fe2ef096e4979b563b3929750a494169fe"
+    },
+    {
+      "id": "root_remote_gate",
+      "path": "Locus/RuntimesSettingsView.swift",
+      "line_start": 50,
+      "line_end": 58,
+      "kind": "source",
+      "note": "Remote runtime settings surface is conditional on RuntimeInstallation.enabled.",
+      "sha256": "cffbd4cafd885f6a87597bc4a3ed2f845f22f1d0ae834b46b91a88ec1f59ec0c"
+    },
+    {
+      "id": "root_computer_bridge",
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "line_start": 537,
+      "line_end": 574,
+      "kind": "source",
+      "note": "Computer action events gate native control by settings or task-scoped application access, call the native broker and send a result.",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "id": "root_computer",
+      "path": "Locus/ComputerControlService.swift",
+      "line_start": 80,
+      "line_end": 113,
+      "kind": "source",
+      "note": "Native broker checks capture privacy, execution state, Accessibility permission and live task scope before an action.",
+      "sha256": "99e96b9e80a0b7f2ac2203658d3edf5f9cf4df47119b37289e1aa66fdf1b0286"
+    },
+    {
+      "id": "root_voice",
+      "path": "Locus/VoiceComposerControls.swift",
+      "line_start": 3,
+      "line_end": 41,
+      "kind": "source",
+      "note": "Composer buttons invoke dictation and voice-mode toggles; live recognition/provider behavior is outside this trace.",
+      "sha256": "5cf01cc83a8c14bc9e237c47117eb69706d534e7bab3a68c629be471e32a879c"
+    },
+    {
+      "id": "root_simulator",
+      "path": "Locus/InspectorSimulatorTab.swift",
+      "line_start": 26,
+      "line_end": 63,
+      "kind": "source",
+      "note": "Simulator panel chooses device or attached workspace and starts/stops its preview through the simulator service.",
+      "sha256": "0cf264d0456271df2f400dbb1b3a7549e74bad02fea670c587c1ba2b041e2bf7"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "desktop",
+      "name": "Locus desktop workspace",
+      "kind": "frontend",
+      "description": "Native SwiftUI workspace owns visible panels, user input and local tools.",
+      "simple_label": "Locus desktop workspace",
+      "code_label": "Locus/LocusApp.swift",
+      "files": [
+        "Locus/LocusApp.swift",
+        "Locus/InspectorView.swift",
+        "Locus/BackendService.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_menu",
+        "root_inspector",
+        "root_transport"
+      ]
+    },
+    {
+      "id": "agent_api",
+      "name": "Local agent API and transport",
+      "kind": "backend",
+      "description": "Python FastAPI routes and WebSocket entrypoints coordinate agent services; the desktop may attach to an independent runtime or launch a child backend.",
+      "simple_label": "Local agent API and transport",
+      "code_label": "agent/ollama_code/server.py",
+      "files": [
+        "agent/ollama_code/server.py",
+        "agent/ollama_code/api/__init__.py",
+        "Locus/BackendProcess.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_launch",
+        "root_api",
+        "root_server"
+      ]
+    },
+    {
+      "id": "workspace_panels",
+      "name": "Project files and review tools",
+      "kind": "frontend",
+      "description": "Open workspace files, attach context, review changes, and reach the terminal.",
+      "simple_label": "Project files and review tools",
+      "code_label": "Locus/AppModel+WorkspaceBrowser.swift",
+      "files": [
+        "Locus/AppModel+WorkspaceBrowser.swift",
+        "Locus/InspectorView.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_workspace",
+        "root_inspector",
+        "root_menu"
+      ]
+    },
+    {
+      "id": "browser_panel",
+      "name": "Shared browser",
+      "kind": "frontend",
+      "description": "Session browser panel shares tabs and captures with the conversation.",
+      "simple_label": "Shared browser",
+      "code_label": "Locus/InspectorBrowserTab.swift",
+      "files": [
+        "Locus/InspectorBrowserTab.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_browser",
+        "root_browser_actions"
+      ]
+    },
+    {
+      "id": "provider_settings",
+      "name": "Model and account selection",
+      "kind": "service",
+      "description": "Native account catalogs and server provider selection choose the inference route.",
+      "simple_label": "Model and account selection",
+      "code_label": "Locus/ProviderAccountsModel.swift",
+      "files": [
+        "Locus/ProviderAccountsModel.swift",
+        "agent/ollama_code/api/providers.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_accounts",
+        "root_provider",
+        "root_provider_routes"
+      ]
+    },
+    {
+      "id": "extensions",
+      "name": "Plugins, skills and MCP",
+      "kind": "service",
+      "description": "Registered routes install/manage extensions and expose MCP resources and connection operations.",
+      "simple_label": "Plugins, skills and MCP",
+      "code_label": "agent/ollama_code/api/extensions.py",
+      "files": [
+        "agent/ollama_code/api/extensions.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_extension_install",
+        "root_extension_routes"
+      ]
+    },
+    {
+      "id": "goals_capsules",
+      "name": "Goals and saved task plans",
+      "kind": "service",
+      "description": "Native workflow controls and backend routes support durable objectives and saved, validated task recipes.",
+      "simple_label": "Goals and saved task plans",
+      "code_label": "Locus/AppModel+Goals.swift",
+      "files": [
+        "Locus/AppModel+Goals.swift",
+        "agent/ollama_code/api/goals.py",
+        "agent/ollama_code/api/capsules.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_goal_ui",
+        "root_goal_api",
+        "root_capsules",
+        "root_work_menu"
+      ]
+    },
+    {
+      "id": "output_library",
+      "name": "Workspace library",
+      "kind": "storage",
+      "description": "Opens saved outputs and versions, previews documents and prepares saved versions for a new revision.",
+      "simple_label": "Workspace library",
+      "code_label": "Locus/AppModel+LibraryIntegration.swift",
+      "files": [
+        "Locus/AppModel+LibraryIntegration.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_library",
+        "root_library_revision"
+      ]
+    },
+    {
+      "id": "calendar_board",
+      "name": "Calendar and workspace board",
+      "kind": "frontend",
+      "description": "Native panels show permissioned EventKit calendars and workspace-scoped planning cards.",
+      "simple_label": "Calendar and workspace board",
+      "code_label": "Locus/InspectorCalendarTab.swift",
+      "files": [
+        "Locus/InspectorCalendarTab.swift",
+        "Locus/InspectorBoardTab.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_calendar",
+        "root_calendar_create",
+        "root_board"
+      ]
+    },
+    {
+      "id": "mobile_access",
+      "name": "Mobile companion access",
+      "kind": "service",
+      "description": "Opt-in pairing and a native command dispatcher connect companion requests to chat/activity/schedule actions.",
+      "simple_label": "Mobile companion access",
+      "code_label": "Locus/CompanionSettingsView.swift",
+      "files": [
+        "Locus/CompanionSettingsView.swift",
+        "Locus/AppModel+MobileCompanion.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_mobile_settings",
+        "root_mobile_dispatch",
+        "root_mobile_requests"
+      ]
+    },
+    {
+      "id": "remote_runtimes",
+      "name": "Remote runtime controls",
+      "kind": "service",
+      "description": "Optional remote-runtime panel and registered API routes expose deployment and returned-change operations.",
+      "simple_label": "Remote runtime controls",
+      "code_label": "Locus/RemoteRuntimesView.swift",
+      "files": [
+        "Locus/RemoteRuntimesView.swift",
+        "agent/ollama_code/api/runtime_deploy.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_remote_ui",
+        "root_remote_routes",
+        "root_remote_gate"
+      ]
+    },
+    {
+      "id": "native_controls",
+      "name": "Computer, voice and simulator controls",
+      "kind": "service",
+      "description": "Native controls support task-scoped computer actions, voice input controls and attached simulator previews. These have separate availability and permission gates.",
+      "simple_label": "Computer, voice and simulator controls",
+      "code_label": "Locus/ComputerControlService.swift",
+      "files": [
+        "Locus/ComputerControlService.swift",
+        "Locus/VoiceComposerControls.swift",
+        "Locus/InspectorSimulatorTab.swift"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_computer_bridge",
+        "root_computer",
+        "root_voice",
+        "root_simulator"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "root_desktop_api",
+      "from": "desktop",
+      "to": "agent_api",
+      "type": "http_request",
+      "reason": "Send authenticated HTTP requests or WebSocket messages",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_http",
+        "root_transport",
+        "root_server"
+      ]
+    },
+    {
+      "id": "root_open_panels",
+      "from": "desktop",
+      "to": "workspace_panels",
+      "type": "function_call",
+      "reason": "Open file, changes and terminal panels",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_menu",
+        "root_inspector",
+        "root_workspace"
+      ]
+    },
+    {
+      "id": "root_open_browser",
+      "from": "desktop",
+      "to": "browser_panel",
+      "type": "function_call",
+      "reason": "Open session browser and attach captures",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_browser"
+      ]
+    },
+    {
+      "id": "root_open_library",
+      "from": "desktop",
+      "to": "output_library",
+      "type": "function_call",
+      "reason": "Open a workspace library or saved output version",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_menu",
+        "root_library"
+      ]
+    },
+    {
+      "id": "root_open_planning",
+      "from": "desktop",
+      "to": "calendar_board",
+      "type": "function_call",
+      "reason": "Open Calendar or Board",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_calendar",
+        "root_board"
+      ]
+    },
+    {
+      "id": "root_open_goals",
+      "from": "desktop",
+      "to": "goals_capsules",
+      "type": "function_call",
+      "reason": "Open a goal or saved task plan",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_work_menu",
+        "root_goal_ui",
+        "root_capsule_ui"
+      ]
+    },
+    {
+      "id": "root_api_extensions",
+      "from": "agent_api",
+      "to": "extensions",
+      "type": "function_call",
+      "reason": "Dispatch registered extension routes",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_api",
+        "root_extension_routes"
+      ]
+    },
+    {
+      "id": "root_api_provider",
+      "from": "agent_api",
+      "to": "provider_settings",
+      "type": "function_call",
+      "reason": "Dispatch provider selection and model routes",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_api",
+        "root_provider_routes"
+      ]
+    },
+    {
+      "id": "root_mobile_desktop",
+      "from": "mobile_access",
+      "to": "desktop",
+      "type": "function_call",
+      "reason": "Dispatch companion chat, activity and schedule requests",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_mobile_requests"
+      ]
+    },
+    {
+      "id": "root_native_actions",
+      "from": "desktop",
+      "to": "native_controls",
+      "type": "function_call",
+      "reason": "Perform a gated native computer action and return its result",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_computer_bridge",
+        "root_computer"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "project_workspace",
+      "title": "Work with project files and changes",
+      "description": "Browse files, attach context, review changes and open a terminal beside the conversation.",
+      "nodes": [
+        "desktop",
+        "workspace_panels"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "These supporting workspace actions are visible entrypoints; the main AI-work example shows the broader request path.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_menu",
+        "root_inspector",
+        "root_workspace"
+      ]
+    },
+    {
+      "id": "browse_web",
+      "title": "Browse and inspect websites",
+      "description": "Use session browser tabs, attach captures, and inspect console/network information. The full agent-driven browser round trip is not traced here.",
+      "nodes": [
+        "browser_panel"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "A useful independent follow-up for understanding how native browser actions reach the agent.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_browser",
+        "root_browser_actions"
+      ]
+    },
+    {
+      "id": "choose_models",
+      "title": "Choose models and accounts",
+      "description": "Select local Ollama or a configured remote/managed account and inspect per-account model catalogs. Availability depends on setup.",
+      "nodes": [
+        "provider_settings"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Routing is central to the product, but tracing every provider would repeat much of the main AI-work story.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_accounts",
+        "root_provider",
+        "root_provider_routes"
+      ]
+    },
+    {
+      "id": "connect_tools",
+      "title": "Connect tools, plugins and skills",
+      "description": "Manage plugins/skills and MCP server connections, resources and prompts through registered extension operations.",
+      "nodes": [
+        "extensions"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Extends the agent toolbox; individual extension execution paths can be inspected on demand.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_extension_install",
+        "root_extension_routes"
+      ]
+    },
+    {
+      "id": "persistent_goals",
+      "title": "Keep working toward a goal",
+      "description": "Create an objective bound to a chat, workspace, model and optional team; continuation is gated by chat and account state.",
+      "nodes": [
+        "goals_capsules"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Durable continuation is a separate deep dive from the three representative first-look flows.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_goal_ui",
+        "root_goal_api",
+        "root_work_menu"
+      ]
+    },
+    {
+      "id": "task_capsules",
+      "title": "Save and revisit task plans",
+      "description": "Open saved Task Capsules and create, update or validate their recipes. Recovery and verification internals are outside this first trace.",
+      "nodes": [
+        "goals_capsules"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "A useful focused follow-up for saved progress and validation, without duplicating team execution in the overview.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_work_menu",
+        "root_capsule_ui",
+        "root_capsules"
+      ]
+    },
+    {
+      "id": "outputs_library",
+      "title": "Revisit and revise outputs",
+      "description": "Open saved documents and output versions, preview them, or attach a saved version to prepare a revision. Image editing is conditional on backend support.",
+      "nodes": [
+        "output_library"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Shows the deliverable lifecycle; individual extraction/export/image-generation paths are not traced in the default three examples.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_library",
+        "root_library_revision",
+        "root_menu"
+      ]
+    },
+    {
+      "id": "calendar",
+      "title": "View and create calendar events",
+      "description": "Use macOS calendars after EventKit access is granted; creation validates fields and a writable calendar.",
+      "nodes": [
+        "calendar_board"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "A distinct native integration kept available for a focused request.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_calendar",
+        "root_calendar_create"
+      ]
+    },
+    {
+      "id": "board",
+      "title": "Plan work on a shared board",
+      "description": "Use workspace-scoped cards, open their details and create or organize work through the Board panel.",
+      "nodes": [
+        "calendar_board"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "A user-facing planning surface whose full persistence and agent-tool path can be explored separately.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_board"
+      ]
+    },
+    {
+      "id": "phone_access",
+      "title": "Continue from a phone",
+      "description": "Enable Mobile Access, pair a companion, and dispatch chat, activity, approval and schedule requests. Device transport is not traced end to end.",
+      "nodes": [
+        "mobile_access"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Optional companion integration; its boundary stays visible without taking a default walkthrough slot.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_mobile_settings",
+        "root_mobile_dispatch",
+        "root_mobile_requests"
+      ]
+    },
+    {
+      "id": "remote_agents",
+      "title": "Run agents on another host",
+      "description": "When independent runtimes are enabled, use remote deployment controls and retrieve returned changes. No real host was contacted.",
+      "nodes": [
+        "remote_runtimes"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Optional execution topology deserves its own later trace; endpoint presence does not establish a deployed remote host.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_remote_ui",
+        "root_remote_routes",
+        "root_remote_gate"
+      ]
+    },
+    {
+      "id": "computer_control",
+      "title": "Let agents use Mac apps",
+      "description": "Native computer actions require enabled task access and macOS Accessibility permission, then return a result to the conversation.",
+      "nodes": [
+        "native_controls"
+      ],
+      "flows": [],
+      "priority": "secondary",
+      "selection_reason": "Native permission and action handling is an additional boundary that can be focused on separately.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_computer_bridge",
+        "root_computer"
+      ]
+    },
+    {
+      "id": "voice",
+      "title": "Dictate or use voice mode",
+      "description": "Composer controls start dictation or voice mode; live audio/recognition behavior was not followed.",
+      "nodes": [
+        "native_controls"
+      ],
+      "flows": [],
+      "priority": "supporting",
+      "selection_reason": "Optional input mode; the core work flow is representative of what happens after a request is submitted.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_voice"
+      ]
+    },
+    {
+      "id": "simulator",
+      "title": "Preview an iOS simulator",
+      "description": "Open a device picker or attached simulator workspace and start/stop its preview. A working installed simulator was not tested.",
+      "nodes": [
+        "native_controls"
+      ],
+      "flows": [],
+      "priority": "supporting",
+      "selection_reason": "Specialized development tool, available for a dedicated trace.",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_simulator"
+      ]
+    }
+  ],
+  "files": [],
+  "changes": [
+    {
+      "id": "root_change_workspace",
+      "goal": "Change the workspace panels",
+      "paths": [
+        "Locus/InspectorView.swift",
+        "Locus/Models/InspectorModels.swift"
+      ],
+      "explanation": "Panel registration and visible workspace destinations live here.",
+      "nodes": [
+        "desktop",
+        "workspace_panels"
+      ],
+      "impact": [
+        "desktop",
+        "workspace_panels"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_panel_names"
+      ]
+    },
+    {
+      "id": "root_change_model_selection",
+      "goal": "Change model selection",
+      "paths": [
+        "agent/ollama_code/api/providers.py",
+        "Locus/ProviderAccountsModel.swift"
+      ],
+      "explanation": "The server accepts provider changes while native state owns catalogs/account status.",
+      "nodes": [
+        "agent_api",
+        "provider_settings"
+      ],
+      "impact": [
+        "agent_api",
+        "provider_settings"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_provider",
+        "root_accounts"
+      ]
+    },
+    {
+      "id": "root_change_extensions",
+      "goal": "Change extension management",
+      "paths": [
+        "agent/ollama_code/api/extensions.py"
+      ],
+      "explanation": "Start with registered operations and extension mutation handling.",
+      "nodes": [
+        "agent_api",
+        "extensions"
+      ],
+      "impact": [
+        "agent_api",
+        "extensions"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_extension_install",
+        "root_extension_routes"
+      ]
+    },
+    {
+      "id": "root_change_library",
+      "goal": "Change saved-output behavior",
+      "paths": [
+        "Locus/AppModel+LibraryIntegration.swift"
+      ],
+      "explanation": "This connects conversation outputs, versions and library actions.",
+      "nodes": [
+        "desktop",
+        "output_library"
+      ],
+      "impact": [
+        "desktop",
+        "output_library"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_library",
+        "root_library_revision"
+      ]
+    },
+    {
+      "id": "root_change_calendar_board",
+      "goal": "Change Calendar or Board",
+      "paths": [
+        "Locus/InspectorCalendarTab.swift",
+        "Locus/InspectorBoardTab.swift"
+      ],
+      "explanation": "These are separate native panels despite sharing the inspector.",
+      "nodes": [
+        "desktop",
+        "calendar_board"
+      ],
+      "impact": [
+        "desktop",
+        "calendar_board"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_calendar_create",
+        "root_board"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "root_scope",
+      "title": "Which Locus this report describes",
+      "text": "This is a first-look source report of the native Locus workspace and its Python agent backend. The build separates ordinary Locus from the optional wallet-bearing LocusX edition. Wallet execution, mobile transport, deployed remote hosts, generated build products, and third-party internals are outside the traced scope. The capability inventory lists discovered entrypoints; a missing walkthrough does not mean a feature is absent.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "root_edition_sources",
+        "root_edition_targets",
+        "root_readme"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "area": "Capability inventory and native surfaces",
+      "confidence": "confirmed",
+      "explanation": "Checked visible menu/panel handlers and registered backend operations for the listed outcomes; selected three distinct journeys for deeper tracing.",
+      "uninspected": [
+        "Every panel action and provider variation",
+        "LocusX wallet edition",
+        "Mobile transport and live remote hosts",
+        "Real provider accounts and macOS grants"
+      ],
+      "evidence": [
+        "root_menu",
+        "root_inspector",
+        "root_api",
+        "root_edition_targets"
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "root_live_setup",
+      "area": "Configured environment",
+      "question": "Which accounts, runtimes, integrations and native permissions are enabled on a real installation?",
+      "reason": "Only repository source was inspected; no app, user data, accounts, devices or remote services were opened.",
+      "next_step": "Inspect the relevant settings and one focused capability in an explicitly scoped live check.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "evidence": []
+    }
+  ],
+  "stack": [
+    {
+      "id": "root_swiftui",
+      "name": "SwiftUI",
+      "category": "frontend",
+      "purpose": "Builds native workspace panels.",
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_inspector",
+        "root_voice"
+      ]
+    },
+    {
+      "id": "root_python",
+      "name": "Python",
+      "category": "runtime",
+      "purpose": "Runs the local agent backend.",
+      "status": "configured",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_launch",
+        "root_backend_packages"
+      ]
+    },
+    {
+      "id": "root_fastapi",
+      "name": "FastAPI",
+      "category": "backend",
+      "purpose": "Composes domain API routes and agent transport.",
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_server",
+        "root_api"
+      ]
+    },
+    {
+      "id": "root_eventkit",
+      "name": "EventKit",
+      "category": "native integration",
+      "purpose": "Reads and creates permitted calendar events.",
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_calendar",
+        "root_calendar_create"
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "root_dep_mcp",
+      "name": "mcp",
+      "category": "Agent integrations",
+      "purpose": "Declared MCP client/runtime dependency; connection management is exposed by extension routes.",
+      "status": "installed",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_backend_packages"
+      ]
+    },
+    {
+      "id": "root_dep_claude_agent_sdk",
+      "name": "claude-agent-sdk",
+      "category": "Agent integrations",
+      "purpose": "Declared dependency for Claude-managed agent execution; full provider branch is outside this first report.",
+      "status": "installed",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_backend_packages"
+      ]
+    },
+    {
+      "id": "root_dep_python_docx",
+      "name": "python-docx",
+      "category": "Agent integrations",
+      "purpose": "Declared document support; this report does not trace package-level invocation.",
+      "status": "installed",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_backend_packages"
+      ]
+    },
+    {
+      "id": "root_dep_openpyxl",
+      "name": "openpyxl",
+      "category": "Agent integrations",
+      "purpose": "Declared spreadsheet support; this report does not trace package-level invocation.",
+      "status": "installed",
+      "confidence": "confirmed",
+      "evidence": [
+        "root_backend_packages"
+      ]
+    }
+  ],
+  "environment": [],
+  "glossary": [
+    {
+      "term": "Capability",
+      "definition": "Something a person can accomplish with the project; it may cross many files or services."
+    },
+    {
+      "term": "Flow",
+      "definition": "A traced sequence from a user action or background trigger to its recorded result or explicit stopping boundary."
+    },
+    {
+      "term": "MCP",
+      "definition": "A protocol that lets an agent connect to external tools and resources."
+    },
+    {
+      "term": "Worktree",
+      "definition": "A separate working checkout of a Git project used to keep a task’s edits apart until review."
+    },
+    {
+      "term": "Runtime",
+      "definition": "The process or host that keeps agent work running."
+    }
+  ]
+}

@@ -80,7 +80,8 @@ def pack_glb(gltf: dict, binary: bytes) -> bytes:
             + struct.pack("<I4s", len(binary), b"BIN\x00") + binary)
 
 
-def optimize(source: bytes) -> tuple[bytes, dict]:
+def optimize(source: bytes, *, color_size: int = 2048, pbr_size: int = 1024) -> tuple[bytes, dict]:
+    assert color_size in (512, 1024, 2048) and pbr_size in (256, 512, 1024)
     original, original_binary = parse_glb(source)
     gltf = copy.deepcopy(original)
     colors, alpha_colors = set(), set()
@@ -97,7 +98,7 @@ def optimize(source: bytes) -> tuple[bytes, dict]:
         assert view not in replacements, "Shared image buffer view requires explicit handling"
         texture = Image.open(io.BytesIO(view_bytes(original, original_binary, view)))
         old_size = texture.size
-        maximum = 2048 if index in colors else 1024
+        maximum = color_size if index in colors else pbr_size
         texture.thumbnail((maximum, maximum), Image.Resampling.LANCZOS)
         is_jpeg = index in colors and index not in alpha_colors
         encoded = io.BytesIO()

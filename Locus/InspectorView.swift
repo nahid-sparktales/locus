@@ -10,6 +10,7 @@ struct InspectorView: View {
     private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
 
     let resizeWidth: CGFloat
+    var showsResizeHandle = true
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
     @EnvironmentObject private var workspaceFiles: WorkspaceFileModel
@@ -93,8 +94,10 @@ struct InspectorView: View {
             }
         }
         .overlay(alignment: .leading) {
-            InspectorResizeHandle(renderedWidth: resizeWidth)
-                .environmentObject(model)
+            if showsResizeHandle {
+                InspectorResizeHandle(renderedWidth: resizeWidth)
+                    .environmentObject(model)
+            }
         }
         .padding(model.inspectorZoomed ? 8 : 0)
         // The outer surface reaches into the hidden title-bar area. Match it

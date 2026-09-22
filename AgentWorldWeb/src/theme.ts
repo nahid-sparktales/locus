@@ -26,14 +26,15 @@ export const RESIDENT_ASSET_TYPES = [...HUMANOID_ASSET_TYPES, ...SHIP_ASSET_TYPE
 export type ResidentAssetType = typeof RESIDENT_ASSET_TYPES[number];
 export const PROP_ASSET_TYPES = ['beacon', 'habitat', 'crates', 'planter', 'lounge', 'server'] as const;
 export type PropAssetType = typeof PROP_ASSET_TYPES[number];
-export const SCENERY_ASSET_TYPES = ['island_twin_cape', 'island_little_garden', 'island_drum', 'island_alabasta', 'island_water_seven', 'island_enies_lobby', 'island_sabaody', 'island_marineford', 'island_wano', 'island_whole_cake', 'island_laugh_tale', 'island_jaya', 'island_skypiea', 'scenery_red_line', 'scenery_reverse_mountain', 'creature_laboon', 'creature_sea_king', 'island_elbaf', 'island_egghead'] as const;
+export const SCENERY_ASSET_TYPES = ['island_twin_cape', 'island_little_garden', 'island_drum', 'island_alabasta', 'island_water_seven', 'island_enies_lobby', 'island_sabaody', 'island_marineford', 'island_wano', 'island_whole_cake', 'island_laugh_tale', 'island_jaya', 'island_skypiea', 'scenery_red_line', 'scenery_reverse_mountain', 'creature_laboon', 'creature_sea_king', 'island_elbaf', 'island_egghead', 'island_mary_geoise', 'island_impel_down', 'island_amazon_lily', 'island_sabaody_archipelago', 'creature_zunesha', 'creature_momonosuke', 'island_dressrosa', 'island_punk_hazard', 'island_hachinosu', 'island_long_ring_long_land'] as const;
 export type SceneryAssetType = typeof SCENERY_ASSET_TYPES[number];
 export const ASSET_TYPES = [...RESIDENT_ASSET_TYPES, 'station', ...PROP_ASSET_TYPES, ...SCENERY_ASSET_TYPES] as const;
 export type AssetType = typeof ASSET_TYPES[number];
 export type Placement = Point & { rotation?: number };
 export type CircleObstacle = Point & { radius: number };
 export type PropPlacement = Placement & { asset: PropAssetType; radius?: number };
-export type ThemeLayout = { radius: number; stations: Placement[]; props: PropPlacement[]; obstacles: CircleObstacle[]; wanderPoints: Point[] };
+export type SailingBounds = { minZ: number; maxZ: number };
+export type ThemeLayout = { sailingBounds?: SailingBounds; radius: number; stations: Placement[]; props: PropPlacement[]; obstacles: CircleObstacle[]; wanderPoints: Point[] };
 export type Theme = {
   version: 1;
   id: string;
@@ -90,7 +91,7 @@ export const DEFAULT_THEME: Theme = {
     ship_mihawk_coffin: 2.7, ship_garp_battleship: 3.4, ship_marine_patrol: 3.0,
     island_twin_cape: 4.8, island_little_garden: 4.5, island_drum: 6, island_alabasta: 4.2,
     island_water_seven: 4.4, island_enies_lobby: 4.6, island_sabaody: 5.5, island_marineford: 4.7,
-    island_wano: 5, island_whole_cake: 5, island_laugh_tale: 3.2, island_jaya: 3.6, island_skypiea: 4.4, scenery_red_line: 7, scenery_reverse_mountain: 8, creature_laboon: 1.8, creature_sea_king: 3.4, island_elbaf: 7.5, island_egghead: 5 },
+    island_wano: 5, island_whole_cake: 5, island_laugh_tale: 3.2, island_jaya: 3.6, island_skypiea: 4.4, scenery_red_line: 7, scenery_reverse_mountain: 8, creature_laboon: 1.8, creature_sea_king: 3.4, island_elbaf: 7.5, island_egghead: 5, island_mary_geoise: 5, island_impel_down: 3.6, island_amazon_lily: 5.5, island_sabaody_archipelago: 6, creature_zunesha: 8, creature_momonosuke: 2, island_dressrosa: 5, island_punk_hazard: 3.6, island_hachinosu: 4.5, island_long_ring_long_land: 1.7 },
   rotations: { ...SHIP_MODEL_ROTATIONS }, palette: { ground: '#46613E', accent: '#C9F54A', sky: '#171713' },
   layout: campusLayout(),
 };
@@ -98,9 +99,9 @@ export const DEFAULT_THEME: Theme = {
 export function safeAssetPath(value: unknown): value is string {
   return typeof value === 'string' && /^assets\/[a-zA-Z0-9_./-]+\.glb(?:\.gz)?$/.test(value) && !value.split('/').some(segment => segment === '..' || segment === '.') && !value.includes('//');
 }
-function placement(p: unknown): p is Placement {
-  return !!p && typeof p === 'object' && typeof (p as Placement).x === 'number' && Number.isFinite((p as Placement).x) && Math.abs((p as Placement).x) <= 48
-    && typeof (p as Placement).z === 'number' && Number.isFinite((p as Placement).z) && Math.abs((p as Placement).z) <= 48
+function placement(p: unknown, limit = 48): p is Placement {
+  return !!p && typeof p === 'object' && typeof (p as Placement).x === 'number' && Number.isFinite((p as Placement).x) && Math.abs((p as Placement).x) <= limit
+    && typeof (p as Placement).z === 'number' && Number.isFinite((p as Placement).z) && Math.abs((p as Placement).z) <= limit
     && ((p as Placement).rotation === undefined || (typeof (p as Placement).rotation === 'number' && Number.isFinite((p as Placement).rotation)));
 }
 const boundedRadius = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0.2 && value <= 8;
@@ -127,17 +128,24 @@ export function parseTheme(input: unknown): Theme {
   }
   const layout = value.layout as Record<string, unknown> | undefined;
   if (layout && typeof layout === 'object') {
-    if (typeof layout.radius === 'number' && Number.isFinite(layout.radius) && layout.radius >= 10 && layout.radius <= (result.environment === 'ocean' ? 42 : 24)) result.layout = campusLayout(layout.radius);
-    if (Array.isArray(layout.stations) && layout.stations.length <= 12 && layout.stations.every(p => placement(p) && Math.hypot(p.x, p.z) < result.layout.radius - 1)) {
+    const coordinateLimit = result.environment === 'ocean' ? 96 : 48;
+    if (typeof layout.radius === 'number' && Number.isFinite(layout.radius) && layout.radius >= 10 && layout.radius <= (result.environment === 'ocean' ? 84 : 24)) result.layout = campusLayout(layout.radius);
+    const bounds = layout.sailingBounds as Partial<SailingBounds> | undefined;
+    if (result.environment === 'ocean' && bounds && typeof bounds.minZ === 'number' && typeof bounds.maxZ === 'number'
+      && Number.isFinite(bounds.minZ) && Number.isFinite(bounds.maxZ) && bounds.minZ < bounds.maxZ - 4
+      && bounds.minZ >= -result.layout.radius && bounds.maxZ <= result.layout.radius) {
+      result.layout.sailingBounds = { minZ: bounds.minZ, maxZ: bounds.maxZ };
+    }
+    if (Array.isArray(layout.stations) && layout.stations.length <= 12 && layout.stations.every(p => placement(p, coordinateLimit) && Math.hypot(p.x, p.z) < result.layout.radius - 1)) {
       result.layout.stations = layout.stations.map(p => ({ x: p.x, z: p.z, ...(p.rotation === undefined ? {} : { rotation: p.rotation }) }));
     }
-    if (Array.isArray(layout.props) && layout.props.length <= 32 && layout.props.every(p => placement(p) && PROP_ASSET_TYPES.includes((p as PropPlacement).asset) && ((p as PropPlacement).radius === undefined || boundedRadius((p as PropPlacement).radius)))) {
+    if (Array.isArray(layout.props) && layout.props.length <= 32 && layout.props.every(p => placement(p, coordinateLimit) && PROP_ASSET_TYPES.includes((p as PropPlacement).asset) && ((p as PropPlacement).radius === undefined || boundedRadius((p as PropPlacement).radius)))) {
       result.layout.props = layout.props.map(p => ({ asset: p.asset, x: p.x, z: p.z, ...(p.rotation === undefined ? {} : { rotation: p.rotation }), ...(p.radius === undefined ? {} : { radius: p.radius }) }));
     }
-    if (Array.isArray(layout.obstacles) && layout.obstacles.length <= (result.environment === 'ocean' ? 64 : 32) && layout.obstacles.every(p => placement(p) && boundedRadius((p as CircleObstacle).radius))) {
+    if (Array.isArray(layout.obstacles) && layout.obstacles.length <= (result.environment === 'ocean' ? 64 : 32) && layout.obstacles.every(p => placement(p, coordinateLimit) && boundedRadius((p as CircleObstacle).radius))) {
       result.layout.obstacles = layout.obstacles.map(p => ({ x: p.x, z: p.z, radius: p.radius }));
     }
-    if (Array.isArray(layout.wanderPoints) && layout.wanderPoints.length <= 64 && layout.wanderPoints.every(p => placement(p) && Math.hypot(p.x, p.z) < result.layout.radius - 0.5)) {
+    if (Array.isArray(layout.wanderPoints) && layout.wanderPoints.length <= 64 && layout.wanderPoints.every(p => placement(p, coordinateLimit) && Math.hypot(p.x, p.z) < result.layout.radius - 0.5)) {
       result.layout.wanderPoints = layout.wanderPoints.map(p => ({ x: p.x, z: p.z }));
     }
   }

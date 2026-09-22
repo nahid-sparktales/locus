@@ -1,0 +1,17 @@
+{
+  "credit_ceiling": 117,
+  "assets": [
+    {
+      "asset": "island_mary_geoise",
+      "prompt": "Premium hand-painted miniature 3D game diorama, rich PBR colors. High three-quarter isometric view, entire isolated object on pale gray. Mary Geoise from One Piece: ivory and warm gold palace with a large emerald green central dome, four slender green-domed towers, smaller domes, ornate arches, broad front stairs and terraced emerald lawns. Compact round rocky reddish sandstone plateau base. Match the colorful anime map silhouette. No text, labels, ocean, people, boats or pedestal."
+    },
+    {
+      "asset": "island_impel_down",
+      "prompt": "Premium hand-painted miniature 3D game diorama, rich PBR colors. High three-quarter isometric view, entire isolated object on pale gray. Impel Down from One Piece: squat circular blue-gray stone ocean prison, thick concentric cylindrical fortress walls, crenellated rim, narrow dark barred windows, imposing central square tower, small entrance gate facing front. Heavy weathered masonry and restrained navy metal details. Compact round foundation at sea level. No text, labels, ocean plane, people, boats or pedestal."
+    },
+    {
+      "asset": "island_amazon_lily",
+      "prompt": "Premium hand-painted miniature 3D game diorama, rich PBR colors. High three-quarter isometric view, entire isolated object on pale gray. Amazon Lily from One Piece: lush tropical island with steep sculpted jungle-covered karst cliffs surrounding a small red and gold Chinese palace with upturned tiled roofs. Giant pale stone serpent sculptures flank the palace entrance, dense emerald foliage, palms, winding stairs and sandy rocky coast. Compact irregular natural island base. No text, labels, ocean, people, boats or pedestal."
+    }
+  ]
+}

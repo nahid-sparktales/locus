@@ -7,7 +7,10 @@ struct AgentWorldWorkspacePane: View {
     @ObservedObject var world: AgentWorldModel
     @ObservedObject var model: AppModel
     let title: String
+    var onRequestChatSpace: () -> Void = {}
     @State private var showsTools = true
+    @State private var toolsWidth: CGFloat?
+    @State private var resizeStart: CGFloat?
     @State private var activityContext: AgentInspectorContext?
     private var ocean: Bool { world.theme == "grand-line" }
     private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters) }
@@ -33,21 +36,23 @@ struct AgentWorldWorkspacePane: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let contentWidth = max(0, proxy.size.width - 24)
+            let contentWidth = max(0, proxy.size.width)
             VStack(spacing: 0) {
-                if !world.quartersPresented || !world.profilePresented { header }
-                workspaceTabs
-                    .padding(.top, world.quartersPresented && world.profilePresented ? 12 : 0)
+                header
                 paneContent(width: contentWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(palette.paper)
-                    .clipShape(RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(palette.line, lineWidth: 1))
-                    .padding(.horizontal, 12).padding(.bottom, 12)
+
+            }
+            .onChange(of: proxy.size.width) { _, width in
+                if width < 700 { showsTools = false }
+            }
+            .onChange(of: showsTools) { _, shown in
+                if shown && proxy.size.width < 700 { onRequestChatSpace() }
             }
             .environment(\.locusWorkspaceGeometry, WorkspaceGeometrySnapshot(
                 windowSize: proxy.size, workspaceWidth: contentWidth,
-                workspaceHeight: max(0, proxy.size.height - 155), composerWidth: contentWidth
+                workspaceHeight: max(0, proxy.size.height - 48), composerWidth: contentWidth
             ))
         }
         .background(palette.panel)
@@ -55,6 +60,9 @@ struct AgentWorldWorkspacePane: View {
         .onChange(of: world.selection) { _, _ in activityContext = nil }
         .onChange(of: model.currentSessionID) { _, _ in world.adoptForegroundConversation() }
         .onChange(of: world.workspaceToolsRequest) { _, _ in showsTools = true }
+        .onChange(of: model.inspectorCollapsed) { _, collapsed in
+            if isSelectedConversationActive && !world.profilePresented { showsTools = !collapsed }
+        }
         .onChange(of: model.inspectorTab) { _, _ in
             if model.agentWorldOwnsPresentations, isSelectedConversationActive,
                !world.activatingConversation, !world.sharedChatPresented, !world.profilePresented, !model.inspectorCollapsed {
@@ -65,9 +73,9 @@ struct AgentWorldWorkspacePane: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 13) {
+        HStack(spacing: 10) {
             if let profile = world.selectedProfile, !world.sharedChatPresented {
-                AgentAvatarView(profileID: profile.id, name: profile.name, size: 40)
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: 28)
             } else { ZStack {
                 Circle().stroke(palette.warning.opacity(0.2), lineWidth: 1)
                 Circle().stroke(palette.warning.opacity(0.3), lineWidth: 1).padding(5)
@@ -77,26 +85,25 @@ struct AgentWorldWorkspacePane: View {
             .foregroundStyle(ocean ? palette.warning : palette.signal)
             .frame(width: 34, height: 34).padding(.top, 5)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title.uppercased()).font(.locus(size: 8, weight: .semibold)).tracking(2.1)
-                    .foregroundStyle(palette.warning)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(world.sharedChatPresented ? "Crew Chat" : world.selectedProfile?.name ?? "Agent workspace")
-                    .font(.locus(size: 20, weight: .semibold))
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    if !world.sharedChatPresented, let resident {
+                    .font(.locus(size: 13, weight: .semibold)).lineLimit(1)
+                if !world.sharedChatPresented, let resident {
+                    HStack(spacing: 4) {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
+                        Text(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))
+                            .font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                     }
-                    Text(world.sharedChatPresented ? "Work with several agents in one conversation" : placement.map { "\($0.ship) · \($0.home)" }
-                         ?? world.conversationContext ?? resident?.role.capitalized ?? "Choose an agent to view chats, activity, and automations")
-                        .font(.locus(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
                 }
-            }
-            Spacer(minLength: 0)
+            }.frame(minWidth: 60, alignment: .leading)
+            Spacer(minLength: 8)
+            workspaceTabs
             if let profile = world.selectedProfile, !world.sharedChatPresented {
-                Button("New chat", action: world.newConversation)
-                    .buttonStyle(AgentWorldChromeButtonStyle(selected: true))
+                Button(action: world.newConversation) {
+                    Image(systemName: "plus.bubble").frame(width: 28, height: 28)
+                }.buttonStyle(.locus(.icon))
                     .disabled(!world.canStartConversation(for: profile.id.uuidString))
+                    .help("New chat with \(profile.name)").accessibilityLabel("New chat with \(profile.name)")
                     .accessibilityIdentifier("agentWorld.workspace.header.newChat")
                 Menu {
                     Button("New chat", action: world.newConversation).disabled(!world.canStartConversation(for: profile.id.uuidString))
@@ -122,7 +129,8 @@ struct AgentWorldWorkspacePane: View {
                 .background(palette.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
                 .help(world.quartersPresented ? "Clear agent selection" : "Return to the world").accessibilityLabel("Close agent workspace")
                 .accessibilityIdentifier("agentWorld.closeConversation")
-        }.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+        }.padding(.horizontal, 12).frame(height: 48)
+            .overlay(alignment: .bottom) { palette.line.frame(height: 1) }
     }
 
     private var workspaceTabs: some View {
@@ -133,7 +141,7 @@ struct AgentWorldWorkspacePane: View {
                         Image(systemName: tabIcon(pane)).font(.locus(size: 11))
                         Text(tabTitle(pane)).font(.locus(size: 11, weight: .semibold)).lineLimit(1)
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
                     .foregroundStyle(selectedPane.wrappedValue == pane ? palette.warning : palette.muted)
                     .background(selectedPane.wrappedValue == pane ? palette.white : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(selectedPane.wrappedValue == pane ? palette.warning.opacity(0.26) : .clear, lineWidth: 1))
@@ -147,17 +155,16 @@ struct AgentWorldWorkspacePane: View {
             if !world.sharedChatPresented && !world.profilePresented {
                 Button {
                     showsTools.toggle()
-                    if showsTools && model.inspectorTab == .agent { model.selectInspectorTab(.preview) }
+                    if showsTools { model.selectInspectorTab(model.inspectorTab == .agent ? .preview : model.inspectorTab) }
                 } label: {
                     Label(showsTools ? "Hide tools" : "Show tools", systemImage: "sidebar.right")
-                        .font(.locus(size: 11, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 10)
+                        .font(.locus(size: 11, weight: .semibold))
                 }.buttonStyle(AgentWorldChromeButtonStyle(selected: showsTools))
                     .help("Keep browser, files, calendar, and task board beside your chat")
                     .accessibilityIdentifier("agentWorld.workspace.toggleTools")
             }
         }
-        .padding(4).background(palette.paper, in: RoundedRectangle(cornerRadius: 11))
-        .padding(.horizontal, 12).padding(.bottom, 12)
+
         .accessibilityIdentifier("agentWorld.workspace.tabs")
     }
 
@@ -203,22 +210,39 @@ struct AgentWorldWorkspacePane: View {
             VStack(spacing: 12) { ProgressView(); Text("Opening your conversation…").foregroundStyle(palette.muted) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isSelectedConversationActive {
-            HSplitView {
+            let inspectorWidth = min(max(304, toolsWidth ?? width * 0.35), max(304, width - 383))
+            HStack(spacing: 0) {
                 GeometryReader { geometry in
                     WorkspaceView(sidebarVisible: true, showSidebar: {}, presentsAgentOverview: false,
-                                  openAgentOverview: { world.openAgentProfile() })
+                                  openAgentOverview: { world.openAgentProfile() }, compactHeader: true)
                         .environment(\.locusWorkspaceGeometry, WorkspaceGeometrySnapshot(
                             windowSize: geometry.size, workspaceWidth: geometry.size.width,
                             workspaceHeight: geometry.size.height, composerWidth: geometry.size.width))
                         .accessibilityIdentifier("agentWorld.workspace.chat")
                 }.frame(minWidth: 320, maxWidth: .infinity)
-                if showsTools {
+                    .onAppear {
+                        if showsTools && model.inspectorTab == .agent { model.selectInspectorTab(.preview) }
+                    }
+                if showsTools && width >= 700 {
+                    Rectangle().fill(palette.line.opacity(0.65)).frame(width: 3)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                        }
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            if resizeStart == nil { resizeStart = inspectorWidth }
+                            toolsWidth = min(max(304, (resizeStart ?? inspectorWidth) - value.translation.width), max(304, width - 383))
+                        }.onEnded { _ in resizeStart = nil })
+                        .accessibilityLabel("Resize chat and tools")
+                        .accessibilityAdjustableAction { direction in
+                            toolsWidth = min(max(304, inspectorWidth + (direction == .increment ? 40 : -40)), max(304, width - 383))
+                        }
                     GeometryReader { geometry in
                         HStack(spacing: 0) {
-                            InspectorView(resizeWidth: max(260, geometry.size.width - InspectorRail.width))
+                            InspectorView(resizeWidth: max(260, geometry.size.width - InspectorRail.width), showsResizeHandle: false)
                             InspectorRail(suppressDuplicateAgentOverview: false)
                         }
-                    }.frame(minWidth: 300, idealWidth: max(320, width * 0.43), maxWidth: .infinity)
+                    }.frame(width: inspectorWidth)
                         .accessibilityIdentifier("agentWorld.workspace.inspector")
                 }
             }

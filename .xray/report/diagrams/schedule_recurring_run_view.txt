@@ -1,0 +1,25 @@
+When a recurring agent becomes due (Simple; Confirmed)
+
+[n0] Due-time coordinator
+[n1] Schedule API
+[n2] Schedule and occurrence records
+[n3] Scheduled workflow execution
+[n4] Background runtime supervisor
+[n5] Local agent API and transport
+[n6] Agent conversation engine
+
+1. Start at [n0]: Find an enabled due schedule. Continue only when a desktop controller is present or this automation may keep running. [Confirmed]
+2. [n0] -> [n1] : Lock the schedule and request its due occurrence. | Dispatch the due enabled schedule when controller/keep-running eligibility permits. [Confirmed] (Due-time coordinator -> Schedule API)
+3. [n1] -> [n2] : Claim one occurrence transactionally and calculate the following run time. | Claim an occurrence before creating outside work. [Confirmed] (Schedule API -> Schedule and occurrence records)
+4. [n2] -> [n1] : Reuse the dedicated chat; skip this occurrence if it is busy, and verify its execution location. | Return schedule, occurrence and whether this caller owns the claim. [Confirmed] (Schedule and occurrence records -> Schedule API)
+5. [n1] -> [n3] : For a stored workflow with workflow support enabled, snapshot it and advance toward its first agent step. | For a stored workflow with capability enabled, start its execution. [Confirmed] (Schedule API -> Scheduled workflow execution)
+6. [n3] -> [n2] : Prepare the agent action, save a queued run and bind it to the workflow step. | Create/advance workflow state, queue the agent step and bind its run. [Confirmed] (Scheduled workflow execution -> Schedule and occurrence records)
+7. [n2] -> [n3] : Return the queued run and updated execution record. | Return the saved run and bound workflow execution. [Confirmed] (Schedule and occurrence records -> Scheduled workflow execution)
+8. [n3] -> [n1] : Record the schedule occurrence and return the queued agent run. | Return workflow action/execution and any queued run to schedule dispatch. [Confirmed] (Scheduled workflow execution -> Schedule API)
+9. [n1] -> [n0] : Resolve the saved model/account/profile and build this run?s user message; missing prerequisites wait for attention. | Return the linked occurrence and queued run; coordinator queues returned work. [Confirmed] (Schedule API -> Due-time coordinator)
+10. [n0] -> [n4] : Queue the command, then admit it when a worker and execution slot are available. | Resolve saved model/profile/account requirements and enqueue a user message for the schedule session. [Confirmed] (Due-time coordinator -> Background runtime supervisor)
+11. [n4] -> [n5] : Apply runtime configuration and accept the user message through the session worker?s chat transport. | Apply worker configuration and send the queued user_message over /ws/chat. [Confirmed] (Background runtime supervisor -> Local agent API and transport)
+12. [n5] -> [n6] : Start the solo/profile agent turn using the same conversation engine as an interactive task. | A supported solo/profile user-message branch starts a user turn, which invokes AgentCore. [Confirmed] (Local agent API and transport -> Agent conversation engine)
+Partial flow: unresolved boundaries remain.
+
+Links: -> confirmed; --~-> likely; --?-> unclear.

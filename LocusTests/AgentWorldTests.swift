@@ -137,6 +137,47 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
     }
 
+    func testShipSelectionOnlyFollowsOutsideQuartersAndNeverLoadsAConversation() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let app = AppModel(startImmediately: false)
+        app.agentProfiles = fixture.profiles
+        app.currentSessionID = "unrelated-chat"
+        let world = app.agentWorld
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { _ in .init() },
+                        create: { _, _ in XCTFail("Following a ship must not create a chat"); return "unexpected" },
+                        load: { _ in XCTFail("Following a ship must not load a chat") },
+                        dispatch: { _, _, _, _, _ in XCTFail("Following must not run an agent") },
+                        stop: { _ in XCTFail("Following must not stop an agent") }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        let id = fixture.profiles[0].id.uuidString
+        let firstFocus = world.focusRequest
+        world.chooseResident(id)
+        XCTAssertEqual(world.selection, id)
+        XCTAssertFalse(world.quartersPresented)
+        XCTAssertFalse(world.conversationPresented)
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertFalse(world.preparingConversation)
+        XCTAssertEqual(world.focusRequest, firstFocus + 1)
+        world.chooseResident(id)
+        XCTAssertEqual(world.focusRequest, firstFocus + 2, "Selecting the same ship resumes camera follow")
+        world.chooseResident(UUID().uuidString)
+        XCTAssertEqual(world.selection, id, "Unknown ships cannot change selection")
+        XCTAssertEqual(world.focusRequest, firstFocus + 2)
+        world.openAgentControls()
+        XCTAssertTrue(world.quartersPresented)
+        XCTAssertTrue(world.profilePresented)
+        world.chooseResident(fixture.profiles[1].id.uuidString)
+        XCTAssertEqual(world.selection, fixture.profiles[1].id.uuidString)
+        XCTAssertTrue(world.profilePresented, "The crew list still opens agent details inside the quarters")
+        world.quartersPresented = false
+        world.chooseResident(id)
+        XCTAssertFalse(world.conversationPresented, "Returning to the map must not restore the large workspace")
+        XCTAssertFalse(world.quartersPresented)
+        XCTAssertEqual(app.currentSessionID, "unrelated-chat")
+    }
+
     func testAgentPicturesAreBoundedSquareImagesAndRejectInvalidFiles() throws {
         let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 600, pixelsHigh: 300,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,

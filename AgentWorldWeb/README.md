@@ -37,11 +37,11 @@ and recovery actions. The snail communicator opens that same Activity Center.
 
 When work starts, ships reserve the nearest free island by navigable sailing
 distance. Existing reservations survive queued and attention states, and release
-on completion. All fourteen Local Line islands can host work. A mint glow follows
+on completion. All twenty Local Line islands can host work. A mint glow follows
 working ships until docking, then the island shoreline and beacon light up.
 Decorative rendezvous never divert working ships. Reduced motion keeps signals
-static. The four near-bank island models face across the channel; Alabatcha sits
-farther left, with more water separating it from Elbatch.
+static. The four inward-facing island models keep their artwork orientation. Alabatcha
+and Elbatch occupy the southern and central waters, leaving the Marineford triangle open.
 
 The local TypeScript/Babylon.js renderer for the Agent World Locus plugin. Its
 native window, conversations, permissions, and task execution belong to Locus.
@@ -171,7 +171,7 @@ props include station, beacon, habitat, crates, planter, lounge, and server mode
 GLBs are normalized by their bounding boxes before placement. Idle and walking
 animation groups are detected from their names; the supplied Meshy characters use
 `Idle` and `Casual_Walk`. The explorer is an autonomous resident appearance.
-Ocean themes use the twelve `ship_` asset keys in `theme.ts`. Whole-ship motion
+Ocean themes use the fifteen `ship_` asset keys in `theme.ts`. Whole-ship motion
 replaces humanoid animation, so ships require neither rigs nor walking clips.
 The Local Line's twelve designs follow the supplied miniature-ship image.
 Its Meshy 7 quality pass targets 30,000 faces and 4K PBR source textures per ship.
@@ -195,8 +195,47 @@ twelve isolated reference images. Its **648-credit** total includes 108 for
 references, 180 for the original ship pass, and 360 for higher-detail replacements.
 The Outpost's original and commons campaigns total **209 credits**, making the
 combined world artwork spend **857 credits**. The shared Ping Ping alert asset
-adds **44 credits**, bringing the complete prepared package to **901 credits**. Its
+adds **44 credits**. Later scenery and companion campaigns bring the Local Line
+to **1,800 Meshy credits** and the complete package to **2,053 credits**. Its
 model is `ui/assets/models/den-den-mushi.glb`; shared artwork provenance lives
 beside the shared asset folder. Generation never runs during builds,
 installation, or normal exploration. Credentials and expiring provider URLs stay
 out of the packaged provenance.
+
+
+Paradise occupies the right side of the Red Line in the default view: Twin Cape,
+Little Garden, Drum, Alabasta, Water Seven, Jaya/Skypiea, Sabaody, and the
+Marineford reference group. Wano, Whole Cake, Laugh Tale, Elbaf, and Egghead
+remain in the New World on the left. Mary Geoise stands on the ridge above
+Marineford; Impel Down sits inside the northern shipping channel, Amazon Lily occupies the northern Calm Belt, and
+Enies Lobby completes the triangle. A slowly turning whirlpool marks the
+Marineford current. Docks overlap the front shoreline; the Impel Down and
+Amazon Lily entrances and docks face forward toward the Marineford region.
+
+Six new Meshy reference/model pairs cost 234 credits: Mary Geoise, Impel Down,
+Amazon Lily, a new Sabaody archipelago, Zunesha with Zou, and Momonosuke.
+Zunesha follows a clear route beyond the leftmost islands, with alternating leg
+strokes; the little pink dragon circles above Wano. Reduced motion freezes both
+routes and the whirlpool. Original geometry is retained with 1K color and 512px
+PBR textures for these additions and several small older models, keeping the
+complete plugin below the 250 MiB installation limit. All twenty harbors remain
+reachable and the twelve native captain-home indices stay stable. Mary Geoise
+is a continental landmark, so ships do not berth on the cliff top.
+
+A final 60-credit Meshy campaign adds Dressrosa, Punk Hazard, Hachinosu, and
+Long Ring Long Land: four Smart Topology previews at 5 credits each, followed
+by four Meshy 7.1 texture refinements at 10 credits each. Original geometry,
+preview images, task lineage, and runtime hashes are retained. The first three
+islands sit in the New World; Long Ring Long Land sits in Paradise. Two clear
+offshore patrol points per island keep the expanded navigation graph bounded.
+
+The Calm Belt bands share the same ±24 centerlines across both sides of the Red
+Line. Main island footprints sit between their inner edges at ±20.8; Amazon Lily
+is the exception, with a reachable dock at the channel edge. Hull-aware sailing
+bounds apply to both captain ships and handoff couriers, so the central mountain
+entrance is the only cross-sea route.
+
+The standalone browser preview opens Captain’s Quarters as a full-window modal
+using the native deck artwork (lossless WebP). It supports crew search, finding
+ships, viewing the bare deck, Escape and returning to the map. Live conversations
+and management tools still open through the native Locus bridge.

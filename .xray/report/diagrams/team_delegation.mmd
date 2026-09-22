@@ -1,0 +1,23 @@
+flowchart LR
+    n0["Locus desktop workspace"]
+    n1["Local agent API and transport"]
+    n2["Team coordinator"]
+    n3["Read-only specialists"]
+    n4["Agent conversation engine"]
+    n5["Configured reviewers"]
+    n6[("Managed task checkout")]
+    n7[("Run history and checkpoints")]
+    n0 -->|"The session worker receives a user_message with the selected team manifest. #91;Confirmed#93;"| n1
+    n1 -->|"The runtime handler dispatches a team manifest to _run_team_turn. #91;Confirmed#93;"| n2
+    n2 -->|"Via the chat service, dispatch_plan_ready presents a validated plan and puts the desktop into waiting for plan approval. #91;Confirmed#93;"| n0
+    n0 -->|"dispatch_decision travels back through the runtime service#59; a run decision is revalidated before specialist work begins. #91;Confirmed#93;"| n2
+    n2 -->|"The coordinator submits dependency-ready read-only specialist waves within the concurrency budget. #91;Confirmed#93;"| n3
+    n3 -->|"Structured outputs, evidence and failures return to the coordinator for the writer prompt and final handoff. #91;Confirmed#93;"| n2
+    n2 -->|"Bounded ordered coding jobs call the shared AgentCore with the writer profile and svc.decide permission function. #91;Confirmed#93;"| n4
+    n4 -->|"The team wrapper reads the shared core result, output and metering, then prepares the diff and verification evidence. #91;Confirmed#93;"| n2
+    n2 -->|"When reviewers are configured, the coordinator asks them to assess the current diff and verification evidence. #91;Confirmed#93;"| n5
+    n5 -->|"Review results return to the completion/repair gate#59; missing verdicts, changed files or unresolved findings keep the run from a clean handoff. #91;Confirmed#93;"| n2
+    n2 -->|"The dispatcher handoff and task-change/completion events are emitted#59; the desktop updates the visible team run. #91;Confirmed#93;"| n0
+    n2 -->|"Managed isolation conditionally creates a detached checkout before dispatch in a Git workspace. #91;Confirmed#93;"| n6
+    n6 -->|"The checkout record returns and the run core enters its execution path before planning and writing. #91;Confirmed#93;"| n2
+    n2 -->|"The team path persists admission metadata and recoverable dispatch/completion checkpoints in the shared RunStore SQLite database. #91;Confirmed#93;"| n7

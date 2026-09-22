@@ -357,9 +357,24 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true) }
     func windowDidChangeOcclusionState(_ notification: Notification) { visibilityChanged?(window?.occlusionState.contains(.visible) == true) }
 
+    /// A map/roster selection only steers the camera. It never loads a chat.
+    func focusResident(_ agentID: String) {
+        guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
+        dismissConversation()
+        selection = agentID
+        focusRequest += 1
+        refresh()
+    }
+
+    func chooseResident(_ agentID: String) {
+        if quartersPresented { openAgentProfile(agentID) }
+        else { focusResident(agentID) }
+    }
+
     func select(_ agentID: String) {
         guard canInteract, let profile = profilesProvider().first(where: { $0.id.uuidString == agentID }) else { return }
         activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
+        quartersPresented = true
         selection = agentID; error = nil; draft = ""; blocks = []; pendingCount = 0
         selectedSessionOverride = nil; conversationPresented = true; sharedChatPresented = false; selectedTransfer = nil; profilePresented = false
         selectionTask?.cancel()
@@ -470,6 +485,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         selectionTask?.cancel(); selectionToken = UUID(); preparingConversation = false
         activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
         if selection != id { selectedSessionOverride = nil; error = nil; blocks = [] }
+        quartersPresented = true
         selection = id; focusRequest += 1; conversationPresented = true; sharedChatPresented = false; profilePresented = true
         refresh()
     }
@@ -630,6 +646,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         selectionTask?.cancel(); activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
         selectionToken = UUID(); preparingConversation = false; profilePresented = false
         appModel.agentCrewChat.activate(workspace: workspace)
+        quartersPresented = true
         conversationPresented = true; sharedChatPresented = true; selectedTransfer = nil
     }
 
@@ -661,6 +678,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard profilesProvider().contains(where: { $0.id.uuidString == profileID }) else { return }
         selectionTask?.cancel()
         selectionToken = UUID(); preparingConversation = false; profilePresented = false
+        quartersPresented = true
         selection = profileID; selectedSessionOverride = sessionID
         conversationPresented = true; sharedChatPresented = false; error = nil
         activateSelectedConversation()

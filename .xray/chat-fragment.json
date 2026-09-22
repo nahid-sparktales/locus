@@ -1,0 +1,1317 @@
+{
+  "evidence": [
+    {
+      "id": "chat_e_composer",
+      "path": "Locus/ComposerView.swift",
+      "line_start": 1413,
+      "line_end": 1422,
+      "kind": "source",
+      "note": "Submit invokes the command router after checking the active composer action.",
+      "sha256": "928046fb777acdf52af0a0a56d624ffeccb993078c1a34712db7f91d740921e9"
+    },
+    {
+      "id": "chat_e_submit",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 805,
+      "line_end": 815,
+      "kind": "source",
+      "note": "Submit sends the draft when idle and queues it while busy.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "chat_e_gates",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 68,
+      "line_end": 123,
+      "kind": "source",
+      "note": "Rejects empty input, handles local slash commands, queues busy requests and preserves unsent input if the agent is offline.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "chat_e_payload",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 403,
+      "line_end": 419,
+      "kind": "source",
+      "note": "Builds a user_message request containing the decorated prompt, selected mode and reserved request ID.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "chat_e_send",
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "line_start": 520,
+      "line_end": 552,
+      "kind": "source",
+      "note": "Admits the reserved run, sends through the selected worker service and starts recovery when transport send fails.",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "id": "chat_e_worker",
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "line_start": 47,
+      "line_end": 90,
+      "kind": "source",
+      "note": "Chooses an attached independent-runtime worker when enabled, otherwise starts a child worker; the walkthrough follows the latter branch.",
+      "sha256": "2198209e916b410c2311868eba121191df975db01f75a2e92a77f80f0bdd32f7"
+    },
+    {
+      "id": "chat_e_worker_service",
+      "path": "Locus/TaskWorkerRuntime.swift",
+      "line_start": 123,
+      "line_end": 135,
+      "kind": "source",
+      "note": "Without an override the worker creates BackendService for its endpoint.",
+      "sha256": "d6879032287e1bd1419e96d2b27c73862104c39df3fa8dea762cd87f3c56ac63"
+    },
+    {
+      "id": "chat_e_connection",
+      "path": "Locus/BackendService.swift",
+      "line_start": 46,
+      "line_end": 90,
+      "kind": "source",
+      "note": "Default chat WebSocket path is /ws/chat; connect attaches the local authentication header and starts receiving.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "chat_e_socket_send",
+      "path": "Locus/BackendService.swift",
+      "line_start": 105,
+      "line_end": 123,
+      "kind": "source",
+      "note": "A validated connection serializes the payload and sends it over the socket.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "chat_e_socket_auth",
+      "path": "agent/ollama_code/api/chat_transport.py",
+      "line_start": 210,
+      "line_end": 224,
+      "kind": "source",
+      "note": "The chat socket rejects disallowed browser origins and incorrect configured authentication tokens before accepting.",
+      "sha256": "d05ccfd2031f9dc9ee79f7d10f314f9659ea6e36cb6fc0afebc89c8a4168e060"
+    },
+    {
+      "id": "chat_e_socket_dispatch",
+      "path": "agent/ollama_code/api/chat_transport.py",
+      "line_start": 277,
+      "line_end": 287,
+      "kind": "source",
+      "note": "The socket pumps events and hands received JSON objects to the installed chat message handler.",
+      "sha256": "d05ccfd2031f9dc9ee79f7d10f314f9659ea6e36cb6fc0afebc89c8a4168e060"
+    },
+    {
+      "id": "chat_e_route",
+      "path": "agent/ollama_code/api/chat_transport.py",
+      "line_start": 312,
+      "line_end": 314,
+      "kind": "source",
+      "note": "Registers the /ws/chat WebSocket route.",
+      "sha256": "d05ccfd2031f9dc9ee79f7d10f314f9659ea6e36cb6fc0afebc89c8a4168e060"
+    },
+    {
+      "id": "chat_e_handler",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2950,
+      "line_end": 2957,
+      "kind": "source",
+      "note": "Application construction installs _handle_client_message as the chat message handler.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "chat_e_admission",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2559,
+      "line_end": 2593,
+      "kind": "source",
+      "note": "Ordinary messages select _run_user_turn, strictly save pending input before starting, reject busy execution and acknowledge accepted requests.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "chat_e_start",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 1653,
+      "line_end": 1675,
+      "kind": "source",
+      "note": "Reserves the turn slot and starts the selected function in an executor.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "id": "chat_e_run",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 703,
+      "line_end": 717,
+      "kind": "source",
+      "note": "Calls AgentCore.run_turn with the service permission decider; Just Chat normally disables tools.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "id": "chat_e_provider_branch",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 2133,
+      "line_end": 2158,
+      "kind": "source",
+      "note": "Managed ChatGPT and Claude Plan use a separate turn path; other providers use the classic response loop.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_client",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 348,
+      "line_end": 359,
+      "kind": "source",
+      "note": "Creates an Ollama client and replaces it for the remote API provider branch.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_prepare",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 2994,
+      "line_end": 3058,
+      "kind": "source",
+      "note": "Work reloads context, prepares tools, records the user message, checks context capacity and begins the response loop.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_model_call",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3836,
+      "line_end": 3857,
+      "kind": "source",
+      "note": "The classic path calls tracked_chat with the selected client, model, messages, available tools and streaming callbacks.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_tracked_call",
+      "path": "agent/ollama_code/model_usage.py",
+      "line_start": 92,
+      "line_end": 103,
+      "kind": "source",
+      "note": "The usage wrapper invokes client.chat_stream and returns the response after recording usage.",
+      "sha256": "49eb80cb48c0ddeb2d30c4356fabdf3952332c0eea9a63133644c4fcf7f247e2"
+    },
+    {
+      "id": "chat_e_ollama_payload",
+      "path": "agent/ollama_code/ollama.py",
+      "line_start": 334,
+      "line_end": 358,
+      "kind": "source",
+      "note": "Builds a streaming request including messages and optional tool schemas, then calls the Ollama stream adapter.",
+      "sha256": "c6dde06fa697cf960fac2a4fd82585f5caa7ef4bfcee409d8e1830c0002ec2d2"
+    },
+    {
+      "id": "chat_e_ollama_stream",
+      "path": "agent/ollama_code/ollama.py",
+      "line_start": 382,
+      "line_end": 418,
+      "kind": "source",
+      "note": "Posts to the configured Ollama /api/chat endpoint, consumes streamed lines and invokes token callbacks.",
+      "sha256": "c6dde06fa697cf960fac2a4fd82585f5caa7ef4bfcee409d8e1830c0002ec2d2"
+    },
+    {
+      "id": "chat_e_tokens",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3808,
+      "line_end": 3826,
+      "kind": "source",
+      "note": "Provider callbacks emit separate visible-token and thinking events.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_response",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3456,
+      "line_end": 3490,
+      "kind": "source",
+      "note": "The loop consumes a model response and records the assistant message including proposed tools.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_no_tools",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3518,
+      "line_end": 3543,
+      "kind": "source",
+      "note": "A response without tools can finish; Just Chat blocks returned tool requests without executing them.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_permission",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 4319,
+      "line_end": 4364,
+      "kind": "source",
+      "note": "After earlier hard-deny checks, safe/allowed calls may proceed; other calls request a decision and denial returns a tool result.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_tool_dispatch",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 4489,
+      "line_end": 4510,
+      "kind": "source",
+      "note": "Dispatches built-in calls through execute_tool, or extension/MCP calls through the tool registry.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_builtin",
+      "path": "agent/ollama_code/tools.py",
+      "line_start": 1379,
+      "line_end": 1388,
+      "kind": "source",
+      "note": "Built-in dispatch resolves a named implementation and returns validation/execution errors as text.",
+      "sha256": "0cf2cd98562dc18d807aec58ee4a99977828b672037b1a48742655e6889de5a0"
+    },
+    {
+      "id": "chat_e_read_file",
+      "path": "agent/ollama_code/tools.py",
+      "line_start": 330,
+      "line_end": 359,
+      "kind": "source",
+      "note": "The read_file implementation checks the target and size, then reads bounded bytes; this is an inspected example tool.",
+      "sha256": "0cf2cd98562dc18d807aec58ee4a99977828b672037b1a48742655e6889de5a0"
+    },
+    {
+      "id": "chat_e_tool_return",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3574,
+      "line_end": 3589,
+      "kind": "source",
+      "note": "Tool output is returned to the loop and appended as a tool-role conversation message.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_save",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 2084,
+      "line_end": 2095,
+      "kind": "source",
+      "note": "Conversation records are appended to SessionStore; user input and goal/capsule-critical records use strict append when available.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_session",
+      "path": "agent/ollama_code/sessions.py",
+      "line_start": 567,
+      "line_end": 584,
+      "kind": "source",
+      "note": "SessionStore creates an individual JSONL transcript file.",
+      "sha256": "49ba69ed8aef4239b88e16c8439bfdcb3b0d0d2d07dd0ea210d44e2c5b103bfd"
+    },
+    {
+      "id": "chat_e_append",
+      "path": "agent/ollama_code/sessions.py",
+      "line_start": 610,
+      "line_end": 631,
+      "kind": "source",
+      "note": "Ordinary append swallows file errors; strict append writes, flushes and fsyncs the transcript.",
+      "sha256": "49ba69ed8aef4239b88e16c8439bfdcb3b0d0d2d07dd0ea210d44e2c5b103bfd"
+    },
+    {
+      "id": "chat_e_terminal",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3648,
+      "line_end": 3682,
+      "kind": "source",
+      "note": "After output finalization the loop records and emits turn_done with completion reason and usage.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_bridge_register",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 215,
+      "line_end": 217,
+      "kind": "source",
+      "note": "ChatService subscribes its emit handler to core events.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "id": "chat_e_bridge_queue",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 535,
+      "line_end": 548,
+      "kind": "source",
+      "note": "Core events are placed on the service queue, using thread-safe scheduling from the worker.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "id": "chat_e_event_pump",
+      "path": "agent/ollama_code/chat_transport_runtime.py",
+      "line_start": 21,
+      "line_end": 30,
+      "kind": "source",
+      "note": "The event pump sends queued events over the WebSocket, waiting for worker completion before terminal events.",
+      "sha256": "09dcafe1ce140957feef367fa9d143b48c82601cd2b135e6c489a693213f8af1"
+    },
+    {
+      "id": "chat_e_receive",
+      "path": "Locus/BackendService.swift",
+      "line_start": 240,
+      "line_end": 280,
+      "kind": "source",
+      "note": "Socket receive decodes events and calls onEvent; native action requests have an additional runtime claim branch.",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "id": "chat_e_worker_receive",
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "line_start": 198,
+      "line_end": 201,
+      "kind": "source",
+      "note": "The worker transport callback routes received events to handleWorkerEvent.",
+      "sha256": "2198209e916b410c2311868eba121191df975db01f75a2e92a77f80f0bdd32f7"
+    },
+    {
+      "id": "chat_e_visible_worker",
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "line_start": 543,
+      "line_end": 553,
+      "kind": "source",
+      "note": "The active session forwards worker events to the main UI handler; other sessions use background recording.",
+      "sha256": "2198209e916b410c2311868eba121191df975db01f75a2e92a77f80f0bdd32f7"
+    },
+    {
+      "id": "chat_e_render_tokens",
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "line_start": 206,
+      "line_end": 237,
+      "kind": "source",
+      "note": "Creates the assistant stream, queues incoming text and commits authoritative final message content.",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "id": "chat_e_render_done",
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "line_start": 730,
+      "line_end": 764,
+      "kind": "source",
+      "note": "The terminal event flushes tokens, resolves dangling permissions, records completion and clears busy state.",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "id": "chat_e_provider_error",
+      "path": "agent/ollama_code/core.py",
+      "line_start": 3949,
+      "line_end": 3957,
+      "kind": "source",
+      "note": "A failed model stream preserves any partial answer, emits an error and ends that response.",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "id": "chat_e_permission_reply",
+      "path": "agent/ollama_code/chat_service.py",
+      "line_start": 578,
+      "line_end": 606,
+      "kind": "source",
+      "note": "The permission decider waits for a matching response; disconnect cleanup denies pending decisions.",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "id": "chat_e_permission_command",
+      "path": "agent/ollama_code/server.py",
+      "line_start": 2612,
+      "line_end": 2616,
+      "kind": "source",
+      "note": "A permission_decision message is passed to ChatService.answer_permission.",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "chat_engine",
+      "name": "Agent conversation engine",
+      "kind": "agent",
+      "description": "Owns the conversation, chooses the managed or classic provider path, loops over model/tool results and emits progress. The walkthrough follows ordinary Work with a selected Ollama model.",
+      "files": [
+        "agent/ollama_code/core.py",
+        "agent/ollama_code/chat_service.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_provider_branch",
+        "chat_e_prepare",
+        "chat_e_response",
+        "chat_e_terminal"
+      ]
+    },
+    {
+      "id": "model_provider",
+      "name": "Selected AI provider",
+      "kind": "AI provider",
+      "description": "Generates streamed replies and proposed tool calls. The traced implementation is the configured Ollama endpoint; remote API and managed ChatGPT/Claude account paths are separate branches.",
+      "files": [
+        "agent/ollama_code/core.py",
+        "agent/ollama_code/model_usage.py",
+        "agent/ollama_code/ollama.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_client",
+        "chat_e_provider_branch",
+        "chat_e_model_call",
+        "chat_e_tracked_call",
+        "chat_e_ollama_stream"
+      ]
+    },
+    {
+      "id": "tool_execution",
+      "name": "Permission checks and tools",
+      "kind": "tool runtime",
+      "description": "Checks whether a proposed action is allowed, waits for required permission and dispatches built-in or registered tools. File reading is the concrete implementation sampled here.",
+      "files": [
+        "agent/ollama_code/core.py",
+        "agent/ollama_code/tools.py",
+        "agent/ollama_code/chat_service.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_permission",
+        "chat_e_tool_dispatch",
+        "chat_e_builtin",
+        "chat_e_read_file",
+        "chat_e_permission_reply"
+      ]
+    },
+    {
+      "id": "local_store",
+      "name": "Local conversation transcripts",
+      "kind": "storage",
+      "description": "SessionStore appends JSONL conversation records. User input and execution-critical history can require strict persistence; ordinary transcript writes are best effort. This node does not represent all Locus storage.",
+      "files": [
+        "agent/ollama_code/sessions.py",
+        "agent/ollama_code/core.py"
+      ],
+      "status": "used",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_save",
+        "chat_e_session",
+        "chat_e_append"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "chat_send_to_worker",
+      "from": "desktop",
+      "to": "agent_api",
+      "type": "websocket_message",
+      "reason": "On the direct-child branch, send the selected worker a user_message through the authenticated /ws/chat connection.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_worker",
+        "chat_e_worker_service",
+        "chat_e_connection",
+        "chat_e_payload",
+        "chat_e_send",
+        "chat_e_socket_send",
+        "chat_e_route",
+        "chat_e_socket_auth",
+        "chat_e_socket_dispatch"
+      ]
+    },
+    {
+      "id": "chat_start_engine",
+      "from": "agent_api",
+      "to": "chat_engine",
+      "type": "function_call",
+      "reason": "Resolve the ordinary message handler, save pending input and run AgentCore with the service permission decider.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_handler",
+        "chat_e_admission",
+        "chat_e_start",
+        "chat_e_run"
+      ]
+    },
+    {
+      "id": "chat_request_model",
+      "from": "chat_engine",
+      "to": "model_provider",
+      "type": "http_request",
+      "reason": "Send the current conversation and allowed tool schemas through tracked_chat to the selected Ollama client.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_model_call",
+        "chat_e_tracked_call",
+        "chat_e_ollama_payload",
+        "chat_e_ollama_stream"
+      ]
+    },
+    {
+      "id": "chat_model_result",
+      "from": "model_provider",
+      "to": "chat_engine",
+      "type": "callback_and_return",
+      "reason": "Return streamed text through callbacks and the completed response with optional tool calls.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_ollama_stream",
+        "chat_e_tokens",
+        "chat_e_response"
+      ]
+    },
+    {
+      "id": "chat_run_tool",
+      "from": "chat_engine",
+      "to": "tool_execution",
+      "type": "function_call",
+      "reason": "If a tool is proposed in Work mode, check permission and dispatch its implementation.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_tool_return",
+        "chat_e_permission",
+        "chat_e_tool_dispatch",
+        "chat_e_builtin"
+      ]
+    },
+    {
+      "id": "chat_tool_result",
+      "from": "tool_execution",
+      "to": "chat_engine",
+      "type": "return",
+      "reason": "Return the tool output or denial/error text so the model can use it in the next iteration.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_tool_return",
+        "chat_e_builtin",
+        "chat_e_permission"
+      ]
+    },
+    {
+      "id": "chat_save_transcript",
+      "from": "chat_engine",
+      "to": "local_store",
+      "type": "file_write",
+      "reason": "Append user, assistant and tool records to the local session transcript.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_save",
+        "chat_e_prepare",
+        "chat_e_response",
+        "chat_e_tool_return",
+        "chat_e_append"
+      ]
+    },
+    {
+      "id": "chat_save_returns",
+      "from": "local_store",
+      "to": "chat_engine",
+      "type": "return",
+      "reason": "Return after append; ordinary transcript errors are swallowed while strict writes can raise.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_append",
+        "chat_e_save"
+      ]
+    },
+    {
+      "id": "chat_publish_events",
+      "from": "chat_engine",
+      "to": "agent_api",
+      "type": "event",
+      "reason": "Emit progress during generation and a final turn_done; ChatService queues these for the WebSocket event pump.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_tokens",
+        "chat_e_terminal",
+        "chat_e_bridge_register",
+        "chat_e_bridge_queue",
+        "chat_e_event_pump"
+      ]
+    },
+    {
+      "id": "chat_show_reply",
+      "from": "agent_api",
+      "to": "desktop",
+      "type": "websocket_event",
+      "reason": "Forward queued events; the active conversation accumulates tokens and finalizes the reply on completion.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_event_pump",
+        "chat_e_receive",
+        "chat_e_worker_receive",
+        "chat_e_visible_worker",
+        "chat_e_render_tokens",
+        "chat_e_render_done"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "chat_work_local",
+      "title": "Work with AI: local Ollama path",
+      "trigger": "Send an ordinary Work message with an Ollama model selected and the direct child-worker transport in use.",
+      "summary": "The native app admits the request and sends it to a Python worker. AgentCore alternates model responses with any permitted tools, saves conversation records and streams events back to the chat. Tool steps are conditional; progress and persistence happen throughout the turn. This is one confirmed static branch, not a claim about the currently active runtime or provider.",
+      "status": "complete",
+      "steps": [
+        {
+          "node": "desktop",
+          "action": "Submit a Work request in an ordinary conversation, using the direct child-worker branch with an Ollama model selected.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_composer",
+            "chat_e_submit",
+            "chat_e_gates",
+            "chat_e_worker"
+          ]
+        },
+        {
+          "node": "agent_api",
+          "action": "Receive the user_message on the authenticated local chat socket and validate its route.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_socket_auth",
+            "chat_e_socket_dispatch",
+            "chat_e_payload",
+            "chat_e_handler"
+          ],
+          "edge": "chat_send_to_worker"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Accept the turn, retain its input, load Work context and choose the classic provider loop.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_admission",
+            "chat_e_start",
+            "chat_e_run",
+            "chat_e_prepare",
+            "chat_e_provider_branch"
+          ],
+          "edge": "chat_start_engine"
+        },
+        {
+          "node": "model_provider",
+          "action": "Send the conversation and available tools to the selected Ollama endpoint for a streamed answer.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_model_call",
+            "chat_e_tracked_call",
+            "chat_e_ollama_payload",
+            "chat_e_ollama_stream"
+          ],
+          "edge": "chat_request_model"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Forward text as it arrives and inspect the completed response for requested actions.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_tokens",
+            "chat_e_response"
+          ],
+          "edge": "chat_model_result"
+        },
+        {
+          "node": "tool_execution",
+          "action": "When the model requests a tool, check permission and execute the allowed action; a denial returns an explanation.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_permission",
+            "chat_e_tool_dispatch",
+            "chat_e_builtin"
+          ],
+          "edge": "chat_run_tool"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Add the tool result to the conversation and repeat the model/tool loop until it can finish; skip the tool branch when no action was requested.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_tool_return",
+            "chat_e_no_tools",
+            "chat_e_response"
+          ],
+          "edge": "chat_tool_result"
+        },
+        {
+          "node": "local_store",
+          "action": "Append conversation records throughout the turn, including assistant replies and tool output.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_save",
+            "chat_e_response",
+            "chat_e_tool_return",
+            "chat_e_session",
+            "chat_e_append"
+          ],
+          "edge": "chat_save_transcript"
+        },
+        {
+          "node": "chat_engine",
+          "action": "Resume after persistence and publish the terminal reason when output processing is finished.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_append",
+            "chat_e_save",
+            "chat_e_terminal"
+          ],
+          "edge": "chat_save_returns"
+        },
+        {
+          "node": "agent_api",
+          "action": "Relay progress throughout the turn; send turn_done only after the worker future finishes.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_bridge_register",
+            "chat_e_bridge_queue",
+            "chat_e_event_pump"
+          ],
+          "edge": "chat_publish_events"
+        },
+        {
+          "node": "desktop",
+          "action": "Display streamed text in the active conversation, finalize its blocks and clear the busy state on turn_done.",
+          "confidence": "confirmed",
+          "evidence": [
+            "chat_e_receive",
+            "chat_e_worker_receive",
+            "chat_e_visible_worker",
+            "chat_e_render_tokens",
+            "chat_e_render_done"
+          ],
+          "edge": "chat_show_reply"
+        }
+      ],
+      "gaps": [],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_send",
+        "chat_e_admission",
+        "chat_e_run",
+        "chat_e_model_call",
+        "chat_e_tool_return",
+        "chat_e_append",
+        "chat_e_render_done"
+      ]
+    }
+  ],
+  "views": [
+    {
+      "id": "chat_work_flow",
+      "title": "From Work message to streamed answer",
+      "kind": "sequence",
+      "level": "simple",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "edges": [
+        "chat_send_to_worker",
+        "chat_start_engine",
+        "chat_request_model",
+        "chat_model_result",
+        "chat_run_tool",
+        "chat_tool_result",
+        "chat_save_transcript",
+        "chat_save_returns",
+        "chat_publish_events",
+        "chat_show_reply"
+      ],
+      "flow": "chat_work_local",
+      "description": "Representative direct-child/Ollama path. The model/tool loop is conditional; progress events stream while the turn continues. Independent runtime and other provider internals are outside this walkthrough.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_send",
+        "chat_e_run",
+        "chat_e_model_call",
+        "chat_e_tool_return",
+        "chat_e_append",
+        "chat_e_render_done"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "work_with_ai",
+      "title": "Chat and work with AI",
+      "description": "Send a request, receive a streamed answer and let permitted tools act on the workspace. Ask/Just Chat limits tool access; provider and execution mode select different routes. The representative trace follows local Ollama with a direct child worker.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "flows": [
+        "chat_work_local"
+      ],
+      "priority": "primary",
+      "selection_reason": "This central user action explains how the native interface, Python agent, model, permissions and saved conversation fit together. The selected Ollama branch is a bounded example, not measured usage or the assumed default.",
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_submit",
+        "chat_e_run",
+        "chat_e_provider_branch",
+        "chat_e_no_tools",
+        "chat_e_model_call",
+        "chat_e_permission",
+        "chat_e_append"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "chat_modes_and_boundaries",
+      "title": "One request can take different routes",
+      "text": "Submitting a draft can send immediately, queue behind active work or remain unsent while the worker is unavailable. With the independent runtime enabled, the app attaches a worker and uses the returned transport path; otherwise it starts a child worker. AgentCore routes managed ChatGPT/Claude accounts differently from the classic Ollama/API loop. The selected walkthrough shows the direct-child Ollama branch so its steps stay concrete.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_gates",
+        "chat_e_submit",
+        "chat_e_worker",
+        "chat_e_provider_branch",
+        "chat_e_client"
+      ]
+    },
+    {
+      "id": "chat_failures_and_permissions",
+      "title": "What can pause or end a Work request",
+      "text": "The socket rejects invalid configured authentication or disallowed origins. A request that cannot be saved before admission is not started, and a busy worker rejects another turn. Tool permission may pause work until a decision; denial returns a tool result so the model can respond or choose another action. Just Chat blocks tool execution. A provider-stream error preserves visible partial text and emits an error. Ordinary transcript writes are best effort; strict input and execution-critical writes flush to disk and can fail the operation.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_socket_auth",
+        "chat_e_admission",
+        "chat_e_permission",
+        "chat_e_permission_reply",
+        "chat_e_permission_command",
+        "chat_e_no_tools",
+        "chat_e_provider_error",
+        "chat_e_append"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "Locus/ComposerView.swift",
+      "role": "important",
+      "reason": "Send control and composer behavior.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_composer"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "role": "core",
+      "reason": "Admission, queueing, prompt construction and worker dispatch.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_payload"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "role": "core",
+      "reason": "Worker attachment/launch and event routing to the correct conversation.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_worker"
+      ]
+    },
+    {
+      "path": "Locus/TaskWorkerRuntime.swift",
+      "role": "supporting",
+      "reason": "Per-conversation service selection.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_worker_service"
+      ]
+    },
+    {
+      "path": "Locus/BackendService.swift",
+      "role": "core",
+      "reason": "Authenticated duplex transport and decoded event delivery.",
+      "nodes": [
+        "desktop",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_connection"
+      ]
+    },
+    {
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "role": "core",
+      "reason": "Visible reply, tool card and completion state handling.",
+      "nodes": [
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_render_tokens"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/api/chat_transport.py",
+      "role": "core",
+      "reason": "WebSocket authentication and command dispatch.",
+      "nodes": [
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_socket_auth"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/chat_transport_runtime.py",
+      "role": "important",
+      "reason": "Ordered progress and terminal event delivery.",
+      "nodes": [
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_event_pump"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/server.py",
+      "role": "core",
+      "reason": "Chooses turn routes and admits ordinary messages.",
+      "nodes": [
+        "agent_api",
+        "chat_engine"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_admission"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/chat_service.py",
+      "role": "core",
+      "reason": "Threaded turn execution, event bridge and pending permissions.",
+      "nodes": [
+        "agent_api",
+        "chat_engine",
+        "tool_execution"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_start"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/core.py",
+      "role": "core",
+      "reason": "Conversation/provider loop, tool permission checks and transcript writes.",
+      "nodes": [
+        "chat_engine",
+        "tool_execution",
+        "local_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_prepare"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/model_usage.py",
+      "role": "important",
+      "reason": "Wraps model invocations with usage bookkeeping.",
+      "nodes": [
+        "model_provider"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_tracked_call"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/ollama.py",
+      "role": "core",
+      "reason": "Ollama streaming request and response adapter.",
+      "nodes": [
+        "model_provider"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_ollama_stream"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/tools.py",
+      "role": "core",
+      "reason": "Built-in tool implementation dispatch and bounded file-reading example.",
+      "nodes": [
+        "tool_execution"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_builtin"
+      ]
+    },
+    {
+      "path": "agent/ollama_code/sessions.py",
+      "role": "core",
+      "reason": "Local JSONL conversation persistence.",
+      "nodes": [
+        "local_store"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_append"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "chat_change_sending",
+      "goal": "Change what Send includes or when requests queue",
+      "paths": [
+        "Locus/AppModel+SendPipeline.swift"
+      ],
+      "nodes": [
+        "desktop"
+      ],
+      "explanation": "The pipeline constructs the user_message payload after admission and mode/provider preparation. Keep the backend request contract in sync.",
+      "impact": [
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_payload",
+        "chat_e_send",
+        "chat_e_gates"
+      ]
+    },
+    {
+      "id": "chat_change_reply_loop",
+      "goal": "Change model/tool iteration or completion behavior",
+      "paths": [
+        "agent/ollama_code/core.py"
+      ],
+      "nodes": [
+        "chat_engine"
+      ],
+      "explanation": "The classic loop creates assistant/tool messages and determines when to stop; managed provider routing is separate.",
+      "impact": [
+        "model_provider",
+        "tool_execution",
+        "local_store",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_provider_branch",
+        "chat_e_response",
+        "chat_e_tool_return",
+        "chat_e_terminal"
+      ]
+    },
+    {
+      "id": "chat_change_tools",
+      "goal": "Change action permissions or built-in tools",
+      "paths": [
+        "agent/ollama_code/core.py",
+        "agent/ollama_code/tools.py",
+        "agent/ollama_code/chat_service.py"
+      ],
+      "nodes": [
+        "tool_execution"
+      ],
+      "explanation": "Keep permission decision events and tool return text compatible with the UI and conversation loop.",
+      "impact": [
+        "chat_engine",
+        "desktop"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_permission",
+        "chat_e_permission_reply",
+        "chat_e_tool_dispatch",
+        "chat_e_builtin"
+      ]
+    },
+    {
+      "id": "chat_change_transcript",
+      "goal": "Change local chat retention or persistence guarantees",
+      "paths": [
+        "agent/ollama_code/sessions.py",
+        "agent/ollama_code/core.py"
+      ],
+      "nodes": [
+        "local_store"
+      ],
+      "explanation": "Ordinary and strict append have different failure behavior. User inputs and execution-critical records rely on strict persistence.",
+      "impact": [
+        "chat_engine",
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_save",
+        "chat_e_append",
+        "chat_e_admission"
+      ]
+    },
+    {
+      "id": "chat_change_reply_display",
+      "goal": "Change how streaming answers appear",
+      "paths": [
+        "Locus/AppModel+BackendEvents.swift",
+        "Locus/BackendService.swift"
+      ],
+      "nodes": [
+        "desktop"
+      ],
+      "explanation": "Progress starts a reply, accumulates tokens and commits authoritative final content; completion clears busy state.",
+      "impact": [
+        "agent_api"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_receive",
+        "chat_e_render_tokens",
+        "chat_e_render_done"
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "area": "Work message: direct child worker and local Ollama",
+      "explanation": "Inspected a complete static path across 15 targeted Swift/Python files: native submit, transport, admission, classic provider streaming, permissioned tool dispatch, JSONL writes and return events. The app and model were not run; complete means linked source control flow for the scoped branch.",
+      "uninspected": [
+        "Independent-runtime relay internals and restart/reconnect replay",
+        "Remote API and managed ChatGPT/Claude provider implementations",
+        "Concrete execution of every built-in, MCP, native or extension tool",
+        "Actual selected provider/runtime, live model availability and production behavior",
+        "Full context compaction, image/media, budget ledger, goals and collaboration branches"
+      ],
+      "confidence": "confirmed",
+      "evidence": [
+        "chat_e_send",
+        "chat_e_admission",
+        "chat_e_run",
+        "chat_e_model_call",
+        "chat_e_tool_dispatch",
+        "chat_e_append",
+        "chat_e_render_done"
+      ]
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "chat_runtime_provider_scope",
+      "area": "Other chat execution branches",
+      "question": "Which provider and worker transport are active for a particular user request?",
+      "reason": "The code supports direct child and independent-runtime worker transports plus several provider families. No saved credentials, runtime state or running app were inspected.",
+      "next_step": "For a focused follow-up, inspect the chosen route and its relevant adapter/relay using non-secret configuration and then trace that branch.",
+      "nodes": [
+        "desktop",
+        "agent_api",
+        "chat_engine",
+        "model_provider",
+        "tool_execution",
+        "local_store"
+      ],
+      "evidence": [
+        "chat_e_worker",
+        "chat_e_provider_branch",
+        "chat_e_client"
+      ]
+    }
+  ],
+  "inspected_files": [
+    {
+      "path": "Locus/ComposerView.swift",
+      "sha256": "928046fb777acdf52af0a0a56d624ffeccb993078c1a34712db7f91d740921e9"
+    },
+    {
+      "path": "Locus/AppModel+SendPipeline.swift",
+      "sha256": "f37b401102a6d7fb574a9aecf11db75e5c0d3aeddd13933ae3f5b487360575bf"
+    },
+    {
+      "path": "Locus/AppModel+ChatWorkers.swift",
+      "sha256": "2198209e916b410c2311868eba121191df975db01f75a2e92a77f80f0bdd32f7"
+    },
+    {
+      "path": "Locus/TaskWorkerRuntime.swift",
+      "sha256": "d6879032287e1bd1419e96d2b27c73862104c39df3fa8dea762cd87f3c56ac63"
+    },
+    {
+      "path": "Locus/BackendService.swift",
+      "sha256": "39c2820c732c13d13c70b383c23271c524db5944c03863124d66b8e3cf1ff3ae"
+    },
+    {
+      "path": "Locus/AppModel+BackendEvents.swift",
+      "sha256": "11cb8486ac9858681fac353ec3a5c10d0859f8ff06493d0f3d4b99592e0850a4"
+    },
+    {
+      "path": "agent/ollama_code/api/chat_transport.py",
+      "sha256": "d05ccfd2031f9dc9ee79f7d10f314f9659ea6e36cb6fc0afebc89c8a4168e060"
+    },
+    {
+      "path": "agent/ollama_code/chat_transport_runtime.py",
+      "sha256": "09dcafe1ce140957feef367fa9d143b48c82601cd2b135e6c489a693213f8af1"
+    },
+    {
+      "path": "agent/ollama_code/server.py",
+      "sha256": "74b661494de02baf2bf644fed842a84380cedcfde976e8eabb4783bb018a53a7"
+    },
+    {
+      "path": "agent/ollama_code/chat_service.py",
+      "sha256": "3a84203deb9b3df4aaaa90f28744349584c123bf268d3b908e951fb992af2681"
+    },
+    {
+      "path": "agent/ollama_code/core.py",
+      "sha256": "04af0dc17de2a1eb3abfb60c60478e8a64457224f176c347fda2c0a18fc9b49d"
+    },
+    {
+      "path": "agent/ollama_code/model_usage.py",
+      "sha256": "49eb80cb48c0ddeb2d30c4356fabdf3952332c0eea9a63133644c4fcf7f247e2"
+    },
+    {
+      "path": "agent/ollama_code/ollama.py",
+      "sha256": "c6dde06fa697cf960fac2a4fd82585f5caa7ef4bfcee409d8e1830c0002ec2d2"
+    },
+    {
+      "path": "agent/ollama_code/tools.py",
+      "sha256": "0cf2cd98562dc18d807aec58ee4a99977828b672037b1a48742655e6889de5a0"
+    },
+    {
+      "path": "agent/ollama_code/sessions.py",
+      "sha256": "49ba69ed8aef4239b88e16c8439bfdcb3b0d0d2d07dd0ea210d44e2c5b103bfd"
+    }
+  ]
+}

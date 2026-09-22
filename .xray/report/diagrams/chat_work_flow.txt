@@ -1,0 +1,22 @@
+From Work message to streamed answer (Simple; Confirmed)
+
+[n0] Locus desktop workspace
+[n1] Local agent API and transport
+[n2] Agent conversation engine
+[n3] Selected AI provider
+[n4] Permission checks and tools
+[n5] Local conversation transcripts
+
+1. Start at [n0]: Submit a Work request in an ordinary conversation, using the direct child-worker branch with an Ollama model selected. [Confirmed]
+2. [n0] -> [n1] : Receive the user_message on the authenticated local chat socket and validate its route. | On the direct-child branch, send the selected worker a user_message through the authenticated /ws/chat connection. [Confirmed] (Locus desktop workspace -> Local agent API and transport)
+3. [n1] -> [n2] : Accept the turn, retain its input, load Work context and choose the classic provider loop. | Resolve the ordinary message handler, save pending input and run AgentCore with the service permission decider. [Confirmed] (Local agent API and transport -> Agent conversation engine)
+4. [n2] -> [n3] : Send the conversation and available tools to the selected Ollama endpoint for a streamed answer. | Send the current conversation and allowed tool schemas through tracked_chat to the selected Ollama client. [Confirmed] (Agent conversation engine -> Selected AI provider)
+5. [n3] -> [n2] : Forward text as it arrives and inspect the completed response for requested actions. | Return streamed text through callbacks and the completed response with optional tool calls. [Confirmed] (Selected AI provider -> Agent conversation engine)
+6. [n2] -> [n4] : When the model requests a tool, check permission and execute the allowed action; a denial returns an explanation. | If a tool is proposed in Work mode, check permission and dispatch its implementation. [Confirmed] (Agent conversation engine -> Permission checks and tools)
+7. [n4] -> [n2] : Add the tool result to the conversation and repeat the model/tool loop until it can finish; skip the tool branch when no action was requested. | Return the tool output or denial/error text so the model can use it in the next iteration. [Confirmed] (Permission checks and tools -> Agent conversation engine)
+8. [n2] -> [n5] : Append conversation records throughout the turn, including assistant replies and tool output. | Append user, assistant and tool records to the local session transcript. [Confirmed] (Agent conversation engine -> Local conversation transcripts)
+9. [n5] -> [n2] : Resume after persistence and publish the terminal reason when output processing is finished. | Return after append; ordinary transcript errors are swallowed while strict writes can raise. [Confirmed] (Local conversation transcripts -> Agent conversation engine)
+10. [n2] -> [n1] : Relay progress throughout the turn; send turn_done only after the worker future finishes. | Emit progress during generation and a final turn_done; ChatService queues these for the WebSocket event pump. [Confirmed] (Agent conversation engine -> Local agent API and transport)
+11. [n1] -> [n0] : Display streamed text in the active conversation, finalize its blocks and clear the busy state on turn_done. | Forward queued events; the active conversation accumulates tokens and finalizes the reply on completion. [Confirmed] (Local agent API and transport -> Locus desktop workspace)
+
+Links: -> confirmed; --~-> likely; --?-> unclear.

@@ -7,7 +7,7 @@ import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture.js';
 import { createOceanWater, oceanNormalPixels, oceanTime } from '../src/oceanWater.ts';
-import { GRAND_LINE_LANDMARKS } from '../src/grandLineGeography.ts';
+import { GRAND_LINE_LANDMARKS, MARINEFORD_CURRENT } from '../src/grandLineGeography.ts';
 
 test('local ripple normals are deterministic, smoothly wrapped and bounded in memory', () => {
   const pixels = oceanNormalPixels(), size = 256;
@@ -27,13 +27,14 @@ test('local ripple normals are deterministic, smoothly wrapped and bounded in me
   assert.ok(clipped < size * size * 0.001, 'Normal slopes should not flatten into clipped patches');
 });
 
-test('ocean keeps all fourteen shore contours, updates finite uniforms and owns one bounded texture', () => {
+test('ocean keeps all twenty shore contours, updates finite uniforms and owns one bounded texture', () => {
   const engine = new NullEngine(), scene = new Scene(engine), parent = new TransformNode('sea', scene);
   const camera = new FreeCamera('camera', new Vector3(0, 30, -40), scene); scene.activeCamera = camera;
   const ocean = createOceanWater(scene, parent, GRAND_LINE_LANDMARKS);
   try {
     const saved = ocean.material.serialize();
     assert.deepEqual(saved.vectors4Arrays.islandCoasts, GRAND_LINE_LANDMARKS.flatMap((island, index) => [island.x, island.z, island.radius, index * 2.3999632297 + 0.73]));
+    assert.deepEqual(saved.vectors3.marinefordCurrent, [MARINEFORD_CURRENT.x, MARINEFORD_CURRENT.z, MARINEFORD_CURRENT.radius]);
     assert.equal(ocean.surface.isPickable, false); assert.equal(ocean.surface.position.y, -0.19);
     assert.ok(ocean.surface.getTotalVertices() <= 25000);
     const texture = ocean.material.getActiveTextures()[0]; assert.ok(texture);

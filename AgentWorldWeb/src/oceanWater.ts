@@ -1,3 +1,4 @@
+import { MARINEFORD_CURRENT, GRAND_LINE_CALM_BELT } from './grandLineGeography.ts';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
 import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
@@ -7,7 +8,7 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
 
 type IslandCoast = { x: number; z: number; radius: number };
-export const MAX_OCEAN_COASTS = 16;
+export const MAX_OCEAN_COASTS = 20;
 export const oceanTime = (elapsed: number, reducedMotion: boolean): number => reducedMotion || !Number.isFinite(elapsed) ? 0 : Math.max(0, elapsed) % 4096;
 
 /** Periodic gradient noise gives a seamless, deterministic normal tile. The
@@ -64,7 +65,7 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
       varying vec3 vPosition; varying vec3 vWorld;
       void main(void) {
         vec3 p = position;
-        float calm = 1.0 - 0.72 * smoothstep(20.8, 23.0, abs(p.z)) * (1.0 - smoothstep(25.0, 27.2, abs(p.z)));
+        float calm = 1.0 - 0.72 * smoothstep(${GRAND_LINE_CALM_BELT.inner.toFixed(1)}, ${GRAND_LINE_CALM_BELT.solid.toFixed(1)}, abs(p.z)) * (1.0 - smoothstep(${GRAND_LINE_CALM_BELT.fade.toFixed(1)}, ${GRAND_LINE_CALM_BELT.outer.toFixed(1)}, abs(p.z)));
         p.y += (sin(dot(p.xz, vec2(0.19, 0.12)) - time * 0.23) * 0.042
           + sin(dot(p.xz, vec2(-0.09, 0.28)) - time * 0.31 + 1.7) * 0.026) * calm;
         vPosition = p; vWorld = (world * vec4(p, 1.0)).xyz;
@@ -72,7 +73,7 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
       }`,
     fragmentSource: `precision highp float;
       varying vec3 vPosition; varying vec3 vWorld;
-      uniform float time; uniform vec3 cameraPosition;
+      uniform float time; uniform vec3 cameraPosition; uniform vec3 marinefordCurrent;
       uniform sampler2D rippleNormal;
       uniform vec4 islandCoasts[${Math.max(1, coasts.length)}];
       float hash(vec2 p) {
@@ -101,7 +102,7 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
       }
       void main(void) {
         vec2 p = vPosition.xz;
-        float calm = smoothstep(20.8, 23.0, abs(p.y)) * (1.0 - smoothstep(25.0, 27.2, abs(p.y)));
+        float calm = smoothstep(${GRAND_LINE_CALM_BELT.inner.toFixed(1)}, ${GRAND_LINE_CALM_BELT.solid.toFixed(1)}, abs(p.y)) * (1.0 - smoothstep(${GRAND_LINE_CALM_BELT.fade.toFixed(1)}, ${GRAND_LINE_CALM_BELT.outer.toFixed(1)}, abs(p.y)));
         // Two very broad currents bend the wave trains, so their highlights
         // never form straight light shafts or a repeating fingerprint grid.
         vec2 flow = vec2(noise(p * 0.09 + vec2(time * 0.012, 2.8)), noise(p * 0.073 + vec2(8.3, -time * 0.010))) - 0.5;
@@ -151,9 +152,22 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
         foam *= smoothstep(0.25, 0.63, washNoise);
         float lace = (1.0 - smoothstep(0.02, 0.14, abs(shore - 0.07))) * smoothstep(0.42, 0.74, washNoise);
         color = mix(color, vec3(0.80, 0.94, 0.87), clamp(foam * 0.62 + lace * 0.24, 0.0, 0.68));
+        // A small three-armed whirlpool in the Marineford triangle. Its dark
+        // center and broken foam rotate with ocean time, which freezes for
+        // reduced motion. It is surface decoration, never a navigation hazard.
+        vec2 vortex = (p - marinefordCurrent.xy) / marinefordCurrent.z;
+        float vr = length(vortex);
+        float vortexMask = 1.0 - smoothstep(0.68, 1.0, vr);
+        float angle = atan(vortex.y, vortex.x);
+        float spiral = sin(angle * 3.0 + vr * 19.0 + time * 0.85);
+        float streak = smoothstep(0.78, 0.97, spiral) * smoothstep(0.10, 0.24, vr);
+        float breakup = 0.62 + 0.38 * noise(vortex * 13.0 + vec2(time * 0.07));
+        color = mix(color, vec3(0.018, 0.23, 0.30), vortexMask * (0.35 + 0.22 * (1.0 - smoothstep(0.0, 0.22, vr))));
+        color = mix(color, vec3(0.56, 0.83, 0.79), streak * breakup * vortexMask * 0.70);
         gl_FragColor = vec4(color, 1.0);
       }`,
-  }, { attributes: ['position'], uniforms: ['worldViewProjection', 'world', 'time', 'cameraPosition', 'islandCoasts'], samplers: ['rippleNormal'] });
+  }, { attributes: ['position'], uniforms: ['worldViewProjection', 'world', 'time', 'cameraPosition', 'islandCoasts', 'marinefordCurrent'], samplers: ['rippleNormal'] });
+  material.setVector3('marinefordCurrent', new Vector3(MARINEFORD_CURRENT.x, MARINEFORD_CURRENT.z, MARINEFORD_CURRENT.radius));
   material.setFloat('time', 0); material.setVector3('cameraPosition', new Vector3(0, 30, -40));
   material.setArray4('islandCoasts', coasts.length ? coasts.flatMap((island, index) => [island.x, island.z, island.radius, index * 2.3999632297 + 0.73]) : [0, 0, 0, 0]);
   material.setTexture('rippleNormal', rippleNormal);
