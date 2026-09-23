@@ -33,7 +33,7 @@ enum SummaryDetail: Hashable {
 struct PinnedSummaryCard: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -420,7 +420,7 @@ struct PinnedSummaryCard: View {
 struct SummarySection<Trailing: View, Content: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The person's own choice, persisted per section like Codex's
@@ -580,7 +580,7 @@ extension SummarySection where Trailing == EmptyView {
 struct SummaryHeaderMenu<Items: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
     let label: String
@@ -609,7 +609,7 @@ struct SummaryHeaderMenu<Items: View>: View {
 struct SummaryHeaderButton: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
     let label: String
@@ -638,7 +638,7 @@ struct SummaryHeaderButton: View {
 struct SummaryList<Item: Identifiable, Row: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var extraVisible = 0
@@ -708,7 +708,7 @@ struct SummaryList<Item: Identifiable, Row: View>: View {
 struct SummaryRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let icon: SummaryIcon
     let label: String
@@ -803,7 +803,7 @@ struct SummaryRow: View {
 struct SummaryEmptyRow<Items: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let title: String
     /// Codex's empty rows are text-only; pass a symbol to lead with a glyph.
@@ -914,7 +914,7 @@ enum SummaryIcon {
 private struct SummaryCardChrome: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     /// Cards fill their column; a chrome-wrapped control that sits in a row
     /// beside others opts out so it can hug its own content instead.

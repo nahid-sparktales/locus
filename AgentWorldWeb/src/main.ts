@@ -1,3 +1,7 @@
+import { ISLAND_QUARTERS, canOpenIslandQuarters } from './islandQuarters';
+import type { QuartersIslandID } from './islandQuarters';
+import { isSailingArea, sailingHarbors, SAILING_AREA_NAMES } from './sailingArea';
+import type { SailingArea } from './sailingArea';
 import { createCaptainsQuarters } from './captainsQuarters';
 import { GRAND_LINE_LANDMARKS, GRAND_LINE_MAP_RADIUS, GRAND_LINE_CALM_BELT, MARY_GEOISE } from './grandLineGeography';
 import { OutpostWorld } from './world';
@@ -26,6 +30,7 @@ el('theme-button').hidden = !demo;
 const seenTransfers = new Set<string>();
 const activityButtons = new Map<string, HTMLButtonElement>();
 const rosterCards = new Map<string, { element: HTMLDivElement; button: HTMLButtonElement; picker: HTMLSelectElement }>();
+const ISLAND_QUARTERS_PREFERENCE = 'locus.agentWorld.islandQuartersEnabled.v1';
 const SHIP_STYLE_PREFERENCE = 'locus.agentWorld.demoShipStyles.v1';
 let pendingFocusAgentID: string | undefined;
 let snapshot: Snapshot = { version: 1, type: 'snapshot', agents: [], theme: 'outpost', projectName: '' };
@@ -35,6 +40,8 @@ let nativeVisible = true;
 let themeChoices: ThemeChoice[] = [{ id: 'outpost', name: 'Orbital Locus Outpost' }];
 let loadedTheme: string | undefined;
 let ocean = false;
+let sailingArea: SailingArea = 'whole';
+const fleetSize = () => snapshot.theme === 'grand-line' ? Math.min(SECTOR_SIZE, sailingHarbors(sailingArea).length) : SECTOR_SIZE;
 let residentStyle: ResidentStyle = 'mixed';
 let navigationMode: 'orbit' | 'pan' = 'orbit';
 let loadingTheme: string | undefined;
@@ -55,6 +62,7 @@ function updatePreviewURL(): void {
   const url = new URL(window.location.href);
   url.searchParams.set('theme', loadedTheme ?? snapshot.theme);
   url.searchParams.set('residentStyle', residentStyle);
+  url.searchParams.set('sailingArea', sailingArea);
   history.replaceState(null, '', url);
 }
 function showNote(message: string): void {
@@ -117,6 +125,7 @@ function renderActivity(): void {
   el('shared-chat').textContent = ocean ? 'Crew Chat' : 'Shared chat';
   el('agent-controls-title').textContent = ocean ? 'Captain’s Quarters' : 'Agent workspace';
   el('quarters-open').hidden = !demo || !ocean;
+  renderIslandSettings();
   const selected = snapshot.agents.find(agent => agent.id === snapshot.selectedAgentID);
   el('agent-controls-name').textContent = selected?.name ?? (ocean ? 'Choose a captain or manage your fleet' : 'Manage your agents');
   el('attention-count').textContent = String(attention.length);
@@ -196,7 +205,7 @@ function publishResidentPlacements(): void {
     const home = world?.getAgentHome(agent.id);
     if (ship && home) knownPlacements.set(agent.id, { agentID: agent.id, ship, home });
   }
-  const visibleIDs = new Set(sectorAgents(snapshot.agents, sector).map(agent => agent.id));
+  const visibleIDs = new Set(sectorAgents(snapshot.agents, sector, fleetSize()).map(agent => agent.id));
   const placements = [...knownPlacements.values()].sort((a, b) => Number(visibleIDs.has(b.agentID)) - Number(visibleIDs.has(a.agentID))).slice(0, 500);
   const fingerprint = JSON.stringify(placements);
   if (fingerprint === lastPlacements) return;
@@ -207,7 +216,7 @@ function publishResidentPlacements(): void {
 function selectAgent(id: string): void {
   const agent = snapshot.agents.find(item => item.id === id);
   if (!agent) return;
-  const nextSector = agentSector(snapshot.agents, id);
+  const nextSector = agentSector(snapshot.agents, id, fleetSize());
   sector = nextSector;
   snapshot = { ...snapshot, selectedAgentID: id };
   updateWorldAgents();
@@ -235,9 +244,28 @@ function clearAgentSelection(): void {
   announce('Ship selection cleared. Camera returned to the world overview.');
 }
 
+function openIslandQuarters(id: QuartersIslandID): void {
+  if (!canOpenIslandQuarters(id, snapshot.islandQuartersEnabled !== false, loadedTheme ?? snapshot.theme)) return;
+  el<HTMLDetailsElement>('world-settings').open = false;
+  if (demo) quarters.open(id);
+  else send({ version: 1, type: 'openIslandQuarters', islandID: id });
+  announce(`Captain’s Quarters · ${ISLAND_QUARTERS[id].name}`);
+}
+
+function renderIslandSettings(): void {
+  const enabled = snapshot.islandQuartersEnabled !== false;
+  el('world-settings').hidden = !demo || !ocean;
+  el<HTMLInputElement>('island-quarters-enabled').checked = enabled;
+  el('island-destinations').hidden = !enabled;
+  world?.setIslandQuartersEnabled(enabled);
+  renderNavigation();
+}
+
 function updateWorldAgents(): void {
+  world?.setIslandQuartersEnabled(snapshot.islandQuartersEnabled !== false);
+  world?.setSailingArea(sailingArea);
   world?.setShipStyles(snapshot.shipStyles ?? {});
-  world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
+  world?.setAgents(sectorAgents(snapshot.agents, sector, fleetSize()), snapshot.selectedAgentID);
 }
 
 function setAgentShipStyle(agentID: string, style: string): void {
@@ -263,7 +291,7 @@ function renderRoster(): void {
   el('project-name').textContent = snapshot.projectName || (demo ? 'A preview of your next workspace' : 'Select a project in Locus');
   el('project-name').title = snapshot.projectName;
   el('live-label').textContent = demo ? `Demo ${ocean ? 'fleet' : 'residents'} · no model calls` : 'Connected to Locus';
-  const totalSectors = Math.max(1, Math.ceil(snapshot.agents.length / SECTOR_SIZE));
+  const totalSectors = Math.max(1, Math.ceil(snapshot.agents.length / fleetSize()));
   el('sector-label').textContent = `${String(sector + 1).padStart(2, '0')} / ${String(totalSectors).padStart(2, '0')}`;
   el('coordinate-sector').textContent = String(sector + 1).padStart(2, '0');
   const working = snapshot.agents.filter(agent => agent.status === 'working').length;
@@ -329,7 +357,7 @@ function renderNavigation(): void {
   el('mode-orbit').setAttribute('aria-pressed', String(navigationMode === 'orbit'));
   el('mode-pan').setAttribute('aria-pressed', String(navigationMode === 'pan'));
   el('drag-hint').textContent = navigationMode === 'pan' ? 'Drag to move map' : 'Drag to rotate';
-  el('world').setAttribute('aria-label', `3D ${ocean ? 'Local Line ocean world. Each agent has their own ship' : 'outpost overview'}. Click ${ocean ? 'a ship' : 'an agent'} to interact. Drag to ${navigationMode === 'pan' ? 'move the map' : 'rotate the view'}, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the Residents tab to select agents with the keyboard.`);
+  el('world').setAttribute('aria-label', `3D ${ocean ? 'Local Line ocean world. Each agent has their own ship' : 'outpost overview'}. Click ${ocean ? 'a ship' : 'an agent'} to interact.${ocean && snapshot.islandQuartersEnabled !== false ? ' Click Elbaf, Marineford, Water 7, Wano or Drum Island to visit Captain’s Quarters. Island visits are also available in Settings.' : ''} Drag to ${navigationMode === 'pan' ? 'move the map' : 'rotate the view'}, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the Residents tab to select agents with the keyboard.`);
 }
 
 function setNavigationMode(mode: 'orbit' | 'pan'): void {
@@ -337,6 +365,32 @@ function setNavigationMode(mode: 'orbit' | 'pan'): void {
   world?.setNavigationMode(mode);
   renderNavigation();
   announce(mode === 'pan' ? 'Move map mode. Drag to move across the map. Arrow keys or W A S D also move the map.' : 'Rotate mode. Drag to rotate the view. Arrow keys or W A S D move the map.');
+}
+
+
+function renderSailingArea(): void {
+  el('sailing-area-control').hidden = !ocean;
+  el<HTMLSelectElement>('sailing-area').value = sailingArea;
+  const overview = sailingArea === 'whole' ? 'whole map' : SAILING_AREA_NAMES[sailingArea].toLowerCase();
+  el('view-reset').setAttribute('aria-label', `Reset camera to the ${overview}`);
+  el('view-reset').title = `Return to the ${overview}`;
+}
+
+function setSailingArea(area: SailingArea): void {
+  if (sailingArea === area) return;
+  sailingArea = area;
+  snapshot = { ...snapshot, sailingArea: area };
+  knownPlacements.clear(); lastPlacements = '';
+  sector = snapshot.selectedAgentID ? agentSector(snapshot.agents, snapshot.selectedAgentID, fleetSize()) : 0;
+  pendingFocusAgentID = undefined;
+  updateWorldAgents(); applyActivity(); renderSailingArea(); renderRoster();
+  world?.resetView();
+  send({ version: 1, type: 'preferences', preferences: { sailingArea: area } });
+  if (demo) {
+    try { localStorage.setItem('locus.agentWorld.sailingArea.v1', area); } catch { /* The selection works without storage. */ }
+    updatePreviewURL();
+  }
+  announce(`Ships now stay in the ${SAILING_AREA_NAMES[area].toLowerCase()}. Camera adjusted to match.`);
 }
 
 function renderResidentStyle(): void {
@@ -365,6 +419,7 @@ function applyThemePresentation(isOcean: boolean): void {
   ocean = isOcean;
   snailAlert.setTheme(isOcean);
   document.body.dataset.environment = isOcean ? 'ocean' : 'campus';
+  renderSailingArea();
   renderResidentStyle();
   el('world-subtitle').hidden = !isOcean;
   el('voyage-chart').hidden = !isOcean;
@@ -465,7 +520,7 @@ async function loadTheme(id: string): Promise<void> {
     heading.firstChild!.textContent = theme.name;
     document.title = `${theme.name} · Agent World · Locus`;
     el('theme-button').children[1].textContent = allowed.name.replace(/^Orbital /, '');
-    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
+    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onIsland: openIslandQuarters, onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
     world.setNavigationMode(navigationMode);
     updateWorldAgents();
     applyActivity();
@@ -480,7 +535,7 @@ async function loadTheme(id: string): Promise<void> {
     // Missing manifest can still show a functional built-in outpost without network access.
     if (!world && id === 'outpost') {
       try {
-        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
+        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onIsland: openIslandQuarters, onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
         world.setNavigationMode(navigationMode);
         updateWorldAgents();
         applyActivity();
@@ -512,7 +567,13 @@ function receive(message: unknown): void {
   const selectionChanged = parsed.selectedAgentID !== snapshot.selectedAgentID;
   const focusRequested = selectionChanged || parsed.focusRequest !== snapshot.focusRequest;
   const activityRequested = (parsed.activityCenterRequest ?? 0) > 0 && parsed.activityCenterRequest !== snapshot.activityCenterRequest;
+  const areaChanged = sailingArea !== (parsed.sailingArea ?? 'whole');
   snapshot = parsed;
+  if (areaChanged) {
+    sailingArea = parsed.sailingArea ?? 'whole';
+    knownPlacements.clear(); lastPlacements = '';
+    renderSailingArea();
+  }
   if (projectChanged) { setActivityCenterOpen(false, false); knownPlacements.clear(); lastPlacements = ''; }
   if (activityRequested && !parsed.nativeChrome) toggleActivityCenter();
   if (parsed.residentStyle && residentStyle !== parsed.residentStyle) {
@@ -520,7 +581,7 @@ function receive(message: unknown): void {
     world?.setResidentStyle(residentStyle);
     renderResidentStyle();
   }
-  sector = focusRequested && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID) : clampSector(projectChanged ? 0 : sector, parsed.agents.length);
+  sector = (focusRequested || areaChanged) && parsed.selectedAgentID ? agentSector(parsed.agents, parsed.selectedAgentID, fleetSize()) : clampSector(projectChanged ? 0 : sector, parsed.agents.length, fleetSize());
   updateWorldAgents();
   applyActivity();
   renderRoster();
@@ -529,6 +590,10 @@ function receive(message: unknown): void {
 }
 window.locusAgentWorld = { receive, toggleActivityCenter };
 
+el('sailing-area').addEventListener('change', () => {
+  const value = el<HTMLSelectElement>('sailing-area').value;
+  if (isSailingArea(value)) setSailingArea(value);
+});
 el('new-agent').addEventListener('click', () => {
   if (demo) showNote('Open Agent World in Locus to create an agent. This preview does not save agent profiles.');
   else if (snapshot.canCreateAgent) send({ version: 1, type: 'createAgent' });
@@ -536,6 +601,24 @@ el('new-agent').addEventListener('click', () => {
 el('shared-chat').addEventListener('click', () => {
   if (demo) showNote('Crew Chat connects your agents in Locus. This preview does not open a real chat or send messages.');
   else send({ version: 1, type: 'openSharedChat' });
+});
+el('island-quarters-enabled').addEventListener('change', event => {
+  const enabled = (event.target as HTMLInputElement).checked;
+  if (!demo) { send({ version: 1, type: 'preferences', preferences: { islandQuartersEnabled: enabled } }); return; }
+  snapshot = { ...snapshot, islandQuartersEnabled: enabled };
+  try { localStorage.setItem(ISLAND_QUARTERS_PREFERENCE, String(enabled)); } catch { /* Storage is optional in previews. */ }
+  renderIslandSettings();
+});
+for (const id of Object.keys(ISLAND_QUARTERS) as QuartersIslandID[]) {
+  const button = document.createElement('button'); button.type = 'button';
+  button.textContent = ISLAND_QUARTERS[id].name; button.dataset.islandId = id;
+  button.addEventListener('click', () => openIslandQuarters(id));
+  el('island-destinations').append(button);
+}
+el('quarters-settings').addEventListener('click', () => {
+  el<HTMLDialogElement>('captains-quarters').close();
+  el<HTMLDetailsElement>('world-settings').open = true;
+  el('island-quarters-enabled').focus();
 });
 el('quarters-open').addEventListener('click', () => quarters.open());
 el('agent-controls').addEventListener('click', () => {
@@ -568,7 +651,7 @@ el('mode-pan').addEventListener('click', () => setNavigationMode('pan'));
 el('previous-agent').addEventListener('click', () => selectAdjacentAgent(-1));
 el('next-agent').addEventListener('click', () => selectAdjacentAgent(1));
 el('clear-agent').addEventListener('click', clearAgentSelection);
-el('view-reset').addEventListener('click', () => { world?.resetView(); announce('Camera returned to the world overview.'); });
+el('view-reset').addEventListener('click', () => { world?.resetView(); announce(`Camera returned to the ${SAILING_AREA_NAMES[sailingArea].toLowerCase()}.`); });
 el('roster-toggle').addEventListener('click', () => {
   const body = el('roster-body'), button = el('roster-toggle'); body.hidden = !body.hidden;
   button.textContent = body.hidden ? '+' : '−';
@@ -578,9 +661,12 @@ el('roster-toggle').addEventListener('click', () => {
 });
 const themePopover = el('theme-popover');
 el('theme-button').addEventListener('click', () => { themePopover.hidden = !themePopover.hidden; el('theme-button').setAttribute('aria-expanded', String(!themePopover.hidden)); });
-document.addEventListener('pointerdown', event => { if (!(event.target instanceof Element) || event.target.closest('#theme-button, #theme-popover')) return; themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); });
+document.addEventListener('pointerdown', event => {
+  if (event.target instanceof Element && !event.target.closest('#world-settings')) el<HTMLDetailsElement>('world-settings').open = false;
+  if (!(event.target instanceof Element) || event.target.closest('#theme-button, #theme-popover')) return; themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); });
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || event.target instanceof HTMLSelectElement) return;
+  if (el<HTMLDetailsElement>('world-settings').open) { el<HTMLDetailsElement>('world-settings').open = false; el('world-settings').querySelector('summary')!.focus(); return; }
   if (world?.handleCreatureKey(event.key, event.repeat)) { event.preventDefault(); return; }
   if (!themePopover.hidden) { themePopover.hidden = true; el('theme-button').setAttribute('aria-expanded', 'false'); el('theme-button').focus(); }
   else if (!el('fleet-activity').hidden) setActivityCenterOpen(false);
@@ -631,6 +717,11 @@ async function start(): Promise<void> {
     const requestedStyle = new URLSearchParams(window.location.search).get('residentStyle');
     residentStyle = isResidentStyle(requestedStyle) ? requestedStyle : isResidentStyle(savedStyle) ? savedStyle : 'mixed';
     snapshot.residentStyle = residentStyle;
+    let savedArea: unknown;
+    try { savedArea = localStorage.getItem('locus.agentWorld.sailingArea.v1'); } catch { /* Storage is optional. */ }
+    const requestedArea = new URLSearchParams(window.location.search).get('sailingArea');
+    sailingArea = isSailingArea(requestedArea) ? requestedArea : isSailingArea(savedArea) ? savedArea : 'whole';
+    snapshot.sailingArea = sailingArea;
     try {
       const savedStyles = localStorage.getItem(SHIP_STYLE_PREFERENCE);
       if (savedStyles) snapshot.shipStyles = parseShipStyles(JSON.parse(savedStyles), snapshot.agents.map(agent => agent.id)) ?? {};
@@ -664,6 +755,7 @@ if (demo) {
       { id: '30000000-0000-4000-8000-000000000002', fromAgentID: demoAgents[2].id, toAgentID: demoAgents[5].id, kind: 'artifact', title: 'Sample build artifact', occurredAt: Date.now() / 1000 },
     ],
   };
+  try { snapshot.islandQuartersEnabled = localStorage.getItem(ISLAND_QUARTERS_PREFERENCE) !== 'false'; } catch { /* Keep the enabled default. */ }
 } else {
   el('empty-state').hidden = true;
   send({ version: 1, type: 'ready' });

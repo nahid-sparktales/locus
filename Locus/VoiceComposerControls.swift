@@ -3,7 +3,7 @@ import SwiftUI
 struct VoiceComposerButtons: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var voice: VoiceControlModel
@@ -49,7 +49,7 @@ struct VoiceComposerButtons: View {
 struct VoiceComposerStrip: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var voice: VoiceControlModel
@@ -160,7 +160,7 @@ struct VoiceComposerStrip: View {
 private struct VoicePushToTalkButton: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var voice: VoiceControlModel
     @State private var pointerStartedAt: Date?

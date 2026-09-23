@@ -1018,7 +1018,7 @@ final class StreamingRenderCoordinator: ObservableObject {
 struct StreamingMarkdownBodyView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let text: String
     var workspacePath: String? = nil
@@ -1103,7 +1103,7 @@ struct StreamingMarkdownBodyView: View {
 private struct MarkdownBlocksView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.responseOutputContext) private var outputContext
@@ -1790,7 +1790,7 @@ enum MarkdownLinkPolicy {
 private struct MarkdownTableRenderer: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.responseRegisteredSources) private var registeredSources
     @Environment(\.locusAccent) private var accent

@@ -74,16 +74,17 @@ test('Marineford landmarks preserve the reference triangle beside the Red Line',
   const named = (id: string) => GRAND_LINE_LANDMARKS.find(island => island.id === id)!;
   const marineford = named('marineford'), impel = named('impel-down'), enies = named('enies-lobby');
   const sabaody = named('sabaody'), amazon = named('amazon-lily');
-  assert.equal(MARY_GEOISE.x, -29);
+  assert.ok(MARY_GEOISE.x < -29 && MARY_GEOISE.x > marineford.x, 'The palace overlooks Marineford from its side of the ridge');
   assert.ok(MARY_GEOISE.floor > 5, 'The holy land belongs on top of the continental ridge');
-  assert.ok(MARY_GEOISE.x > marineford.x && MARY_GEOISE.z > marineford.z);
+  assert.ok(MARY_GEOISE.z < 0 && marineford.z < 0, 'Both landmarks sit on the same mountain segment');
+  assert.ok(marineford.x + marineford.radius >= -31.1, 'Marineford backs directly onto the west edge of the mountain');
   assert.ok(marineford.x > impel.x && impel.x > enies.x);
   assert.ok(impel.z < marineford.z && impel.z < enies.z);
-  assert.ok(sabaody.x > marineford.x && sabaody.z > marineford.z);
+  assert.ok(sabaody.z > marineford.z);
   assert.ok(amazon.x < impel.x && amazon.z <= impel.z);
   assert.ok(enies.z > amazon.z);
   for (const island of [marineford, impel, enies, sabaody, amazon]) {
-    assert.ok(island.x + island.radius < MARY_GEOISE.x - 2.1, `${island.id} must be across the mountain ridge`);
+    assert.ok(island.x < -29, `${island.id} must stay on the Paradise side of the mountain ridge`);
   }
   const newWorld = ['wano', 'whole-cake', 'laugh-tale', 'elbaf', 'egghead', 'dressrosa', 'punk-hazard', 'hachinosu'];
   for (const island of GRAND_LINE_LANDMARKS) {

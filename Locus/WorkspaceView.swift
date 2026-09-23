@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 struct WorkspaceView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var activityCenter: ActivityCenterModel
@@ -23,6 +23,7 @@ struct WorkspaceView: View {
     var presentsAgentOverview = true
     var openAgentOverview: (() -> Void)? = nil
     var compactHeader = false
+    var showsHeader = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,7 +61,7 @@ struct WorkspaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("workspace.emptyDestination")
             } else {
-                header
+                if showsHeader { header }
                 contentArea
             }
         }
@@ -463,7 +464,7 @@ private struct WorkspaceSessionTitle: View {
 private struct WorkspaceEffortPicker: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -600,7 +601,7 @@ enum ChatWorkspacePresentation: Equatable {
 struct SplitChatWorkspaceView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -693,7 +694,7 @@ struct SplitChatWorkspaceView: View {
 private struct SplitPaneDivider: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let totalWidth: CGFloat
@@ -722,7 +723,7 @@ private struct SplitPaneDivider: View {
 private struct BackgroundChatPane: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -884,7 +885,7 @@ private struct BackgroundChatPane: View {
 private struct PassiveChatBlockView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let block: ChatBlock
     let accent: LocusAccentSelection
@@ -945,7 +946,7 @@ private struct PassiveChatBlockView: View {
 struct ReviewAndLandView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var landingFlow: LandingFlowModel
@@ -1279,7 +1280,7 @@ private enum ActivityGroup: String, CaseIterable, Identifiable {
 struct ActivityActionButtonStyle: ButtonStyle {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1295,7 +1296,7 @@ struct ActivityActionButtonStyle: ButtonStyle {
 struct ActivityCenterView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -1429,7 +1430,7 @@ struct ActivityCenterView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "tray.full").font(.system(size: 22, weight: .medium))
+            Image(systemName: "tray.full").font(.locus(size: 22, weight: .medium))
                 .foregroundStyle(viewColors.signalDeep)
                 .frame(width: 42, height: 42)
                 .background(viewColors.paperDeep, in: RoundedRectangle(cornerRadius: 12))
@@ -1468,7 +1469,7 @@ struct ActivityCenterView: View {
                     .textFieldStyle(.plain).accessibilityIdentifier("activity.search")
                 if !filter.search.isEmpty {
                     Button { filter.search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).accessibilityLabel("Clear search")
+                        .buttonStyle(.locus(.icon)).accessibilityLabel("Clear search")
                 }
             }
             .font(.locus(size: 12)).padding(10)
@@ -1666,7 +1667,7 @@ struct ActivityCenterView: View {
             .contentShape(Rectangle())
             .overlay(alignment: .bottom) { viewColors.line.frame(height: 1) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus(.quiet))
         .accessibilityLabel("\(unread ? "Unread, " : "")\(taskTitle(run)), by \(agentName(for: run) ?? "Unassigned")")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityIdentifier("activity.open.\(run.id)")
@@ -2064,7 +2065,7 @@ private struct ActivityResultReader: View {
     @EnvironmentObject private var activity: ActivityCenterModel
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.locusCaptainDeckTheme) private var deck
-    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    @Environment(\.locusViewColors) private var colors
     let run: OrchestrationRun
     let title: String
     let agentName: String
@@ -2225,7 +2226,7 @@ private struct ActivityResultReader: View {
 struct ScheduleEditorView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
@@ -2828,7 +2829,7 @@ struct ScheduleEditorView: View {
 private struct ModelPickerPopover: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -3044,7 +3045,7 @@ private struct ModelPickerPopover: View {
 private struct WorkStatusStrip: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -3134,7 +3135,7 @@ private struct WorkStatusStrip: View {
 struct SidebarDestinationControl: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let destination: SidebarDestination
     let select: (SidebarDestination) -> Void
@@ -3258,7 +3259,7 @@ private struct TranscriptLayoutStack<Content: View>: View {
 private struct ConversationView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
@@ -5468,7 +5469,7 @@ final class TranscriptTailLayoutView: NSView {
 private struct TranscriptSearchBar: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @FocusState private var focused: Bool
@@ -5562,7 +5563,7 @@ private struct TranscriptSearchBar: View {
 private struct EmptyConversationView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
 
@@ -5713,7 +5714,7 @@ struct LocusMessageMarker: View {
 private struct IncomingEventTranscriptCard: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let context: EventTranscriptContext
@@ -5844,7 +5845,7 @@ private struct TrailingFractionLayout: Layout {
 struct MessageBlockView: View, Equatable {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
@@ -6199,7 +6200,7 @@ struct MessageBlockView: View, Equatable {
 private struct TurnCompletionMarker: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let completion: TurnCompletion
 
@@ -6256,7 +6257,7 @@ private struct TurnCompletionMarker: View {
 private struct HeaderIconButton: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
     let label: String
@@ -6285,7 +6286,7 @@ private struct HeaderIconButton: View {
 private struct ContextUsageChip: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @State private var detailPresented = false
@@ -6416,7 +6417,7 @@ private struct ContextUsageChip: View {
 private struct StreamingCaret: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = true
@@ -6438,7 +6439,7 @@ private struct StreamingCaret: View {
 private struct ThinkingDots: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var active = false
@@ -6472,7 +6473,7 @@ private struct ThinkingDots: View {
 private struct ThinkingActivityView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let groupID: ThinkingPresentationGroupID
@@ -6623,7 +6624,7 @@ private struct ThinkingActivityView: View {
 private struct ToolActivityView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let groupID: UUID
@@ -6957,7 +6958,7 @@ private final class ToolHeaderHitTestDiagnosticView: NSView {
 private struct ToolCardView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let tool: ToolPayload
     @State private var expanded = false
@@ -7085,7 +7086,7 @@ private struct ToolCardView: View {
 private struct MCPImagePreview: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let reference: ToolMediaReference

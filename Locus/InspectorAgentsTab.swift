@@ -177,7 +177,7 @@ enum AgentInstructionsStarter: String, CaseIterable, Identifiable {
 struct InspectorAgentsTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentInstructions: AgentInstructionsModel

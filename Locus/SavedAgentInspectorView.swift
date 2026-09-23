@@ -50,7 +50,7 @@ enum AgentAvatarImage {
 struct AgentAvatarView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.locusOceanTheme) private var ocean
@@ -59,7 +59,7 @@ struct AgentAvatarView: View {
     var size: CGFloat = 40
 
     var body: some View {
-        let accent = AgentWorldPalette(ocean: ocean).warning
+        let accent = viewColors.warning
         Group {
             if let data = agentTeams.agentAvatarData[profileID], let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().scaledToFill()
@@ -119,7 +119,7 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
 struct AgentWorkspacePreferencesEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.locusOceanTheme) private var ocean
@@ -259,7 +259,7 @@ struct SavedAgentInspectorView: View {
 private struct SavedAgentResultExcerptView: View {
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.locusCaptainDeckTheme) private var deck
-    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    @Environment(\.locusViewColors) private var colors
     let source: String
 
     var body: some View {
@@ -305,7 +305,7 @@ private struct SavedAgentResultReader: View {
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.locusCaptainDeckTheme) private var deck
     @State private var copied = false
-    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    @Environment(\.locusViewColors) private var colors
     let result: SavedAgentOverviewSnapshot.LatestResult
     let workspacePath: String?
     let openSource: () -> Void
@@ -369,7 +369,7 @@ private struct SavedAgentResultReader: View {
 private struct SavedAgentOverviewContent: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel

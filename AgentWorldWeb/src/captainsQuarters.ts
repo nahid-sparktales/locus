@@ -1,3 +1,5 @@
+import { ISLAND_QUARTERS } from './islandQuarters';
+import type { QuartersIslandID } from './islandQuarters';
 import { STATUS_META } from './state';
 import type { Agent } from './state';
 
@@ -34,7 +36,16 @@ export function createCaptainsQuarters(crew: () => readonly Agent[], home: (id: 
   // Keep map keyboard shortcuts from consuming Escape or arrow keys behind the modal.
   dialog.addEventListener('keydown', event => event.stopPropagation());
   return {
-    open() {
+    open(islandID?: QuartersIslandID) {
+      const theme = islandID ? ISLAND_QUARTERS[islandID] : undefined;
+      dialog.dataset.island = islandID ?? '';
+      for (const name of ['paper', 'panel', 'raised', 'line', 'ink', 'muted', 'accent'] as const) {
+        if (theme) dialog.style.setProperty(`--quarters-${name}`, theme[name]);
+        else dialog.style.removeProperty(`--quarters-${name}`);
+      }
+      if (theme) dialog.style.setProperty('--quarters-art', `url('${new URL(`static/quarters-${theme.artwork}.webp`, document.baseURI).href}')`);
+      else dialog.style.removeProperty('--quarters-art');
+      document.getElementById('quarters-location')!.textContent = theme ? `${theme.name.toUpperCase()} · ${theme.subtitle}` : 'THE LOCAL LINE · PREVIEW';
       search.value = ''; workspace.hidden = false; toggle.textContent = 'View deck'; toggle.setAttribute('aria-expanded', 'true');
       render(); if (!dialog.open) dialog.showModal();
     },

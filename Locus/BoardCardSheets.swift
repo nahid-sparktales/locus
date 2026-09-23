@@ -12,7 +12,7 @@ import SwiftUI
 struct BoardCardDetailSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
     let cardID: UUID
@@ -488,7 +488,7 @@ struct BoardCardDetailSheet: View {
 struct BoardNewCardSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
     let initialColumnID: String?
@@ -621,7 +621,7 @@ struct BoardNewCardSheet: View {
 private struct BoardFieldLabel: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let title: String
 
@@ -661,7 +661,7 @@ private struct BoardPriorityPicker: View {
 private struct BoardDescriptionEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Binding var text: String
     let minHeight: CGFloat
@@ -701,7 +701,7 @@ private struct BoardDescriptionEditor: View {
 struct AgentMentionPicker: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var teams: AgentTeamsModel
     @Binding var selectedIDs: [UUID]
@@ -765,7 +765,7 @@ struct AgentMentionPicker: View {
 struct AgentTagLabels: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var teams: AgentTeamsModel
     let ids: [UUID]

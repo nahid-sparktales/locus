@@ -93,7 +93,7 @@ enum ResponseSelectionProjection {
 struct ResponsePartsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let document: ResponseDocument
     let block: ChatBlock
@@ -209,7 +209,7 @@ struct ResponsePartsView: View {
 private struct ResponseArtifactView<Original: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let part: ResponsePart
     let block: ChatBlock

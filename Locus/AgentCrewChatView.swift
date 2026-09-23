@@ -6,7 +6,7 @@ import SwiftUI
 struct AgentCrewChatView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: AgentCrewChatModel
     @EnvironmentObject private var appModel: AppModel
@@ -246,7 +246,7 @@ private struct CrewTranscriptScrollBridge: NSViewRepresentable {
 private struct CrewTranscriptMessage: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var appModel: AppModel
     let message: AgentCrewChatMessage
@@ -298,7 +298,7 @@ private struct CrewTranscriptMessage: View {
 struct CrewChatSidebarEntry: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let selected: Bool

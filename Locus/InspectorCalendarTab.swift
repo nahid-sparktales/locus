@@ -509,7 +509,7 @@ enum CalendarStoreError: LocalizedError {
 struct InspectorCalendarTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject private var store = LocusCalendarStore.shared
     @State private var showingNewEvent = false
@@ -767,7 +767,7 @@ struct InspectorCalendarTab: View {
 private struct CalendarEventRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let event: LocusCalendarEntry
 
@@ -816,7 +816,7 @@ private struct CalendarEventRow: View {
 private struct CalendarEventComposer: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: LocusCalendarStore
     var event: LocusCalendarEntry? = nil

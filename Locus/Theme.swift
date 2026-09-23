@@ -309,11 +309,26 @@ private struct LocusOceanThemeKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct LocusQuartersIslandKey: EnvironmentKey {
+    static let defaultValue: AgentWorldQuartersIsland? = nil
+}
+
 private struct LocusCaptainDeckThemeKey: EnvironmentKey {
     static let defaultValue = false
 }
 
 extension EnvironmentValues {
+    /// Resolve the complete presentation context in one place. Reading this
+    /// environment value also updates stable child views when islands change.
+    var locusViewColors: LocusViewColors {
+        LocusViewColors(ocean: locusOceanTheme, deck: locusCaptainDeckTheme, island: locusQuartersIsland)
+    }
+
+    var locusQuartersIsland: AgentWorldQuartersIsland? {
+        get { self[LocusQuartersIslandKey.self] }
+        set { self[LocusQuartersIslandKey.self] = newValue }
+    }
+
     var locusCaptainDeckTheme: Bool {
         get { self[LocusCaptainDeckThemeKey.self] }
         set { self[LocusCaptainDeckThemeKey.self] = newValue }
@@ -329,7 +344,8 @@ extension EnvironmentValues {
 struct LocusWorldSheetTheme: ViewModifier {
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.locusCaptainDeckTheme) private var deck
-    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var colors
     func body(content: Content) -> some View {
         if ocean || deck {
             content.foregroundStyle(colors.ink).tint(colors.signalDeep).background(colors.paper)
@@ -361,9 +377,12 @@ extension View {
 struct LocusViewColors {
     let ocean: Bool
     let deck: Bool
-    init(ocean: Bool, deck: Bool = false) { self.ocean = ocean; self.deck = deck }
-    private var themed: Bool { ocean || deck }
-    private var palette: LocusTheme.Palette { deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette }
+    let island: AgentWorldQuartersIsland?
+    init(ocean: Bool, deck: Bool = false, island: AgentWorldQuartersIsland? = nil) {
+        self.ocean = ocean; self.deck = deck; self.island = island
+    }
+    private var themed: Bool { ocean || deck || island != nil }
+    private var palette: LocusTheme.Palette { island.map(LocusTheme.islandPalette) ?? (deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette) }
     var ink: Color { themed ? Color(nsColor: palette.ink) : LocusTheme.ink }
     var inkSoft: Color { themed ? Color(nsColor: palette.inkSoft) : LocusTheme.inkSoft }
     var paper: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.paper }
@@ -520,6 +539,26 @@ enum LocusTheme {
         permissionInk: rgb(0xF0D3A8), permissionMuted: rgb(0xD0C6AA),
         successSoft: rgb(0x3C4B30), codeKeyword: rgb(0xDDB9CE), codeType: rgb(0xAED7CF)
     )
+
+    static func islandPalette(_ island: AgentWorldQuartersIsland) -> Palette {
+        let colors: (paper: UInt32, panel: UInt32, raised: UInt32, line: UInt32, ink: UInt32, muted: UInt32, accent: UInt32)
+        switch island {
+        case .elbaf: colors = (0x172D23, 0x233D2E, 0x36513B, 0x6D8154, 0xF4F1D9, 0xC1D0B1, 0xE4C27D)
+        case .marineford: colors = (0x182B42, 0x243D59, 0x365372, 0x6988A4, 0xF0F5FC, 0xBDD0E2, 0xC6DEEF)
+        case .waterSeven: colors = (0x133437, 0x204A4C, 0x326568, 0x639E99, 0xECF6ED, 0xB8D9D1, 0xF3BF88)
+        case .wano: colors = (0x302034, 0x462D47, 0x61405C, 0x9B6E8B, 0xFFF0EE, 0xDEC1D0, 0xF3B5CE)
+        case .drum: colors = (0x233248, 0x30465E, 0x435E79, 0x819DB4, 0xF2F8FF, 0xC9DCEB, 0xBDDFF6)
+        }
+        return Palette(
+            ink: rgb(colors.ink), inkSoft: rgb(colors.muted), paper: rgb(colors.paper), paperDeep: rgb(colors.paper),
+            panel: rgb(colors.panel), white: rgb(colors.raised), line: rgb(colors.line), lineStrong: rgb(colors.accent),
+            muted: rgb(colors.muted), signal: rgb(colors.accent), signalDeep: rgb(colors.accent),
+            coral: deckPalette.coral, danger: deckPalette.danger, blue: oceanPalette.blue,
+            success: oceanPalette.success, warning: rgb(colors.accent), permissionInk: rgb(colors.ink),
+            permissionMuted: rgb(colors.muted), successSoft: oceanPalette.successSoft,
+            codeKeyword: deckPalette.codeKeyword, codeType: oceanPalette.codeType
+        )
+    }
 
     static let oceanPalette = Palette(
         ink: rgb(0xF4EFDF),
@@ -848,7 +887,8 @@ enum LocusSurfaceKind {
 private struct LocusSurfaceModifier: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -906,7 +946,8 @@ private struct LocusSurfaceModifier: ViewModifier {
 private struct LocusCardModifier: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.colorSchemeContrast) private var contrast
@@ -934,7 +975,8 @@ private struct LocusCardModifier: ViewModifier {
 private struct LocusWorkspaceBackground: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusOceanTheme) private var ocean
     func body(content: Content) -> some View {
@@ -961,7 +1003,8 @@ struct LocusButtonStyle: ButtonStyle {
 private struct LocusButtonStyleBody: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -1268,7 +1311,8 @@ struct MCPLogo: View {
 struct SettingsAdvancedLabel: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     var detail: String
 
@@ -1294,7 +1338,8 @@ struct SettingsAdvancedLabel: View {
 struct SettingsAdvancedDisclosureRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusViewColors) private var viewColors
 
     @Binding var isExpanded: Bool
     var detail: String

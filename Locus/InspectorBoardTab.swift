@@ -9,7 +9,7 @@ import SwiftUI
 struct InspectorBoardTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
     var isDetached = false
@@ -132,7 +132,7 @@ struct InspectorBoardTab: View {
                     .accessibilityLabel("Opening a new chat for this card")
             }
             if !isDetached {
-                Button { model.boardWindows.open(store: store, model: model, ocean: usesWorldTheme, deck: usesDeckTheme) } label: {
+                Button { model.boardWindows.open(store: store, model: model, ocean: usesWorldTheme, deck: usesDeckTheme, island: viewColors.island) } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.locus(size: 12, weight: .medium))
                         .frame(width: 26, height: 26)

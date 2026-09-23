@@ -1,5 +1,138 @@
 import SwiftUI
 
+/// A small, native conversation over the map. It shares the normal transcript
+/// and composer, including saved drafts and approvals, without mounting tools.
+struct AgentWorldMapChat: View {
+    @ObservedObject var world: AgentWorldModel
+    @ObservedObject var model: AppModel
+    private var palette: AgentWorldPalette { .init(ocean: world.theme == "grand-line") }
+    private var residents: [AgentWorldResident] { world.residents }
+    private var resident: AgentWorldResident? { residents.first { $0.id == world.selection } }
+    private var conversations: [SessionSummary] { world.selection.map(world.residentConversations(for:)) ?? [] }
+    private var isSelectedConversationActive: Bool {
+        guard let sessionID = world.selectedSessionID, sessionID == model.currentSessionID,
+              let profile = world.selectedProfile else { return false }
+        return model.sessions.first(where: { $0.id == sessionID })?.belongsToWorkspace(world.workspace) == true
+            && (model.savedAgentProfileID(for: sessionID) ?? world.boundProfileID(for: sessionID)) == profile.id
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            palette.line.frame(height: 1)
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(palette.paper)
+        .foregroundStyle(palette.ink)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.warning.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+        .onChange(of: model.currentSessionID) { _, _ in world.adoptForegroundConversation() }
+        .accessibilityIdentifier("agentWorld.mapChat")
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(residents, id: \.id) { item in
+                    Button { world.chooseResident(item.id) } label: {
+                        if item.id == world.selection { Label(item.name, systemImage: "checkmark") }
+                        else { Text(item.name) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if let profile = world.selectedProfile {
+                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 26)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(world.selectedProfile?.name ?? "Agent").font(.locus(size: 12, weight: .semibold)).lineLimit(1)
+                        if let resident {
+                            HStack(spacing: 4) {
+                                Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
+                                Text(AgentWorldChrome.statusLabel(resident.status, ocean: world.theme == "grand-line"))
+                                    .font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                            }
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
+            .help("Switch agent and follow their ship")
+            .accessibilityLabel("Chat with \(world.selectedProfile?.name ?? "agent"). Switch agent")
+            .accessibilityIdentifier("agentWorld.mapChat.agentPicker")
+            iconButton("chevron.left", "Previous agent", "previous") { switchAgent(by: -1) }
+                .disabled(residents.count < 2)
+            iconButton("chevron.right", "Next agent", "next") { switchAgent(by: 1) }
+                .disabled(residents.count < 2)
+            Menu {
+                Button("New chat", action: world.newConversation)
+                    .disabled(!world.canStartConversation(for: world.selection ?? ""))
+                if !conversations.isEmpty {
+                    Menu("Recent chats") {
+                        ForEach(conversations, id: \.id) { chat in
+                            Button { world.openResidentConversation(chat) } label: {
+                                if chat.id == world.selectedSessionID { Label(chat.name.nilIfEmpty ?? "Untitled chat", systemImage: "checkmark") }
+                                else { Text(chat.name.nilIfEmpty ?? "Untitled chat") }
+                            }
+                        }
+                    }
+                }
+                Button("Agent overview") { world.openAgentProfile() }
+            } label: { Image(systemName: "ellipsis").frame(width: 22, height: 28) }
+                .menuStyle(.borderlessButton).fixedSize()
+                .accessibilityLabel("Chat options").accessibilityIdentifier("agentWorld.mapChat.options")
+            iconButton("arrow.up.left.and.arrow.down.right", "Open full workspace", "expand") { world.quartersPresented = true }
+            iconButton("xmark", "Close chat", "close", action: world.clearWorldSelection)
+        }
+        .padding(.horizontal, 10).frame(height: 50)
+        .background(palette.panel)
+    }
+
+    private func iconButton(_ symbol: String, _ label: String, _ id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.locus(size: 11, weight: .medium)).frame(width: 24, height: 28) }
+            .buttonStyle(.locus(.icon)).help(label).accessibilityLabel(label)
+            .accessibilityIdentifier("agentWorld.mapChat.\(id)")
+    }
+
+    private func switchAgent(by offset: Int) {
+        guard !residents.isEmpty, let index = residents.firstIndex(where: { $0.id == world.selection }) else { return }
+        world.chooseResident(residents[(index + offset + residents.count) % residents.count].id)
+    }
+
+    @ViewBuilder private var content: some View {
+        if !world.canInteract {
+            Text("Agent conversations are currently unavailable.").font(.locus(size: 12)).padding(20)
+        } else if world.preparingConversation || world.activatingConversation {
+            ProgressView("Opening chat…").controlSize(.small)
+        } else if isSelectedConversationActive {
+            GeometryReader { geometry in
+                WorkspaceView(sidebarVisible: true, showSidebar: {}, presentsAgentOverview: false,
+                              openAgentOverview: { world.openAgentProfile() }, compactHeader: true, showsHeader: false)
+                    .environment(\.locusWorkspaceGeometry, WorkspaceGeometrySnapshot(
+                        windowSize: geometry.size, workspaceWidth: geometry.size.width,
+                        workspaceHeight: geometry.size.height, composerWidth: geometry.size.width))
+            }
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "bubble.left.and.bubble.right").font(.locus(size: 24)).foregroundStyle(palette.warning)
+                Text(world.error ?? "Chat with \(world.selectedProfile?.name ?? "this agent") while keeping an eye on your world.")
+                    .font(.locus(size: 12)).multilineTextAlignment(.center).foregroundStyle(palette.muted)
+                if world.selectedSessionID == nil {
+                    Button("Start chat", action: world.newConversation)
+                        .buttonStyle(AgentWorldChromeButtonStyle(selected: true))
+                        .disabled(!world.canStartConversation(for: world.selection ?? ""))
+                        .accessibilityIdentifier("agentWorld.mapChat.start")
+                } else {
+                    Button("Resume chat") { world.showSelectedChat() }
+                        .buttonStyle(AgentWorldChromeButtonStyle(selected: true))
+                        .accessibilityIdentifier("agentWorld.mapChat.resume")
+                }
+            }.padding(24)
+        }
+    }
+}
+
 /// The map chooses a resident; the existing Locus workspace owns every chat,
 /// approval and task action. The pinned identity guard prevents a different
 /// foreground chat from silently becoming this resident's conversation.
@@ -13,7 +146,7 @@ struct AgentWorldWorkspacePane: View {
     @State private var resizeStart: CGFloat?
     @State private var activityContext: AgentInspectorContext?
     private var ocean: Bool { world.theme == "grand-line" }
-    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters) }
+    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters, island: world.activeQuartersIsland) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
     private var placement: AgentWorldResidentPlacement? { world.selection.flatMap { world.residentPlacements[$0] } }
     private var residentConversations: [SessionSummary] {

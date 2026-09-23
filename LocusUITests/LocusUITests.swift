@@ -4527,7 +4527,7 @@ final class LocusUITests: XCTestCase {
         anyElement("activity.tab.inbox").click()
         XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
         anyElement("activity.close").click()
-        XCTAssertFalse(anyElement("activity.center").exists)
+        XCTAssertTrue(anyElement("activity.center").waitForNonExistence(timeout: 3), "Close must dismiss Activity Center")
         XCTAssertTrue(app.textViews["composer.input"].exists)
         // Opening Activity Center dismisses the temporary sidebar in compact
         // windows. Reopen it before checking the unresolved-request badge.

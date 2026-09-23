@@ -36,7 +36,7 @@ struct InspectorBrowserTab: View {
 struct BrowserPanel: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     let sessionID: String
@@ -882,7 +882,7 @@ struct BorrowedWebView: NSViewRepresentable {
 private struct BrowserQuickHistory: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BrowserActivityStore
     let open: (String) -> Void
@@ -919,7 +919,7 @@ private struct BrowserQuickHistory: View {
 private struct BrowserQuickDownloads: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @ObservedObject var store: BrowserActivityStore
@@ -956,7 +956,7 @@ private struct BrowserQuickDownloads: View {
 private struct BrowserAutofillSuggestionBar: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @ObservedObject private var vault: BrowserAutofillVault
@@ -1029,7 +1029,7 @@ private struct BrowserAutofillSuggestionBar: View {
 struct CaptureDrawer: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var log: BrowserCaptureLog
     @State private var pane = Pane.console

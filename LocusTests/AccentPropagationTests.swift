@@ -10,6 +10,67 @@ import XCTest
 /// customer, looks like "the icons only change once I switch chats".
 @MainActor
 final class AccentPropagationTests: XCTestCase {
+    private final class QuartersBox: ObservableObject {
+        @Published var island: AgentWorldQuartersIsland?
+        init(_ island: AgentWorldQuartersIsland? = nil) { self.island = island }
+    }
+
+    private struct QuartersColors: View {
+        @Environment(\.locusViewColors) private var colors
+        var body: some View {
+            HStack(spacing: 0) {
+                colors.surfaceCanvas
+                colors.surfaceCard
+                colors.accentAction
+            }
+        }
+    }
+
+    private struct StableQuartersHost: View {
+        @ObservedObject var quarters: QuartersBox
+        var body: some View {
+            QuartersColors()
+                .environment(\.locusOceanTheme, true)
+                .environment(\.locusCaptainDeckTheme, true)
+                .environment(\.locusQuartersIsland, quarters.island)
+        }
+    }
+
+    func testEveryIslandOverridesLegacyWoodAndOceanColors() {
+        var environment = EnvironmentValues()
+        environment.locusOceanTheme = true
+        environment.locusCaptainDeckTheme = true
+        XCTAssertEqual(environment.locusViewColors.paper, Color(nsColor: LocusTheme.deckPalette.paper))
+        for island in AgentWorldQuartersIsland.allCases {
+            environment.locusQuartersIsland = island
+            let palette = LocusTheme.islandPalette(island)
+            XCTAssertEqual(environment.locusViewColors.surfaceCanvas, Color(nsColor: palette.paper))
+            XCTAssertEqual(environment.locusViewColors.surfaceCard, Color(nsColor: palette.white))
+            XCTAssertEqual(environment.locusViewColors.accentAction, Color(nsColor: palette.signalDeep))
+        }
+        environment.locusQuartersIsland = nil
+        environment.locusCaptainDeckTheme = false
+        XCTAssertEqual(environment.locusViewColors.paper, Color(nsColor: LocusTheme.oceanPalette.paper))
+        environment.locusOceanTheme = false
+        XCTAssertEqual(environment.locusViewColors.paper, LocusTheme.paper)
+    }
+
+    func testMountedOverviewColorsFollowIslandChangesWithoutReopening() throws {
+        let quarters = QuartersBox()
+        let host = mount(StableQuartersHost(quarters: quarters))
+        var previous = try XCTUnwrap(snapshot(host))
+        for island in AgentWorldQuartersIsland.allCases {
+            quarters.island = island
+            pump()
+            let current = try XCTUnwrap(snapshot(host))
+            XCTAssertGreaterThan(differingPixels(previous, current), 100, "Switching to \(island) must update mounted overview surfaces")
+            let rebuilt = mount(StableQuartersHost(quarters: QuartersBox(island)))
+            XCTAssertEqual(differingPixels(current, try XCTUnwrap(snapshot(rebuilt))), 0,
+                           "Existing content must use the same island palette as newly opened content")
+            previous = current
+        }
+    }
+
     /// Mirrors the shape of a transcript row: a parent that re-evaluates, and a
     /// Markdown subtree underneath it whose own inputs never change.
     private struct StableMarkdownHost: View {

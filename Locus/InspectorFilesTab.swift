@@ -14,7 +14,7 @@ struct InspectorFilesTab: View {
 private struct WorkspaceBrowserFilesContent: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var workspaceFiles: WorkspaceFileModel

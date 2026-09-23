@@ -38,7 +38,7 @@ struct SocialStudioView: View {
     @State private var topic = ""
     @State private var month = Calendar.current.startOfDay(for: Date())
     @State private var confirming: SocialPublicationAction?
-    private let colors = LocusViewColors(ocean: false)
+    @Environment(\.locusViewColors) private var colors
 
     private var drafts: [SocialDraft] {
         store.document.drafts.filter { search.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(search) || $0.text.localizedCaseInsensitiveContains(search) }
@@ -468,7 +468,7 @@ private struct SocialComposer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: SocialDraft
     @State private var selected: SocialChannel?
-    private let colors = LocusViewColors(ocean: false)
+    @Environment(\.locusViewColors) private var colors
     init(store: SocialStudioStore, initial: SocialDraft, assistant: @escaping (SocialAssistantAction, String, SocialDraft?) -> Void) {
         self.store = store; self.assistant = assistant; _draft = State(initialValue: initial)
     }

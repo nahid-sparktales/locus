@@ -8,9 +8,10 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import type { SceneryAssetType, Theme } from './theme.ts';
 import { ZuneshaStride } from './grandLineCompanions.ts';
+import type { QuartersIslandID } from './islandQuarters.ts';
 import { WaterfallFlow } from './waterfallFlow.ts';
 
-export type SceneryPlacement = { parent: TransformNode; width: number; depth: number; height: number; floor: number; rotation?: number; footprintRadius?: number; animated?: boolean; interactionID?: 'laboon' };
+export type SceneryPlacement = { parent: TransformNode; width: number; depth: number; height: number; floor: number; rotation?: number; footprintRadius?: number; animated?: boolean; interactionID?: 'laboon'; islandID?: QuartersIslandID };
 type InstalledModel = { instance: InstantiatedEntries; pivot: TransformNode };
 
 /** Installs embedded Meshy geometry inside the same footprints used by navigation. */
@@ -91,7 +92,8 @@ export class GrandLineModels {
         pivot.position.y = placement.floor;
         pivot.rotation.y = placement.rotation ?? 0;
         for (const mesh of pivot.getChildMeshes()) {
-          mesh.isPickable = Boolean(placement.interactionID);
+          mesh.isPickable = Boolean(placement.interactionID || placement.islandID);
+          if (placement.islandID) mesh.metadata = { ...mesh.metadata, islandID: placement.islandID };
           if (placement.interactionID) mesh.metadata = { ...mesh.metadata, creatureID: placement.interactionID };
           (mesh instanceof InstancedMesh ? mesh.sourceMesh : mesh).receiveShadows = true;
           // Static imported Mesh and InstancedMesh both inherit these methods.

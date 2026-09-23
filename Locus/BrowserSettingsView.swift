@@ -22,7 +22,7 @@ private enum BrowserSettingsRoute: String, Hashable {
 struct BrowserSettingsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var browser: BrowserService
@@ -273,7 +273,7 @@ private struct BrowserVaultUnavailableView: View {
 private struct BrowserPasswordManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserPasswordRecord?
@@ -346,7 +346,7 @@ private struct BrowserPasswordManager: View {
 private struct BrowserPasswordEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserPasswordRecord
@@ -374,7 +374,7 @@ private struct BrowserPasswordEditor: View {
 private struct BrowserContactManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserContactRecord?
@@ -434,7 +434,7 @@ private struct BrowserContactManager: View {
 private struct BrowserContactEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserContactRecord
@@ -471,7 +471,7 @@ private struct BrowserContactEditor: View {
 private struct BrowserCardManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
     @State private var editor: BrowserPaymentCardRecord?
@@ -537,7 +537,7 @@ private struct BrowserCardManager: View {
 private struct BrowserCardEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @State var record: BrowserPaymentCardRecord
@@ -593,7 +593,7 @@ private enum BrowserHistoryRange: String, CaseIterable, Identifiable {
 private struct BrowserHistoryManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @ObservedObject private var store: BrowserActivityStore
@@ -655,7 +655,7 @@ private struct BrowserHistoryManager: View {
 private struct BrowserDownloadManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @ObservedObject private var store: BrowserActivityStore
@@ -757,7 +757,7 @@ private struct BrowserDownloadManager: View {
 private struct BrowserSiteDataManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @State private var records: [BrowserWebsiteDataRecord] = []
@@ -818,7 +818,7 @@ private struct BrowserSiteDataManager: View {
 private struct BrowserPermissionManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @Binding var draft: AppSettings
@@ -902,7 +902,7 @@ private struct BrowserPermissionManager: View {
 private struct BrowserImportManager: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
     @State private var kind = BrowserImportKind.passwords

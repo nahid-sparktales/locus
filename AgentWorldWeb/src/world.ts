@@ -1,3 +1,6 @@
+import { shipLabelDetail, shipLabelOnScreen } from './shipLabelDetail';
+import { canOpenIslandQuarters } from './islandQuarters';
+import type { QuartersIslandID } from './islandQuarters';
 import { stepShipCameraFollow } from './shipCameraFollow';
 import { fetchCompressedModel } from './assetBytes';
 import { createNewsCoo } from './newsCoo';
@@ -33,7 +36,9 @@ import { RESIDENT_ASSET_TYPES, HUMANOID_ASSET_TYPES, SHIP_ASSET_TYPES, DEFAULT_S
 import { SCENERY_ASSET_TYPES, type SceneryAssetType } from './theme';
 import { buildGrandLineScenery, GRAND_LINE_CREW_PLAZAS, GRAND_LINE_LANDMARKS } from './grandLineScenery';
 import { assignHarbors, reserveNearestHarbors, reservesWorkHarbor } from './harborAssignments';
-import { GRAND_LINE_HARBORS } from './grandLineGeography';
+import { sailingHarbors, sailingNavigation, sailingCameraFrame } from './sailingArea';
+import type { SailingArea } from './sailingArea';
+import { placeShipLabel } from './shipLabelLayout';
 import { createShipWorkGlow } from './shipWorkGlow';
 import { createShipFallback, replaceShipFallback, createShipWake, fitShipModel } from './ships';
 import { createPanda } from './pandas';
@@ -50,7 +55,7 @@ import type { NavigationMap, ResidentMotion } from './residentMotion';
 type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; kind: ResidentKind | 'ship'; panda?: ReturnType<typeof createPanda>; person?: ReturnType<typeof createPerson>; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
 type Resident = { workGlow?: ReturnType<typeof createShipWorkGlow>; crew?: ReturnType<typeof createIslandCrew>; agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; wake?: TransformNode; home: Placement; motion: ResidentMotion; id: string; phase: number };
 type Courier = { event: AgentTransfer; boat: ReturnType<typeof createCourierBoat>; route: Point[]; wake: TransformNode; started: number; duration: number; arrivedAt?: number; label: HTMLDivElement };
-type Callbacks = { onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onClearSelection?: () => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
+type Callbacks = { onIsland?: (id: QuartersIslandID) => void; onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onClearSelection?: () => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
 export class OutpostWorld {
   private engine: Engine;
@@ -66,8 +71,13 @@ export class OutpostWorld {
   private crewAssignments = new Map<string, ResidentKind>();
   private harborAssignments = new Map<string, number>();
   private workHarbors = new Map<string, number>();
-  private get harbors(): readonly Placement[] { return this.theme.id === 'grand-line' ? GRAND_LINE_HARBORS : this.theme.layout.stations; }
+  private sailingArea: SailingArea = 'whole';
+  private overview = true;
+  private seaHarbors = sailingHarbors('whole');
+  private get harbors(): readonly Placement[] { return this.theme.id === 'grand-line' ? this.seaHarbors : this.theme.layout.stations; }
   private navigation: NavigationMap;
+  private islandQuartersEnabled = true;
+  setIslandQuartersEnabled(enabled: boolean): void { this.islandQuartersEnabled = enabled; }
   private visible = true;
   private disposed = false;
   private lastFrame = 0;
@@ -108,7 +118,7 @@ export class OutpostWorld {
     this.scene.skipPointerMovePicking = true;
     this.scene.autoClear = true;
     this.labels = document.getElementById('agent-labels')!;
-    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, .voyage-chart, .view-reset, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback, #fleet-activity, #snail-alert'));
+    this.hudOverlays = Array.from(document.querySelectorAll<HTMLElement>('.roster-panel, .world-header, .world-footer, .coordinate-label, .voyage-chart, .view-reset, #theme-popover, #selection-note, #asset-loading, #asset-notice, #graphics-fallback, #fleet-activity, #snail-alert, #sailing-area-control'));
     this.mapRoot = new TransformNode('outpost', this.scene);
     this.navigation = themeNavigation(theme, []);
     if (theme.environment === 'ocean') this.courierNavigation = createNavigation({ radius: theme.layout.radius, sailingBounds: theme.layout.sailingBounds, bodyRadius: 0.48, obstacles: theme.layout.obstacles });
@@ -119,7 +129,7 @@ export class OutpostWorld {
     this.camera.lowerBetaLimit = 0.35;
     this.camera.upperBetaLimit = 1.16;
     this.camera.minZ = 0.2;
-    this.camera.maxZ = 250;
+    this.camera.maxZ = 1000;
     this.camera.wheelPrecision = 22;
     this.camera.panningSensibility = 0;
     this.camera.angularSensibilityX = 620;
@@ -607,7 +617,7 @@ export class OutpostWorld {
     for (const station of this.stations) station.dispose();
     this.stations = [];
     if (this.theme.environment === 'ocean') {
-      this.navigation = themeNavigation(this.theme, []);
+      this.navigation = this.theme.id === 'grand-line' ? sailingNavigation(this.theme, this.sailingArea) : themeNavigation(this.theme, []);
       return;
     }
     for (const resident of this.residents) {
@@ -692,7 +702,13 @@ export class OutpostWorld {
       label.dataset.residentStyle = this.theme.environment === 'ocean' ? 'ships' : this.residentStyle;
       if (this.theme.environment === 'ocean') label.dataset.homeIsland = this.getAgentHome(agent.id) ?? '';
       label.title = `Interact with ${agent.name}`;
-      label.addEventListener('click', () => this.callbacks.onSelect(agent.id));
+      label.addEventListener('pointerdown', event => {
+        // Keep moving badges as the click target while the camera or layout
+        // changes; the gesture must not fall through to the ocean underneath.
+        if (event.button === 0 && !(event.target instanceof Element && event.target.closest('button'))) label.setPointerCapture(event.pointerId);
+        event.stopPropagation();
+      });
+      label.addEventListener('click', event => { event.stopPropagation(); this.callbacks.onSelect(agent.id); });
       label.addEventListener('pointerenter', () => this.setHovered(agent.id));
       label.addEventListener('pointerleave', () => this.setHovered(undefined));
       const ring = this.ring(`resident-pad-${agent.id}`, this.theme.environment === 'ocean' ? 3.6 : 1.45, 0.032, 0.115, this.material('resident-pad', '#829c96', 0.1));
@@ -751,7 +767,7 @@ export class OutpostWorld {
     }
     const state = document.createElement('span'); state.className = 'agent-label-state'; state.textContent = meta.label;
     inner.append(name, state);
-    if (this.theme.environment === 'ocean' && resident.agent.status !== 'idle') {
+    if (this.theme.environment === 'ocean') {
       const source = document.querySelector('.snail-art-placeholder');
       if (source) {
         const snail = source.cloneNode(true) as SVGElement;
@@ -764,6 +780,7 @@ export class OutpostWorld {
     if (request) {
       const call = document.createElement('button'); call.type = 'button'; call.tabIndex = -1; call.className = 'den-den-call';
       call.textContent = request.kind === 'approval' ? 'Ping Ping · Approval' : 'Ping Ping · Needs your input';
+      call.setAttribute('aria-label', `Open ${resident.agent.name}’s ${request.kind === 'approval' ? 'approval request' : 'input request'}`);
       call.title = request.title; call.dataset.requestId = request.id;
       call.addEventListener('click', event => { event.stopPropagation(); this.callbacks.onAttention?.(request.id); });
       inner.append(call);
@@ -771,7 +788,7 @@ export class OutpostWorld {
     resident.label.append(inner);
     resident.label.classList.toggle('selected', resident.id === this.selectedID);
     resident.label.classList.toggle('hovered', resident.id === this.hoveredID);
-    resident.label.title = `Interact with ${resident.agent.name}`;
+    resident.label.title = `${resident.agent.name} · ${meta.label}${this.getAgentHome(resident.id) ? ` · ${this.getAgentHome(resident.id)}` : ''}`;
     resident.label.style.setProperty('--status', meta.color);
     resident.label.dataset.status = resident.agent.status;
     const selected = resident.id === this.selectedID, hovered = resident.id === this.hoveredID;
@@ -790,7 +807,7 @@ export class OutpostWorld {
 
   private buildInput(): void {
     const listen = <K extends keyof WindowEventMap>(type: K, listener: (event: WindowEventMap[K]) => void) => { window.addEventListener(type, listener); this.cleanups.push(() => window.removeEventListener(type, listener)); };
-    listen('resize', () => this.resizeRenderer());
+    listen('resize', () => { this.resizeRenderer(); if (this.overview) this.resetView(); });
     const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
     const motionPreferenceChanged = (event: MediaQueryListEvent) => {
       this.reducedMotion = event.matches;
@@ -806,11 +823,12 @@ export class OutpostWorld {
     this.cleanups.push(() => motionPreference.removeEventListener('change', motionPreferenceChanged));
     let pointerStart: ScreenPoint | undefined;
     let dragged = false;
-    const pick = (event: PointerEvent): { actorID?: string; attentionID?: string; transferID?: string; creatureID?: string } | undefined => {
+    const pick = (event: PointerEvent): { actorID?: string; attentionID?: string; transferID?: string; creatureID?: string; islandID?: QuartersIslandID } | undefined => {
       const rect = this.canvas.getBoundingClientRect();
-      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string' || typeof mesh.metadata?.creatureID === 'string'))?.pickedMesh?.metadata;
+      return this.scene.pick(event.clientX - rect.left, event.clientY - rect.top, mesh => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && (typeof mesh.metadata?.actorID === 'string' || typeof mesh.metadata?.transferID === 'string' || typeof mesh.metadata?.creatureID === 'string' || canOpenIslandQuarters(mesh.metadata?.islandID, this.islandQuartersEnabled, this.theme.id)))?.pickedMesh?.metadata;
     };
     const down = (event: PointerEvent) => {
+      this.overview = false;
       if (event.button === 2) { this.followingID = undefined; this.focusRadius = undefined; }
       if (event.button !== 0) return;
       pointerStart = { x: event.clientX, y: event.clientY }; dragged = false;
@@ -824,7 +842,7 @@ export class OutpostWorld {
       }
       const target = pick(event);
       this.setHovered(target?.actorID);
-      if (target?.transferID || target?.attentionID || target?.creatureID) this.canvas.style.cursor = 'pointer';
+      if (target?.transferID || target?.attentionID || target?.creatureID || target?.islandID) this.canvas.style.cursor = 'pointer';
     };
     const up = (event: PointerEvent) => {
       const click = pointerStart && !dragged && isClickGesture(pointerStart, { x: event.clientX, y: event.clientY });
@@ -836,10 +854,11 @@ export class OutpostWorld {
       else if (click && target?.attentionID) this.callbacks.onAttention?.(target.attentionID);
       else if (click && target?.transferID) this.callbacks.onTransfer?.(target.transferID);
       else if (click && target?.actorID) this.callbacks.onSelect(target.actorID);
+      else if (click && target?.islandID) this.callbacks.onIsland?.(target.islandID);
       else if (click && !target) this.callbacks.onClearSelection?.();
     };
     const cancel = () => { pointerStart = undefined; dragged = false; this.setHovered(undefined); };
-    const wheel = () => { this.focusRadius = undefined; };
+    const wheel = () => { this.overview = false; this.focusRadius = undefined; };
     this.canvas.addEventListener('wheel', wheel, { passive: true });
     this.cleanups.push(() => this.canvas.removeEventListener('wheel', wheel));
     this.canvas.addEventListener('pointerdown', down); this.canvas.addEventListener('pointermove', move); this.canvas.addEventListener('pointerup', up);
@@ -947,6 +966,10 @@ export class OutpostWorld {
   }
 
   private updateLabels(): void {
+    // Apply before measuring so collision placement uses the actual badge/card
+    // bounds. CSS transforms alone would leave oversized invisible hit areas.
+    const detail = this.theme.environment === 'ocean' ? shipLabelDetail(this.camera.radius, this.canvas.clientHeight, this.camera.fov) : 'full';
+    if (this.labels.dataset.detail !== detail) this.labels.dataset.detail = detail;
     const viewport = this.camera.viewport.toGlobal(this.engine.getRenderWidth(), this.engine.getRenderHeight());
     const scaleX = this.canvas.clientWidth / this.engine.getRenderWidth();
     const scaleY = this.canvas.clientHeight / this.engine.getRenderHeight();
@@ -971,15 +994,28 @@ export class OutpostWorld {
     candidates.sort((a, b) => a.priority - b.priority || a.projected.z - b.projected.z || a.id.localeCompare(b.id));
     const occupied = [...overlays];
     for (const { label, projected, x, y, bounds } of candidates) {
-      const automatic = this.theme.environment !== 'ocean' || label.dataset.status !== 'idle' || label.classList.contains('selected') || label.classList.contains('hovered');
-      const visible = automatic && projected.z > 0 && projected.z < 1 && labelIsUnobscured(bounds, this.canvas.clientWidth, this.canvas.clientHeight, occupied);
-      if (visible) occupied.push(bounds);
+      const ship = this.theme.environment === 'ocean' && !label.classList.contains('courier-label');
+      const rect = ship ? placeShipLabel(x, y, label.offsetWidth, label.offsetHeight, this.canvas.clientWidth, this.canvas.clientHeight, occupied) : bounds;
+      const onScreen = shipLabelOnScreen(x, y, projected.z, this.canvas.clientWidth, this.canvas.clientHeight);
+      const visible = ship ? onScreen : (onScreen && labelIsUnobscured(rect, this.canvas.clientWidth, this.canvas.clientHeight, occupied));
+      if (visible) occupied.push(rect);
       label.dataset.labelVisible = String(visible);
+      label.dataset.offscreen = String(!onScreen);
       label.style.opacity = visible ? '1' : '0';
-      // Hide immediately on overlap; an opacity transition must not linger over the HUD.
       label.style.visibility = visible ? 'visible' : 'hidden';
-      label.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-100%)`;
-      label.style.zIndex = `${Math.round(1000 - projected.z * 1000)}`;
+      const cardX = ship ? (rect.left + rect.right) / 2 : x, cardY = ship ? rect.bottom : y;
+      label.style.transform = `translate(${cardX.toFixed(1)}px,${cardY.toFixed(1)}px) translate(-50%,-100%)`;
+      label.style.zIndex = `${1000 - candidates.findIndex(candidate => candidate.label === label)}`;
+      // A light tether keeps displaced cards connected to their actual ship.
+      if (ship) {
+        let tether = label.querySelector<HTMLElement>('.ship-label-tether');
+        if (!tether) { tether = document.createElement('span'); tether.className = 'ship-label-tether'; label.append(tether); }
+        const dx = x - cardX, dy = y - cardY;
+        const displaced = Math.hypot(dx, dy) > 8 && label.dataset.offscreen !== 'true';
+        tether.hidden = !displaced;
+        tether.style.height = `${Math.hypot(dx, dy)}px`;
+        tether.style.transform = `rotate(${Math.atan2(-dx, dy)}rad)`;
+      }
     }
   }
 
@@ -1077,7 +1113,7 @@ export class OutpostWorld {
   private updateIslandWorkSignals(): void {
     if (!this.islandWorkSignals) return;
     const active = this.islandWorkSignals.update(this.residents.map(resident => ({ id: resident.id, status: resident.agent.status,
-      motion: resident.motion, home: resident.home, harbor: this.harborAssignments.get(resident.id) })), this.elapsed, this.reducedMotion);
+      motion: resident.motion, home: resident.home, harbor: this.seaHarbors[this.harborAssignments.get(resident.id)!]?.islandIndex })), this.elapsed, this.reducedMotion);
     for (const resident of this.residents) resident.label.dataset.workIsland = active.has(resident.id) ? String(active.get(resident.id)) : '';
   }
 
@@ -1085,7 +1121,8 @@ export class OutpostWorld {
     if (this.theme.environment !== 'ocean') return;
     const activity = islandCrewActivity(resident.agent.status, resident.motion, resident.home);
     const harbor = this.harborAssignments.get(resident.id);
-    const plaza = harbor === undefined ? undefined : GRAND_LINE_CREW_PLAZAS[harbor];
+    const island = harbor === undefined ? undefined : this.seaHarbors[harbor]?.islandIndex;
+    const plaza = island === undefined ? undefined : GRAND_LINE_CREW_PLAZAS[island];
     if (!activity || !plaza) {
       resident.crew?.dispose(); resident.crew = undefined;
     } else {
@@ -1119,6 +1156,7 @@ export class OutpostWorld {
     this.selectedID = id;
     for (const item of this.residents) this.updateLabel(item);
     this.followingID = id;
+    this.overview = false;
     this.focusRadius = Math.min(this.camera.radius, this.theme.environment === 'ocean' ? 16 : 14);
     this.camera.inertialPanningX = 0; this.camera.inertialPanningY = 0;
     this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0;
@@ -1182,7 +1220,7 @@ export class OutpostWorld {
 
   getAgentHome(id: string): string | undefined {
     const index = this.harborAssignments.get(id);
-    return this.theme.environment === 'ocean' && index !== undefined ? GRAND_LINE_HARBORS[index]?.name : undefined;
+    return this.theme.environment === 'ocean' && index !== undefined ? this.seaHarbors[index]?.name : undefined;
   }
 
   setNavigationMode(mode: 'orbit' | 'pan'): void {
@@ -1196,6 +1234,7 @@ export class OutpostWorld {
   }
 
   panMap(direction: 'left' | 'right' | 'up' | 'down'): void {
+    this.overview = false;
     this.followingID = undefined; this.focusRadius = undefined;
     const step = Math.max(0.45, this.camera.radius * 0.025);
     const right = new Vector3(-Math.sin(this.camera.alpha), 0, Math.cos(this.camera.alpha));
@@ -1207,14 +1246,36 @@ export class OutpostWorld {
     this.camera.target.copyFrom(target);
   }
 
+  setSailingArea(area: SailingArea): void {
+    if (this.theme.id !== 'grand-line' || this.sailingArea === area) return;
+    this.sailingArea = area;
+    this.seaHarbors = sailingHarbors(area);
+    this.harborAssignments.clear(); this.workHarbors.clear();
+    // A region change is an explicit fleet move. Clear old routes and berths
+    // before the caller repopulates the visible fleet in the selected sea.
+    this.setAgents([]);
+    this.navigation = sailingNavigation(this.theme, area);
+    this.courierNavigation = sailingNavigation(this.theme, area, 0.48);
+    this.resetView();
+  }
+
   resetView(): void {
+    this.overview = true;
     this.followingID = undefined; this.focusRadius = undefined;
     this.camera.inertialAlphaOffset = 0; this.camera.inertialBetaOffset = 0; this.camera.inertialRadiusOffset = 0;
     this.camera.inertialPanningX = 0; this.camera.inertialPanningY = 0;
-    this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -13 : 0, 0.9, this.theme.environment === 'ocean' ? -3 : -0.4));
-    this.camera.alpha = this.theme.environment === 'ocean' ? Math.PI / 2 : Math.PI / 2 - 0.3;
-    this.camera.beta = this.theme.environment === 'ocean' ? 0.74 : 1.01;
-    this.camera.radius = this.theme.environment === 'ocean' ? 68 : 33;
+    const frame = sailingCameraFrame(this.sailingArea, this.canvas.clientWidth, this.canvas.clientHeight, this.camera.fov);
+    const ocean = this.theme.environment === 'ocean';
+    this.camera.setTarget(new Vector3(ocean ? frame.x : 0, 0.9, ocean ? frame.z : -0.4));
+    this.camera.alpha = ocean ? Math.PI / 2 : Math.PI / 2 - 0.3;
+    this.camera.beta = ocean ? frame.beta : 1.01;
+    this.camera.lowerRadiusLimit = ocean ? frame.minimum : 14;
+    this.camera.upperRadiusLimit = ocean ? frame.maximum : 46;
+    this.camera.radius = ocean ? frame.radius : 33;
+    this.camera.wheelDeltaPercentage = ocean ? 0.035 : 0;
+    this.canvas.dataset.sailingArea = this.sailingArea;
+    this.canvas.dataset.overviewRadius = String(this.camera.radius);
+    this.canvas.dataset.overviewTargetX = String(this.camera.target.x);
   }
 
   setVisible(visible: boolean): void {

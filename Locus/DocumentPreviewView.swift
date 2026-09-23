@@ -6,7 +6,7 @@ import SwiftUI
 struct DocumentPreviewSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     let request: DocumentPreviewRequest
@@ -40,7 +40,7 @@ struct DocumentPreviewSheet: View {
 struct DocumentPreviewView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var library: WorkspaceLibraryModel
     let request: DocumentPreviewRequest
@@ -229,7 +229,7 @@ private enum ImageCanvasBackground: String, CaseIterable, Identifiable {
 private struct ImageReader: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let image: NSImage
     @State private var zoom: CGFloat = 1
@@ -423,7 +423,7 @@ private final class ImageReaderCanvas: NSView {
 struct DocumentPDFReader: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     var url: URL? = nil
     var data: Data? = nil

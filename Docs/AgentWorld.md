@@ -80,6 +80,16 @@ screen extension.
   and WASD also move the map; scroll to zoom and **Reset view** restores the overview.
   The widened Local Line has spaced islands and berths, with RAM Belts farther
   north and south. Ships turn toward their course before sailing bow-first.
+- **Ships sail → Whole map / Left side / Right side** controls which sea the
+  fleet can roam and dock in. Left and right refer to the reset overview; rotating
+  the camera does not swap them. The saved choice also centers the camera and
+  adjusts zoom limits and **Reset view**. Larger rosters use fleet pages sized to
+  the available ports; selecting any agent brings their fleet into view.
+  Islands retain voyage order with varied spacing. Marineford backs onto the
+  mountain, with Mary Geoise on the same side of the ridge.
+- Ship labels grow from a small status-colored snail to a name and full details
+  as you zoom in. Crowded labels move apart with a line to their ship, and
+  labels disappear when their ships leave the camera view.
 - Choose a world from the native top toolbar beside **Crew Chat** and **Residents**;
   Locus remembers the selection. The ocean has no duplicate fleet panel or theme
   picker over the map. Its upper-right corner holds **Den Den Dispatch**, flush with the top border; Outpost
@@ -91,11 +101,18 @@ screen extension.
   articulated walk. Existing agents keep their kind when the roster changes.
   Locus remembers this appearance independently of the world selection. Switching
   preserves the agents' locations, routes, identities, and work.
-- Click an agent, ship, or its label to interact. The searchable native
+- Click an agent, ship, or its label to open a small chat over the map and follow
+  that ship. Switch agents from the chat's picker or previous/next arrows; the
+  map stays visible and interactive. Expand the chat explicitly to enter the
+  full Captain's Quarters workspace. The searchable native
   **Agents** sidebar provides keyboard access to every agent. Compact captain cards
   use detailed ship portraits and show the assigned ship, home island, and current status.
   Each row has a visible **New chat** action; the sidebar starts at 206 points wide. Fleet management,
   Crew Chat, Captain’s Quarters, and Activity Center shortcuts live here.
+- Click Elbaf, Marineford, Water 7, Wano, or Drum Island to visit its Captain's
+  Quarters. Overview pages, chat, tools, and nested editors share the island's
+  palette. The regular Captain's Quarters button uses your saved Wood/Ocean
+  preference. Settings can disable island-click visits.
 - Choose **Ship style** on a resident card, or from the agent actions menu in
   Agent workspace, to assign any of the fifteen boats. **Automatic** restores
   that profile’s original automatic boat assignment; the original twelve styles

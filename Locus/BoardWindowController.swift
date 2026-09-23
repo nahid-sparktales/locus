@@ -12,12 +12,13 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         windows[BoardStore.storageIdentity(workspacePath: workspacePath)]
     }
 
-    func open(store: BoardStore, model: AppModel, ocean: Bool = false, deck: Bool = false) {
+    func open(store: BoardStore, model: AppModel, ocean: Bool = false, deck: Bool = false, island: AgentWorldQuartersIsland? = nil) {
         guard store.isAvailable else { return }
         let identity = BoardStore.storageIdentity(workspacePath: store.workspacePath)
         if let window = windows[identity] {
             appearances[identity]?.ocean = ocean
             appearances[identity]?.deck = deck
+            appearances[identity]?.island = island
             window.appearance = ocean ? NSAppearance(named: .darkAqua) : nil
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
@@ -36,7 +37,7 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         if ocean { window.appearance = NSAppearance(named: .darkAqua) }
-        let appearance = BoardWindowAppearance(ocean: ocean, deck: deck)
+        let appearance = BoardWindowAppearance(ocean: ocean, deck: deck, island: island)
         appearances[identity] = appearance
         window.contentView = NSHostingView(rootView: BoardWindowContent(appearance: appearance, store: store, model: model))
         windows[identity] = window
@@ -65,12 +66,15 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
 private final class BoardWindowAppearance: ObservableObject {
     @Published var ocean: Bool
     @Published var deck: Bool
-    init(ocean: Bool, deck: Bool) { self.ocean = ocean; self.deck = deck }
+    @Published var island: AgentWorldQuartersIsland?
+    init(ocean: Bool, deck: Bool, island: AgentWorldQuartersIsland?) {
+        self.ocean = ocean; self.deck = deck; self.island = island
+    }
 }
 
 private struct BoardWindowContent: View {
     @ObservedObject var appearance: BoardWindowAppearance
-    private var viewColors: LocusViewColors { .init(ocean: appearance.ocean, deck: appearance.deck) }
+    private var viewColors: LocusViewColors { .init(ocean: appearance.ocean, deck: appearance.deck, island: appearance.island) }
 
     @ObservedObject var store: BoardStore
     @ObservedObject var model: AppModel
@@ -84,6 +88,7 @@ private struct BoardWindowContent: View {
             .background(viewColors.surfaceCanvas)
             .environment(\.locusOceanTheme, appearance.ocean)
             .environment(\.locusCaptainDeckTheme, appearance.deck)
+            .environment(\.locusQuartersIsland, appearance.island)
             .accessibilityIdentifier("board.window")
     }
 }

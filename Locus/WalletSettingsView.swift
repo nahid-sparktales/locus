@@ -96,7 +96,7 @@ enum WalletSendEligibility {
 struct WalletSettingsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var gateway: WalletGateway
@@ -1883,7 +1883,7 @@ private enum WalletConnectionPresentation {
 private struct WalletConnectionProposalSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var gateway: WalletGateway
     let proposal: WalletConnectionProposalReview
@@ -1993,7 +1993,7 @@ private struct WalletConnectionProposalSheet: View {
 private struct WalletSectionCard<Content: View>: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let title: String
     let symbol: String
@@ -2020,7 +2020,7 @@ private struct WalletSectionCard<Content: View>: View {
 private struct WalletAlphaRiskSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     let enable: () -> Void
@@ -2067,7 +2067,7 @@ private struct WalletAlphaRiskSheet: View {
 private struct WalletSendSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -2365,7 +2365,7 @@ private struct WalletSendSheet: View {
 private struct WalletReceiveSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -2481,7 +2481,7 @@ private struct WalletReceiveSheet: View {
 private struct WalletBrowserOriginGrantSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -2519,7 +2519,7 @@ private struct WalletBrowserOriginGrantSheet: View {
 private struct WalletNativePolicySheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     private struct PolicyOption: Identifiable {
         let account: WalletAccount
@@ -2677,7 +2677,7 @@ private struct WalletNativePolicySheet: View {
 private struct WalletSPLTokenPolicySheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -2822,7 +2822,7 @@ private struct WalletSPLTokenPolicySheet: View {
 private struct WalletContractPolicySheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -2969,7 +2969,7 @@ private struct WalletContractPolicySheet: View {
 private struct WalletContractRegistrySheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -3024,7 +3024,7 @@ private struct WalletContractRegistrySheet: View {
 private struct WalletVaultDeleteSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -3049,7 +3049,7 @@ private struct WalletVaultDeleteSheet: View {
 private struct WalletRecoveryVaultDeleteSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
@@ -3081,7 +3081,7 @@ private struct WalletRecoveryVaultDeleteSheet: View {
 private struct WalletTransactionConfirmationSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var gateway: WalletGateway
