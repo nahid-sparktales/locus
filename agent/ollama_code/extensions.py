@@ -36,7 +36,7 @@ MAX_GIT_OUTPUT = 16_000
 MAX_OAUTH_METADATA_BYTES = 1024 * 1024
 MAX_PLUGIN_SCREENS = 16
 PLUGIN_SCREEN_CAPABILITIES = frozenset({
-    "agents.read", "agents.interact", "world.preferences",
+    "agents.read", "agents.interact", "world.preferences", "social.workspace",
 })
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
 
@@ -260,6 +260,8 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
             raise ExtensionError(f"screen {identifier} requests unsupported capabilities")
         if len(capabilities) != len(set(capabilities)):
             raise ExtensionError(f"screen {identifier} declares duplicate capabilities")
+        if "social.workspace" in capabilities and (identifier != "social-studio" or capabilities != ["social.workspace"]):
+            raise ExtensionError("social.workspace requires the native social-studio screen with no additional capabilities")
         entrypoint = screen.get("entrypoint")
         if not isinstance(entrypoint, str) or not 1 <= len(entrypoint) <= 1024:
             raise ExtensionError(f"screen {identifier} requires a local HTML entrypoint")

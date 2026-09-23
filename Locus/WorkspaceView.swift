@@ -65,7 +65,15 @@ struct WorkspaceView: View {
             }
         }
         .locusWorkspaceBackground()
-        .overlay(alignment: .topTrailing) { activityPanel }
+        .locusSheet(isPresented: Binding(
+            get: { activityCenter.activityCenterPresented && !model.agentWorldOwnsPresentations },
+            set: { if !model.agentWorldOwnsPresentations { activityCenter.activityCenterPresented = $0 } }
+        )) {
+            ActivityCenterView()
+                .appFeatureEnvironment(from: model)
+                .frame(width: min(1120, max(320, workspaceGeometry.windowSize.width - 40)),
+                       height: min(780, max(440, workspaceGeometry.windowSize.height - 40)))
+        }
     }
 
     private var agentOverviewHeader: some View {
@@ -84,33 +92,6 @@ struct WorkspaceView: View {
         .frame(height: compactHeader ? 42 : WorkspaceLayoutMetrics.toolbarHeight)
         .locusSurface(.toolbar)
         .overlay(alignment: .bottom) { Rectangle().fill(viewColors.line).frame(height: 1) }
-    }
-
-    @ViewBuilder
-    private var activityPanel: some View {
-        if activityCenter.activityCenterPresented {
-            ActivityCenterView()
-                .environmentObject(model)
-                .frame(
-                    width: max(280, min(440, workspaceGeometry.workspaceWidth - 24))
-                )
-                .frame(maxHeight: .infinity)
-                .locusSurface(.floating, radius: 12)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(viewColors.lineStrong, lineWidth: 1)
-                }
-                .shadow(
-                    color: isLiveResizing ? .clear : .black.opacity(0.18),
-                    radius: isLiveResizing ? 0 : 18,
-                    x: 0,
-                    y: 8
-                )
-                .padding(12)
-                .transition(LocusMotion.transition(edge: .trailing, reduceMotion: reduceMotion))
-                .zIndex(2)
-        }
     }
 
     private var contentArea: some View {
@@ -1322,155 +1303,53 @@ struct ActivityCenterView: View {
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @State private var workflowRetryConfirmation: AttentionItem?
     @State private var clearUnavailableConfirmationPresented = false
-    @State private var searchText = ""
+    @State private var filter = ActivityFilter()
+    @State private var selectedResultID: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Activity Center")
-                        .font(.locus(size: 16, weight: .bold))
-                    Text("Your work, across all chats.")
-                        .font(.locus(size: 11))
-                        .foregroundStyle(viewColors.muted)
-                }
-                Spacer(minLength: 0)
-                Button {
-                    Task { await activityCenter.refreshActivityRuns() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 28, height: 28)
-                }
-                .disabled(activityCenter.isRefreshing)
-                .help(activityCenter.isRefreshing ? "Refreshing activity…" : "Refresh activity")
-                .accessibilityLabel("Refresh activity")
-                .accessibilityIdentifier("activity.refresh")
-                Button {
-                    withAnimation(LocusMotion.spatial) {
-                        activityCenter.toggleActivityCenter()
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 28, height: 28)
-                }
-                .help("Close Activity Center")
-                .accessibilityLabel("Close Activity Center")
-                .accessibilityIdentifier("activity.close")
-            }
-            .buttonStyle(.locus())
-            .padding(16)
-
+            header
             HStack(spacing: 4) {
-                activityTab(.inbox, count: activityCenter.inboxCount)
+                activityTab(.inbox, count: activityCenter.displayedAttentionItems.count + activityCenter.attentionRuns.count)
                 activityTab(.inProgress, count: activityCenter.inProgressRuns.count)
-                activityTab(.read, count: activityCenter.readRuns.count)
+                activityTab(.completed, count: activityCenter.completedRuns.count)
             }
             .padding(4)
-            .background(viewColors.paperDeep.opacity(0.7))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal, 16)
+            .background(viewColors.paperDeep.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 20)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("activity.tabSwitcher")
-
-            VStack(alignment: .leading, spacing: 10) {
-                if let focus = activityCenter.focus {
-                    HStack {
-                        Text(focusLabel(focus)).font(.locus(size: 11))
-                        Spacer()
-                        Button("Show all") { activityCenter.clearFocus() }
-                            .accessibilityIdentifier("activity.showAll")
-                    }
-                    .accessibilityIdentifier("activity.focus")
-                }
-                Text(tabDescription)
-                    .font(.locus(size: 11))
-                    .foregroundStyle(viewColors.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
-                    TextField("Search activity", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .accessibilityIdentifier("activity.search")
-                    if !searchText.isEmpty {
-                        Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.locus(.icon))
-                            .accessibilityLabel("Clear search")
-                    }
-                }
-                .font(.locus(size: 11))
-                .padding(9)
-                .background(viewColors.white.opacity(0.7))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay { RoundedRectangle(cornerRadius: 7).stroke(viewColors.line) }
-                if let error = activityCenter.focusError ?? activityCenter.refreshError {
-                    Label(error, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-                        .font(.locus(size: 10))
-                        .foregroundStyle(viewColors.warning)
-                }
-                if activityCenter.selectedTab == .inbox {
-                    HStack {
-                        if !activityCenter.inboxRuns.isEmpty, searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button("Mark all as read") { activityCenter.markAllActivitySeen() }
-                                .help("Move all new results to Read. Requests still need to be resolved.")
-                                .accessibilityIdentifier("activity.markAllSeen")
-                        }
-                        Spacer(minLength: 0)
-                        if activityCenter.focus == nil, !unavailableAttentionItems.isEmpty {
-                            Button("Clear Unavailable") { clearUnavailableConfirmationPresented = true }
-                                .disabled(model.isClearingUnavailableAttention)
-                                .accessibilityIdentifier("attention.clearUnavailable")
-                        }
-                    }
-                    .font(.locus(size: 10, weight: .medium))
-                    .buttonStyle(ActivityActionButtonStyle())
-                } else if activityCenter.selectedTab == .read, !filteredRuns.isEmpty {
-                    HStack {
-                        Button {
-                            activityCenter.clearReadActivityRuns(matching: Set(filteredRuns.map(\.id)))
-                        } label: {
-                            Label("Clear read (\(filteredRuns.count))", systemImage: "tray.and.arrow.up")
-                        }
-                        .help("Clear the read updates shown here. Your chats and tasks stay saved.")
-                        .accessibilityIdentifier("activity.clearRead")
-                        Spacer(minLength: 0)
-                    }
-                    .font(.locus(size: 10, weight: .medium))
-                    .buttonStyle(ActivityActionButtonStyle())
-                }
-            }
-            .padding(16)
+            filters
             Divider().overlay(viewColors.line)
-
-            if filteredRuns.isEmpty && filteredAttentionItems.isEmpty {
+            if activityCenter.selectedTab == .completed {
+                completedInbox
+            } else if filteredRuns.isEmpty && filteredAttentionItems.isEmpty {
                 emptyContent
             } else {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
+                TimelineView(.periodic(from: .now, by: 30)) { context in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
-                            if activityCenter.selectedTab == .inbox {
-                                attentionSections
-                            }
+                            if activityCenter.selectedTab == .inbox { attentionSections }
                             ForEach(ActivityGroup.allCases) { group in
                                 let values = runs(in: group)
                                 if !values.isEmpty {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        sectionHeading(
-                                            activityCenter.selectedTab == .inbox && group == .recent
-                                                ? "New results" : group.rawValue,
-                                            count: values.count
-                                        )
-                                        ForEach(values) { run in
-                                            activityRow(run, now: context.date)
-                                        }
-                                    }
+                                    sectionHeading(group.rawValue, count: values.count)
+                                    ForEach(values) { run in activityRow(run, now: context.date) }
                                 }
                             }
-                        }
-                        .padding(16)
+                        }.padding(20)
                     }
                 }
             }
         }
+        .foregroundStyle(viewColors.ink)
+        .background(viewColors.paper)
+        .onExitCommand {
+            if selectedResultID != nil { selectedResultID = nil }
+            else { activityCenter.activityCenterPresented = false }
+        }
+        .onChange(of: filter) { _, _ in selectedResultID = nil }
+        .onChange(of: activityCenter.focus) { _, _ in selectedResultID = nil }
         .task {
             while !Task.isCancelled {
                 await activityCenter.refreshActivityRuns(announceFailure: false)
@@ -1535,8 +1414,8 @@ struct ActivityCenterView: View {
                         .foregroundStyle(activityCenter.selectedTab == tab ? viewColors.ink : viewColors.muted)
                 }
             }
-            .font(.locus(size: 11, weight: activityCenter.selectedTab == tab ? .semibold : .medium))
-            .frame(maxWidth: .infinity, minHeight: 32)
+            .font(.locus(size: 12, weight: activityCenter.selectedTab == tab ? .semibold : .medium))
+            .frame(maxWidth: .infinity, minHeight: 36)
             .background(activityCenter.selectedTab == tab ? viewColors.white : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
@@ -1545,71 +1424,258 @@ struct ActivityCenterView: View {
         .accessibilityLabel(tab.rawValue)
         .accessibilityValue("\(count) items, \(activityCenter.selectedTab == tab ? "selected" : "not selected")")
         .accessibilityAddTraits(activityCenter.selectedTab == tab ? [.isSelected] : [])
-        .accessibilityIdentifier("activity.tab.\(tab == .inbox ? "inbox" : tab == .inProgress ? "inProgress" : "read")")
+        .accessibilityIdentifier("activity.tab.\(tab == .inbox ? "inbox" : tab == .inProgress ? "inProgress" : "completed")")
     }
 
-    private var tabDescription: String {
-        switch activityCenter.selectedTab {
-        case .inbox: "Requests that need you and new results. Open a finished task to move it to Read."
-        case .inProgress: "Live work and queued tasks. They keep running when you leave this panel."
-        case .read: "Finished tasks you’ve opened or marked as read. Clear updates here to tidy this list; your chats and tasks stay saved."
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "tray.full").font(.system(size: 22, weight: .medium))
+                .foregroundStyle(viewColors.signalDeep)
+                .frame(width: 42, height: 42)
+                .background(viewColors.paperDeep, in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Activity Center").font(.locus(size: 20, weight: .bold))
+                Text("Your agents’ work, in one place.").font(.locus(size: 12)).foregroundStyle(viewColors.muted)
+            }
+            Spacer(minLength: 0)
+            if activityCenter.isRefreshing { ProgressView().controlSize(.small) }
+            Button { Task { await activityCenter.refreshActivityRuns() } } label: {
+                Image(systemName: "arrow.clockwise").frame(width: 30, height: 30)
+            }
+            .disabled(activityCenter.isRefreshing).help("Refresh activity")
+            .accessibilityLabel("Refresh activity").accessibilityIdentifier("activity.refresh")
+            Button { activityCenter.activityCenterPresented = false } label: {
+                Image(systemName: "xmark").frame(width: 30, height: 30)
+            }
+            .help("Close Activity Center").accessibilityLabel("Close Activity Center")
+            .accessibilityIdentifier("activity.close")
+        }.buttonStyle(.locus()).padding(20)
+    }
+
+    private var filters: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let focus = activityCenter.focus {
+                HStack {
+                    Text(focusLabel(focus))
+                    Spacer()
+                    Button("Show all") { activityCenter.clearFocus() }
+                        .accessibilityIdentifier("activity.showAll")
+                }.font(.locus(size: 12)).accessibilityIdentifier("activity.focus")
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(viewColors.muted)
+                TextField("Search tasks, agents, or workspaces", text: $filter.search)
+                    .textFieldStyle(.plain).accessibilityIdentifier("activity.search")
+                if !filter.search.isEmpty {
+                    Button { filter.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).accessibilityLabel("Clear search")
+                }
+            }
+            .font(.locus(size: 12)).padding(10)
+            .background(viewColors.white, in: RoundedRectangle(cornerRadius: 8))
+            .overlay { RoundedRectangle(cornerRadius: 8).stroke(viewColors.line) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { filterPickers; resetFilters }
+                VStack(alignment: .leading, spacing: 8) { filterPickers; resetFilters }
+            }
+            if let error = activityCenter.focusError ?? activityCenter.refreshError {
+                Label(error, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.locus(size: 11)).foregroundStyle(viewColors.warning)
+            }
+            if activityCenter.selectedTab == .inbox, !unavailableAttentionItems.isEmpty {
+                Button("Clear unavailable recoveries") { clearUnavailableConfirmationPresented = true }
+                    .disabled(model.isClearingUnavailableAttention)
+                    .buttonStyle(ActivityActionButtonStyle())
+                    .accessibilityIdentifier("attention.clearUnavailable")
+            }
+        }.padding(.horizontal, 20).padding(.vertical, 14)
+    }
+
+    @ViewBuilder private var filterPickers: some View {
+        Picker("Agent", selection: $filter.agentID) {
+            Text("All agents").tag("")
+            ForEach(agentOptions, id: \.id) { Text($0.name).tag($0.id) }
+        }.accessibilityIdentifier("activity.filter.agent")
+        Picker("Time", selection: $filter.time) {
+            ForEach(ActivityFilter.TimeRange.allCases) { Text($0.rawValue).tag($0) }
+        }.accessibilityIdentifier("activity.filter.time")
+        Picker("Type", selection: $filter.kind) {
+            ForEach(ActivityFilter.Kind.allCases) { Text($0.rawValue).tag($0) }
+        }.accessibilityIdentifier("activity.filter.type")
+    }
+
+    private var resetFilters: some View {
+        Button("Reset filters") { filter = ActivityFilter() }
+            .disabled(!filter.isActive && filter.readState == .all)
+            .buttonStyle(ActivityActionButtonStyle()).fixedSize()
+            .accessibilityIdentifier("activity.filter.reset")
+    }
+
+    private var agentOptions: [(id: String, name: String)] {
+        var options: [String: String] = [:]
+        for run in activityCenter.displayedActivityRuns {
+            options[agentKey(for: run)] = agentName(for: run) ?? "Unassigned"
         }
+        for item in activityCenter.displayedAttentionItems {
+            let run = relatedRun(item)
+            let session = item.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0] }
+            let key = ActivityFilter.agentKey(run: run, session: session)
+            let name = run.flatMap { agentName(for: $0) } ?? session?.savedAgentProfileID.flatMap { id in
+                agentTeams.agentProfiles.first { $0.id == id }?.name
+            } ?? session?.agentName ?? "Unassigned"
+            options[key] = name
+        }
+        return options.map { (id: $0.key, name: $0.value) }.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+    }
+
+    private func relatedRun(_ item: AttentionItem) -> OrchestrationRun? {
+        activityCenter.displayedActivityRuns.first { $0.id == item.runID }
+    }
+    private func agentKey(for run: OrchestrationRun) -> String {
+        ActivityFilter.agentKey(run: run, session: run.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0] })
     }
 
     private var filteredAttentionItems: [AttentionItem] {
         guard activityCenter.selectedTab == .inbox else { return [] }
         return activityCenter.displayedAttentionItems.filter { item in
-            let chatTitle = item.sessionID.flatMap {
-                sessionCatalog.snapshot.sessionsByID[$0]?.displayTitle
-            } ?? ""
-            return matchesSearch([item.title, item.detail, chatTitle])
+            let run = relatedRun(item)
+            let session = item.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0] }
+            let key = ActivityFilter.agentKey(run: run, session: session)
+            return filter.matches(agentID: key, timestamp: item.timestamp,
+                kind: .kind(for: item, run: run), text: [item.title, item.detail, session?.displayTitle ?? "",
+                    agentOptions.first { $0.id == key }?.name ?? ""])
         }
     }
 
     private var filteredRuns: [OrchestrationRun] {
         let values: [OrchestrationRun]
         switch activityCenter.selectedTab {
-        case .inbox: values = activityCenter.inboxRuns
+        case .inbox: values = activityCenter.attentionRuns
         case .inProgress: values = activityCenter.inProgressRuns
-        case .read: values = activityCenter.readRuns
+        case .completed: values = activityCenter.completedRuns
         }
-        return values.filter {
-            matchesSearch([chatTitle(for: $0), workspaceTitle(for: $0), agentName(for: $0) ?? "", $0.request, statusTitle(for: $0)])
+        return values.filter { run in
+            let matchesRead = activityCenter.selectedTab != .completed || filter.readState == .all
+                || (filter.readState == .unread) == activityCenter.activityIsUnseen(run)
+            return matchesRead && filter.matches(agentID: agentKey(for: run),
+                timestamp: run.completedAt ?? run.updatedAt, kind: .kind(for: run),
+                text: [chatTitle(for: run), taskTitle(run), workspaceTitle(for: run), agentName(for: run) ?? "", run.request, statusTitle(for: run)])
         }
-    }
-
-    private func matchesSearch(_ values: [String]) -> Bool {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty || values.contains { $0.localizedStandardContains(query) }
     }
 
     private var emptyContent: some View {
         VStack(spacing: 12) {
-            if activityCenter.isRefreshing && !activityCenter.hasLoadedActivity && activityCenter.activityRuns.isEmpty && activityCenter.refreshError == nil {
+            if activityCenter.isRefreshing && !activityCenter.hasLoadedActivity && activityCenter.activityRuns.isEmpty {
                 ProgressView("Loading activity…")
             } else if activityCenter.refreshError != nil && !activityCenter.hasLoadedActivity && activityCenter.activityRuns.isEmpty {
                 ContentUnavailableView("Activity unavailable", systemImage: "wifi.exclamationmark",
-                    description: Text("Try refreshing to load your tasks and requests."))
-            } else if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ContentUnavailableView.search(text: searchText)
+                    description: Text("Refresh to try loading your tasks again."))
+            } else if filter.isActive || (activityCenter.selectedTab == .completed && filter.readState != .all) {
+                ContentUnavailableView("No matching activity", systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("Try a different search or reset your filters."))
+                Button("Reset filters") { filter = ActivityFilter() }
             } else {
                 ContentUnavailableView(
                     activityCenter.selectedTab == .inbox ? "You’re all caught up"
-                        : activityCenter.selectedTab == .inProgress ? "Nothing in progress" : "No read activity yet",
-                    systemImage: activityCenter.selectedTab == .inbox ? "checkmark.circle"
-                        : activityCenter.selectedTab == .inProgress ? "clock" : "tray",
-                    description: Text(activityCenter.selectedTab == .inbox
-                        ? "New results and requests will appear here."
+                        : activityCenter.selectedTab == .inProgress ? "Nothing in progress" : "No completed tasks yet",
+                    systemImage: activityCenter.selectedTab == .inbox ? "checkmark.circle" : "tray",
+                    description: Text(activityCenter.selectedTab == .inbox ? "Requests and work that needs attention appear here."
                         : activityCenter.selectedTab == .inProgress ? "Tasks appear here when they start or join the queue."
-                        : "Open a finished task in your Inbox or mark it as read to keep it here.")
-                )
-                if activityCenter.selectedTab == .inbox && !activityCenter.inProgressRuns.isEmpty {
-                    Button("View work in progress") { activityCenter.selectTab(.inProgress) }
+                        : "Finished work will arrive here, ready to read."))
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier("activity.empty")
+    }
+
+    private func taskTitle(_ run: OrchestrationRun) -> String {
+        let text = ChatTranscriptBuilder.displayUserText(run.request).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String((text.split(separator: "\n").first.map(String.init) ?? "").prefix(180)).nilIfEmpty ?? chatTitle(for: run)
+    }
+
+    private var selectedResult: OrchestrationRun? {
+        // Keep the open message visible when reading it removes its unread row.
+        activityCenter.completedRuns.first { $0.id == selectedResultID }
+    }
+
+    private var completedInbox: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if geometry.size.width >= 760 || selectedResult == nil {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Picker("Show", selection: $filter.readState) {
+                                ForEach(ActivityFilter.ReadState.allCases) { Text($0.rawValue).tag($0) }
+                            }.labelsHidden().accessibilityLabel("Result read status")
+                                .accessibilityIdentifier("activity.filter.read")
+                            Spacer(minLength: 0)
+                            Menu {
+                                Button("Mark shown as read") { activityCenter.markAllActivitySeen(matching: Set(filteredRuns.map(\.id))) }
+                                    .accessibilityIdentifier("activity.markAllSeen")
+                                Button("Clear read results") { activityCenter.clearReadActivityRuns(matching: Set(filteredRuns.map(\.id))) }
+                                    .accessibilityIdentifier("activity.clearRead")
+                            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
+                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                            .accessibilityLabel("Inbox actions").accessibilityIdentifier("activity.inboxActions")
+                        }.padding(12)
+                        Divider().overlay(viewColors.line)
+                        if filteredRuns.isEmpty { emptyContent }
+                        else {
+                            ScrollView {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(filteredRuns) { run in resultRow(run) }
+                                }
+                            }.accessibilityIdentifier("activity.resultList")
+                        }
+                    }
+                    .frame(width: geometry.size.width >= 760 ? min(360, geometry.size.width * 0.35) : nil)
+                }
+                if geometry.size.width >= 760 { Divider().overlay(viewColors.line) }
+                if let run = selectedResult {
+                    ActivityResultReader(run: run, title: taskTitle(run), agentName: agentName(for: run) ?? "Unassigned",
+                        onBack: { selectedResultID = nil })
+                        .id(run.id)
+                } else if geometry.size.width >= 760 {
+                    ContentUnavailableView("Select a completed task", systemImage: "envelope.open",
+                        description: Text("Read its final answer and open its saved outputs here."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("activity.empty")
+    }
+
+    private func resultRow(_ run: OrchestrationRun) -> some View {
+        let unread = activityCenter.activityIsUnseen(run)
+        let selected = selectedResultID == run.id
+        return Button { selectedResultID = run.id } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Circle().fill(unread ? viewColors.accentAction : .clear).frame(width: 7, height: 7).padding(.top, 5)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(agentName(for: run) ?? "Unassigned").font(.locus(size: 12, weight: unread ? .bold : .medium)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(Date(timeIntervalSince1970: run.completedAt ?? run.updatedAt), format: .dateTime.month(.abbreviated).day())
+                            .font(.locus(size: 10)).foregroundStyle(viewColors.muted)
+                    }
+                    Text(taskTitle(run)).font(.locus(size: 13, weight: unread ? .semibold : .regular)).lineLimit(2)
+                    Text("\(ActivityFilter.Kind.kind(for: run).rawValue) · \(workspaceTitle(for: run))")
+                        .font(.locus(size: 11)).foregroundStyle(viewColors.muted).lineLimit(1)
+                }
+            }
+            .foregroundStyle(viewColors.ink).multilineTextAlignment(.leading)
+            .padding(14).frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .background(selected ? viewColors.accentAction.opacity(0.12) : viewColors.white.opacity(unread ? 0.65 : 0.2))
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) { viewColors.line.frame(height: 1) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(unread ? "Unread, " : "")\(taskTitle(run)), by \(agentName(for: run) ?? "Unassigned")")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityIdentifier("activity.open.\(run.id)")
+        .contextMenu {
+            Button(unread ? "Mark as read" : "Mark unread") {
+                if unread { activityCenter.markActivitySeen(run) } else { activityCenter.markActivityUnread(run) }
+            }
+            Button("Clear from Activity Center") { activityCenter.dismissActivityRun(run) }
+        }
     }
 
     private func sectionHeading(_ title: String, count: Int) -> some View {
@@ -1642,15 +1708,15 @@ struct ActivityCenterView: View {
                     .frame(width: 20)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
+                    Text(item.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0]?.displayTitle } ?? item.title)
                         .font(.locus(size: 13, weight: .semibold))
                     Text(item.detail)
                         .font(.locus(size: 11))
                         .foregroundStyle(viewColors.inkSoft)
                         .textSelection(.enabled)
                     if let sessionID = item.sessionID,
-                       let session = sessionCatalog.snapshot.sessionsByID[sessionID] {
-                        Text(session.displayTitle)
+                       sessionCatalog.snapshot.sessionsByID[sessionID] != nil {
+                        Text(item.title)
                             .font(.locus(size: 10))
                             .foregroundStyle(viewColors.muted)
                             .lineLimit(1)
@@ -1658,6 +1724,13 @@ struct ActivityCenterView: View {
                 }
                 Spacer(minLength: 0)
             }
+
+            HStack(spacing: 8) {
+                if let run = relatedRun(item), let name = agentName(for: run) {
+                    Label(name, systemImage: "person.crop.circle")
+                }
+                Text(Date(timeIntervalSince1970: item.timestamp), format: .relative(presentation: .named))
+            }.font(.locus(size: 11)).foregroundStyle(viewColors.muted)
 
             if item.kind == "structured_question",
                let request = model.blockingQuestion(for: item) {
@@ -1982,6 +2055,171 @@ struct ActivityCenterView: View {
         case .recent: run.state == "completed" ? viewColors.success : viewColors.muted
         }
     }
+}
+
+/// The message reader is deliberately independent from chat navigation. Its task
+/// is cancelled on selection changes, and a failed read never acknowledges mail.
+private struct ActivityResultReader: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var activity: ActivityCenterModel
+    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusCaptainDeckTheme) private var deck
+    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    let run: OrchestrationRun
+    let title: String
+    let agentName: String
+    let onBack: () -> Void
+    @State private var output: ChatBlock?
+    @State private var loading = true
+    @State private var failed = false
+    @State private var loadAttempt = 0
+    @State private var preview: DocumentPreviewRequest?
+    @State private var previewError: String?
+    @State private var previewTask: Task<Void, Never>?
+    private var workspace: String { run.executionPath?.nilIfEmpty ?? run.workspaceRoot ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Button(action: onBack) { Label("Inbox", systemImage: "chevron.left") }
+                    .accessibilityIdentifier("activity.result.back")
+                Spacer()
+                Button(activity.activityIsUnseen(run) ? "Mark as read" : "Mark unread") {
+                    if activity.activityIsUnseen(run) { activity.markActivitySeen(run) }
+                    else { activity.markActivityUnread(run) }
+                }.accessibilityIdentifier("activity.result.toggleRead")
+                Button {
+                    guard !copyText.isEmpty else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(copyText, forType: .string)
+                } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    .disabled(copyText.isEmpty)
+                    .accessibilityIdentifier("activity.result.copy")
+            }
+            .font(.locus(size: 11)).buttonStyle(ActivityActionButtonStyle())
+            .padding(.horizontal, 20).padding(.vertical, 10)
+            Divider().overlay(colors.line)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(title).font(.locus(size: 22, weight: .semibold)).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Label(agentName, systemImage: "person.crop.circle")
+                            Text("·")
+                            Text(Date(timeIntervalSince1970: run.completedAt ?? run.updatedAt), format: .dateTime.month(.abbreviated).day().hour().minute())
+                        }.font(.locus(size: 12)).foregroundStyle(colors.muted)
+                    }
+                    Divider().overlay(colors.line)
+                    if loading {
+                        ProgressView("Loading task output…").frame(maxWidth: .infinity).padding(.vertical, 40)
+                    } else if failed {
+                        Label("This task’s output couldn’t be loaded.", systemImage: "wifi.exclamationmark")
+                            .foregroundStyle(colors.warning)
+                        Button("Try again") { loadAttempt += 1 }
+                            .accessibilityIdentifier("activity.result.retry")
+                    } else if let output {
+                        Group {
+                            if let document = output.responseParts, document.isSupported {
+                                ResponsePartsView(document: document, block: output, workspacePath: workspace,
+                                    onOpenWorkspaceReference: openReference)
+                            } else {
+                                MessageContentView(text: output.text, isStreaming: false, reasoningFormat: .none,
+                                    workspacePath: workspace, onOpenWorkspaceReference: openReference)
+                            }
+                        }
+                        .environment(\.responseOutputContext, outputContext)
+                        .accessibilityIdentifier("activity.result.output")
+                    } else {
+                        Label("No final answer was saved for this task.", systemImage: "doc.text.magnifyingglass")
+                            .foregroundStyle(colors.muted)
+                    }
+                    AgentInspectorRunOutputs(run: run, workspace: run.workspaceRoot ?? workspace,
+                        hidesWhenEmpty: true, onOpen: openSavedOutput)
+                    if let previewError {
+                        Label(previewError, systemImage: "exclamationmark.triangle").foregroundStyle(colors.warning)
+                    }
+                }
+                .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            }.accessibilityIdentifier("activity.result.content")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(colors.white.opacity(0.45))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("activity.result.reader")
+        .locusSheet(item: $preview) { DocumentPreviewSheet(request: $0).appFeatureEnvironment(from: model) }
+        .onDisappear { previewTask?.cancel() }
+        .task(id: loadAttempt) {
+            loading = true; failed = false; output = nil
+            do {
+                let result = try await model.loadActivityOutput(run)
+                guard !Task.isCancelled else { return }
+                output = result
+                loading = false
+                activity.markActivitySeen(run)
+            } catch {
+                guard !Task.isCancelled else { return }
+                loading = false; failed = true
+            }
+        }
+    }
+
+    private var copyText: String {
+        guard let output else { return "" }
+        if let document = output.responseParts, document.isSupported {
+            return document.parts.map { ResponseSelectionProjection.markdown(for: $0) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        return output.text
+    }
+
+    private var outputContext: ResponseOutputContext {
+        var context = model.responseOutputContext(sessionID: run.sessionID ?? "")
+        context.allowsEditing = false
+        context.allowsImageEditing = false
+        context.openVersion = { itemID, versionID, sourceWorkspace in
+            previewTask?.cancel()
+            previewTask = Task { @MainActor in
+                do {
+                    let items = try await model.outputsLibrary.store.list(workspace: sourceWorkspace)
+                    guard !Task.isCancelled,
+                          let item = items.first(where: { $0.id == itemID }),
+                          let version = item.versions.first(where: { $0.id == versionID && $0.belongsTo(sessionID: nil, runID: run.id) }) else { return }
+                    await previewSavedOutput(item, version: version)
+                } catch { if !Task.isCancelled { previewError = "The saved output couldn’t be loaded." } }
+            }
+        }
+        return context
+    }
+
+    private func openReference(_ reference: WorkspaceArtifactReference) {
+        guard let url = MarkdownLinkPolicy.containedWorkspaceFileURL(reference.relativePath, workspacePath: workspace),
+              url == reference.url.standardizedFileURL.resolvingSymlinksInPath(),
+              FileManager.default.fileExists(atPath: url.path) else {
+            previewError = "This file is no longer available in the task’s workspace."
+            return
+        }
+        previewError = nil
+        preview = DocumentPreviewRequest(url: url, title: url.lastPathComponent,
+            reference: reference.documentReference ?? DocumentReference(workspace: workspace, path: reference.relativePath))
+    }
+
+    private func openSavedOutput(_ item: LibraryOutput, _ version: OutputVersion) {
+        previewTask?.cancel()
+        previewTask = Task { @MainActor in await previewSavedOutput(item, version: version) }
+    }
+
+    private func previewSavedOutput(_ item: LibraryOutput, version: OutputVersion) async {
+        previewError = nil
+        if item.isWebsite, let url = URL(string: item.target), ["https", "http"].contains(url.scheme ?? "") {
+            NSWorkspace.shared.open(url)
+        } else if let url = await model.outputsLibrary.store.versionURL(item, version: version) {
+            guard !Task.isCancelled else { return }
+            preview = DocumentPreviewRequest(url: url, title: item.title)
+        } else if !Task.isCancelled {
+            previewError = version.unavailableReason ?? "This saved file is no longer available."
+        }
+    }
+
 }
 
 struct ScheduleEditorView: View {

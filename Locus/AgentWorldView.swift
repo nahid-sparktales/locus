@@ -854,7 +854,8 @@ private struct AgentWorldActivityPane: View {
 
     var body: some View {
         ActivityCenterView()
-            .frame(minWidth: 480, idealWidth: 600, minHeight: 500, idealHeight: 700)
+            .frame(width: min(1120, (NSScreen.main?.visibleFrame.width ?? 1200) - 80),
+                   height: min(780, (NSScreen.main?.visibleFrame.height ?? 900) - 100))
             .onChange(of: activity.activityCenterPresented) { _, presented in
                 if !presented { dismiss() }
             }

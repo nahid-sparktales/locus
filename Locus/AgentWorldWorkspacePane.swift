@@ -16,6 +16,13 @@ struct AgentWorldWorkspacePane: View {
     private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
     private var placement: AgentWorldResidentPlacement? { world.selection.flatMap { world.residentPlacements[$0] } }
+    private var residentConversations: [SessionSummary] {
+        world.selection.map(world.residentConversations(for:)) ?? []
+    }
+    private var selectedConversationTitle: String {
+        guard let id = world.selectedSessionID else { return "Chats" }
+        return residentConversations.first(where: { $0.id == id })?.name.nilIfEmpty ?? "Chat"
+    }
 
     private enum Pane: String, CaseIterable { case details = "Overview", chat = "Chat", crew = "Crew Chat" }
     private var selectedPane: Binding<Pane> {
@@ -96,6 +103,27 @@ struct AgentWorldWorkspacePane: View {
                     }
                 }
             }.frame(minWidth: 60, alignment: .leading)
+            if !world.sharedChatPresented, world.selectedProfile != nil, !residentConversations.isEmpty {
+                Menu {
+                    ForEach(residentConversations, id: \.id) { conversation in
+                        Button {
+                            world.openResidentConversation(conversation)
+                        } label: {
+                            if conversation.id == world.selectedSessionID {
+                                Label(conversation.name.nilIfEmpty ?? "Untitled chat", systemImage: "checkmark")
+                            } else { Text(conversation.name.nilIfEmpty ?? "Untitled chat") }
+                        }
+                    }
+                } label: {
+                    Label(selectedConversationTitle, systemImage: "chevron.down")
+                        .font(.locus(size: 11, weight: .medium)).lineLimit(1)
+                        .frame(maxWidth: 180)
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Switch between this agent’s chats")
+                .accessibilityLabel("Chat for \(world.selectedProfile?.name ?? "agent"): \(selectedConversationTitle)")
+                .accessibilityIdentifier("agentWorld.workspace.chatPicker")
+            }
             Spacer(minLength: 8)
             workspaceTabs
             if let profile = world.selectedProfile, !world.sharedChatPresented {
@@ -255,12 +283,14 @@ struct AgentWorldWorkspacePane: View {
                     : "Another conversation is active in Locus. Resume \(world.selectedProfile?.name ?? "this agent") here to use its chat and controls."))
             } actions: {
                 if world.selectedProfile != nil {
-                    Button("New chat", action: world.newConversation)
+                    Button("Start chat", action: world.newConversation)
                         .buttonStyle(.borderedProminent)
                         .disabled(!world.canStartConversation(for: world.selection ?? ""))
                         .accessibilityIdentifier("agentWorld.workspace.newChat")
-                    Button("Agent overview") { world.openAgentProfile() }
-                        .accessibilityIdentifier("agentWorld.workspace.openProfile")
+                    if let profile = world.selectedProfile {
+                        Button("Set up automation") { model.manageSavedAgent(profile, workspace: world.workspace) }
+                            .accessibilityIdentifier("agentWorld.workspace.setupAutomation")
+                    }
                     if world.selectedSessionID != nil {
                         Button("Try again") { world.showSelectedChat() }
                             .accessibilityIdentifier("agentWorld.workspace.resume")

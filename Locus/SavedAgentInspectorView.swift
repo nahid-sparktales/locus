@@ -256,6 +256,116 @@ struct SavedAgentInspectorView: View {
     }
 }
 
+private struct SavedAgentResultExcerptView: View {
+    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusCaptainDeckTheme) private var deck
+    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    let source: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(SavedAgentResultExcerpt(blocks: FinishedMarkdownCache.blocks(for: source)).lines.enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if case .list(let marker) = line.kind {
+                        Text(marker).foregroundStyle(colors.inkSoft).accessibilityHidden(true)
+                    }
+                    formatted(line)
+                        .font(.locus(size: 13, weight: line.kind == .heading ? .semibold : .regular))
+                        .foregroundStyle(line.kind == .heading ? colors.ink : colors.inkSoft)
+                        .lineSpacing(4)
+                        .lineLimit(line.kind == .heading || line.kind == .code ? 2 : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .textSelection(.enabled)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Result preview")
+    }
+
+    private func formatted(_ line: SavedAgentResultExcerpt.Line) -> Text {
+        line.runs.reduce(Text("")) { text, run in
+            var segment = Text(run.text)
+            if run.style.contains(.strong) { segment = segment.bold() }
+            if run.style.contains(.emphasis) { segment = segment.italic() }
+            if run.style.contains(.strikethrough) { segment = segment.strikethrough() }
+            if run.style.contains(.code) || line.kind == .code {
+                segment = segment.font(.locusExact(size: 12, design: .monospaced))
+            }
+            return text + segment
+        }
+    }
+}
+
+/// A separate reading surface preserves the overview's position and gives long
+/// answers room without turning its card into a nested scroll view.
+private struct SavedAgentResultReader: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusCaptainDeckTheme) private var deck
+    @State private var copied = false
+    private var colors: LocusViewColors { .init(ocean: ocean, deck: deck) }
+    let result: SavedAgentOverviewSnapshot.LatestResult
+    let workspacePath: String?
+    let openSource: () -> Void
+
+    private var source: String { result.fullResponse ?? result.summary }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Agent result", systemImage: "doc.text").font(.locus(size: 13, weight: .semibold))
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("savedAgent.resultReader.done")
+            }.padding(20)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(result.title).font(.locusExact(size: 26, weight: .semibold)).tracking(-0.5)
+                            .textSelection(.enabled)
+                        Text(result.timestamp.formatted(date: .abbreviated, time: .shortened))
+                            .font(.locus(size: 12)).foregroundStyle(colors.inkSoft)
+                    }
+                    MarkdownBodyView(text: source, workspacePath: workspacePath)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(28)
+            }
+            Divider()
+            HStack {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(MarkdownPlainTextRenderer.render(source), forType: .string)
+                    copied = true
+                } label: { Label(copied ? "Copied" : "Copy text", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                .accessibilityIdentifier("savedAgent.resultReader.copy")
+                Spacer()
+                if let action = result.action {
+                    Button {
+                        openSource()
+                    } label: {
+                        Label(sourceTitle(action), systemImage: "arrow.up.right")
+                    }
+                    .accessibilityIdentifier("savedAgent.resultReader.open")
+                }
+            }.buttonStyle(.bordered).padding(20)
+        }
+        .foregroundStyle(colors.ink).background(colors.surfaceCanvas)
+        .frame(width: min(700, (NSScreen.main?.visibleFrame.width ?? 900) - 80),
+               height: min(680, (NSScreen.main?.visibleFrame.height ?? 900) - 100))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("savedAgent.resultReader")
+    }
+
+    private func sourceTitle(_ action: SavedAgentOverviewSnapshot.Action) -> String {
+        if case .chat = action { return "Open chat" }
+        return "View activity"
+    }
+}
+
 private struct SavedAgentOverviewContent: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
@@ -288,6 +398,7 @@ private struct SavedAgentOverviewContent: View {
     @State private var resultTranscript: SavedAgentOverviewSnapshot.ResultTranscript?
     @State private var resultLoading = false
     @State private var resultError: String?
+    @State private var readingResult: SavedAgentOverviewSnapshot.LatestResult?
     @State private var activeResultRequest: ResultRequest?
     @State private var choosingPicture = false
     @State private var pictureError: String?
@@ -314,7 +425,7 @@ private struct SavedAgentOverviewContent: View {
             localModels: accounts.localModels.map(\.name),
             runningSessionIDs: model.runningChatSessionIDs,
             attentionSessionIDs: [], attentionItems: activity.attentionItems, workspace: workspace,
-            resultTranscript: resultTranscript)
+            resultTranscript: resultTranscript ?? model.savedAgentResultFixture(profileID: profile.id))
     }
     private var resultRequest: ResultRequest? {
         guard let id = overview.resultSessionID,
@@ -340,9 +451,9 @@ private struct SavedAgentOverviewContent: View {
     var body: some View {
         let snapshot = overview
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 740
+            let wide = geometry.size.width >= 900
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 24) {
                     header(snapshot)
                     if showsReadiness(snapshot) { readiness(snapshot) }
                     if let error = automation.lastError ?? schedule.lastLoadError {
@@ -350,20 +461,31 @@ private struct SavedAgentOverviewContent: View {
                             .font(.locus(size: 12)).foregroundStyle(viewColors.warning).textSelection(.enabled)
                     }
                     if wide {
-                        HStack(alignment: .top, spacing: 16) {
-                            connectionHealth(snapshot).frame(maxWidth: .infinity, alignment: .topLeading)
-                            latestResult(snapshot).frame(maxWidth: .infinity, alignment: .topLeading)
+                        HStack(alignment: .top, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 24) {
+                                latestResult(snapshot)
+                                automations(snapshot)
+                                chats(snapshot)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            VStack(alignment: .leading, spacing: 24) {
+                                connectionHealth(snapshot)
+                                instructionsPreview
+                                workspaceSection
+                            }
+                            .frame(width: 300, alignment: .topLeading)
                         }
                     } else {
-                        connectionHealth(snapshot)
                         latestResult(snapshot)
+                        automations(snapshot)
+                        chats(snapshot)
+                        connectionHealth(snapshot)
+                        instructionsPreview
+                        workspaceSection
                     }
-                    automations(snapshot)
-                    chats(snapshot)
-                    workspaceSection
                 }
-                .frame(maxWidth: 980, alignment: .leading)
-                .padding(wide ? 30 : 18)
+                .frame(maxWidth: 1080, alignment: .leading)
+                .padding(wide ? 36 : 20)
                 .frame(maxWidth: .infinity, alignment: .top)
             }.background(canvas)
         }
@@ -398,7 +520,14 @@ private struct SavedAgentOverviewContent: View {
         .locusSheet(isPresented: $recoveryPresented) {
             ActivityCenterView()
                 .appFeatureEnvironment(from: model)
-                .frame(width: 500, height: 650)
+                .frame(width: min(1120, (NSScreen.main?.visibleFrame.width ?? 1200) - 80),
+                       height: min(780, (NSScreen.main?.visibleFrame.height ?? 900) - 100))
+        }
+        .locusSheet(item: $readingResult) { result in
+            SavedAgentResultReader(result: result, workspacePath: resultWorkspace(result)) {
+                readingResult = nil
+                if let action = result.action { perform(action) }
+            }
         }
         .onChange(of: activity.activityCenterPresented) {
             if !activity.activityCenterPresented { recoveryPresented = false }
@@ -411,16 +540,17 @@ private struct SavedAgentOverviewContent: View {
         .onChange(of: profile.id) {
             showAllChats = false; showInstructions = false
             resultTranscript = nil; resultError = nil; resultLoading = false; activeResultRequest = nil
+            readingResult = nil
         }
     }
 
     // MARK: Identity
 
     private func header(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .center, spacing: 18) {
                 Button { choosingPicture = true } label: {
-                    AgentAvatarView(profileID: profile.id, name: profile.name, size: 56)
+                    AgentAvatarView(profileID: profile.id, name: profile.name, size: 64)
                         .overlay(alignment: .bottomTrailing) {
                             Image(systemName: "camera.fill").font(.locus(size: 10))
                                 .foregroundStyle(ink).padding(5).background(canvas, in: Circle())
@@ -454,17 +584,25 @@ private struct SavedAgentOverviewContent: View {
                 .help("Refresh this agent’s status").accessibilityLabel("Refresh agent status")
                 .accessibilityIdentifier("savedAgent.refresh")
             }
-            facts(snapshot)
-            instructionsPreview
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { primaryActions }
-                VStack(alignment: .leading, spacing: 10) { primaryActions }
+                HStack(spacing: 20) {
+                    facts(snapshot)
+                    Spacer(minLength: 12)
+                    HStack(spacing: 10) { primaryActions }.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 16) {
+                    facts(snapshot)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { primaryActions }
+                        VStack(alignment: .leading, spacing: 10) { primaryActions }
+                    }
+                }
             }
         }
     }
 
     private var nameText: some View {
-        Text(profile.name).font(.locus(size: 25, weight: .bold))
+        Text(profile.name).font(.locusExact(size: 30, weight: .semibold)).tracking(-0.7)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("savedAgent.name")
@@ -495,8 +633,7 @@ private struct SavedAgentOverviewContent: View {
     }
 
     private func facts(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
-        AgentFlowLayout(spacing: 6) {
-            routeChip(snapshot.route)
+        AgentFlowLayout(spacing: 16) {
             factChip(profile.accessCeiling.title, symbol: accessSymbol)
                 .accessibilityLabel("Access: \(profile.accessCeiling.title)")
             factChip(automationSummary(snapshot), symbol: "bolt")
@@ -506,34 +643,14 @@ private struct SavedAgentOverviewContent: View {
         .accessibilityIdentifier("savedAgent.facts")
     }
 
-    /// A route is only shown as healthy once its access has been verified.
-    private func routeChip(_ route: SavedAgentOverviewSnapshot.Route) -> some View {
-        let title = route.model.isEmpty ? route.title : "\(route.title) · \(route.model)"
-        let healthy = route.issue == nil && route.isVerified
-        return factChip(title,
-            symbol: route.issue != nil ? "exclamationmark.triangle.fill" : healthy ? "checkmark.circle.fill" : "cpu",
-            tint: route.issue == nil ? nil : viewColors.warning,
-            symbolTint: healthy ? viewColors.success : nil,
-            marker: route.issue == nil && !route.isVerified ? "not checked" : nil)
-            .help(route.issue ?? route.detail)
-            .accessibilityLabel("Model: \(title)")
-            .accessibilityValue(route.issue ?? route.detail)
-            .accessibilityIdentifier("savedAgent.facts.route")
-    }
-
-    private func factChip(_ title: String, symbol: String, tint: Color? = nil, symbolTint: Color? = nil,
-                          marker: String? = nil) -> some View {
-        HStack(spacing: 5) {
+    private func factChip(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 6) {
             Image(systemName: symbol).font(.locus(size: 11, weight: .medium))
-                .foregroundStyle(symbolTint ?? tint ?? secondary).accessibilityHidden(true)
-            Text(title).foregroundStyle(tint ?? ink).lineLimit(1).truncationMode(.middle)
-            if let marker { Text("· \(marker)").foregroundStyle(secondary).lineLimit(1).fixedSize() }
+                .accessibilityHidden(true)
+            Text(title).lineLimit(1).truncationMode(.middle)
         }
-        .font(.locus(size: 12, weight: .medium))
-        .padding(.horizontal, 9).frame(height: 24)
-        .background((tint ?? secondary).opacity(0.07), in: Capsule())
-        .overlay(Capsule().stroke(tint.map { $0.opacity(0.30) } ?? viewColors.line.opacity(0.8), lineWidth: 1)
-            .allowsHitTesting(false).accessibilityHidden(true))
+        .font(.locus(size: 12)).foregroundStyle(secondary)
+        .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
     }
 
@@ -559,14 +676,13 @@ private struct SavedAgentOverviewContent: View {
         return snapshot.chats.isEmpty ? "No chats\(scope) yet" : AgentOverviewFormatting.chatCount(snapshot.chats.count) + scope
     }
 
-    /// Instructions shape every chat, so they sit with the agent's identity.
+    /// Persistent setup stays together, leaving the agent's work in focus.
     private var instructionsPreview: some View {
         let text = profile.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        let long = text.count > 220 || text.contains("\n")
-        return VStack(alignment: .leading, spacing: 6) {
+        let long = text.count > 120 || text.contains("\n")
+        return card {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label("Instructions", systemImage: "text.alignleft")
-                    .font(.locus(size: 12, weight: .semibold)).foregroundStyle(secondary)
+                sectionTitle("Instructions", symbol: "text.alignleft")
                 Spacer(minLength: 8)
                 if !text.isEmpty {
                     Button("Edit") { model.presentSavedAgentEditor(profile) }
@@ -585,7 +701,8 @@ private struct SavedAgentOverviewContent: View {
                     .accessibilityIdentifier("savedAgent.instructions.edit")
             } else {
                 Text(text).font(.locus(size: 13)).foregroundStyle(secondary)
-                    .lineLimit(long && !showInstructions ? 3 : nil)
+                    .lineSpacing(4)
+                    .lineLimit(long && !showInstructions ? 4 : nil)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     .accessibilityIdentifier("savedAgent.instructions.content")
                 if long {
@@ -598,8 +715,6 @@ private struct SavedAgentOverviewContent: View {
                 }
             }
         }
-        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(accent.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("savedAgent.instructions")
     }
@@ -732,24 +847,20 @@ private struct SavedAgentOverviewContent: View {
             }
             ForEach(Array(snapshot.issues.enumerated()), id: \.element.id) { index, issue in
                 if index > 0 { Divider() }
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: readinessSymbol(snapshot))
-                        .font(.locus(size: 15, weight: .medium))
-                        .foregroundStyle(readinessColor(snapshot))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(issue.title).font(.locus(size: 14, weight: .semibold))
-                        Text(issue.detail).font(.locus(size: 12)).foregroundStyle(secondary)
-                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                        if let action = issue.action {
-                            Button(actionTitle(action)) { perform(action) }.buttonStyle(.bordered)
-                                .accessibilityIdentifier("savedAgent.recovery.\(issue.id)")
-                        }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 18) {
+                        issueDescription(issue, snapshot: snapshot)
+                        Spacer(minLength: 8)
+                        issueAction(issue).fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        issueDescription(issue, snapshot: snapshot)
+                        issueAction(issue).padding(.leading, 28)
                     }
                 }
             }
         }
-        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
         .background((snapshot.needsAttention ? viewColors.warning : accent).opacity(0.055),
                     in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14)
@@ -757,24 +868,59 @@ private struct SavedAgentOverviewContent: View {
         .accessibilityIdentifier("savedAgent.readiness")
     }
 
+    private func issueDescription(_ issue: SavedAgentOverviewSnapshot.Issue,
+                                  snapshot: SavedAgentOverviewSnapshot) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: readinessSymbol(snapshot))
+                .font(.locus(size: 15, weight: .medium))
+                .foregroundStyle(readinessColor(snapshot)).padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(issue.title).font(.locus(size: 13, weight: .semibold))
+                Text(issue.detail).font(.locus(size: 12)).foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder private func issueAction(_ issue: SavedAgentOverviewSnapshot.Issue) -> some View {
+        if let action = issue.action {
+            Button(actionTitle(action)) { perform(action) }.buttonStyle(.bordered)
+                .accessibilityIdentifier("savedAgent.recovery.\(issue.id)")
+        }
+    }
+
     private func connectionHealth(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
         card {
-            sectionTitle("Connection health", symbol: "point.3.connected.trianglepath.dotted")
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(snapshot.route.title).font(.locus(size: 14, weight: .semibold))
-                    Spacer(minLength: 8)
+            sectionTitle("Connections", symbol: "point.3.connected.trianglepath.dotted")
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "cpu").foregroundStyle(secondary)
+                        .frame(width: 28, height: 28)
+                        .background(secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(snapshot.route.title).font(.locus(size: 13, weight: .medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !snapshot.route.model.isEmpty {
+                            Text(snapshot.route.model).font(.locus(size: 12)).foregroundStyle(secondary)
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
                     Image(systemName: snapshot.route.issue != nil ? "exclamationmark.circle.fill" :
-                            snapshot.route.isVerified ? "checkmark.circle.fill" : "questionmark.circle")
+                            snapshot.route.isVerified ? "checkmark.circle" : "questionmark.circle")
                         .foregroundStyle(snapshot.route.issue != nil ? viewColors.warning :
                                             snapshot.route.isVerified ? viewColors.success : muted)
-                        .accessibilityHidden(true)
+                        .help(snapshot.route.issue ?? snapshot.route.detail)
+                        .accessibilityLabel(snapshot.route.issue ?? snapshot.route.detail)
                 }
-                Text(snapshot.route.model).font(.locus(size: 12)).foregroundStyle(secondary).textSelection(.enabled)
-                Text(snapshot.route.issue ?? snapshot.route.detail)
-                    .font(.locus(size: 12)).foregroundStyle(snapshot.route.issue == nil ? secondary : viewColors.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(snapshot.route.accountID == nil ? "Review local model" : "Review account") {
+                // Account errors already have a recovery banner above the work.
+                if snapshot.route.issue == nil {
+                    Text(snapshot.route.detail).font(.locus(size: 12)).foregroundStyle(secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button(snapshot.route.accountID == nil ? "Model settings" : "Account settings") {
                     reviewAccount(snapshot.route.accountID)
                 }
                     .buttonStyle(.locus()).foregroundStyle(accent).font(.locus(size: 12, weight: .medium))
@@ -797,33 +943,51 @@ private struct SavedAgentOverviewContent: View {
                 Button("Review connections") { reviewConnections() }
                     .buttonStyle(.locus()).foregroundStyle(accent).font(.locus(size: 12, weight: .medium))
             } else {
-                Text("No event sources are used by this agent yet.")
+                Text("Event sources appear here when you add an automation.")
                     .font(.locus(size: 12)).foregroundStyle(secondary)
             }
         }.accessibilityIdentifier("savedAgent.connections")
     }
 
     private func latestResult(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
-        card {
-            sectionTitle("Latest result", symbol: "text.bubble")
-            if let result = snapshot.latestResult {
-                if resultLoading { resultLoadingRow }
-                stateBadge(result.statusTitle, warning: result.needsAttention, busy: result.isInProgress)
-                Text(result.title).font(.locus(size: 14, weight: .semibold)).lineLimit(2)
-                Text(result.summary).font(.locus(size: 13)).foregroundStyle(secondary)
-                    .fixedSize(horizontal: false, vertical: true).lineLimit(6).textSelection(.enabled)
-                Text(result.timestamp, style: .relative).font(.locus(size: 12)).foregroundStyle(secondary)
-                if let action = result.action {
-                    Button(actionTitle(action)) { perform(action) }.buttonStyle(.bordered)
-                        .accessibilityIdentifier("savedAgent.latestResult.open")
+        card(prominent: true) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionTitle("Latest result", symbol: "text.bubble")
+                Spacer(minLength: 8)
+                if let result = snapshot.latestResult {
+                    Text(AgentOverviewFormatting.relative(result.timestamp))
+                        .font(.locus(size: 12)).foregroundStyle(secondary)
+                        .help(result.timestamp.formatted(date: .complete, time: .shortened))
                 }
+            }
+            if let result = snapshot.latestResult {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(result.title).font(.locusExact(size: 22, weight: .semibold)).tracking(-0.35)
+                        .fixedSize(horizontal: false, vertical: true)
+                    resultStatus(result)
+                }.padding(.vertical, 4)
+                Divider()
+                if resultLoading && result.fullResponse == nil {
+                    resultLoadingRow
+                } else {
+                    SavedAgentResultExcerptView(source: result.fullResponse ?? result.summary)
+                        .accessibilityIdentifier("savedAgent.latestResult.preview")
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) { resultActions(result) }
+                    VStack(alignment: .leading, spacing: 12) { resultActions(result) }
+                }
+                .padding(.top, 6)
             } else if resultLoading {
                 resultLoadingRow
             } else {
-                Text("Your next result will appear here.").font(.locus(size: 14, weight: .medium))
-                Text("Start a conversation or add automatic work. You’ll see its outcome and any next steps here.")
+                Image(systemName: "text.bubble").font(.system(size: 28, weight: .light))
+                    .foregroundStyle(accent).padding(.top, 12).accessibilityHidden(true)
+                Text("Ready for the first result")
+                    .font(.locusExact(size: 20, weight: .semibold)).tracking(-0.3)
+                Text("Start a chat or add an automation. \(profile.name)’s latest response will be waiting here.")
                     .font(.locus(size: 13)).foregroundStyle(secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.bottom, 12)
             }
             if let resultError {
                 Text(resultError).font(.locus(size: 12)).foregroundStyle(viewColors.warning)
@@ -834,6 +998,44 @@ private struct SavedAgentOverviewContent: View {
                 }
             }
         }.accessibilityIdentifier("savedAgent.latestResult")
+    }
+
+    private func resultStatus(_ result: SavedAgentOverviewSnapshot.LatestResult) -> some View {
+        Label(result.state == "completed" ? "Run completed" : result.statusTitle,
+              systemImage: result.needsAttention ? "exclamationmark.circle" :
+                result.isInProgress ? "circle.dotted" : result.state == "completed" ? "checkmark.circle" : "text.bubble")
+            .font(.locus(size: 12, weight: .medium))
+            .foregroundStyle(result.needsAttention ? viewColors.warning : secondary)
+            .accessibilityIdentifier("savedAgent.latestResult.status")
+    }
+
+    @ViewBuilder private func resultActions(_ result: SavedAgentOverviewSnapshot.LatestResult) -> some View {
+        if result.fullResponse != nil {
+            Button { readingResult = result } label: {
+                Label("Read full result", systemImage: "doc.text")
+            }
+            .buttonStyle(.bordered).controlSize(.large)
+            .accessibilityIdentifier("savedAgent.latestResult.read")
+        }
+        if let action = result.action {
+            Button { perform(action) } label: {
+                HStack(spacing: 6) {
+                    Text(resultActionTitle(action))
+                    Image(systemName: "arrow.up.right").font(.locus(size: 10, weight: .medium))
+                }
+            }
+            .buttonStyle(.locus()).foregroundStyle(accent).font(.locus(size: 12, weight: .medium))
+            .accessibilityIdentifier("savedAgent.latestResult.open")
+        }
+    }
+
+    private func resultActionTitle(_ action: SavedAgentOverviewSnapshot.Action) -> String {
+        if case .activity = action { return "View activity" }
+        return actionTitle(action)
+    }
+
+    private func resultWorkspace(_ result: SavedAgentOverviewSnapshot.LatestResult) -> String? {
+        result.sessionID.flatMap { sessionCatalog.snapshot.sessionsByID[$0]?.workspacePath }
     }
 
     private var resultLoadingRow: some View {
@@ -970,12 +1172,13 @@ private struct SavedAgentOverviewContent: View {
     private func sectionTitle(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol).font(.locus(size: 14, weight: .semibold)).foregroundStyle(ink)
     }
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 14, content: content)
-            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-            .locusSurface(.floating, radius: 14)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(viewColors.line.opacity(0.7), lineWidth: 1)
+    private func card<Content: View>(prominent: Bool = false, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: prominent ? 18 : 16, content: content)
+            .padding(prominent ? 24 : 20).frame(maxWidth: .infinity, alignment: .leading)
+            .locusSurface(.floating, radius: 18)
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(viewColors.line.opacity(0.55), lineWidth: 1)
                 .allowsHitTesting(false).accessibilityHidden(true))
+            .accessibilityElement(children: .contain)
     }
     private func stateBadge(_ title: String, warning: Bool, busy: Bool) -> some View {
         Text(title).font(.locus(size: 11, weight: .medium))

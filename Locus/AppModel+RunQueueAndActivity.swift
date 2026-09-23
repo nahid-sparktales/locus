@@ -792,6 +792,18 @@ extension AppModel {
         }
     }
 
+    /// Read the exact saved output without resuming or navigating to its chat.
+    func loadActivityOutput(_ run: OrchestrationRun) async throws -> ChatBlock? {
+        if run.sessionID == currentSessionID, transcriptPresentation.loadingSessionID == nil,
+           let output = ChatTranscriptBuilder.activityOutput(for: run, in: blocks) { return output }
+        guard let sessionID = run.sessionID?.nilIfEmpty else { return nil }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        guard let segment = sessionID.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        let response = try await backend.get("/api/sessions/\(segment)", as: SessionDetailResponse.self)
+        guard response.id == sessionID else { return nil }
+        return ChatTranscriptBuilder.activityOutput(for: run, in: ChatTranscriptBuilder.blocks(from: response.messages))
+    }
+
     func openActivityRun(_ run: OrchestrationRun) {
         let generation = UUID()
         activityNavigationGeneration = generation

@@ -67,6 +67,17 @@ enum ChatTranscriptBuilder {
         ResultIndex(blocks: blocks).resultBlockID(runID: run.id, request: run.request)
     }
 
+    /// A standalone result never exposes the conversation, tool logs, or thinking.
+    static func activityOutput(for run: OrchestrationRun, in blocks: [ChatBlock]) -> ChatBlock? {
+        guard let id = activityResultBlockID(for: run, in: blocks),
+              var block = blocks.first(where: { $0.id == id }) else { return nil }
+        block.text = AssistantSegment.copyableText(from: block.text, reasoningFormat: block.reasoningFormat ?? .legacyTags)
+        block.reasoningText = nil
+        block.reasoningSections = nil
+        block.reasoningFormat = AssistantReasoningFormat.none
+        return block
+    }
+
     /// One linear pass supports every result card in a long transcript. Never
     /// rescan the entire history for each saved run during a view update.
     private struct ResultIndex {
@@ -113,9 +124,9 @@ enum ChatTranscriptBuilder {
 
         static func isResult(_ block: ChatBlock) -> Bool {
             block.kind == .assistant && block.assistantPhase != .commentary && !block.isStreaming
-                && !AssistantSegment.copyableText(from: block.text,
+                && (block.responseParts?.isSupported == true || !AssistantSegment.copyableText(from: block.text,
                     reasoningFormat: block.reasoningFormat ?? .legacyTags)
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
@@ -153,7 +164,8 @@ enum ChatTranscriptBuilder {
                 )
             case "assistant" where !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !(message.reasoning?.isEmpty ?? true)
-                || !(message.reasoningSections?.isEmpty ?? true):
+                || !(message.reasoningSections?.isEmpty ?? true)
+                || message.responseParts?.isSupported == true:
                 ChatBlock(
                     kind: .assistant,
                     text: message.content,

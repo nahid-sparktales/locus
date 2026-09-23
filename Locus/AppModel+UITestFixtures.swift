@@ -718,16 +718,23 @@ extension AppModel {
             if variant == "schedule" {
                 installTranscriptSession("seed-schedule-chat", blocks: blocks)
             }
-            if variant == "saved-profile" {
+            if variant == "saved-profile" || variant == "saved-profile-result" {
                 let profile = AgentProfile(id: UUID(uuidString: "FAAAA111-1111-4111-8111-111111111111")!,
                     name: "Atlas", model: "fixture-model", instructions: "Help with project research.")
                 agentProfiles.append(profile)
                 let chats = (1...2).map { index in
                     SessionSummary(id: "saved-agent-chat-\(index)", name: "saved-agent-chat-\(index)",
                         preview: "", mtime: Date().timeIntervalSince1970 + Double(index), size: 0,
-                        title: "Chat \(index)", cwd: workspace, agentProfileID: profile.id.uuidString)
+                        title: variant == "saved-profile-result" && index == 2 ? "Inbox review" : "Chat \(index)",
+                        cwd: workspace, agentProfileID: profile.id.uuidString)
                 }
                 sessions.append(contentsOf: chats)
+                if variant == "saved-profile-result" {
+                    sessions.removeAll { $0.id == "seed-agent-chat" }
+                    sessions.append(SessionSummary(id: "seed-agent-chat", name: "Inbox Triage", preview: "",
+                        mtime: Date().timeIntervalSince1970 - 120, size: 0, title: "Inbox Triage", cwd: workspace,
+                        agentTriggerID: "seed-agent", agentProfileID: profile.id.uuidString, agentKind: "event"))
+                }
                 selectedSavedAgentID = profile.id
                 selectedAgentID = nil
                 agentInspector.clearAgentSelection()

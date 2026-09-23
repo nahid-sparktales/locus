@@ -11,7 +11,7 @@ test('Zunesha walks beyond the left end without crossing islands, and Momo circl
   const wano = GRAND_LINE_LANDMARKS.find(island => island.id === 'wano')!;
   for (let time = 0; time < 440; time += 0.5) {
     const elephant = zuneshaPose(time), dragon = momonosukePose(time);
-    assert.ok(elephant.x >= 38 && elephant.x <= 46);
+    assert.ok(elephant.x >= 54 && elephant.x <= 62);
     for (const island of GRAND_LINE_LANDMARKS) assert.ok(Math.hypot(elephant.x - island.x, elephant.z - island.z) > island.radius + 6);
     assert.ok(Math.hypot(dragon.x - wano.x, dragon.z - wano.z) >= 4.29);
     assert.ok(dragon.y >= 5.7 && dragon.y <= 7.3);

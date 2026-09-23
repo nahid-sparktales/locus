@@ -12,7 +12,7 @@ const motionTime = (elapsed: number, reduced: boolean) => reduced || !Number.isF
 export function zuneshaPose(elapsed: number, reduced = false) {
   const time = motionTime(elapsed, reduced), angle = time % 220 / 220 * TAU;
   const stride = (time % (TAU / 0.9)) * 0.9;
-  return { x: 42 + Math.cos(angle) * 4, z: 1 + Math.sin(angle) * 11,
+  return { x: 58 + Math.cos(angle) * 4, z: 1 + Math.sin(angle) * 11,
     y: reduced ? -0.18 : -0.18 + Math.sin(stride * 2) * 0.035,
     heading: Math.atan2(-4 * Math.sin(angle), 11 * Math.cos(angle)),
     roll: reduced ? 0 : Math.sin(stride) * 0.012 };

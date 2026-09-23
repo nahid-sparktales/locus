@@ -602,7 +602,7 @@ extension AgentInspectorCopy {
 
 /// Each row resolves a saved version from the selected run's provenance. The
 /// workspace library may contain newer versions from unrelated conversations.
-private struct AgentInspectorRunOutputs: View {
+struct AgentInspectorRunOutputs: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
     private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
@@ -610,6 +610,8 @@ private struct AgentInspectorRunOutputs: View {
     @EnvironmentObject private var model: AppModel
     let run: OrchestrationRun
     let workspace: String
+    var hidesWhenEmpty = false
+    var onOpen: ((LibraryOutput, OutputVersion) -> Void)? = nil
     @State private var rows: [Row] = []
     @State private var loaded = false
     @State private var failed = false
@@ -622,31 +624,34 @@ private struct AgentInspectorRunOutputs: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Saved outputs").font(.locus(size: 12, weight: .semibold))
-            if !loaded {
-                ProgressView("Finding outputs…").controlSize(.small)
-            } else if failed {
-                Text("Saved outputs could not be loaded.")
-                    .foregroundStyle(viewColors.textSecondary)
-            } else if rows.isEmpty {
-                Text("No saved outputs are linked to this run.")
-                    .foregroundStyle(viewColors.textSecondary)
-            }
-            ForEach(rows) { row in
-                Button {
-                    model.openLibraryOutput(itemID: row.item.id, versionID: row.version.id, workspace: workspace)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(row.item.title).lineLimit(2)
-                        Text(row.version.label).font(.locus(size: 12))
-                            .foregroundStyle(viewColors.textSecondary)
-                        if let reason = row.version.unavailableReason {
-                            Text(reason).font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+            if !hidesWhenEmpty || !loaded || failed || !rows.isEmpty {
+                Text("Saved outputs").font(.locus(size: 12, weight: .semibold))
+                if !loaded {
+                    ProgressView("Finding outputs…").controlSize(.small)
+                } else if failed {
+                    Text("Saved outputs could not be loaded.")
+                        .foregroundStyle(viewColors.textSecondary)
+                } else if rows.isEmpty {
+                    Text("No saved outputs are linked to this run.")
+                        .foregroundStyle(viewColors.textSecondary)
                 }
-                .buttonStyle(.locus())
-                .accessibilityIdentifier("agentInspector.output.\(row.id)")
+                ForEach(rows) { row in
+                    Button {
+                        if let onOpen { onOpen(row.item, row.version) }
+                        else { model.openLibraryOutput(itemID: row.item.id, versionID: row.version.id, workspace: workspace) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(row.item.title).lineLimit(2)
+                            Text(row.version.label).font(.locus(size: 12))
+                                .foregroundStyle(viewColors.textSecondary)
+                            if let reason = row.version.unavailableReason {
+                                Text(reason).font(.locus(size: 12)).foregroundStyle(viewColors.textSecondary)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.locus())
+                    .accessibilityIdentifier("agentInspector.output.\(row.id)")
+                }
             }
         }
         .accessibilityIdentifier("agentInspector.savedOutputs")

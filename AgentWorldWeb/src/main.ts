@@ -219,6 +219,22 @@ function selectAgent(id: string): void {
   if (demo) showNote(`${agent.name} is a demo ${ocean ? 'captain' : 'resident'}. The camera follows their ship. In Locus, Captain’s Quarters also has chats and tools.`);
 }
 
+function selectAdjacentAgent(direction: -1 | 1): void {
+  if (!snapshot.agents.length) return;
+  const current = snapshot.agents.findIndex(agent => agent.id === snapshot.selectedAgentID);
+  const index = current < 0 ? (direction > 0 ? 0 : snapshot.agents.length - 1) : (current + direction + snapshot.agents.length) % snapshot.agents.length;
+  selectAgent(snapshot.agents[index].id);
+}
+
+function clearAgentSelection(): void {
+  if (!snapshot.selectedAgentID) return;
+  snapshot = { ...snapshot, selectedAgentID: undefined };
+  pendingFocusAgentID = undefined;
+  updateWorldAgents(); renderRoster(); world?.resetView();
+  if (!demo) send({ version: 1, type: 'clearSelection' });
+  announce('Ship selection cleared. Camera returned to the world overview.');
+}
+
 function updateWorldAgents(): void {
   world?.setShipStyles(snapshot.shipStyles ?? {});
   world?.setAgents(sectorAgents(snapshot.agents, sector), snapshot.selectedAgentID);
@@ -252,6 +268,7 @@ function renderRoster(): void {
   el('coordinate-sector').textContent = String(sector + 1).padStart(2, '0');
   const working = snapshot.agents.filter(agent => agent.status === 'working').length;
   const attention = snapshot.agents.filter(agent => agent.status === 'needs_attention' || agent.status === 'failed').length;
+  el('agent-navigation').hidden = !snapshot.selectedAgentID;
   el('working-count').textContent = working ? `${working} agent${working === 1 ? '' : 's'} at work` : attention ? `${attention} need${attention === 1 ? 's' : ''} your attention` : ocean ? 'Calm seas' : 'All systems calm';
   const list = el('resident-list');
   const filtered = searchAgents(snapshot.agents, el<HTMLInputElement>('resident-search').value);
@@ -448,7 +465,7 @@ async function loadTheme(id: string): Promise<void> {
     heading.firstChild!.textContent = theme.name;
     document.title = `${theme.name} · Agent World · Locus`;
     el('theme-button').children[1].textContent = allowed.name.replace(/^Orbital /, '');
-    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
+    world = new OutpostWorld(el<HTMLCanvasElement>('world'), theme, { onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback('The graphics connection was interrupted. Reopen this window to restore the world, or select an agent to keep talking.') }, residentStyle);
     world.setNavigationMode(navigationMode);
     updateWorldAgents();
     applyActivity();
@@ -463,7 +480,7 @@ async function loadTheme(id: string): Promise<void> {
     // Missing manifest can still show a functional built-in outpost without network access.
     if (!world && id === 'outpost') {
       try {
-        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
+        world = new OutpostWorld(el<HTMLCanvasElement>('world'), DEFAULT_THEME, { onSelect: selectAgent, onClearSelection: clearAgentSelection, onAttention: openAttention, onTransfer: openTransfer, onAssetFailure: () => { el('asset-notice').hidden = false; }, onAssetProgress: assetProgress, onGraphicsFailure: () => fallback() }, residentStyle);
         world.setNavigationMode(navigationMode);
         updateWorldAgents();
         applyActivity();
@@ -548,6 +565,9 @@ el('appearance-pandas').addEventListener('click', () => setResidentStyle('pandas
 el('appearance-explorers').addEventListener('click', () => setResidentStyle('explorers'));
 el('mode-orbit').addEventListener('click', () => setNavigationMode('orbit'));
 el('mode-pan').addEventListener('click', () => setNavigationMode('pan'));
+el('previous-agent').addEventListener('click', () => selectAdjacentAgent(-1));
+el('next-agent').addEventListener('click', () => selectAdjacentAgent(1));
+el('clear-agent').addEventListener('click', clearAgentSelection);
 el('view-reset').addEventListener('click', () => { world?.resetView(); announce('Camera returned to the world overview.'); });
 el('roster-toggle').addEventListener('click', () => {
   const body = el('roster-body'), button = el('roster-toggle'); body.hidden = !body.hidden;

@@ -1,0 +1,22 @@
+{
+  "name": "social-studio",
+  "version": "0.1.0",
+  "description": "Write, adapt, research, and plan social content in Locus. Connect OpenPost for publishing.",
+  "author": {"name": "SparkTales"},
+  "license": "Apache-2.0",
+  "interface": {
+    "displayName": "Social Studio",
+    "shortDescription": "Your social content workspace in Locus.",
+    "longDescription": "Keep local drafts, platform versions, a content calendar, and brand voice in a native Locus workspace. Research recent conversations with last30days. Connect OpenPost Hosted or a self-hosted instance to send drafts, schedule, publish, and inspect delivery results.",
+    "developerName": "SparkTales",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Open Social Studio in Locus to plan my social content."
+  },
+  "locus": {
+    "screens": [{
+      "id": "social-studio", "title": "Social Studio", "entrypoint": "ui/index.html",
+      "version": 1, "capabilities": ["social.workspace"]
+    }]
+  }
+}

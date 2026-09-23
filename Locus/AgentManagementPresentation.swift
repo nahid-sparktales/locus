@@ -109,6 +109,64 @@ enum AgentActivityFilter: String, CaseIterable, Identifiable {
 
 /// Read-only projection for one saved profile. Ownership comes from durable
 /// session metadata, including archived sessions, never names or model routes.
+/// A small, faithful reading preview, built from Markdown structure rather
+/// than cutting through its source syntax. The full answer stays in the reader.
+struct SavedAgentResultExcerpt {
+    enum Kind: Equatable { case heading, body, list(String), code, table }
+    struct Line {
+        let kind: Kind
+        let runs: [MarkdownInlineRun]
+        var text: String { runs.map(\.text).joined() }
+    }
+    let lines: [Line]
+
+    init(_ source: String) {
+        self.init(blocks: MarkdownDocumentParser.parse(source))
+    }
+
+    init(blocks: [MarkdownRenderBlock]) {
+        var preview: [Line] = []
+        func append(_ blocks: [MarkdownRenderBlock]) {
+            for block in blocks {
+                guard preview.count < 4 else { return }
+                switch block {
+                case .heading(_, let runs): preview.append(Line(kind: .heading, runs: runs))
+                case .paragraph(let runs): preview.append(Line(kind: .body, runs: runs))
+                case .unordered(let items), .ordered(_, let items):
+                    for (index, item) in items.enumerated() {
+                        guard preview.count < 4 else { break }
+                        let start = preview.count
+                        append(item.blocks)
+                        if start < preview.count {
+                            let marker: String
+                            if let checked = item.checked { marker = checked ? "☑" : "☐" }
+                            else if case .ordered(let number, _) = block { marker = "\(number + index)." }
+                            else { marker = "•" }
+                            preview[start] = Line(kind: .list(marker), runs: preview[start].runs)
+                        }
+                    }
+                case .quote(let blocks): append(blocks)
+                case .code(_, let body):
+                    preview.append(Line(kind: .code, runs: [MarkdownInlineRun(text: body)]))
+                case .table(let headers, _, let rows):
+                    let headings = headers.map { $0.map(\.text).joined() }.joined(separator: " · ")
+                    preview.append(Line(kind: .table, runs: [MarkdownInlineRun(text: headings)]))
+                    for row in rows.prefix(2) where preview.count < 4 {
+                        let text = row.map { $0.map(\.text).joined() }.joined(separator: " · ")
+                        preview.append(Line(kind: .body, runs: [MarkdownInlineRun(text: text)]))
+                    }
+                case .rawText(let text): preview.append(Line(kind: .body, runs: [MarkdownInlineRun(text: text)]))
+                case .rule: break
+                }
+            }
+        }
+        append(blocks)
+        // Never leave a section title stranded at the end of the preview.
+        if preview.count > 1, preview.last?.kind == .heading { preview.removeLast() }
+        lines = preview
+    }
+}
+
 struct SavedAgentOverviewSnapshot {
     enum Status: Equatable { case ready, working, needsAttention, paused, unverified }
     enum Action: Hashable {
@@ -163,6 +221,9 @@ struct SavedAgentOverviewSnapshot {
         let action: Action?
         let sessionID: String?
         let runID: String?
+        /// Keep the original answer for the reader. Only the overview excerpt
+        /// is bounded; opening a result must never silently lose its ending.
+        var fullResponse: String? = nil
     }
     /// The same read-only session response used by chat restoration, retaining
     /// its durable profile binding before exposing any assistant content.
@@ -421,18 +482,20 @@ struct SavedAgentOverviewSnapshot {
                                                       runID: exactResult?.runID)
             }
             if let answer {
-                let summary = String(answer.content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
+                let response = answer.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let summary = String(response.prefix(2_000))
                 if let result = exactResult {
                     latestResult = LatestResult(id: result.id, title: result.title, state: result.state,
                         statusTitle: result.statusTitle, summary: summary, timestamp: result.timestamp,
                         isInProgress: result.isInProgress, needsAttention: result.needsAttention,
-                        action: result.action, sessionID: result.sessionID, runID: result.runID)
+                        action: result.action, sessionID: result.sessionID, runID: result.runID,
+                        fullResponse: response)
                 } else if let chat = ownedSessions.first(where: { $0.id == resultSessionID }) {
                     latestResult = LatestResult(id: "response:\(chat.id):\(answer.itemID ?? answer.runID ?? "latest")",
                         title: chat.displayTitle, state: "saved_response", statusTitle: "Saved response",
                         summary: summary, timestamp: Date(timeIntervalSince1970: chat.mtime),
                         isInProgress: false, needsAttention: false, action: .chat(chat.id),
-                        sessionID: chat.id, runID: answer.runID)
+                        sessionID: chat.id, runID: answer.runID, fullResponse: response)
                 }
             }
         }

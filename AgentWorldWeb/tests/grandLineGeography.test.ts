@@ -35,7 +35,11 @@ test('twenty islands retain twelve stable captain homes and eight visitable dest
 test('varied island footprints leave broad shipping passages and all harbors have full clearance', () => {
   const radii = GRAND_LINE_LANDMARKS.map(island => island.radius);
   assert.ok(Math.max(...radii) / Math.min(...radii) > 2.5, 'Signature destinations should have visibly different sizes');
-  assert.ok(new Set(GRAND_LINE_LANDMARKS.map(island => island.z)).size >= 12, 'Avoid restoring the old two rows');
+  const named = (id: string) => GRAND_LINE_LANDMARKS.find(island => island.id === id)!;
+  const paradise = ['twin-cape', 'little-garden', 'drum', 'alabasta', 'jaya', 'long-ring-long-land', 'water-seven', 'sabaody'].map(named);
+  const newWorld = ['punk-hazard', 'dressrosa', 'whole-cake', 'wano', 'egghead', 'elbaf', 'hachinosu', 'laugh-tale'].map(named);
+  assert.ok(paradise.every((island, index) => index === 0 || island.x > paradise[index - 1].x), 'Paradise follows the voyage toward the Red Line');
+  assert.ok(newWorld.every((island, index) => index === 0 || island.x > newWorld[index - 1].x), 'New World destinations follow the voyage away from the Red Line');
   assert.ok(pointIsWalkable({ x: 0, z: 0 }, sea), 'The center stays open water');
   for (const [index, island] of GRAND_LINE_LANDMARKS.entries()) {
     const harbor = GRAND_LINE_HARBORS[index];
@@ -72,10 +76,10 @@ test('Marineford landmarks preserve the reference triangle beside the Red Line',
   const sabaody = named('sabaody'), amazon = named('amazon-lily');
   assert.equal(MARY_GEOISE.x, -29);
   assert.ok(MARY_GEOISE.floor > 5, 'The holy land belongs on top of the continental ridge');
-  assert.ok(MARY_GEOISE.x > marineford.x && MARY_GEOISE.z < marineford.z);
+  assert.ok(MARY_GEOISE.x > marineford.x && MARY_GEOISE.z > marineford.z);
   assert.ok(marineford.x > impel.x && impel.x > enies.x);
   assert.ok(impel.z < marineford.z && impel.z < enies.z);
-  assert.ok(sabaody.x < marineford.x && sabaody.z > marineford.z);
+  assert.ok(sabaody.x > marineford.x && sabaody.z > marineford.z);
   assert.ok(amazon.x < impel.x && amazon.z <= impel.z);
   assert.ok(enies.z > amazon.z);
   for (const island of [marineford, impel, enies, sabaody, amazon]) {
@@ -101,6 +105,7 @@ test('Calm Belts block the entire hull and every cross-sea route uses the mounta
   }
   for (const island of GRAND_LINE_LANDMARKS) {
     if (island.id === 'amazon-lily') assert.equal(Math.abs(island.z), GRAND_LINE_CALM_BELT.center);
+    else if (island.id === 'impel-down') assert.ok(Math.abs(island.z - GRAND_LINE_CALM_BELT.center * -1) < 0.25, 'Impel Down sits inside the Calm Belt');
     else assert.ok(Math.abs(island.z) + island.radius < GRAND_LINE_CALM_BELT.inner, `${island.id} stays between the belts`);
   }
   const west = GRAND_LINE_HARBORS.filter(h => h.x > -29), east = GRAND_LINE_HARBORS.filter(h => h.x < -29);

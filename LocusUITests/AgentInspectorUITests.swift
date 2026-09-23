@@ -106,15 +106,13 @@ final class AgentInspectorUITests: XCTestCase {
         let overview = element("savedAgent.overview")
         XCTAssertTrue(overview.waitForExistence(timeout: 10))
 
-        // Instructions are shown with the agent's identity rather than behind
-        // a disclosure, beside the quick automation action.
+        // Instructions remain readable in the supporting setup column.
         let instructions = element("savedAgent.instructions.content")
         XCTAssertTrue(instructions.waitForExistence(timeout: 5))
         XCTAssertTrue((instructions.label + " \(instructions.value ?? "")").contains("Help with project research."))
         XCTAssertTrue(element("savedAgent.newAutomation").exists)
 
-        // macOS exposes a styled DisclosureGroup as a disclosure triangle;
-        // its native accessibility node also inherits the card identifier.
+        // macOS exposes a styled DisclosureGroup as a disclosure triangle.
         // Match its unique visible label and compare the native open state.
         for title in ["Folder details & linked projects"] {
             let header = app.disclosureTriangles.matching(NSPredicate(format: "label == %@", title)).firstMatch
@@ -138,6 +136,62 @@ final class AgentInspectorUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
         }
         attachScreenshot("Saved agent full-row disclosure headers")
+    }
+
+    func testSavedAgentResultOpensACompleteReadableResponse() {
+        launchResultOverview(width: 1440, appearance: "dark")
+        let overview = element("savedAgent.overview")
+        let preview = element("savedAgent.latestResult.preview")
+        let read = element("savedAgent.latestResult.read")
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(read.isHittable)
+        XCTAssertTrue(overview.frame.contains(preview.frame))
+        let originalY = preview.frame.minY
+        attachScreenshot("Agent overview — result and supporting setup")
+        read.click()
+        let reader = element("savedAgent.resultReader")
+        XCTAssertTrue(reader.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("savedAgent.resultReader.copy").isHittable)
+        let ending = app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@",
+            "Final verification:", "Final verification:")).firstMatch
+        for _ in 0..<20 {
+            if ending.exists && ending.isHittable { break }
+            reader.scroll(byDeltaX: 0, deltaY: -300)
+        }
+        XCTAssertTrue(ending.exists && ending.isHittable, "The full response must include text beyond the preview limit")
+        attachScreenshot("Full result — ending preserved")
+        element("savedAgent.resultReader.done").click()
+        XCTAssertFalse(reader.exists)
+        XCTAssertEqual(preview.frame.minY, originalY, accuracy: 2)
+    }
+
+    func testSavedAgentResultFitsACompactLightWindow() {
+        launchResultOverview(width: 980, appearance: "light")
+        let overview = element("savedAgent.overview")
+        let read = element("savedAgent.latestResult.read")
+        for _ in 0..<8 where !read.isHittable {
+            overview.scroll(byDeltaX: 0, deltaY: -150)
+        }
+        XCTAssertTrue(read.isHittable)
+        XCTAssertTrue(overview.frame.contains(read.frame))
+        XCTAssertLessThanOrEqual(element("savedAgent.latestResult").frame.maxX, overview.frame.maxX)
+        attachScreenshot("Agent overview — compact light layout")
+        read.click()
+        XCTAssertTrue(element("savedAgent.resultReader.done").waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(element("savedAgent.resultReader").exists)
+    }
+
+    private func launchResultOverview(width: Int, appearance: String) {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_FIXTURE"] = "saved-profile-result"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = String(width)
+        app.launchEnvironment["LOCUS_UI_TESTING_APPEARANCE"] = appearance
+        app.launch()
+        let openOverview = element("workspace.agentOverview")
+        XCTAssertTrue(openOverview.waitForExistence(timeout: 10))
+        openOverview.click()
+        XCTAssertTrue(element("savedAgent.overview").waitForExistence(timeout: 10))
     }
 
     private func attachScreenshot(_ name: String) {

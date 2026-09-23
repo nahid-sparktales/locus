@@ -357,6 +357,7 @@ final class AgentManagementPresentationTests: XCTestCase {
             occurrences: [occurrence("result")], transcript: saved)
         XCTAssertEqual(snapshot.resultSessionID, "chat")
         XCTAssertEqual(snapshot.latestResult?.summary, String(repeating: "a", count: 2_000))
+        XCTAssertEqual(snapshot.latestResult?.fullResponse, String(repeating: "a", count: 2_050))
         XCTAssertEqual(snapshot.latestResult?.runID, "run")
     }
 
@@ -375,6 +376,7 @@ final class AgentManagementPresentationTests: XCTestCase {
             let snapshot = overview(profile, sessions: [own], definitions: definitions,
                 occurrences: [occurrence("result")], transcript: candidate)
             XCTAssertTrue(snapshot.latestResult?.summary.hasPrefix("No saved output") == true)
+            XCTAssertNil(snapshot.latestResult?.fullResponse)
         }
     }
 
@@ -422,6 +424,7 @@ final class AgentManagementPresentationTests: XCTestCase {
             runs: [try run("run", sessionID: "chat", state: "completed", at: 30)], transcript: saved)
         XCTAssertEqual(snapshot.latestResult?.state, "failed")
         XCTAssertEqual(snapshot.latestResult?.summary, "Retry could not start")
+        XCTAssertNil(snapshot.latestResult?.fullResponse)
         XCTAssertTrue(snapshot.latestResult?.needsAttention == true)
         XCTAssertFalse(snapshot.needsAttention, "Historical failure is not a current blocker after its warning is cleared")
     }
@@ -532,6 +535,43 @@ final class AgentManagementPresentationTests: XCTestCase {
             runs: [try run("run", sessionID: "chat", state: "completed", at: 70)])
         XCTAssertEqual(completed.status, .ready)
         XCTAssertTrue(completed.issues.isEmpty)
+    }
+
+    func testResultExcerptKeepsReadableMarkdownHierarchyAndEmphasis() {
+        let excerpt = SavedAgentResultExcerpt("""
+        Reviewed **three messages**. See [the source](https://example.com) and `invoice.pdf`.
+
+        ## Next steps
+        - Review the draft.
+        - Send it when ready.
+        - This remains in the full result.
+        """)
+        XCTAssertEqual(excerpt.lines.map(\.text), [
+            "Reviewed three messages. See the source and invoice.pdf.", "Next steps",
+            "Review the draft.", "Send it when ready.",
+        ])
+        XCTAssertEqual(excerpt.lines.map(\.kind), [.body, .heading, .list("•"), .list("•")])
+        XCTAssertTrue(excerpt.lines[0].runs.contains { $0.text == "three messages" && $0.style.contains(.strong) })
+        XCTAssertFalse(excerpt.lines[0].text.contains("https://"))
+    }
+
+    func testResultExcerptKeepsOrderedAndTaskListMeaning() {
+        let ordered = SavedAgentResultExcerpt("3. Review\n4. Send")
+        XCTAssertEqual(ordered.lines.map(\.kind), [.list("3."), .list("4.")])
+        let tasks = SavedAgentResultExcerpt("- [x] Read\n- [ ] Reply")
+        XCTAssertEqual(tasks.lines.map(\.kind), [.list("☑"), .list("☐")])
+        let excerpt = SavedAgentResultExcerpt("First.\n\nSecond.\n\nThird.\n\n## More\n\nFourth.")
+        XCTAssertEqual(excerpt.lines.map(\.text), ["First.", "Second.", "Third."])
+    }
+
+    func testResultExcerptHandlesTablesCodeAndEmptyOutput() {
+        XCTAssertTrue(SavedAgentResultExcerpt("").lines.isEmpty)
+        let table = SavedAgentResultExcerpt("| Item | State |\n| --- | --- |\n| Draft | Ready |")
+        XCTAssertEqual(table.lines.map(\.text), ["Item · State", "Draft · Ready"])
+        XCTAssertEqual(table.lines.first?.kind, .table)
+        let code = SavedAgentResultExcerpt("```swift\nlet ready = true\n```")
+        XCTAssertEqual(code.lines.first?.kind, .code)
+        XCTAssertTrue(code.lines.first?.text.contains("let ready = true") == true)
     }
 
     private func overview(

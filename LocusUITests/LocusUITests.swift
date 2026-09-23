@@ -4522,8 +4522,8 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Clear"].exists)
 
         // Read status never hides an unresolved request from the inbox.
-        anyElement("activity.tab.read").click()
-        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.completed").click()
+        XCTAssertTrue(app.staticTexts["No completed tasks yet"].waitForExistence(timeout: 3))
         anyElement("activity.tab.inbox").click()
         XCTAssertTrue(anyElement("attention.item.run:seed-run").waitForExistence(timeout: 3))
         anyElement("activity.close").click()
@@ -4579,7 +4579,7 @@ final class LocusUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
-    func testActivityCompletedResultMovesToReadAndCanBeMarkedUnread() {
+    func testActivityCompletedResultOpensOnlyOutputAndCanBeMarkedUnread() {
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "720"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "620"
         app.launchEnvironment["LOCUS_UI_TESTING_ACTIVITY_RESULTS"] = "1"
@@ -4588,64 +4588,58 @@ final class LocusUITests: XCTestCase {
         anyElement("sidebar.activity").click()
         let row = anyElement("activity.open.seed-run")
         XCTAssertTrue(row.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntilHittable(row), "The compact sidebar must not cover the task result")
-        let inboxScreenshot = XCTAttachment(screenshot: app.screenshot())
-        inboxScreenshot.name = "Activity Inbox"
-        inboxScreenshot.lifetime = .keepAlways
-        add(inboxScreenshot)
-
-        // Opening the result is the acknowledgement, not opening the panel.
+        XCTAssertTrue(waitUntilHittable(row))
+        for identifier in ["agent", "time", "type"] {
+            XCTAssertTrue(anyElement("activity.filter." + identifier).exists)
+        }
         row.click()
-        // Check the temporary feedback before querying the stable destination
-        // controls so a slower accessibility snapshot cannot miss the highlight.
-        let resultHighlight = anyElement("activity.resultHighlight.seed-run")
-        XCTAssertTrue(resultHighlight.waitForExistence(timeout: 3), "The output itself should be highlighted")
-        XCTAssertTrue(waitUntil { self.anyElement("conversation.scroll").frame.intersects(resultHighlight.frame) },
-                      "The selected output must be scrolled into the transcript viewport")
-        // seed-run is a team run started from an ordinary chat: highlighted,
-        // but not boxed as an automated task result.
-        XCTAssertFalse(anyElement("taskResult.header.seed-run").exists,
-                       "Only scheduled, triggered, or agent event results get a task result box")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "value == %@", "Opened from Activity Center")).count, 0)
-        XCTAssertTrue(waitUntil { !self.anyElement("activity.center").exists })
-        // Markdown prose is a native NSTextView, not SwiftUI StaticText.
+        let reader = anyElement("activity.result.reader")
+        XCTAssertTrue(reader.waitForExistence(timeout: 3))
+        XCTAssertTrue(anyElement("activity.center").exists, "Opening mail must keep Activity Center open")
+        XCTAssertLessThan(reader.frame.width, 760)
+        XCTAssertFalse(anyElement("activity.resultList").exists, "Compact windows give the result the full content width")
         let resultText = "The stock check is complete. Two items are available."
-        let transcript = anyElement("conversation.scroll")
-        let output = transcript.descendants(matching: .textView)
-            .matching(NSPredicate(format: "value CONTAINS %@", resultText)).firstMatch
+        let output = reader.descendants(matching: .staticText)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", resultText, resultText)).firstMatch
         XCTAssertTrue(output.waitForExistence(timeout: 3))
-        XCTAssertEqual((output.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), resultText)
-        XCTAssertTrue(transcript.frame.contains(output.frame),
-                      "The exact selected output should be fully inside the transcript viewport")
-        XCTAssertTrue(output.isHittable,
-                      "The result must be readable without a sidebar or inspector covering it")
-        let resultScreenshot = XCTAttachment(screenshot: app.screenshot())
-        resultScreenshot.name = "Activity opened task output"
-        resultScreenshot.lifetime = .keepAlways
-        add(resultScreenshot)
-        revealSidebarForNavigation()
-        anyElement("sidebar.activity").click()
-        XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
-        anyElement("activity.tab.read").click()
-        XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
-        let readScreenshot = XCTAttachment(screenshot: app.screenshot())
-        readScreenshot.name = "Activity Read"
-        readScreenshot.lifetime = .keepAlways
-        add(readScreenshot)
-        anyElement("activity.markUnread.seed-run").click()
-        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
-        anyElement("activity.tab.inbox").click()
-        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertTrue(output.isHittable)
+        XCTAssertFalse(reader.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "unrelated to the selected task result", "unrelated to the selected task result")).firstMatch.exists)
+        XCTAssertTrue(reader.buttons["Mark unread"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Activity task output — compact"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        anyElement("activity.result.toggleRead").click()
+        XCTAssertTrue(reader.buttons["Mark as read"].exists)
+        anyElement("activity.result.back").click()
+        XCTAssertTrue(row.waitForExistence(timeout: 3), "Read and unread mail both stay in Completed")
         let search = anyElement("activity.search")
-        search.click()
-        search.typeText("no matching activity")
+        search.click(); search.typeText("no matching activity")
         XCTAssertFalse(row.exists)
         app.buttons["Clear search"].click()
         XCTAssertTrue(row.waitForExistence(timeout: 3))
-        anyElement("activity.markAllSeen").click()
-        XCTAssertTrue(app.staticTexts["You’re all caught up"].waitForExistence(timeout: 3))
-        anyElement("activity.tab.read").click()
-        XCTAssertTrue(anyElement("activity.markUnread.seed-run").waitForExistence(timeout: 3))
+    }
+
+    func testActivityCompletedInboxHasWideReadingPane() {
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1440"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "900"
+        app.launchEnvironment["LOCUS_UI_TESTING_ACTIVITY_RESULTS"] = "1"
+        relaunchWithRunFixture("completed")
+        revealSidebarForNavigation()
+        anyElement("sidebar.activity").click()
+        let row = anyElement("activity.open.seed-run")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        let reader = anyElement("activity.result.reader")
+        XCTAssertTrue(reader.waitForExistence(timeout: 3))
+        XCTAssertTrue(row.exists)
+        XCTAssertLessThanOrEqual(row.frame.maxX, reader.frame.minX + 1)
+        XCTAssertGreaterThan(anyElement("activity.center").frame.width, 900)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Activity completed inbox — wide"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testActivityClearReadKeepsTheCompletedTask() {
@@ -4654,20 +4648,14 @@ final class LocusUITests: XCTestCase {
         relaunchWithRunFixture("completed")
         revealSidebarForNavigation()
         anyElement("sidebar.activity").click()
-        for tab in ["inbox", "inProgress", "read"] {
-            XCTAssertTrue(waitUntilHittable(anyElement("activity.tab.\(tab)")),
-                "Every Activity Center tab must be reachable in a compact window")
+        for tab in ["inbox", "inProgress", "completed"] {
+            XCTAssertTrue(waitUntilHittable(anyElement("activity.tab.\(tab)")))
         }
-        let markRead = anyElement("activity.markAllSeen")
-        XCTAssertTrue(waitUntilHittable(markRead), "The compact sidebar must not cover activity actions")
-        markRead.click()
-        let readTab = anyElement("activity.tab.read")
-        XCTAssertTrue(waitUntilHittable(readTab))
-        readTab.click()
-        let clear = anyElement("activity.clearRead")
-        XCTAssertTrue(waitUntilHittable(clear))
-        clear.click()
-        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.inboxActions").click()
+        app.menuItems["Mark shown as read"].click()
+        anyElement("activity.inboxActions").click()
+        app.menuItems["Clear read results"].click()
+        XCTAssertTrue(app.staticTexts["No completed tasks yet"].waitForExistence(timeout: 3))
         anyElement("activity.close").click()
         XCTAssertTrue(anyElement("runs.openTask").exists, "Clearing activity keeps the completed task")
     }
@@ -4685,8 +4673,8 @@ final class LocusUITests: XCTestCase {
         screenshot.name = "Activity In Progress"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        anyElement("activity.tab.read").click()
-        XCTAssertTrue(app.staticTexts["No read activity yet"].waitForExistence(timeout: 3))
+        anyElement("activity.tab.completed").click()
+        XCTAssertTrue(app.staticTexts["No completed tasks yet"].waitForExistence(timeout: 3))
     }
 
     func testOrphanedRecoveryOffersIndividualAndBulkClear() {
