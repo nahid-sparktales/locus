@@ -152,6 +152,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var profileHistory: [String: String] = [:]
     private var defaults: UserDefaults?
     private var window: NSWindow?
+    private let socialStudioWindows = SocialStudioWindowController()
     private var refreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
     private var selectionToken = UUID()
@@ -242,6 +243,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func refresh() {
+        socialStudioWindows.refresh(catalog: catalog)
         let currentWorkspace = SessionSummary.canonicalWorkspacePath(workspaceProvider())
         let candidates: [AvailableScreen] = catalog.capabilities.pluginScreens == true
             ? catalog.plugins.filter { Self.enabled($0, workspace: currentWorkspace) && $0.error == nil }.flatMap { plugin in
@@ -303,7 +305,13 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         refresh()
         guard let choice = availableScreens.first(where: {
             (pluginID == nil || $0.pluginID == pluginID) && (screenID == nil || $0.screen.id == screenID)
-        }) else { error = "Install and enable Agent World for this project in Extensions."; return }
+                && (pluginID != nil || screenID != nil || !$0.screen.isSocialStudio)
+        }) else { error = "Install and enable this plugin for the project in Extensions."; return }
+        if choice.screen.isSocialStudio {
+            guard let appModel else { return }
+            socialStudioWindows.open(screen: choice, workspace: workspaceProvider(), appModel: appModel)
+            return
+        }
         if window != nil, activeScreen == choice, windowWorkspace == SessionSummary.canonicalWorkspacePath(workspaceProvider()) {
             window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return
         }
@@ -357,7 +365,9 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true) }
     func windowDidChangeOcclusionState(_ notification: Notification) { visibilityChanged?(window?.occlusionState.contains(.visible) == true) }
 
-    /// A map/roster selection only steers the camera. It never loads a chat.
+    /// Opens a resident's workspace without creating a conversation. When the
+    /// resident has history, the most recent chat is ready to resume; otherwise
+    /// the workspace offers explicit chat and automation setup actions.
     func focusResident(_ agentID: String) {
         guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
         dismissConversation()
@@ -368,7 +378,33 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func chooseResident(_ agentID: String) {
         if quartersPresented { openAgentProfile(agentID) }
-        else { focusResident(agentID) }
+        else { openResidentWorkspace(agentID) }
+    }
+
+    func clearWorldSelection() {
+        dismissConversation()
+        quartersPresented = false
+        refresh()
+    }
+
+    func residentConversations(for agentID: String) -> [SessionSummary] {
+        guard let profileID = UUID(uuidString: agentID), let appModel else { return [] }
+        return appModel.sessions.filter {
+            !$0.isArchived && $0.belongsToWorkspace(workspace)
+                && (appModel.savedAgentProfileID(for: $0.id) ?? boundProfileID(for: $0.id)) == profileID
+        }.sorted { $0.mtime > $1.mtime }
+    }
+
+    func openResidentWorkspace(_ agentID: String) {
+        guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
+        selectionTask?.cancel(); selectionToken = UUID(); preparingConversation = false
+        activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
+        quartersPresented = true; selection = agentID; focusRequest += 1
+        conversationPresented = true; sharedChatPresented = false; profilePresented = false
+        selectedTransfer = nil; error = nil; blocks = []; pendingCount = 0
+        selectedSessionOverride = residentConversations(for: agentID).first?.id
+        refresh()
+        if selectedSessionOverride != nil { activateSelectedConversation() }
     }
 
     func select(_ agentID: String) {
@@ -772,6 +808,23 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 }
 
 extension AgentWorldModel {
+    func openSocialStudioUITestFixture() {
+        guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1",
+              ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SOCIAL_STUDIO"] == "1" else { return }
+        subscriptions.removeAll()
+        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
+        let screen = ExtensionPluginScreen(id: "social-studio", title: "Social Studio", entrypoint: "ui/index.html", version: 1,
+                                           capabilities: ["social.workspace"])
+        var plugin = ExtensionPlugin(id: "social-studio-fixture", name: "social-studio", displayName: "Social Studio", description: nil,
+                                     version: "0.1.0", author: nil, digest: "fixture", enabledGlobal: true,
+                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
+                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
+        plugin.root = FileManager.default.temporaryDirectory.path; plugin.screens = [screen]
+        catalog = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
+                                     mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
+        open(pluginID: plugin.id, screenID: screen.id)
+    }
+
     /// Test-only opt-in: local asset and bridge verification never starts a
     /// worker, installs a plugin, or changes the user's saved profiles.
     func openUITestFixture(root: String) {

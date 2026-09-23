@@ -5,6 +5,12 @@
   },
   "plugins": [
     {
+      "name": "social-studio",
+      "source": {"source": "local", "path": "./plugins/social-studio"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_USE"},
+      "category": "Productivity"
+    },
+    {
       "name": "agent-world",
       "source": {
         "source": "local",

@@ -50,7 +50,7 @@ import type { NavigationMap, ResidentMotion } from './residentMotion';
 type Actor = { root: TransformNode; fallback: TransformNode; appearance: ResidentAssetType; kind: ResidentKind | 'ship'; panda?: ReturnType<typeof createPanda>; person?: ReturnType<typeof createPerson>; model?: InstantiatedEntries; loadedAppearance?: ResidentAssetType; idle?: AnimationGroup; walk?: AnimationGroup; walking: boolean; body?: TransformNode; leftLeg?: TransformNode; rightLeg?: TransformNode };
 type Resident = { workGlow?: ReturnType<typeof createShipWorkGlow>; crew?: ReturnType<typeof createIslandCrew>; agent: Agent; actor: Actor; label: HTMLDivElement; ring: Mesh; wake?: TransformNode; home: Placement; motion: ResidentMotion; id: string; phase: number };
 type Courier = { event: AgentTransfer; boat: ReturnType<typeof createCourierBoat>; route: Point[]; wake: TransformNode; started: number; duration: number; arrivedAt?: number; label: HTMLDivElement };
-type Callbacks = { onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
+type Callbacks = { onAttention?: (requestID: string) => void; onTransfer?: (transferID: string) => void; onSelect: (id: string) => void; onClearSelection?: () => void; onAssetFailure: () => void; onAssetProgress: (completed: number, total: number) => void; onGraphicsFailure: () => void };
 
 export class OutpostWorld {
   private engine: Engine;
@@ -836,6 +836,7 @@ export class OutpostWorld {
       else if (click && target?.attentionID) this.callbacks.onAttention?.(target.attentionID);
       else if (click && target?.transferID) this.callbacks.onTransfer?.(target.transferID);
       else if (click && target?.actorID) this.callbacks.onSelect(target.actorID);
+      else if (click && !target) this.callbacks.onClearSelection?.();
     };
     const cancel = () => { pointerStart = undefined; dragged = false; this.setHovered(undefined); };
     const wheel = () => { this.focusRadius = undefined; };
@@ -1213,7 +1214,7 @@ export class OutpostWorld {
     this.camera.setTarget(new Vector3(this.theme.environment === 'ocean' ? -13 : 0, 0.9, this.theme.environment === 'ocean' ? -3 : -0.4));
     this.camera.alpha = this.theme.environment === 'ocean' ? Math.PI / 2 : Math.PI / 2 - 0.3;
     this.camera.beta = this.theme.environment === 'ocean' ? 0.74 : 1.01;
-    this.camera.radius = this.theme.environment === 'ocean' ? 160 : 33;
+    this.camera.radius = this.theme.environment === 'ocean' ? 68 : 33;
   }
 
   setVisible(visible: boolean): void {

@@ -92,12 +92,16 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
     let version: Int
     let capabilities: [String]
 
+    /// Version-1 native workspace, deliberately distinct from a web screen.
+    var isSocialStudio: Bool { id == "social-studio" && capabilities.contains("social.workspace") }
+
     var capabilityDescription: String {
         capabilities.map { capability in
             switch capability {
             case "agents.read": "Can read agent names, roles and activity."
             case "agents.interact": "Can select an agent in the native conversation panel."
-        case "world.preferences": "Can save the selected world theme and resident appearance."
+            case "world.preferences": "Can save the selected world theme and resident appearance."
+            case "social.workspace": "Can open the native social studio, save project drafts, prepare assistant requests, and connect to OpenPost through native controls."
             default: capability
             }
         }.joined(separator: " ")
@@ -105,7 +109,8 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
 
     var isSupported: Bool {
         version == 1 && !id.isEmpty && !title.isEmpty
-            && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences"])
+            && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences", "social.workspace"])
+            && (!capabilities.contains("social.workspace") || (id == "social-studio" && capabilities == ["social.workspace"]))
             && PluginScreenFiles.isSafeRelativePath(entrypoint)
             && ["html", "htm"].contains(URL(fileURLWithPath: entrypoint).pathExtension.lowercased())
     }

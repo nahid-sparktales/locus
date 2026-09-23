@@ -6,28 +6,28 @@ import type { Point } from './state.ts';
 export const GRAND_LINE_MAP_RADIUS = 84;
 export const GRAND_LINE_CALM_BELT = { inner: 20.8, solid: 23, fade: 25, outer: 27.2, center: 24 } as const;
 export const GRAND_LINE_SAILING_BOUNDS = { minZ: -GRAND_LINE_CALM_BELT.inner, maxZ: GRAND_LINE_CALM_BELT.inner } as const;
-export const MARY_GEOISE = { id: 'mary-geoise', name: 'Mary Geoise', subtitle: 'THE HOLY LAND ABOVE THE RED LINE', x: -29, z: -16, radius: 2.1, floor: 5.6 } as const;
+export const MARY_GEOISE = { id: 'mary-geoise', name: 'Mary Geoise', subtitle: 'THE HOLY LAND ABOVE THE RED LINE', x: -29, z: 10, radius: 2.1, floor: 5.6 } as const;
 export const GRAND_LINE_LANDMARKS = [
-  { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -38, z: 13, radius: 1.8, harborFacing: 'south' },
-  { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -63, z: 15, radius: 2.0, harborFacing: 'south' },
-  { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -73, z: 14, radius: 2.3, harborFacing: 'south' },
-  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -76, z: 0, radius: 3.2, harborFacing: 'east' },
-  { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -52, z: 14, radius: 3.1, harborFacing: 'south' },
-  { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: -65, z: -10, radius: 1.7, harborFacing: 'south' },
-  { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: -39, z: -1, radius: 2.8, harborFacing: 'south' },
-  { id: 'marineford', name: 'Machineford', subtitle: 'LOCAL INFERENCE HEADQUARTERS', x: -36, z: -12, radius: 2.5, harborFacing: 'west' },
-  { id: 'wano', name: 'Wano Weights', subtitle: 'LAND OF OPEN WEIGHTS', x: 19, z: 11, radius: 3.2, harborFacing: 'west' },
-  { id: 'whole-cake', name: 'Whole Cache', subtitle: 'SWEET TOKENS, FRESHLY CACHED', x: 26, z: -8, radius: 2.6, harborFacing: 'north' },
-  { id: 'laugh-tale', name: 'LoRA Tale', subtitle: 'THE LAST TOKEN IS A TREASURE', x: 28, z: 4.5, radius: 1.2, harborFacing: 'west' },
-  { id: 'jaya', name: 'JAXa', subtitle: 'WHERE IDEAS COMPILE', x: -53, z: 3, radius: 1.6, harborFacing: 'east' },
-  { id: 'elbaf', name: 'Elbatch', subtitle: 'GIANT CONTEXT. GREATER ADVENTURES.', x: 0.5, z: 13, radius: 3.5, harborFacing: 'south' },
-  { id: 'egghead', name: 'Egghead', subtitle: 'TOMORROW IS ALREADY RUNNING', x: 12, z: -14, radius: 3.0, harborFacing: 'north' },
-  { id: 'impel-down', name: 'Impel Down', subtitle: 'GREAT PRISON OF THE CALM BELT', x: -51, z: -14, radius: 2.1, harborFacing: 'north' },
+  { id: 'twin-cape', name: 'Twin Cache', subtitle: 'A FRESH CONTEXT WINDOW', x: -79, z: 12, radius: 1.8, harborFacing: 'south' },
+  { id: 'little-garden', name: 'Little Gradient', subtitle: 'SMALL MODELS. BIG IDEAS.', x: -72, z: 3, radius: 2.0, harborFacing: 'south' },
+  { id: 'drum', name: 'DRAM Island', subtitle: 'COLD STORAGE. WARM WELCOMES.', x: -66, z: 13, radius: 2.3, harborFacing: 'south' },
+  { id: 'alabasta', name: 'Alabatcha', subtitle: 'BATCHES IN THE DUNES', x: -59, z: 2, radius: 3.2, harborFacing: 'south' },
+  { id: 'water-seven', name: 'Water 7B', subtitle: 'SEVEN BILLION POSSIBILITIES', x: -40, z: 13, radius: 3.1, harborFacing: 'south' },
+  { id: 'enies-lobby', name: 'Enies LoRA', subtitle: 'SMALL ADAPTERS. BIG ADVENTURES.', x: -66, z: -8, radius: 1.7, harborFacing: 'north' },
+  { id: 'sabaody', name: 'Sabaudio', subtitle: 'WHERE EVERY VOICE HAS A HOME', x: -35, z: 2, radius: 2.8, harborFacing: 'west' },
+  { id: 'marineford', name: 'Machineford', subtitle: 'LOCAL INFERENCE HEADQUARTERS', x: -37, z: -9, radius: 2.5, harborFacing: 'west' },
+  { id: 'wano', name: 'Wano Weights', subtitle: 'LAND OF OPEN WEIGHTS', x: 9, z: 11, radius: 3.2, harborFacing: 'west' },
+  { id: 'whole-cake', name: 'Whole Cache', subtitle: 'SWEET TOKENS, FRESHLY CACHED', x: 0, z: -9, radius: 2.6, harborFacing: 'north' },
+  { id: 'laugh-tale', name: 'LoRA Tale', subtitle: 'THE LAST TOKEN IS A TREASURE', x: 46, z: 3, radius: 1.2, harborFacing: 'west' },
+  { id: 'jaya', name: 'JAXa', subtitle: 'WHERE IDEAS COMPILE', x: -52, z: 13, radius: 1.6, harborFacing: 'east' },
+  { id: 'elbaf', name: 'Elbatch', subtitle: 'GIANT CONTEXT. GREATER ADVENTURES.', x: 27, z: 9, radius: 3.5, harborFacing: 'south' },
+  { id: 'egghead', name: 'Egghead', subtitle: 'TOMORROW IS ALREADY RUNNING', x: 18, z: -10, radius: 3.0, harborFacing: 'north' },
+  { id: 'impel-down', name: 'Impel Down', subtitle: 'GREAT PRISON OF THE CALM BELT', x: -51, z: -23.8, radius: 2.1, harborFacing: 'north' },
   { id: 'amazon-lily', name: 'Amazon Lily', subtitle: 'ISLAND OF THE KUJA', x: -72, z: -24, radius: 2.8, harborFacing: 'north' },
-  { id: 'dressrosa', name: 'Dressrosa', subtitle: 'THE KINGDOM OF FLOWERS', x: -8, z: 6, radius: 3.1, harborFacing: 'north' },
-  { id: 'punk-hazard', name: 'Punk Hazard', subtitle: 'FIRE AND ICE', x: -14, z: -10, radius: 2.9, harborFacing: 'north' },
-  { id: 'hachinosu', name: 'Hachinosu', subtitle: 'PIRATE ISLAND', x: 4, z: -6, radius: 2.8, harborFacing: 'north' },
-  { id: 'long-ring-long-land', name: 'Long Ring Long Land', subtitle: 'A LONG WAY ROUND', x: -63, z: 3, radius: 2.5, harborFacing: 'north' },
+  { id: 'dressrosa', name: 'Dressrosa', subtitle: 'THE KINGDOM OF FLOWERS', x: -10, z: 7, radius: 3.1, harborFacing: 'north' },
+  { id: 'punk-hazard', name: 'Punk Hazard', subtitle: 'FIRE AND ICE', x: -20, z: -9, radius: 2.9, harborFacing: 'north' },
+  { id: 'hachinosu', name: 'Hachinosu', subtitle: 'PIRATE ISLAND', x: 37, z: -7, radius: 2.8, harborFacing: 'north' },
+  { id: 'long-ring-long-land', name: 'Long Ring Long Land', subtitle: 'A LONG WAY ROUND', x: -46, z: 2, radius: 2.5, harborFacing: 'north' },
 ] as const;
 
 /** Generated island entrances face local +Z. Keep artwork, front docks,
@@ -41,8 +41,8 @@ export function islandArtworkRotation(id: string): number {
 /** Front depth is identical after rotating the artwork toward any dock. The
  * timber overlaps the irregular land edge instead of beginning offshore. */
 export const islandShoreDistance = (radius: number): number => radius * 0.72;
-export const GRAND_LINE_SKY_ISLAND = { x: -53.024, y: 6, z: 2.49 } as const;
-export const MARINEFORD_CURRENT = { x: -51, z: -5, radius: 4.2 } as const;
+export const GRAND_LINE_SKY_ISLAND = { x: -52.024, y: 6, z: 12.49 } as const;
+export const MARINEFORD_CURRENT = { x: -51, z: -9, radius: 4.2 } as const;
 
 export const GRAND_LINE_ISLAND_MODELS: Record<typeof GRAND_LINE_LANDMARKS[number]['id'], SceneryAssetType> = {
   'twin-cape': 'island_twin_cape', 'little-garden': 'island_little_garden', drum: 'island_drum',

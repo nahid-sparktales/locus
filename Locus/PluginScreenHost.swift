@@ -30,6 +30,7 @@ enum PluginScreenFiles {
 enum PluginScreenMessage: Equatable {
     case ready
     case selectAgent(String)
+    case clearSelection
     case preferences(String)
     case residentStyle(String)
     case openAttention(String)
@@ -55,6 +56,9 @@ enum PluginScreenMessage: Equatable {
             guard keys == ["version", "type", "agentID"], screen.capabilities.contains("agents.interact"),
                   let id = value["agentID"] as? String, let uuid = UUID(uuidString: id) else { return nil }
             return .selectAgent(uuid.uuidString)
+        case "clearSelection":
+            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
+            return .clearSelection
         case "openAttention", "openTransfer":
             let field = type == "openAttention" ? "requestID" : "transferID"
             guard keys == ["version", "type", field], screen.capabilities.contains("agents.interact"),
@@ -239,6 +243,7 @@ struct PluginScreenHost: NSViewRepresentable {
             switch action {
             case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
             case .selectAgent(let id): model?.chooseResident(id)
+            case .clearSelection: model?.clearWorldSelection()
             case .preferences(let theme): model?.setTheme(theme)
             case .residentStyle(let style): model?.setResidentStyle(style)
             case .openAttention(let id): model?.openAttention(id)

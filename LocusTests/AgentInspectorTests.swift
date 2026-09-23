@@ -616,7 +616,7 @@ final class AgentInspectorTests: XCTestCase {
     }
 
     @MainActor
-    func testActivityCompletionSuppressesOnlyTheExactLiveRunViewedWhenItFinishes() {
+    func testActivityCompletionReadsOnlyTheExactLiveRunViewedWhenItFinishes() {
         let model = activityNavigationModel()
         defer { stopActivityNavigationModel(model) }
         model.installTranscriptSession("viewed-chat", blocks: [])
@@ -634,12 +634,37 @@ final class AgentInspectorTests: XCTestCase {
         model.recordActivityCompletion(["type": "turn_done", "run_id": "current-run", "reason": "complete"],
             sessionID: "viewed-chat", appIsActive: true)
 
-        XCTAssertEqual(model.activity.dismissedActivityRunIDs, ["current-run"])
+        XCTAssertEqual(model.activity.viewedCompletionRunIDs, ["current-run"])
         model.installTranscriptSession("background-chat", blocks: [])
         model.orchestrationRunID = "background-run"
         model.recordActivityCompletion(["type": "orchestration_completed", "run_id": "background-run", "state": "completed"],
             sessionID: "background-chat", appIsActive: true)
-        XCTAssertEqual(model.activity.dismissedActivityRunIDs, ["current-run"], "A later view cannot reclassify the background completion")
+        XCTAssertEqual(model.activity.viewedCompletionRunIDs, ["current-run"], "A later view cannot reclassify the background completion")
+    }
+
+    @MainActor
+    func testActivityOutputLoadsSavedTaskWithoutResumingOrChangingChat() async throws {
+        let model = activityNavigationModel()
+        defer { stopActivityNavigationModel(model) }
+        model.installTranscriptSession("current-chat", blocks: [ChatBlock(kind: .user, text: "Current work")])
+        let selected = try activityNavigationRun(id: "saved-run", sessionID: "saved-chat")
+        BackendStub.respond(toPath: "/api/sessions/saved-chat") { _ in [
+            "id": "saved-chat", "preview": "", "messages": [
+                ["role": "user", "content": "Saved result", "run_id": "saved-run"],
+                ["role": "assistant", "content": "Only this output", "phase": "final_answer", "run_id": "saved-run"],
+                ["role": "user", "content": "Later work", "run_id": "other-run"],
+                ["role": "assistant", "content": "Other output", "phase": "final_answer", "run_id": "other-run"]
+            ]
+        ] }
+        model.activity.activityCenterPresented = true
+        let output = try await model.loadActivityOutput(selected)
+        XCTAssertEqual(output?.text, "Only this output")
+        XCTAssertEqual(model.currentSessionID, "current-chat")
+        XCTAssertEqual(model.blocks.first?.text, "Current work")
+        XCTAssertTrue(model.activity.activityCenterPresented)
+        XCTAssertNil(model.activeTranscriptLoad)
+        XCTAssertNil(model.selectedOrchestrationRun)
+        XCTAssertTrue(model.activity.activityIsUnseen(selected), "The reader acknowledges only after receiving its result")
     }
 
     @MainActor

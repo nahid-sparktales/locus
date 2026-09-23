@@ -159,7 +159,7 @@ final class ActivityCenterModelTests: XCTestCase {
         let model = makeModel()
         model.markActivitySeen(finished)
         await openAndFinishRefresh(model, focus: .run("finished"))
-        XCTAssertEqual(model.selectedTab, .read)
+        XCTAssertEqual(model.selectedTab, .completed)
         XCTAssertEqual(model.readRuns.map(\.id), ["finished"])
         XCTAssertEqual(model.unreadResultCount, 0)
     }
@@ -292,7 +292,7 @@ final class ActivityCenterModelTests: XCTestCase {
         XCTAssertNil(ActivityCenterModel.agentName(for: run(id: "ordinary"), session: nil, profiles: [profile]), "Do not attribute ordinary chats to whichever agent is selected")
     }
 
-    func testCompletionAlreadyViewedInChatStaysOutOfActivityAfterRefreshAndRelaunch() async throws {
+    func testCompletionAlreadyViewedInChatStaysAsReadMailAfterRefreshAndRelaunch() async throws {
         let model = makeModel()
         model.activityRuns = [run(id: "viewed", state: "running")]
         let finished = run(id: "viewed", updatedAt: 20)
@@ -303,12 +303,15 @@ final class ActivityCenterModelTests: XCTestCase {
         model.recordCompletion(runID: "viewed", succeeded: true, wasRunning: true, isViewed: true)
         await model.refreshActivityRuns()
 
-        XCTAssertTrue(model.visibleActivityRuns.isEmpty)
+        XCTAssertEqual(model.completedRuns, [finished], "Viewed completions stay available as read mail")
         XCTAssertEqual(model.activityRuns, [finished], "The result itself remains saved")
         XCTAssertEqual(model.unreadResultCount, 0)
         let restored = makeModel()
         restored.activityRuns = [finished]
-        XCTAssertTrue(restored.visibleActivityRuns.isEmpty)
+        XCTAssertEqual(restored.completedRuns, [finished])
+        XCTAssertFalse(restored.activityIsUnseen(finished))
+        restored.markActivityUnread(finished)
+        XCTAssertTrue(restored.activityIsUnseen(finished))
     }
 
     func testBackgroundCompletionRemainsAvailableWhenOpenedLaterOrReplayed() {
@@ -404,6 +407,84 @@ final class ActivityCenterModelTests: XCTestCase {
             XCTAssertEqual(model.displayedAttentionItems, [item], "Run focus must retain workflow recovery actions")
         }
         model.clearFocus()
+    }
+
+    func testCompletedInboxKeepsReadMailAndExcludesFailedWork() {
+        let model = makeModel()
+        let newer = run(id: "new", updatedAt: 30)
+        let older = run(id: "old", updatedAt: 10)
+        model.activityRuns = [older, run(id: "failed", state: "failed"), newer, run(id: "active", state: "running")]
+        XCTAssertEqual(model.completedRuns.map(\.id), ["new", "old"])
+        model.markActivitySeen(newer)
+        XCTAssertEqual(model.completedRuns.map(\.id), ["new", "old"], "Reading mail must not remove or reorder it")
+        XCTAssertEqual(model.attentionRuns.map(\.id), ["failed"])
+        model.markAllActivitySeen(matching: ["old"])
+        XCTAssertFalse(model.activityIsUnseen(older))
+        XCTAssertTrue(model.activityIsUnseen(model.activityRuns[1]), "Bulk reading must not acknowledge hidden work")
+    }
+
+    func testFiltersCombineAgentTimeTypeAndSearch() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var filter = ActivityFilter()
+        filter.agentID = "agent:luffy"
+        filter.time = .week
+        filter.kind = .schedule
+        filter.search = "stock"
+        XCTAssertTrue(filter.matches(agentID: "agent:luffy", timestamp: now.timeIntervalSince1970 - 3600,
+            kind: .schedule, text: ["Daily stock check"], now: now))
+        XCTAssertFalse(filter.matches(agentID: "agent:law", timestamp: now.timeIntervalSince1970,
+            kind: .schedule, text: ["Daily stock check"], now: now))
+        XCTAssertFalse(filter.matches(agentID: "agent:luffy", timestamp: now.timeIntervalSince1970 - 8 * 86400,
+            kind: .schedule, text: ["Daily stock check"], now: now))
+        XCTAssertFalse(filter.matches(agentID: "agent:luffy", timestamp: now.timeIntervalSince1970,
+            kind: .event, text: ["Daily stock check"], now: now))
+        XCTAssertFalse(filter.matches(agentID: "agent:luffy", timestamp: now.timeIntervalSince1970,
+            kind: .schedule, text: ["Email triage"], now: now))
+    }
+
+    func testTodayUsesCalendarBoundaryAndRejectsFutureDates() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: -4 * 3600)!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let midnight = calendar.startOfDay(for: now).timeIntervalSince1970
+        XCTAssertTrue(ActivityFilter.TimeRange.today.includes(midnight, now: now, calendar: calendar))
+        XCTAssertFalse(ActivityFilter.TimeRange.today.includes(midnight - 1, now: now, calendar: calendar))
+        XCTAssertFalse(ActivityFilter.TimeRange.today.includes(now.timeIntervalSince1970 + 1, now: now, calendar: calendar))
+    }
+
+    func testOutputReaderUsesOnlySelectedFinalAndStripsThinking() {
+        let selected = run(id: "chosen")
+        let blocks = [
+            ChatBlock(kind: .user, text: "req", runID: "chosen"),
+            ChatBlock(kind: .assistant, text: "Checking…", assistantPhase: .commentary, runID: "chosen"),
+            ChatBlock(kind: .assistant, text: "<think>Private reasoning</think>Finished output", assistantPhase: .finalAnswer,
+                reasoningText: "More reasoning", runID: "chosen"),
+            ChatBlock(kind: .user, text: "Later request", runID: "other"),
+            ChatBlock(kind: .assistant, text: "Unrelated later output", assistantPhase: .finalAnswer, runID: "other")
+        ]
+        let output = ChatTranscriptBuilder.activityOutput(for: selected, in: blocks)
+        XCTAssertEqual(output?.text.trimmingCharacters(in: .whitespacesAndNewlines), "Finished output")
+        XCTAssertNil(output?.reasoningText)
+        XCTAssertNil(output?.reasoningSections)
+        XCTAssertNil(ChatTranscriptBuilder.activityOutput(for: run(id: "missing"), in: blocks))
+    }
+
+    func testOutputReaderRetainsStructuredOutputsWithoutPlainText() throws {
+        let document = ResponseDocument(version: 1, parts: [ResponsePart(type: "image", id: "picture", workspace: "/tmp", path: "panda.png")])
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(document))
+        let message = decode(HistoryMessage.self, from: ["role": "assistant", "content": "", "phase": "final_answer",
+            "run_id": "picture-run", "response_parts": json])!
+        let blocks = ChatTranscriptBuilder.blocks(from: [message])
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(ChatTranscriptBuilder.activityOutput(for: run(id: "picture-run"), in: blocks)?.responseParts, document)
+    }
+
+    func testOutputReaderDoesNotGuessBetweenIdenticalLegacyRequests() {
+        let blocks = [
+            ChatBlock(kind: .user, text: "req"), ChatBlock(kind: .assistant, text: "First result"),
+            ChatBlock(kind: .user, text: "req"), ChatBlock(kind: .assistant, text: "Second result")
+        ]
+        XCTAssertNil(ChatTranscriptBuilder.activityOutput(for: run(id: "legacy"), in: blocks))
     }
 
     private func openAndFinishRefresh(_ model: ActivityCenterModel, focus: ActivityCenterModel.Focus) async {

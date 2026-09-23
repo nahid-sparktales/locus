@@ -1415,6 +1415,9 @@ final class AppModel: ObservableObject {
 
         if isUITesting {
             seedUITestState()
+            if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SOCIAL_STUDIO"] == "1" {
+                Task { @MainActor [weak self] in self?.agentWorld.openSocialStudioUITestFixture() }
+            }
             if let root = ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_WORLD_ROOT"] {
                 Task { @MainActor [weak self] in self?.agentWorld.openUITestFixture(root: root) }
             }

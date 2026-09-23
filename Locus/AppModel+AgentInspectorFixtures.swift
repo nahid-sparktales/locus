@@ -1,6 +1,28 @@
 import Foundation
 
 extension AppModel {
+    func savedAgentResultFixture(profileID: UUID) -> SavedAgentOverviewSnapshot.ResultTranscript? {
+        guard isUITesting,
+              ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_FIXTURE"] == "saved-profile-result",
+              profileID.uuidString == "FAAAA111-1111-4111-8111-111111111111" else { return nil }
+        let answer = """
+        Reviewed **3 new messages** and prepared a reply for your review.
+
+        ## What needs your attention
+        - **Invoice #1042:** Payment is due Friday. The draft reply is ready.
+        - **Project update:** The revised timeline is attached to the conversation.
+
+        ## Delivery details
+        The reply has **not been sent**. Review the draft before sending it.
+
+        """ + String(repeating: "The source message and its attachments were checked against the project notes.\n\n", count: 30)
+            + "Final verification: the draft is still awaiting your review."
+        let data: [String: Any] = ["id": "saved-agent-chat-2", "agent_profile_id": profileID.uuidString,
+                                 "messages": [["role": "assistant", "phase": "final_answer", "content": answer]]]
+        return (try? JSONSerialization.data(withJSONObject: data))
+            .flatMap { try? JSONDecoder().decode(SavedAgentOverviewSnapshot.ResultTranscript.self, from: $0) }
+    }
+
     /// The same seeded store rows feed parent and child screens. Fixtures
     /// never fetch a real backend or manufacture a newest-event substitute.
     func seedAgentInspectorContextForUITesting() {

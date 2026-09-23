@@ -30,9 +30,9 @@ final class ActivityCenterModel: ObservableObject {
         }
     }
     enum Tab: String, CaseIterable, Identifiable {
-        case inbox = "Inbox"
+        case inbox = "Needs attention"
         case inProgress = "In progress"
-        case read = "Read"
+        case completed = "Completed"
         var id: String { rawValue }
     }
 
@@ -60,6 +60,7 @@ final class ActivityCenterModel: ObservableObject {
     private var toastHandler: (String) -> Void = { _ in }
     private var liveAttentionProvider: () -> [AttentionItem] = { [] }
     private var observedCompletionRunIDs: Set<String> = []
+    @Published private(set) var viewedCompletionRunIDs: Set<String> = []
 
     var activityNeedsAttentionCount: Int {
         attentionItems.count
@@ -138,6 +139,20 @@ final class ActivityCenterModel: ObservableObject {
         displayedActivityRuns.filter { isFinished($0) && !activityIsUnseen($0) }
     }
 
+    /// Completed mail stays in place after reading it, just like an inbox.
+    var completedRuns: [OrchestrationRun] {
+        displayedActivityRuns.filter { $0.state == "completed" }.sorted {
+            ($0.completedAt ?? $0.updatedAt, $0.id) > ($1.completedAt ?? $1.updatedAt, $1.id)
+        }
+    }
+
+    var attentionRuns: [OrchestrationRun] {
+        let requestIDs = Set(displayedAttentionItems.compactMap(\.runID))
+        return displayedActivityRuns.filter {
+            isFinished($0) && $0.state != "completed" && !requestIDs.contains($0.id)
+        }
+    }
+
     var inboxCount: Int { displayedAttentionItems.count + inboxRuns.count }
 
     func isFinished(_ run: OrchestrationRun) -> Bool {
@@ -171,6 +186,7 @@ final class ActivityCenterModel: ObservableObject {
            let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
             activitySeenUpdates = saved
         }
+        viewedCompletionRunIDs = Set(defaults.stringArray(forKey: "Locus.viewedCompletionRunIDs") ?? [])
         dismissedActivityRunIDs = Set(
             defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
         )
@@ -225,15 +241,17 @@ final class ActivityCenterModel: ObservableObject {
         focusError = nil
         isRefreshingFocus = false
         let generation = focusGeneration
-        selectedTab = .inbox
+        selectedTab = focus == nil && displayedAttentionItems.isEmpty && !completedRuns.isEmpty ? .completed : .inbox
         activityCenterPresented = true
+        let openingTab = selectedTab
         Task { @MainActor [weak self] in
             guard let self else { return }
             await refreshActivityRuns(announceFailure: false)
-            guard generation == focusGeneration, selectedTab == .inbox else { return }
+            guard generation == focusGeneration, selectedTab == openingTab else { return }
             // A deep link must reveal the selected work even if it was already read.
-            if focus != nil, displayedAttentionItems.isEmpty, inboxRuns.isEmpty {
-                selectedTab = !inProgressRuns.isEmpty ? .inProgress : !readRuns.isEmpty ? .read : .inbox
+            if displayedAttentionItems.isEmpty, (focus != nil || !completedRuns.isEmpty) {
+                selectedTab = focus == nil && !completedRuns.isEmpty ? .completed
+                    : !inProgressRuns.isEmpty ? .inProgress : !completedRuns.isEmpty ? .completed : .inbox
             } else {
                 selectedTab = .inbox
             }
@@ -287,7 +305,7 @@ final class ActivityCenterModel: ObservableObject {
     }
 
     func activityIsUnseen(_ run: OrchestrationRun) -> Bool {
-        guard !dismissedActivityRunIDs.contains(run.id) else { return false }
+        guard !dismissedActivityRunIDs.contains(run.id), !viewedCompletionRunIDs.contains(run.id) else { return false }
         return (activitySeenUpdates[run.id] ?? -Double.greatestFiniteMagnitude) < run.updatedAt
     }
 
@@ -297,9 +315,9 @@ final class ActivityCenterModel: ObservableObject {
         persistActivityPresentationState()
     }
 
-    func markAllActivitySeen() {
+    func markAllActivitySeen(matching runIDs: Set<String>? = nil) {
         var changed = false
-        for run in inboxRuns {
+        for run in inboxRuns where runIDs?.contains(run.id) ?? true {
             activitySeenUpdates[run.id] = run.updatedAt
             changed = true
         }
@@ -308,6 +326,7 @@ final class ActivityCenterModel: ObservableObject {
 
     func markActivityUnread(_ run: OrchestrationRun) {
         guard isFinished(run) else { return }
+        viewedCompletionRunIDs.remove(run.id)
         activitySeenUpdates.removeValue(forKey: run.id)
         dismissedActivityRunIDs.remove(run.id)
         persistActivityPresentationState()
@@ -329,13 +348,13 @@ final class ActivityCenterModel: ObservableObject {
     }
 
     /// Called at the live completion boundary, before its runtime becomes
-    /// idle. History reads never call this: opening an old result is not
+    /// idle. A result seen live remains available as read mail. History reads never call this: opening an old result is not
     /// evidence that the person saw it finish. The first observation also
     /// prevents a replay from reclassifying a background result as viewed.
     func recordCompletion(runID: String, succeeded: Bool, wasRunning: Bool, isViewed: Bool) {
         guard !runID.isEmpty, succeeded, observedCompletionRunIDs.insert(runID).inserted else { return }
         guard wasRunning, isViewed, !activityCenterPresented else { return }
-        dismissedActivityRunIDs.insert(runID)
+        viewedCompletionRunIDs.insert(runID)
         persistActivityPresentationState()
     }
 
@@ -362,6 +381,7 @@ final class ActivityCenterModel: ObservableObject {
 
     private func persistActivityPresentationState() {
         guard persistenceEnabled else { return }
+        defaults.set(Array(viewedCompletionRunIDs.prefix(1_000)), forKey: "Locus.viewedCompletionRunIDs")
         if activitySeenUpdates.count > 1_000 {
             activitySeenUpdates = Dictionary(
                 uniqueKeysWithValues: activitySeenUpdates
@@ -381,5 +401,66 @@ final class ActivityCenterModel: ObservableObject {
             Array(acknowledgedWarningRunIDs.prefix(1_000)),
             forKey: "Locus.acknowledgedWarningRunIDs"
         )
+    }
+}
+
+/// Shared filtering rules for requests and completed mail. Agent keys use saved
+/// identity when available, so agents with the same display name stay distinct.
+struct ActivityFilter: Equatable {
+    enum TimeRange: String, CaseIterable, Identifiable {
+        case all = "Any time", today = "Today", week = "Last 7 days", month = "Last 30 days"
+        var id: String { rawValue }
+        func includes(_ timestamp: Double, now: Date = .now, calendar: Calendar = .current) -> Bool {
+            let start: Date
+            switch self {
+            case .all: return true
+            case .today: start = calendar.startOfDay(for: now)
+            case .week: start = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            case .month: start = calendar.date(byAdding: .day, value: -30, to: now) ?? now
+            }
+            return timestamp >= start.timeIntervalSince1970 && timestamp <= now.timeIntervalSince1970
+        }
+    }
+    enum Kind: String, CaseIterable, Identifiable {
+        case all = "All types", chat = "Chat tasks", team = "Team tasks", schedule = "Scheduled", event = "Triggered", workflow = "Workflows"
+        var id: String { rawValue }
+        static func kind(for run: OrchestrationRun) -> Self {
+            if run.manifest?["workflow_execution_id"]?.string?.nilIfEmpty != nil { return .workflow }
+            if run.scheduleID?.nilIfEmpty != nil || run.manifest?["schedule_id"]?.string?.nilIfEmpty != nil { return .schedule }
+            if run.manifest?["event_trigger_id"]?.string?.nilIfEmpty != nil || run.manifest?["event_triggered"]?.boolean == true { return .event }
+            return run.runKind == "team" ? .team : .chat
+        }
+        static func kind(for item: AttentionItem, run: OrchestrationRun?) -> Self {
+            if item.workflowExecutionID != nil { return .workflow }
+            if let run { return kind(for: run) }
+            if item.automationKind == "schedule" || item.kind == "schedule_warning" { return .schedule }
+            if item.automationKind == "event" || item.kind == "event_warning" { return .event }
+            return item.kind == "team_plan" ? .team : .chat
+        }
+    }
+    enum ReadState: String, CaseIterable, Identifiable {
+        case all = "All results", unread = "Unread", read = "Read"
+        var id: String { rawValue }
+    }
+    var agentID = ""
+    var time: TimeRange = .all
+    var kind: Kind = .all
+    var readState: ReadState = .all
+    var search = ""
+    var isActive: Bool { !agentID.isEmpty || time != .all || kind != .all || !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    func matches(agentID: String, timestamp: Double, kind: Kind, text: [String], now: Date = .now) -> Bool {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (self.agentID.isEmpty || self.agentID == agentID)
+            && time.includes(timestamp, now: now) && (self.kind == .all || self.kind == kind)
+            && (query.isEmpty || text.contains { $0.localizedStandardContains(query) })
+    }
+
+    static func agentKey(run: OrchestrationRun?, session: SessionSummary?) -> String {
+        if run?.runKind == "team", let id = run?.teamID?.nilIfEmpty { return "team:" + id }
+        if let id = session?.savedAgentProfileID?.uuidString
+            ?? run?.manifest?["agent_profile_id"]?.string?.nilIfEmpty { return "agent:" + id.lowercased() }
+        if let name = run?.manifest?["agent_name"]?.string?.nilIfEmpty ?? session?.agentName?.nilIfEmpty { return "name:" + name }
+        return "unassigned"
     }
 }
