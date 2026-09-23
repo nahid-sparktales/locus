@@ -546,7 +546,7 @@ private struct NotesColorMenuButton: NSViewRepresentable {
 struct NotesFormatToolbar: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: NotesStore
     @ObservedObject var proxy: NotesEditorProxy
@@ -796,7 +796,7 @@ struct NotesFormatToolbar: View {
 struct NotesHeaderBar: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: NotesStore
     let workspaceName: String
@@ -969,7 +969,7 @@ struct NotesHeaderBar: View {
 struct NotesDocumentEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     /// Observed, not owned. The store cache owns the lifetime, and that shared
     /// instance is what keeps this editor and any other view of the same

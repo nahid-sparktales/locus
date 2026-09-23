@@ -10,6 +10,22 @@ final class AgentWorldTests: XCTestCase {
     private let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 1,
                                                capabilities: ["agents.read", "agents.interact", "world.preferences"])
 
+    func testSailingAreaPreferencesRequireAnAllowedValueAndCapability() {
+        let screen = ExtensionPluginScreen(id: "agent-world", title: "World", entrypoint: "ui/index.html", version: 1,
+                                          capabilities: ["agents.read", "world.preferences"])
+        for area in ["whole", "left", "right"] {
+            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["sailingArea": area]], screen: screen), .sailingArea(area))
+        }
+        for preferences: [String: Any] in [["sailingArea": "north"], ["sailingArea": true], ["sailingArea": "left", "theme": "grand-line"]] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": preferences], screen: screen))
+        }
+        let readOnly = ExtensionPluginScreen(id: "world", title: "World", entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read"])
+        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["sailingArea": "left"]], screen: readOnly))
+        let model = AgentWorldModel()
+        model.setSailingArea("left")
+        XCTAssertEqual(model.sailingArea, "whole", "Closed worlds cannot change saved preferences")
+    }
+
     func testIsolatedProjectIdentityKeepsSelectedSubfolderWithoutChangingExecutionContext() throws {
         let owner = UUID()
         let payload: [String: Any] = [
@@ -138,7 +154,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
     }
 
-    func testShipSelectionOpensWorkspaceWithoutSilentlyCreatingAConversation() async throws {
+    func testShipSelectionOpensMapChatWithoutEnteringQuartersOrCreatingAConversation() async throws {
         let fixture = try conversationFixture()
         defer { fixture.close() }
         let app = AppModel(startImmediately: false)
@@ -156,25 +172,72 @@ final class AgentWorldTests: XCTestCase {
         let firstFocus = world.focusRequest
         world.chooseResident(id)
         XCTAssertEqual(world.selection, id)
-        XCTAssertTrue(world.quartersPresented)
+        XCTAssertFalse(world.quartersPresented, "The map must remain visible when selecting a ship")
         XCTAssertTrue(world.conversationPresented)
         XCTAssertFalse(world.profilePresented)
         XCTAssertFalse(world.preparingConversation)
         XCTAssertEqual(world.focusRequest, firstFocus + 1)
         world.chooseResident(id)
         XCTAssertEqual(world.focusRequest, firstFocus + 2)
-        XCTAssertTrue(world.profilePresented, "Selecting the same resident inside the workspace opens its overview")
+        XCTAssertFalse(world.profilePresented, "Selecting the same ship keeps its small chat open")
+        XCTAssertFalse(world.quartersPresented)
         world.chooseResident(UUID().uuidString)
         XCTAssertEqual(world.selection, id, "Unknown ships cannot change selection")
         XCTAssertEqual(world.focusRequest, firstFocus + 2)
         world.chooseResident(fixture.profiles[1].id.uuidString)
         XCTAssertEqual(world.selection, fixture.profiles[1].id.uuidString)
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertFalse(world.quartersPresented, "Switching ships must stay on the map")
+        XCTAssertTrue(world.conversationPresented)
+        world.openAgentControls()
+        XCTAssertTrue(world.quartersPresented, "Only an explicit workspace action opens quarters")
+        world.chooseResident(id)
         XCTAssertTrue(world.profilePresented, "The crew list still opens agent details inside the quarters")
         world.clearWorldSelection()
         XCTAssertNil(world.selection)
         XCTAssertFalse(world.conversationPresented)
         XCTAssertFalse(world.quartersPresented)
         XCTAssertEqual(app.currentSessionID, "unrelated-chat")
+    }
+
+    func testStartingAndSwitchingMapChatsPreservesPresentationAndAgentIdentity() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let world = AgentWorldModel()
+        var createdFor: [UUID] = []
+        var loaded: [String] = []
+        world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
+                        availability: { _ in nil }, state: { _ in .init() },
+                        create: { _, profile in createdFor.append(profile.id); return "fresh-map-chat" },
+                        load: { loaded.append($0) },
+                        dispatch: { _, _, _, _, _ in XCTFail("Opening chat must never send a message") },
+                        stop: { _ in XCTFail("Switching chats must never stop work") }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        let first = fixture.profiles[0]
+        let second = fixture.profiles[1]
+        world.chooseResident(first.id.uuidString)
+        world.newConversation()
+        await waitForConversationPreparation(world)
+        XCTAssertEqual(createdFor, [first.id])
+        XCTAssertEqual(loaded, ["fresh-map-chat"])
+        XCTAssertEqual(world.selectedSessionID, "fresh-map-chat")
+        XCTAssertFalse(world.quartersPresented, "Starting a chat inside the small panel must not expand it")
+        world.chooseResident(second.id.uuidString)
+        let history = SessionSummary(id: "older-luffy-chat", name: "Earlier chat", preview: "", mtime: 1, size: 0,
+                                     workspaceRoot: fixture.root.path, agentProfileID: second.id.uuidString)
+        world.openResidentConversation(history)
+        world.showSelectedChat()
+        XCTAssertEqual(world.selectedSessionID, history.id)
+        XCTAssertEqual(world.selectedProfile?.id, second.id)
+        XCTAssertFalse(world.quartersPresented, "History and resume must also stay in the small panel")
+        world.chooseResident(first.id.uuidString)
+        world.openResidentConversation(history)
+        XCTAssertEqual(world.selectedSessionID, "fresh-map-chat", "A different agent's history cannot replace this chat")
+        world.openAgentControls()
+        world.showSelectedChat()
+        await waitForConversationPreparation(world)
+        XCTAssertTrue(world.quartersPresented, "Chatting inside explicitly opened quarters keeps the full workspace")
+        XCTAssertEqual(createdFor, [first.id], "Switching or resuming never creates additional chats")
     }
 
     func testAgentPicturesAreBoundedSquareImagesAndRejectInvalidFiles() throws {
@@ -457,6 +520,8 @@ final class AgentWorldTests: XCTestCase {
         let extensions = ExtensionsModel()
         extensions.extensions = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
                                                    mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
+        let areaKey = "Locus.AgentWorld.sailingArea.v1." + pluginID + ":" + first.id
+        defaults.set("invalid", forKey: areaKey)
         let key = "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + first.id
         defaults.set("unrecognized-style", forKey: key)
         let captain = AgentProfile(name: "Ship Captain", model: "Fixture model")
@@ -467,6 +532,12 @@ final class AgentWorldTests: XCTestCase {
                         stop: { _ in }, open: { _ in }, manage: {}, defaults: defaults)
         model.open(pluginID: pluginID, screenID: first.id)
         XCTAssertEqual(model.residentStyle, "mixed", "Unrecognized saved styles must use the mixed crew default")
+        XCTAssertEqual(model.sailingArea, "whole")
+        model.setSailingArea("right")
+        model.setSailingArea("invalid")
+        XCTAssertEqual(model.sailingArea, "right")
+        XCTAssertEqual(defaults.string(forKey: areaKey), "right")
+        XCTAssertEqual(model.snapshot["sailingArea"] as? String, "right")
         model.setShipStyle(agentID: UUID().uuidString, style: "ship_garp_battleship")
         XCTAssertTrue(model.shipStyles.isEmpty, "Unknown captains cannot acquire style preferences")
         model.setShipStyle(agentID: captain.id.uuidString, style: "ship_garp_battleship")
@@ -483,6 +554,8 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(model.residentStyle, "pandas", "Changing worlds must preserve the campus appearance preference")
         model.open(pluginID: pluginID, screenID: second.id)
         XCTAssertTrue(model.shipStyles.isEmpty, "Ship styles are scoped to their world screen")
+        XCTAssertEqual(model.sailingArea, "whole", "A new screen has an independent sailing area")
+        model.setSailingArea("left")
         model.setShipStyle(agentID: captain.id.uuidString, style: "ship_mihawk_coffin")
         XCTAssertEqual(model.residentStyle, "mixed", "An unconfigured screen uses the mixed crew default")
         model.setResidentStyle("explorers")
@@ -490,6 +563,7 @@ final class AgentWorldTests: XCTestCase {
         model.open(pluginID: pluginID, screenID: first.id)
         XCTAssertEqual(model.residentStyle, "pandas")
         XCTAssertEqual(model.theme, "grand-line")
+        XCTAssertEqual(model.sailingArea, "right", "Reopening restores the saved sea")
         XCTAssertEqual(model.shipStyles[captain.id.uuidString], "ship_garp_battleship", "Each captain’s ship survives closing and reopening the world")
         model.setShipStyle(agentID: captain.id.uuidString, style: nil)
         XCTAssertNil(model.shipStyles[captain.id.uuidString], "Automatic clears the explicit override")
@@ -508,6 +582,8 @@ final class AgentWorldTests: XCTestCase {
         model.setResidentStyle("pandas")
         XCTAssertEqual(model.residentStyle, "mixed")
         XCTAssertNil(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + readOnly.id))
+        model.setSailingArea("right")
+        XCTAssertEqual(model.sailingArea, "whole", "Read-only screens cannot change sailing bounds")
     }
 
     func testFilesRejectTraversalAbsolutePathsAndEscapingSymlinks() throws {
@@ -815,6 +891,78 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertFalse(world.canStartConversation(for: UUID().uuidString))
         let previous = try await world.conversation(workspace: fixture.root.path, profile: fixture.profiles[0])
         XCTAssertEqual(previous, "missing-jinbei", "Cancelled loads do not invalidate unseen bindings")
+    }
+
+    func testIslandQuartersBridgeValidatesDestinationsPermissionsAndBooleanPreference() {
+        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
+                                             version: 1, capabilities: ["agents.read"])
+        for island in AgentWorldQuartersIsland.allCases {
+            let payload: [String: Any] = ["version": 1, "type": "openIslandQuarters", "islandID": island.rawValue]
+            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .openIslandQuarters(island))
+            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
+            var extra = payload; extra["agentID"] = UUID().uuidString
+            XCTAssertNil(PluginScreenMessage.decode(extra, screen: screen))
+            XCTAssertNotNil(NSImage(named: island.backgroundAsset), "Every destination needs packaged artwork")
+        }
+        for invalid in ["alabasta", "water7", "../wano", "Wano", ""] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "openIslandQuarters", "islandID": invalid], screen: screen))
+        }
+        for enabled in [true, false] {
+            let payload: [String: Any] = ["version": 1, "type": "preferences", "preferences": ["islandQuartersEnabled": enabled]]
+            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .islandQuartersEnabled(enabled))
+            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
+        }
+        for invalid: Any in [0, 1, "false", NSNull()] {
+            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["islandQuartersEnabled": invalid]], screen: screen))
+        }
+    }
+
+    func testIslandQuartersVisitsAreTemporaryAndDisabledPreferencePersists() throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        func makeWorld() -> AgentWorldModel {
+            let world = AgentWorldModel()
+            world.configure(extensions: fixture.extensions, profiles: { [] }, workspace: { fixture.root.path },
+                            availability: { _ in nil }, state: { _ in .init() },
+                            create: { _, _ in XCTFail("Island visits must not create conversations"); return "unused" },
+                            load: { _ in XCTFail("Island visits must not load conversations") },
+                            dispatch: { _, _, _, _, _ in XCTFail("Island visits must not dispatch work") },
+                            stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+            return world
+        }
+        let world = makeWorld()
+        XCTAssertTrue(world.islandQuartersEnabled)
+        world.open(pluginID: fixture.pluginID)
+        world.setTheme("grand-line")
+        world.setQuartersAppearance(.ocean)
+        for island in AgentWorldQuartersIsland.allCases {
+            world.openIslandQuarters(island)
+            XCTAssertTrue(world.quartersPresented)
+            XCTAssertEqual(world.activeQuartersIsland, island)
+            XCTAssertEqual(world.quartersAppearance, .ocean)
+            XCTAssertFalse(world.conversationPresented)
+            world.quartersPresented = false
+            XCTAssertNil(world.quartersIsland)
+        }
+        world.openIslandQuarters(.wano)
+        world.openAgentControls()
+        XCTAssertNil(world.quartersIsland)
+        XCTAssertEqual(world.quartersAppearance, .ocean)
+        world.openIslandQuarters(.elbaf)
+        world.setIslandQuartersEnabled(false)
+        XCTAssertNil(world.quartersIsland)
+        world.quartersPresented = false
+        world.openIslandQuarters(.drum)
+        XCTAssertFalse(world.quartersPresented)
+        XCTAssertEqual(world.snapshot["islandQuartersEnabled"] as? Bool, false)
+        XCTAssertFalse(makeWorld().islandQuartersEnabled)
+        world.setIslandQuartersEnabled(true)
+        XCTAssertTrue(makeWorld().islandQuartersEnabled)
+        world.setTheme("outpost")
+        world.openIslandQuarters(.marineford)
+        XCTAssertFalse(world.quartersPresented)
+        XCTAssertNil(world.quartersIsland)
+        XCTAssertNil(AgentWorldModel().activeQuartersIsland)
     }
 
     private func waitForConversationPreparation(_ world: AgentWorldModel) async {

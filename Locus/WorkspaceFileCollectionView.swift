@@ -14,7 +14,7 @@ struct WorkspaceFileCollectionEntry: Identifiable {
 struct WorkspaceFileCollectionView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let entries: [WorkspaceFileCollectionEntry]
     var title: String? = nil

@@ -3,7 +3,7 @@ import SwiftUI
 struct GoalCardView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: GoalModel
     let sessionID: String
@@ -113,7 +113,7 @@ struct GoalCardView: View {
 struct GoalEditorView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: GoalModel
     @Environment(\.dismiss) private var dismiss

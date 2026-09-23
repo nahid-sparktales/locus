@@ -19,7 +19,13 @@ profile-bound chat in the world with an editable draft, without sending it.
 Captain’s Quarters has a full ship-deck backdrop and defaults to warm wood,
 cream, and brass. **Settings → Captain’s Quarters appearance** keeps **Ocean blue**
 available; the choice persists between launches. Native sheets, editors, chat,
-and tools inherit the chosen palette. The ocean map keeps its blue appearance.
+and tools inherit the chosen palette. The ocean map keeps its blue appearance. Clicking **Elbaf, Marineford, Water 7,
+Wano, or Drum Island** opens quarters with that island’s artwork and matching
+controls. The island itself is the click target, with no extra quarters markers
+on the map. **Settings → Open quarters when clicking islands** turns this off
+and remembers the choice. Settings also provides keyboard-accessible island
+visits. Returning to the map or using the regular Captain’s Quarters button
+restores the saved Wood/Ocean appearance.
 
 Calendar always includes **Locus Calendar**, stored locally and usable without an
 external account. Connected macOS calendars overlay it with separate visibility
@@ -145,3 +151,8 @@ Dressrosa, Punk Hazard, Hachinosu, and Long Ring Long Land add four visitable
 islands for 60 additional Meshy credits, included in the lifetime total above.
 Their 15,000-face Smart Topology meshes use Meshy 7.1 textures. All twenty
 harbors have connected front docks and share the same navigation geometry.
+
+Ship labels adapt to zoom: distant views show only a small status-colored snail,
+medium views add the captain’s name, and close views restore the full details.
+The badge stays clickable, and pending requests still open from the snail.
+Labels disappear when their ships leave the viewport.

@@ -145,7 +145,7 @@ extension Data {
 struct ChatAttachmentDropTarget: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @State private var isTargeted = false

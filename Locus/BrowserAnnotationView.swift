@@ -47,7 +47,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 struct BrowserScreenshotSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let draft: BrowserScreenshotDraft
     /// Returns whether the attachment was accepted — a full composer refuses,

@@ -79,7 +79,7 @@ extension AppModel {
 struct AutomationWorkflowEditorView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Binding var workflow: AutomationWorkflow
     var connectors: [WorkflowConnectorOption] = []
@@ -190,7 +190,7 @@ struct AutomationWorkflowEditorView: View {
 private struct WorkflowStepCard: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Binding var step: AutomationWorkflowStep
     let index: Int
@@ -423,7 +423,7 @@ private struct WorkflowStepCard: View {
 private struct WorkflowSimulationSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel

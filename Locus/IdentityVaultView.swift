@@ -32,7 +32,7 @@ private struct IdentityPrivateSurface: ViewModifier {
 struct IdentityVaultApprovalView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let request: IdentityVaultReview
     let answer: (Set<UUID>?) -> Void
@@ -81,7 +81,7 @@ struct IdentityVaultApprovalView: View {
 struct IdentityVaultView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: IdentityVaultModel
     @ObservedObject private var store: IdentityVaultStore
@@ -488,7 +488,7 @@ struct IdentityVaultView: View {
 private struct IdentityProfileEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @State var profile: IdentityVaultProfile
     let isNew: Bool
@@ -574,7 +574,7 @@ private struct IdentityImportRequest: Identifiable {
 private struct IdentityDocumentImportView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let request: IdentityImportRequest
     let profiles: [IdentityVaultProfile]
@@ -611,7 +611,7 @@ private struct IdentityDocumentImportView: View {
 private struct IdentityDocumentPreview: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let document: IdentityVaultDocument
     let data: Data
@@ -656,7 +656,7 @@ private struct IdentityDocumentPreview: View {
 private struct IdentityDraftEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @State var draft: IdentityVaultDraft
     let profiles: [IdentityVaultProfile]

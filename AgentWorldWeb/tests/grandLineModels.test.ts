@@ -126,3 +126,16 @@ test('a rectangular imported island stays inside its navigation disk without cha
     near(world.mesh.getBoundingInfo().boundingBox.extendSize.x * 2, 8);
   } finally { world.close(); }
 });
+
+test('installed island artwork keeps its destination identity for ray picking', () => {
+  const world = setup();
+  try {
+    world.models.add('island_wano', { parent: world.parent, width: 4, depth: 4, height: 5, floor: 0, islandID: 'wano' });
+    world.models.install('island_wano', world.container);
+    const mesh = world.parent.getChildMeshes()[0];
+    assert.equal(mesh.isPickable, true);
+    assert.equal(mesh.metadata.islandID, 'wano');
+    assert.equal(mesh.metadata.creatureID, undefined);
+    assert.equal(mesh.isWorldMatrixFrozen, true);
+  } finally { world.close(); }
+});

@@ -7,7 +7,7 @@ import SwiftUI
 struct InspectorView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let resizeWidth: CGFloat
     var showsResizeHandle = true
@@ -112,7 +112,7 @@ struct InspectorView: View {
 struct InspectorRouterTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
 
@@ -329,7 +329,7 @@ struct InspectorRouterTab: View {
 struct InspectorProxiesTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @State private var modeRaw = ProxyMode.off.rawValue
@@ -978,7 +978,7 @@ struct InspectorProxiesTab: View {
 private struct InspectorOpenTabBar: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
 
@@ -1051,7 +1051,7 @@ private struct InspectorOpenTabBar: View {
 private struct InspectorOpenTabItem: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let tab: InspectorTab
@@ -1122,7 +1122,7 @@ private struct InspectorOpenTabItem: View {
 private struct InspectorTabCloseButton: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let tab: InspectorTab
@@ -1246,7 +1246,7 @@ enum InspectorTabAppearance {
 private struct InspectorTextTabBadge: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -1276,7 +1276,7 @@ private struct InspectorTextTabBadge: View {
 struct InspectorPlaceholder: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
     let title: String
@@ -1307,7 +1307,7 @@ struct InspectorPlaceholder: View {
 struct InspectorTabBadge: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var gitWorkspace: GitWorkspaceModel
@@ -1349,7 +1349,7 @@ struct InspectorTabBadge: View {
 private struct InspectorResizeHandle: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let renderedWidth: CGFloat
     @EnvironmentObject private var model: AppModel
@@ -1539,7 +1539,7 @@ private struct MCPTaskImagePreview: View {
 struct InspectorRunsTab: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var runs: OrchestrationRunsModel

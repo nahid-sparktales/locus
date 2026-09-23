@@ -355,7 +355,7 @@ private final class SidebarHitTestDiagnosticView: NSView {
 private struct TranscriptHitsSection: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let snapshot: SessionCatalogSnapshot
     @ObservedObject var transcriptSearch: TranscriptSearchModel
@@ -475,7 +475,7 @@ enum SidebarIconMetrics {
 struct SessionSidebarView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var updates: AppUpdateController
@@ -1472,7 +1472,7 @@ struct SessionSidebarView: View {
     private struct AgentSelectionMenu: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
         @EnvironmentObject private var model: AppModel
         @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -1773,7 +1773,7 @@ struct SessionSidebarView: View {
 private struct SidebarResizeHandle: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var workspaceLayout: WorkspaceLayoutModel
@@ -1836,7 +1836,7 @@ private struct SidebarResizeHandle: View {
 struct TeamProgressPopover: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
@@ -2217,7 +2217,7 @@ private func handleChatSidebarDrop(
 private struct ChatSidebarDropTarget: ViewModifier {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     let targetFolderID: String?
@@ -2252,7 +2252,7 @@ private struct ChatSidebarDropTarget: ViewModifier {
 private struct ChatFolderBranchView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -2385,7 +2385,7 @@ private struct ChatFolderBranchView: View {
 private struct WorkspaceGroupRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
@@ -2474,7 +2474,7 @@ private struct WorkspaceGroupRow: View {
 private struct SectionLabel: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let text: String
     init(_ text: String) { self.text = text }
@@ -2494,7 +2494,7 @@ private struct SectionLabel: View {
 private struct SessionRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let session: SessionSummary
     let isActive: Bool
@@ -2624,7 +2624,7 @@ enum AgentSidebarFilter: String, CaseIterable, Identifiable {
 private struct AgentSidebarSection: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -2940,7 +2940,7 @@ private struct AgentSidebarSection: View {
 private struct AgentGroupRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var schedule: ScheduleModel

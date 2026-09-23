@@ -33,11 +33,14 @@ enum PluginScreenMessage: Equatable {
     case clearSelection
     case preferences(String)
     case residentStyle(String)
+    case sailingArea(String)
     case openAttention(String)
     case openTransfer(String)
     case openSharedChat
     case openActivityCenter
     case openAgentControls(String?)
+    case openIslandQuarters(AgentWorldQuartersIsland)
+    case islandQuartersEnabled(Bool)
     case createAgent
     case residentPlacements([AgentWorldResidentPlacement])
     case setShipStyle(agentID: String, style: String?)
@@ -79,6 +82,10 @@ enum PluginScreenMessage: Equatable {
             guard keys == ["version", "type", "agentID"], let id = value["agentID"] as? String,
                   let uuid = UUID(uuidString: id) else { return nil }
             return .openAgentControls(uuid.uuidString)
+        case "openIslandQuarters":
+            guard keys == ["version", "type", "islandID"], screen.capabilities.contains("agents.interact"),
+                  let id = value["islandID"] as? String, let island = AgentWorldQuartersIsland(rawValue: id) else { return nil }
+            return .openIslandQuarters(island)
         case "setShipStyle":
             guard keys == ["version", "type", "agentID", "shipStyle"], screen.capabilities.contains("world.preferences"),
                   let rawID = value["agentID"] as? String, let id = UUID(uuidString: rawID)?.uuidString else { return nil }
@@ -109,6 +116,10 @@ enum PluginScreenMessage: Equatable {
                AgentWorldModel.isSafeThemeID(theme) { return .preferences(theme) }
             if Set(preferences.keys) == ["residentStyle"], let style = preferences["residentStyle"] as? String,
                AgentWorldModel.isSafeResidentStyle(style) { return .residentStyle(style) }
+            if Set(preferences.keys) == ["sailingArea"], let area = preferences["sailingArea"] as? String,
+               AgentWorldModel.isSafeSailingArea(area) { return .sailingArea(area) }
+            if Set(preferences.keys) == ["islandQuartersEnabled"], let enabled = preferences["islandQuartersEnabled"] as? NSNumber,
+               CFGetTypeID(enabled) == CFBooleanGetTypeID() { return .islandQuartersEnabled(enabled.boolValue) }
             return nil
         default: return nil
         }
@@ -246,11 +257,14 @@ struct PluginScreenHost: NSViewRepresentable {
             case .clearSelection: model?.clearWorldSelection()
             case .preferences(let theme): model?.setTheme(theme)
             case .residentStyle(let style): model?.setResidentStyle(style)
+            case .sailingArea(let area): model?.setSailingArea(area)
             case .openAttention(let id): model?.openAttention(id)
             case .openTransfer(let id): model?.openTransfer(id)
             case .openSharedChat: model?.openSharedChat()
             case .openActivityCenter: model?.requestActivityCenter()
             case .openAgentControls(let id): model?.openAgentControls(id)
+            case .openIslandQuarters(let island): model?.openIslandQuarters(island)
+            case .islandQuartersEnabled(let enabled): model?.setIslandQuartersEnabled(enabled)
             case .createAgent: model?.createAgent()
             case .residentPlacements(let placements): model?.receiveResidentPlacements(placements)
             case .setShipStyle(let id, let style): model?.setShipStyle(agentID: id, style: style)

@@ -4,7 +4,7 @@ import SwiftUI
 struct LibraryWorkspaceView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
@@ -149,7 +149,7 @@ struct LibraryWorkspaceView: View {
 struct OutputsLibraryView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: WorkspaceLibraryModel
@@ -349,7 +349,7 @@ struct OutputsLibraryView: View {
 struct LibrarySearchField: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let prompt: String
     @Binding var text: String
@@ -372,7 +372,7 @@ struct LibrarySearchField: View {
 private struct OutputLibraryThumbnail: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let item: LibraryOutput
     @EnvironmentObject private var outputs: OutputsLibraryModel
@@ -417,7 +417,7 @@ struct OutputComparisonRequest: Identifiable {
 struct OutputComparisonView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let request: OutputComparisonRequest
     @Environment(\.dismiss) private var dismiss

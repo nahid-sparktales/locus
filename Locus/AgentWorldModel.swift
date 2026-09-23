@@ -35,6 +35,16 @@ enum AgentWorldQuartersAppearance: String, CaseIterable, Identifiable {
     var title: String { self == .wood ? "Wood · default" : "Ocean blue" }
 }
 
+/// A visit only overrides the current quarters; it never replaces the saved appearance.
+enum AgentWorldQuartersIsland: String, CaseIterable, Identifiable {
+    case elbaf, marineford, waterSeven = "water-seven", wano, drum
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .elbaf: "Elbaf"; case .marineford: "Marineford"; case .waterSeven: "Water 7"; case .wano: "Wano"; case .drum: "Drum Island" }
+    }
+    var backgroundAsset: String { "Quarters-" + rawValue }
+}
+
 struct AgentWorldShipStyle: Identifiable, Equatable {
     let id: String
     let name: String
@@ -79,11 +89,30 @@ struct AgentWorldConversationState {
 final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     weak var appModel: AppModel?
     @Published var conversationPresented = false
-    @Published var quartersPresented = false
+    @Published var quartersPresented = false {
+        didSet { if !quartersPresented { quartersIsland = nil } }
+    }
+    @Published private(set) var quartersIsland: AgentWorldQuartersIsland?
+    @Published private(set) var islandQuartersEnabled = true
+    var activeQuartersIsland: AgentWorldQuartersIsland? { quartersPresented && theme == "grand-line" ? quartersIsland : nil }
+
+    func setIslandQuartersEnabled(_ enabled: Bool) {
+        guard activeScreen?.screen.capabilities.contains("world.preferences") == true else { return }
+        islandQuartersEnabled = enabled
+        if !enabled { quartersIsland = nil }
+        defaults?.set(enabled, forKey: "Locus.AgentWorld.islandQuartersEnabled.v1")
+    }
+
+    func openIslandQuarters(_ island: AgentWorldQuartersIsland) {
+        guard canInteract, islandQuartersEnabled, theme == "grand-line" else { return }
+        quartersIsland = island
+        quartersPresented = true
+    }
     @Published private(set) var quartersAppearance: AgentWorldQuartersAppearance = .wood
     var usesWoodQuarters: Bool { quartersPresented && theme == "grand-line" && quartersAppearance == .wood }
 
     func setQuartersAppearance(_ value: AgentWorldQuartersAppearance) {
+        quartersIsland = nil
         quartersAppearance = value
         defaults?.set(value.rawValue, forKey: "Locus.AgentWorld.quartersAppearance.v1")
     }
@@ -113,6 +142,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published var workspaceToolsRequest = 0
     @Published private(set) var shipStyles: [String: String] = [:]
     @Published private(set) var residentStyle = "mixed"
+    @Published private(set) var sailingArea = "whole"
     @Published var graphicsError: String?
     var projectName: String { URL(fileURLWithPath: workspace).lastPathComponent }
     var selectedProfile: AgentProfile? { profilesProvider().first { $0.id.uuidString == selection } }
@@ -185,6 +215,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         manageProfiles = manage; self.defaults = defaults
         quartersAppearance = defaults?.string(forKey: "Locus.AgentWorld.quartersAppearance.v1")
             .flatMap(AgentWorldQuartersAppearance.init(rawValue:)) ?? .wood
+        islandQuartersEnabled = defaults?.object(forKey: "Locus.AgentWorld.islandQuartersEnabled.v1") as? Bool ?? true
         if let data = defaults?.data(forKey: "Locus.AgentWorld.conversations.v1"),
            let saved = try? JSONDecoder().decode([String: String].self, from: data) { bindings = saved }
         if let data = defaults?.data(forKey: "Locus.AgentWorld.profileHistory.v1"),
@@ -331,6 +362,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
             return (id, style)
         }, uniquingKeysWith: { first, _ in first })
         residentStyle = defaults?.string(forKey: "Locus.AgentWorld.residentStyle.v1." + choice.id).flatMap { Self.isSafeResidentStyle($0) ? $0 : nil } ?? "mixed"
+        sailingArea = defaults?.string(forKey: "Locus.AgentWorld.sailingArea.v1." + choice.id).flatMap { Self.isSafeSailingArea($0) ? $0 : nil } ?? "whole"
         graphicsError = nil; draft = ""
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -365,9 +397,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true) }
     func windowDidChangeOcclusionState(_ notification: Notification) { visibilityChanged?(window?.occlusionState.contains(.visible) == true) }
 
-    /// Opens a resident's workspace without creating a conversation. When the
-    /// resident has history, the most recent chat is ready to resume; otherwise
-    /// the workspace offers explicit chat and automation setup actions.
+    /// Focus the map camera and close any open conversation panel.
     func focusResident(_ agentID: String) {
         guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
         dismissConversation()
@@ -378,7 +408,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func chooseResident(_ agentID: String) {
         if quartersPresented { openAgentProfile(agentID) }
-        else { openResidentWorkspace(agentID) }
+        else { openResidentMapChat(agentID) }
     }
 
     func clearWorldSelection() {
@@ -395,11 +425,18 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         }.sorted { $0.mtime > $1.mtime }
     }
 
-    func openResidentWorkspace(_ agentID: String) {
+    /// Map selection stays on the map. Existing chats resume in the floating
+    /// panel; starting a first chat remains an explicit action.
+    func openResidentMapChat(_ agentID: String) {
         guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
+        if selection == agentID, conversationPresented, !sharedChatPresented, !profilePresented {
+            focusRequest += 1
+            refresh()
+            return
+        }
         selectionTask?.cancel(); selectionToken = UUID(); preparingConversation = false
         activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
-        quartersPresented = true; selection = agentID; focusRequest += 1
+        selection = agentID; focusRequest += 1
         conversationPresented = true; sharedChatPresented = false; profilePresented = false
         selectedTransfer = nil; error = nil; blocks = []; pendingCount = 0
         selectedSessionOverride = residentConversations(for: agentID).first?.id
@@ -410,7 +447,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func select(_ agentID: String) {
         guard canInteract, let profile = profilesProvider().first(where: { $0.id.uuidString == agentID }) else { return }
         activationTask?.cancel(); activationToken = UUID(); activatingConversation = false
-        quartersPresented = true
+        if selection != agentID { focusRequest += 1 }
         selection = agentID; error = nil; draft = ""; blocks = []; pendingCount = 0
         selectedSessionOverride = nil; conversationPresented = true; sharedChatPresented = false; selectedTransfer = nil; profilePresented = false
         selectionTask?.cancel()
@@ -529,7 +566,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func showSelectedChat() {
         profilePresented = false
         if let selection {
-            if let selectedSessionOverride { showConversation(selectedSessionOverride, profileID: selection) }
+            if let selectedSessionOverride { showConversation(selectedSessionOverride, profileID: selection, opensQuarters: quartersPresented) }
             else { select(selection) }
         }
     }
@@ -548,7 +585,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard canInteract, let profile = selectedProfile, (session.savedAgentProfileID ?? boundProfileID(for: session.id)) == profile.id,
               !session.isArchived, session.belongsToWorkspace(workspace) else { return }
         profilePresented = false
-        showConversation(session.id, profileID: profile.id.uuidString)
+        showConversation(session.id, profileID: profile.id.uuidString, opensQuarters: quartersPresented)
     }
 
     /// Only a confirmed missing/archived chat loses its current binding. Network
@@ -688,6 +725,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func openAgentControls(_ agentID: String? = nil) {
         guard canInteract else { return }
+        quartersIsland = nil
         if let id = agentID ?? selection { openAgentProfile(id) }
         quartersPresented = true
     }
@@ -710,11 +748,11 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         showConversation(transfer.sessionID, profileID: transfer.toAgentID)
     }
 
-    func showConversation(_ sessionID: String, profileID: String) {
+    func showConversation(_ sessionID: String, profileID: String, opensQuarters: Bool = true) {
         guard profilesProvider().contains(where: { $0.id.uuidString == profileID }) else { return }
         selectionTask?.cancel()
         selectionToken = UUID(); preparingConversation = false; profilePresented = false
-        quartersPresented = true
+        quartersPresented = opensQuarters
         selection = profileID; selectedSessionOverride = sessionID
         conversationPresented = true; sharedChatPresented = false; error = nil
         activateSelectedConversation()
@@ -731,6 +769,15 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     nonisolated static func isSafeResidentStyle(_ value: String) -> Bool {
         value == "mixed" || value == "pandas" || value == "explorers"
     }
+    nonisolated static func isSafeSailingArea(_ value: String) -> Bool {
+        ["whole", "left", "right"].contains(value)
+    }
+    func setSailingArea(_ value: String) {
+        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeSailingArea(value), sailingArea != value else { return }
+        sailingArea = value
+        residentPlacements = [:]
+        defaults?.set(value, forKey: "Locus.AgentWorld.sailingArea.v1." + activeScreen.id)
+    }
     func setResidentStyle(_ value: String) {
         guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeResidentStyle(value) else { return }
         residentStyle = value
@@ -739,6 +786,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     func setTheme(_ value: String) {
         guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeThemeID(value) else { return }
         guard availableThemes.contains(where: { $0.id == value }) else { return }
+        quartersIsland = nil
         theme = value
         residentPlacements = [:]
         window?.appearance = value == "grand-line" ? NSAppearance(named: .darkAqua) : nil
@@ -790,10 +838,10 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     var snapshot: [String: Any] {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else {
-            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": "", "canCreateAgent": false]
+            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": "", "canCreateAgent": false, "islandQuartersEnabled": islandQuartersEnabled]
         }
-        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "projectName": projectName, "canCreateAgent": canCreateAgent,
-                                    "nativeChrome": true, "activityCenterRequest": activityCenterRequest, "focusRequest": focusRequest,
+        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "sailingArea": sailingArea, "projectName": projectName, "canCreateAgent": canCreateAgent,
+                                    "islandQuartersEnabled": islandQuartersEnabled, "nativeChrome": true, "activityCenterRequest": activityCenterRequest, "focusRequest": focusRequest,
                                     "shipStyles": shipStyles.filter { id, _ in residents.contains { $0.id == id } },
                                   "agents": residents.map { resident -> [String: Any] in
             // Route failures can contain provider names; the world needs only

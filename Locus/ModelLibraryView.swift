@@ -173,7 +173,7 @@ private extension Error {
 struct ModelLibraryView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss

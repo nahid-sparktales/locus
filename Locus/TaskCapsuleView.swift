@@ -3,7 +3,7 @@ import SwiftUI
 struct TaskCapsuleView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: TaskCapsuleModel
     var openTask: ((String) -> Void)? = nil

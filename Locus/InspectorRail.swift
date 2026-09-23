@@ -11,7 +11,7 @@ import SwiftUI
 struct InspectorRail: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     static let width: CGFloat = 44
     @EnvironmentObject private var model: AppModel
@@ -243,7 +243,7 @@ struct InspectorRail: View {
 struct WorkspaceActionsMenu: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel

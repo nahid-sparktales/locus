@@ -161,7 +161,7 @@ final class AgentInspectorUITests: XCTestCase {
         XCTAssertTrue(ending.exists && ending.isHittable, "The full response must include text beyond the preview limit")
         attachScreenshot("Full result — ending preserved")
         element("savedAgent.resultReader.done").click()
-        XCTAssertFalse(reader.exists)
+        XCTAssertTrue(reader.waitForNonExistence(timeout: 3), "Done must dismiss the result reader")
         XCTAssertEqual(preview.frame.minY, originalY, accuracy: 2)
     }
 
@@ -179,7 +179,7 @@ final class AgentInspectorUITests: XCTestCase {
         read.click()
         XCTAssertTrue(element("savedAgent.resultReader.done").waitForExistence(timeout: 5))
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertFalse(element("savedAgent.resultReader").exists)
+        XCTAssertTrue(element("savedAgent.resultReader").waitForNonExistence(timeout: 3), "Escape must dismiss the result reader")
     }
 
     private func launchResultOverview(width: Int, appearance: String) {

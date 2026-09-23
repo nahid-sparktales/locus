@@ -6,7 +6,7 @@ import SwiftUI
 struct SoloSwarmPanelView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -140,7 +140,7 @@ struct SoloSwarmPanelView: View {
 struct TeamRunBoardView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -531,7 +531,7 @@ struct TeamRunBoardView: View {
 struct TeamDispatchProgressView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
@@ -731,7 +731,7 @@ struct TeamDispatchProgressView: View {
 struct TeamDispatchApprovalPromptView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
@@ -1077,7 +1077,7 @@ struct TeamDispatchApprovalPromptView: View {
 struct PlanApprovalPromptView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
 

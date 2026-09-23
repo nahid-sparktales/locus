@@ -55,6 +55,10 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
   const coasts = islands.slice(0, MAX_OCEAN_COASTS).filter(island => [island.x, island.z, island.radius].every(Number.isFinite) && island.radius > 0);
   const surface = MeshBuilder.CreateGround('endless-grand-line-ocean', { width: 260, height: 260, subdivisions: 150 }, scene);
   surface.parent = parent; surface.position.y = -0.19; surface.isPickable = false;
+  // Wide whole-map views must never expose the square edge of the detailed sea.
+  // Four distant vertices share its shader and texture without adding a render target.
+  const horizon = MeshBuilder.CreateGround('grand-line-ocean-horizon', { width: 2400, height: 2400, subdivisions: 1 }, scene);
+  horizon.parent = parent; horizon.position.y = -0.45; horizon.isPickable = false;
   const rippleNormal = RawTexture.CreateRGBATexture(oceanNormalPixels(), 256, 256, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
   rippleNormal.name = 'local-ocean-ripple-normal'; rippleNormal.wrapU = Texture.WRAP_ADDRESSMODE; rippleNormal.wrapV = Texture.WRAP_ADDRESSMODE;
   rippleNormal.gammaSpace = false; rippleNormal.anisotropicFilteringLevel = 4;
@@ -172,6 +176,7 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
   material.setArray4('islandCoasts', coasts.length ? coasts.flatMap((island, index) => [island.x, island.z, island.radius, index * 2.3999632297 + 0.73]) : [0, 0, 0, 0]);
   material.setTexture('rippleNormal', rippleNormal);
   surface.material = material;
+  horizon.material = material;
   let disposed = false;
   return {
     surface, material,
@@ -181,6 +186,6 @@ export function createOceanWater(scene: Scene, parent: TransformNode, islands: r
       const camera = scene.activeCamera?.globalPosition;
       if (camera && [camera.x, camera.y, camera.z].every(Number.isFinite)) material.setVector3('cameraPosition', camera);
     },
-    dispose() { if (disposed) return; disposed = true; surface.dispose(); material.dispose(); rippleNormal.dispose(); },
+    dispose() { if (disposed) return; disposed = true; surface.dispose(); horizon.dispose(); material.dispose(); rippleNormal.dispose(); },
   };
 }

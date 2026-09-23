@@ -6,7 +6,7 @@ import SwiftUI
 struct ConfigureAgentView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
@@ -913,7 +913,7 @@ private struct AgentConfigurationReference: Identifiable, Hashable {
 private struct ConnectorSetupView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     let kind: ConnectorKind
@@ -1142,7 +1142,7 @@ private struct AutomationDisclosureGroupStyle: DisclosureGroupStyle {
 private struct EventTriggerEditorView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppModel
@@ -1723,7 +1723,7 @@ private struct CSVField: View {
 private struct WebhookSecretView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     let setup: WebhookSetup

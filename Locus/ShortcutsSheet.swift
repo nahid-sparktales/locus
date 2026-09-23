@@ -54,7 +54,7 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
 private struct KeyboardShortcutsReference: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -97,7 +97,7 @@ private struct KeyboardShortcutsReference: View {
 struct KeyboardShortcutsSettingsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     var body: some View {
         ScrollView {
@@ -121,7 +121,7 @@ struct KeyboardShortcutsSettingsView: View {
 struct ShortcutsSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
 

@@ -3,7 +3,7 @@ import SwiftUI
 struct AgentTeamsSettingsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -523,7 +523,7 @@ struct AgentTeamsSettingsView: View {
 struct QuickTeamBuilderView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -1096,7 +1096,7 @@ struct QuickTeamBuilderView: View {
 private struct EvaluationReportView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     let report: EvaluationReport
@@ -1218,7 +1218,7 @@ private struct EvaluationReportView: View {
 private struct AgentBehaviorEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
@@ -1626,7 +1626,7 @@ struct EffectiveResponsePreview: Decodable, Equatable {
 struct AgentProfileEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
@@ -2537,7 +2537,7 @@ struct AgentProfileEditor: View {
 private struct AgentTeamEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -2840,7 +2840,7 @@ private struct AgentTeamEditor: View {
 private struct EvaluationSuiteEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
@@ -3085,7 +3085,7 @@ private struct EvaluationSuiteEditor: View {
 struct WorkspaceKnowledgeSettingsView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -3553,7 +3553,7 @@ private struct WorkspaceMemoryDraft: Identifiable {
 private struct WorkspaceMemoryEditor: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
     @State private var value: WorkspaceMemoryDraft

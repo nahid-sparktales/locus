@@ -8,7 +8,7 @@ import SwiftUI
 struct WorkspaceFileViewerSheet: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -143,7 +143,7 @@ struct WorkspaceFileViewerSheet: View {
 struct WorkspaceSourceTextView: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let contents: String
     let location: WorkspacePreviewLocation?
@@ -197,7 +197,7 @@ struct WorkspaceSourceTextView: View {
 private struct WorkspaceSourceTextRow: View {
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    private var viewColors: LocusViewColors { .init(ocean: usesWorldTheme, deck: usesDeckTheme) }
+    @Environment(\.locusViewColors) private var viewColors
 
     let line: String
     let number: Int

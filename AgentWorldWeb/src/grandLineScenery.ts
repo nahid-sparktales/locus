@@ -1,3 +1,4 @@
+import { isQuartersIsland } from './islandQuarters';
 import { zuneshaPose, momonosukePose, moveCompanion } from './grandLineCompanions.ts';
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
@@ -314,7 +315,25 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
       tube('reverse-mountain-whitewater', [[-29.12, 5.3, sign * 5.89], [-26.50, 2.75, sign * 3.88], [-25.53, 0.14, sign * 1.55]], 0.055, foam, root, 7);
     }
   }
-  // The palace sits on the continental ridge, not on a ship-accessible island.
+  // Marineford's rear shore joins the ridge; its west-facing dock stays at sea.
+  const marineford = GRAND_LINE_LANDMARKS.find(island => island.id === 'marineford')!;
+  const connection = new TransformNode('marineford-ridge-connection', scene);
+  connection.parent = root; connection.position.set(marineford.x + 2.35, 0, marineford.z);
+  if (models.has('scenery_red_line')) {
+    models.add('scenery_red_line', { parent: connection, width: 4.6, depth: 3.0, height: 1.4, floor: -0.2 });
+  } else {
+    const foothill = sphere('marineford-rocky-shore', [4.6, 1.5, 3.0], [0, 0.1, 0], cliff, connection);
+    foothill.convertToFlatShadedMesh();
+  }
+  // A supported terrace puts the holy land above Marineford's side of the ridge.
+  const terrace = new TransformNode('holy-land-ridge-support', scene);
+  terrace.parent = root; terrace.position.set(MARY_GEOISE.x + 0.4, 0, MARY_GEOISE.z);
+  if (models.has('scenery_red_line')) {
+    models.add('scenery_red_line', { parent: terrace, width: 4.3, depth: 6, height: 6.1, floor: -0.36 });
+  } else {
+    const ridge = sphere('holy-land-rocky-terrace', [4.3, 7.0, 6], [0, 2.1, 0], cliff, terrace);
+    ridge.convertToFlatShadedMesh();
+  }
   const holyLand = new TransformNode(MARY_GEOISE.id, scene);
   holyLand.parent = root; holyLand.position.set(MARY_GEOISE.x, 0, MARY_GEOISE.z);
   if (models.has('island_mary_geoise')) {
@@ -341,7 +360,7 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     owner.name = landmark.id;
     if (detailed) {
       owner.parent = root; owner.position.set(landmark.x, 0, landmark.z);
-      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: landmark.id === 'long-ring-long-land' ? -0.40 : -0.12, rotation: islandArtworkRotation(landmark.id) });
+      models.add(type, { parent: owner, width: landmark.radius * 2.02, depth: landmark.radius * 1.62, height: theme.heights[type], footprintRadius: landmark.radius + 0.10, floor: landmark.id === 'long-ring-long-land' ? -0.40 : -0.12, rotation: islandArtworkRotation(landmark.id), islandID: isQuartersIsland(landmark.id) ? landmark.id : undefined });
     }
     if (landmark.id === 'twin-cape') {
       const whale = new TransformNode('laboon', scene); whale.parent = root;
@@ -532,6 +551,11 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     }
     // Elevated city rims get visible steps down to the existing landing.
     if (plaza.y > 0.8) for (let step = 0; step < 3; step++) box('plaza-landing-step', [0.62, 0.10, 0.19], [0, plaza.y - 0.13 - step * 0.13, 0.47 + step * 0.12], wood, workPlaza);
+    // Fallback terrain and docks remain clickable before artwork loads. Keep
+    // their identity through the material batching below.
+    if (isQuartersIsland(landmark.id)) for (const mesh of owner.getChildMeshes()) {
+      if (!mesh.metadata?.creatureID) { mesh.isPickable = true; mesh.metadata = { ...mesh.metadata, islandID: landmark.id }; }
+    }
     label(landmark.name, landmark.subtitle, [landmark.x, 0.02, landmark.z - landmark.radius * 0.87 - 0.50], landmark.id === 'laugh-tale' ? 3.2 : 4.3);
   }
 
@@ -602,14 +626,15 @@ export function buildGrandLineScenery(scene: Scene, shadow: ShadowGenerator, par
     const material = mesh.material as StandardMaterial;
     if (material.alpha < 1) continue;
     mesh.computeWorldMatrix(true);
-    const key = `${material.uniqueId}:${mesh.getVerticesDataKinds().sort().join(',')}`;
+    const key = `${mesh.metadata?.islandID ?? "scenery"}:${material.uniqueId}:${mesh.getVerticesDataKinds().sort().join(',')}`;
     const group = groups.get(key) ?? { material, meshes: [] }; group.meshes.push(mesh); groups.set(key, group);
   }
   for (const { material, meshes } of groups.values()) {
+    const islandID = meshes[0].metadata?.islandID;
     const merged = Mesh.MergeMeshes(meshes, true, true, undefined, false, false);
     if (merged) {
       merged.name = `grand-line-static-${material.name}`; merged.parent = root; merged.material = material;
-      merged.isPickable = false; merged.receiveShadows = true; merged.freezeWorldMatrix();
+      merged.isPickable = Boolean(islandID); merged.metadata = islandID ? { islandID } : null; merged.receiveShadows = true; merged.freezeWorldMatrix();
       shadow.addShadowCaster(merged);
     }
   }
