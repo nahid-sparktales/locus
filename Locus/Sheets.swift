@@ -393,6 +393,11 @@ private struct ExtensionsSettingsView: View {
                                     .disabled(!workspaceEnabled || !screen.isSupported || extensionsModel.extensions.capabilities.pluginScreens != true)
                                     .accessibilityIdentifier("extensions.openScreen.\(screen.id)")
                             }
+                            ForEach(plugin.panels ?? []) { panel in
+                                Button("Open \(panel.title)") { model.agentWorld.openPanel(pluginID: plugin.id, panelID: panel.id) }
+                                    .disabled(!workspaceEnabled || !panel.isSupported || extensionsModel.extensions.capabilities.pluginPanels != true)
+                                    .accessibilityIdentifier("extensions.openPanel.\(panel.id)")
+                            }
                             Spacer()
                             Button("Uninstall", role: .destructive) {
                                 Task { await extensionsModel.uninstallPlugin(plugin.id) }
@@ -994,6 +999,13 @@ private struct PluginTrustReviewView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Screen: \(screen.title)").font(.locus(size: 10, weight: .semibold))
                     Text("Opens a local window. " + screen.capabilityDescription)
+                        .font(.locus(size: 9))
+                }
+            }
+            ForEach(item.trust.trust.panels ?? []) { panel in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Window: \(panel.title)").font(.locus(size: 10, weight: .semibold))
+                    Text("Opens a local window with no network access. " + panel.capabilityDescription)
                         .font(.locus(size: 9))
                 }
             }
