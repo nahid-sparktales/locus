@@ -1070,8 +1070,12 @@ def test_plugin_panels_parse_and_reject_unsafe_declarations(tmp_path):
     assert parsed["screens"] == []
     assert parsed["mcp_servers"][0]["panel_tools"] == ["decide"]
     base = {"id": "w", "title": "W", "entrypoint": "ui/index.html", "version": 1}
+    agents = parse_plugin(_panel_plugin(tmp_path / "agents", panel={
+        **base, "capabilities": ["agents.dispatch", "agents.read"]}))
+    assert agents["panels"][0]["capabilities"] == ["agents.dispatch", "agents.read"]
     for index, (panel, schema) in enumerate([
         ({**base, "capabilities": ["credentials.read"]}, None),
+        ({**base, "capabilities": ["agents.interact"]}, None),  # Agent World screens only
         ({**base, "capabilities": [], "tools": ["decide"]}, None),
         ({**base, "capabilities": [], "settings_schema": "./settings.schema.json"}, None),
         ({**base, "capabilities": ["plugin.settings"]}, None),  # no schema file declared

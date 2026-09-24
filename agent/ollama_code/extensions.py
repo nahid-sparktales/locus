@@ -42,7 +42,10 @@ PLUGIN_SCREEN_CAPABILITIES = frozenset({
 # Locus data: they cover the plugin's own settings, the plugin's own MCP
 # tools, and drafting (never sending) a chat message for the user.
 MAX_PLUGIN_PANELS = 4
-PLUGIN_PANEL_CAPABILITIES = frozenset({"plugin.settings", "plugin.tools", "chat.compose"})
+# agents.read lists saved agents (name, role, provider, model; never credentials);
+# agents.dispatch hands a job to an agent's chat after the user allows it natively.
+PLUGIN_PANEL_CAPABILITIES = frozenset({"plugin.settings", "plugin.tools", "chat.compose",
+                                       "agents.read", "agents.dispatch"})
 MAX_SETTINGS_SCHEMA_BYTES = 64 * 1024
 MAX_SETTINGS_PROPERTIES = 64
 _SETTING_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
