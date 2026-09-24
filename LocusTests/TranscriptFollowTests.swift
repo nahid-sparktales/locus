@@ -1035,13 +1035,19 @@ final class TranscriptFollowTests: XCTestCase {
             let token = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 2, tailID: .block(UUID()))
             let old = TranscriptRenderToken(sessionGeneration: 1, contentRevision: 1, tailID: token.tailID)
             var requests: [String] = []
+            let predecessorRequested = expectation(description: "Initial predecessor discovery, selecting=\(selecting)")
             coordinator.installRenderTarget(
                 token, realizeTail: { requests.append("tail") },
-                realizePredecessor: { requests.append("predecessor") }
+                realizePredecessor: {
+                    requests.append("predecessor")
+                    predecessorRequested.fulfill()
+                }
             )
             coordinator.attach(from: anchor)
             acknowledgeContainerLayout(coordinator, token: token, anchor: anchor)
-            pump()
+            // Native discovery runs on a display-link tick. A fixed number of
+            // run-loop turns can finish before that tick on a busy CI runner.
+            wait(for: [predecessorRequested], timeout: 3)
             XCTAssertEqual(requests, ["predecessor"])
             let rect = NSRect(x: 0, y: 600, width: 300, height: 40)
             coordinator.tailDidLayout(token: old, kind: .predecessor, rect: rect, in: scroll)
