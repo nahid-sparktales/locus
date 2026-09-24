@@ -326,19 +326,37 @@ def test_modern_subscription_end_invalidates_cache_without_disconnect(tmp_path):
         runtime.close()
 
 
-def test_discovery_deadline_and_cancel_release_stdio(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interruption", ["deadline", "cancel"])
+def test_discovery_deadline_and_cancel_release_stdio(tmp_path, monkeypatch, interruption):
     script = tmp_path / "empty.py"
     script.write_text("from mcp.server import MCPServer\ns=MCPServer('empty')\ns.run('stdio')\n")
-    _, server, runtime, _ = configured(tmp_path, {"command": sys.executable, "args": [str(script)], "startup_timeout_sec": 1})
+    _, server, runtime, _ = configured(tmp_path, {"command": sys.executable, "args": [str(script)], "startup_timeout_sec": 30})
+
+    # Exercise the real deadline callback only once discovery has started.
+    # A one-second wall-clock deadline can instead expire while the subprocess
+    # imports the SDK, which tests initialization failure rather than discovery.
+    call_later = runtime._loop.call_later
+    deadline_callbacks = []
+
+    def capture_startup_deadline(delay, callback, *args, **kwargs):
+        if not deadline_callbacks and delay == server["startup_timeout_sec"]:
+            deadline_callbacks.append(lambda: callback(*args))
+        return call_later(delay, callback, *args, **kwargs)
 
     async def slow_tools(server_id):
-        await asyncio.sleep(30)
+        assert deadline_callbacks, "The connection owner must arm its startup deadline"
+        if interruption == "deadline":
+            deadline_callbacks[0]()
+        else:
+            asyncio.current_task().cancel()
+        await asyncio.Future()
 
+    monkeypatch.setattr(runtime._loop, "call_later", capture_startup_deadline)
     monkeypatch.setattr(runtime, "_load_tools", slow_tools)
     try:
         response = runtime.probe(server["id"])
         assert response["status"]["diagnostics"]["stage"] == "tools"
-        assert "timed out" in response["status"]["error"]
+        assert ("timed out" if interruption == "deadline" else "was cancelled") in response["status"]["error"]
         assert not runtime._clients
         assert not runtime._owners
     finally:
