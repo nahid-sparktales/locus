@@ -122,7 +122,9 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
 /// only use its own plugin's settings and MCP tools, and draft (never send) a
 /// chat message for the user.
 struct ExtensionPluginPanel: Codable, Identifiable, Hashable {
-    static let supportedCapabilities: Set<String> = ["plugin.settings", "plugin.tools", "chat.compose"]
+    static let supportedCapabilities: Set<String> = [
+        "plugin.settings", "plugin.tools", "chat.compose", "agents.read", "agents.dispatch",
+    ]
 
     let id: String
     let title: String
@@ -156,6 +158,8 @@ struct ExtensionPluginPanel: Codable, Identifiable, Hashable {
             case "plugin.settings": "Can read and save this plugin's own settings."
             case "plugin.tools": "Can use this plugin's own tools."
             case "chat.compose": "Can draft a chat message for you to review and send."
+            case "agents.read": "Can see your saved agents' names, roles, providers and models (never credentials)."
+            case "agents.dispatch": "Can hand steps to your saved agents' chats after you allow each run in Locus."
             default: capability
             }
         }

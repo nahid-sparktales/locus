@@ -12,8 +12,21 @@ enum PluginPanelMessage: Equatable {
     case saveSettings(requestID: String, values: Data, revision: String)
     case callTool(requestID: String, tool: String, arguments: Data)
     case composeChat(String)
+    case listAgents(requestID: String)
+    case confirmRun(requestID: String, runID: String, title: String, steps: [RunStep])
+    case dispatchJob(requestID: String, job: Handoff)
+    case openAgentChat(runID: String, agentID: UUID)
+
+    /// One step of a run as the panel describes it for the native confirmation.
+    struct RunStep: Equatable { let title: String; let agentID: UUID; let edits: Bool }
+    /// One job for one saved agent. Locus frames and sends the text itself.
+    struct Handoff: Equatable {
+        let runID: String; let agentID: UUID; let operationID: String
+        let title: String; let text: String; let edits: Bool
+    }
 
     static let maxSettingsBytes = 64 * 1024
+    static let maxRunSteps = 40
     static let maxArgumentBytes = 256 * 1024
     static let maxDraftCharacters = 16_000
 
@@ -52,9 +65,58 @@ enum PluginPanelMessage: Equatable {
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   text.count <= maxDraftCharacters else { return nil }
             return .composeChat(text)
+        case "listAgents":
+            guard keys == ["version", "type", "requestID"], panel.capabilities.contains("agents.read"),
+                  let requestID else { return nil }
+            return .listAgents(requestID: requestID)
+        case "confirmRun":
+            guard keys == ["version", "type", "requestID", "runID", "title", "steps"],
+                  panel.capabilities.contains("agents.dispatch"), let requestID,
+                  let runID = (value["runID"] as? String).flatMap(Self.reference),
+                  let title = (value["title"] as? String).flatMap({ Self.line($0, limit: 200) }),
+                  let raw = value["steps"] as? [[String: Any]], (1...maxRunSteps).contains(raw.count) else { return nil }
+            var steps: [RunStep] = []
+            for step in raw {
+                guard Set(step.keys) == ["title", "agentID", "access"],
+                      let title = (step["title"] as? String).flatMap({ Self.line($0, limit: 200) }),
+                      let agentID = (step["agentID"] as? String).flatMap(UUID.init(uuidString:)),
+                      let access = step["access"] as? String, ["read", "write"].contains(access) else { return nil }
+                steps.append(RunStep(title: title, agentID: agentID, edits: access == "write"))
+            }
+            return .confirmRun(requestID: requestID, runID: runID, title: title, steps: steps)
+        case "dispatchJob":
+            guard keys == ["version", "type", "requestID", "runID", "agentID", "operationID", "title", "text", "access"],
+                  panel.capabilities.contains("agents.dispatch"), let requestID,
+                  let runID = (value["runID"] as? String).flatMap(Self.reference),
+                  let agentID = (value["agentID"] as? String).flatMap(UUID.init(uuidString:)),
+                  let operationID = (value["operationID"] as? String).flatMap(Self.reference),
+                  let title = (value["title"] as? String).flatMap({ Self.line($0, limit: 200) }),
+                  let text = value["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= maxDraftCharacters,
+                  let access = value["access"] as? String, ["read", "write"].contains(access) else { return nil }
+            return .dispatchJob(requestID: requestID, job: Handoff(
+                runID: runID, agentID: agentID, operationID: operationID, title: title, text: text, edits: access == "write"))
+        case "openAgentChat":
+            guard keys == ["version", "type", "runID", "agentID"], panel.capabilities.contains("agents.dispatch"),
+                  let runID = (value["runID"] as? String).flatMap(Self.reference),
+                  let agentID = (value["agentID"] as? String).flatMap(UUID.init(uuidString:)) else { return nil }
+            return .openAgentChat(runID: runID, agentID: agentID)
         default:
             return nil
         }
+    }
+
+    /// Plugin-chosen identifiers (run and operation ids): bounded, printable, no spaces.
+    private static func reference(_ value: String) -> String? {
+        (1...200).contains(value.count) && value.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || "_.:/-".unicodeScalars.contains($0)
+        } ? value : nil
+    }
+
+    private static func line(_ value: String, limit: Int) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= limit
+            && !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) ? trimmed : nil
     }
 
     private static func requestID(_ value: String) -> String? {
@@ -84,6 +146,14 @@ struct PluginPanelBridge {
     let saveSettings: (_ values: [String: Any], _ revision: String) async throws -> Any
     let callTool: (_ tool: String, _ arguments: [String: Any]) async throws -> Any
     let compose: (_ text: String) -> Void
+    var listAgents: () -> Any = { [String: Any]() }
+    var confirmRun: (_ runID: String, _ title: String, _ steps: [PluginPanelMessage.RunStep]) async throws -> Any = { _, _, _ in
+        ["confirmed": false]
+    }
+    var dispatch: (_ job: PluginPanelMessage.Handoff) async throws -> Any = { _ in
+        throw PluginPanelHandoffs.Refusal.notConfirmed
+    }
+    var openChat: (_ runID: String, _ agentID: UUID) -> Void = { _, _ in }
 
     static func foundation(_ value: JSONValue) -> Any {
         switch value {
@@ -170,6 +240,14 @@ struct PluginPanelHost: NSViewRepresentable {
                 answer(id) { try await self.bridge.callTool(tool, Self.object(arguments)) }
             case .composeChat(let text):
                 bridge.compose(text)
+            case .listAgents(let id):
+                answer(id) { self.bridge.listAgents() }
+            case .confirmRun(let id, let runID, let title, let steps):
+                answer(id) { try await self.bridge.confirmRun(runID, title, steps) }
+            case .dispatchJob(let id, let job):
+                answer(id) { try await self.bridge.dispatch(job) }
+            case .openAgentChat(let runID, let agentID):
+                bridge.openChat(runID, agentID)
             }
         }
 
@@ -221,7 +299,7 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         var id: String { pluginID + ":" + panel.id }
     }
 
-    private struct Entry { let window: NSWindow; let target: Target; let workspace: String }
+    private struct Entry { let window: NSWindow; let target: Target; let workspace: String; let handoffs: PluginPanelHandoffs }
     private var entries: [String: Entry] = [:]
 
     private func key(_ target: Target, _ workspace: String) -> String { workspace + "\n" + target.id }
@@ -236,6 +314,7 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         }
         entries[key]?.window.close()
         let project = URL(fileURLWithPath: workspace).lastPathComponent
+        let handoffs = PluginPanelHandoffs()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
@@ -245,9 +324,10 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: PluginPanelHost(
-            target: target, project: project, bridge: Self.bridge(target, workspace: workspace, appModel: appModel)
+            target: target, project: project,
+            bridge: Self.bridge(target, workspace: workspace, appModel: appModel, handoffs: handoffs, window: window)
         ))
-        entries[key] = Entry(window: window, target: target, workspace: workspace)
+        entries[key] = Entry(window: window, target: target, workspace: workspace, handoffs: handoffs)
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -272,10 +352,12 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         window.contentView = nil  // dismantles the web view and revokes the bridge
     }
 
-    private static func bridge(_ target: Target, workspace: String, appModel: AppModel) -> PluginPanelBridge {
+    private static func bridge(_ target: Target, workspace: String, appModel: AppModel,
+                               handoffs: PluginPanelHandoffs, window: NSWindow) -> PluginPanelBridge {
         let backend = appModel.backend
         let pluginID = target.pluginID
-        return PluginPanelBridge(
+        let pluginName = target.pluginName
+        var bridge = PluginPanelBridge(
             settings: {
                 PluginPanelBridge.foundation(try await backend.get(
                     "/api/extensions/plugins/settings", query: [URLQueryItem(name: "plugin_id", value: pluginID)],
@@ -303,5 +385,116 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
                 }
             }
         )
+        bridge.listAgents = { [weak appModel] in
+            ["agents": appModel.map { model in model.agentProfiles.map { PluginPanelHandoffs.summary($0, appModel: model) } } ?? []]
+        }
+        bridge.confirmRun = { [weak appModel, weak window] runID, title, steps in
+            guard let appModel, let window else { return ["confirmed": false] }
+            let profiles = Dictionary(appModel.agentProfiles.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            guard steps.allSatisfy({ profiles[$0.agentID] != nil }) else {
+                throw PluginPanelHandoffs.Refusal.unknownAgent
+            }
+            let alert = NSAlert()
+            alert.messageText = "Let \(pluginName) hand steps of “\(title)” to these agents?"
+            alert.informativeText = PluginPanelHandoffs.confirmationText(steps, profiles: profiles, appModel: appModel)
+                + "\n\nEach step is sent to that agent's own chat in this project and follows your Locus permissions. "
+                + "This lasts while the window stays open."
+            alert.addButton(withTitle: "Allow for This Run")
+            alert.addButton(withTitle: "Don't Allow")
+            let response = await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            }
+            guard response == .alertFirstButtonReturn else { return ["confirmed": false] }
+            handoffs.allow(runID, agents: Set(steps.map(\.agentID)))
+            return ["confirmed": true]
+        }
+        bridge.dispatch = { [weak appModel] job in
+            guard let appModel else { throw PluginPanelHandoffs.Refusal.unavailable }
+            try handoffs.check(job)
+            guard let profile = appModel.agentProfiles.first(where: { $0.id == job.agentID }) else {
+                throw PluginPanelHandoffs.Refusal.unknownAgent
+            }
+            var sessionID = handoffs.session(run: job.runID, agent: job.agentID)
+            if let existing = sessionID, appModel.sessionCatalog.snapshot.sessionsByID[existing] == nil { sessionID = nil }
+            if sessionID == nil {
+                sessionID = try await appModel.createSavedAgentConversation(profile, workspace: workspace).id
+                handoffs.bind(run: job.runID, agent: job.agentID, session: sessionID!)
+            }
+            guard let sessionID else { throw PluginPanelHandoffs.Refusal.unavailable }
+            if appModel.agentWorldConversationState(sessionID).busy { throw PluginPanelHandoffs.Refusal.busy }
+            let framed = "From the \(pluginName) plugin, run \(job.runID), step “\(job.title)”:\n\n\(job.text)"
+            try await appModel.sendAgentWorldTurn(sessionID: sessionID, workspace: workspace,
+                                                  profileID: profile.id, text: framed, mode: .work)
+            return ["sessionID": sessionID]
+        }
+        bridge.openChat = { [weak appModel] runID, agentID in
+            guard let appModel, let sessionID = handoffs.session(run: runID, agent: agentID),
+                  let session = appModel.sessionCatalog.snapshot.sessionsByID[sessionID] else { return }
+            appModel.resume(session)
+            LocusApplicationDelegate.mainWindow(in: NSApp.windows)?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        return bridge
     }
+}
+
+/// What the user allowed for runs in one panel window: which saved agents may
+/// receive steps of which run, and each agent's chat for that run. Lives only
+/// as long as the window, so nothing is sent after it closes.
+@MainActor
+final class PluginPanelHandoffs {
+    enum Refusal: LocalizedError {
+        case notConfirmed, unknownAgent, busy, unavailable
+        var errorDescription: String? {
+            switch self {
+            case .notConfirmed: "not_confirmed: allow hand-offs for this run first"
+            case .unknownAgent: "That agent isn't one of your saved agents in Locus."
+            case .busy: "busy: the agent is still working on its previous step"
+            case .unavailable: "Locus can't reach that agent right now."
+            }
+        }
+    }
+
+    private var allowed: [String: Set<UUID>] = [:]
+    private var sessions: [String: String] = [:]
+
+    func allow(_ runID: String, agents: Set<UUID>) { allowed[runID, default: []].formUnion(agents) }
+
+    func check(_ job: PluginPanelMessage.Handoff) throws {
+        guard allowed[job.runID]?.contains(job.agentID) == true else { throw Refusal.notConfirmed }
+    }
+
+    func session(run: String, agent: UUID) -> String? { sessions[run + "\n" + agent.uuidString] }
+    func bind(run: String, agent: UUID, session: String) { sessions[run + "\n" + agent.uuidString] = session }
+
+    /// What a panel may know about a saved agent: never instructions, accounts or keys.
+    static func summary(_ profile: AgentProfile, appModel: AppModel) -> [String: Any] {
+        let account = AppModel.capsuleAccount(profile: profile, accounts: appModel.providerAccounts)
+        let provider: String
+        if case .localOllama = profile.route { provider = "Local" } else { provider = account?.kind.marketingName ?? "Missing account" }
+        return ["id": profile.id.uuidString, "name": profile.name, "role": profile.role.rawValue,
+                "provider": provider, "model": profile.model, "access": profile.accessCeiling.rawValue,
+                "available": (try? appModel.agentProfileProvider(profile)) != nil]
+    }
+
+    static func confirmationText(_ steps: [PluginPanelMessage.RunStep], profiles: [UUID: AgentProfile],
+                                 appModel: AppModel) -> String {
+        var lines: [String] = []
+        for agentID in steps.map(\.agentID).uniqued() {
+            guard let profile = profiles[agentID] else { continue }
+            let info = summary(profile, appModel: appModel)
+            let mine = steps.filter { $0.agentID == agentID }
+            let titles = mine.map { $0.edits ? "\($0.title) (edits files)" : $0.title }.joined(separator: ", ")
+            var line = "• \(profile.name) — \(info["provider"] as? String ?? "")\(profile.model.isEmpty ? "" : " · \(profile.model)"): \(titles)"
+            if mine.contains(where: \.edits), profile.accessCeiling == .readOnly {
+                line += " — can only read, so its editing steps will fail"
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] { var seen = Set<Element>(); return filter { seen.insert($0).inserted } }
 }

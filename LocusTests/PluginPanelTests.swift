@@ -11,7 +11,7 @@ final class PluginPanelTests: XCTestCase {
     func testPanelsAreSupportedOnlyWithKnownCapabilitiesAndLocalHTML() {
         XCTAssertTrue(panel.isSupported)
         let variants = [
-            ExtensionPluginPanel(id: "w", title: "W", entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read"]),
+            ExtensionPluginPanel(id: "w", title: "W", entrypoint: "ui/index.html", version: 1, capabilities: ["agents.interact"]),
             ExtensionPluginPanel(id: "w", title: "W", entrypoint: "ui/index.html", version: 1, capabilities: [], tools: ["x"]),
             ExtensionPluginPanel(id: "w", title: "W", entrypoint: "../index.html", version: 1, capabilities: []),
             ExtensionPluginPanel(id: "w", title: "W", entrypoint: "ui/app.js", version: 1, capabilities: []),
@@ -78,6 +78,65 @@ final class PluginPanelTests: XCTestCase {
         """#.utf8)
         let panels = try XCTUnwrap(try JSONDecoder().decode(ExtensionPlugin.self, from: current).panels)
         XCTAssertEqual(panels.map(\.isSupported), [true, false])  // malformed one is disabled, not fatal
+    }
+
+    func testAgentMessagesNeedTheirCapabilitiesAndStrictShapes() {
+        let agents = ExtensionPluginPanel(id: "a", title: "A", entrypoint: "ui/index.html", version: 1,
+                                          capabilities: ["agents.read", "agents.dispatch"])
+        let nova = UUID(), kai = UUID()
+        XCTAssertTrue(agents.isSupported)
+        XCTAssertEqual(PluginPanelMessage.decode(["version": 1, "type": "listAgents", "requestID": "r1"], panel: agents),
+                       .listAgents(requestID: "r1"))
+        XCTAssertNil(PluginPanelMessage.decode(["version": 1, "type": "listAgents", "requestID": "r1"], panel: panel))
+
+        let steps: [[String: Any]] = [["title": "Plan", "agentID": nova.uuidString, "access": "read"],
+                                      ["title": "Build", "agentID": kai.uuidString, "access": "write"]]
+        XCTAssertEqual(PluginPanelMessage.decode(["version": 1, "type": "confirmRun", "requestID": "r2",
+                                                  "runID": "lgw-abc-1", "title": "Plan, build", "steps": steps], panel: agents),
+                       .confirmRun(requestID: "r2", runID: "lgw-abc-1", title: "Plan, build",
+                                   steps: [.init(title: "Plan", agentID: nova, edits: false),
+                                           .init(title: "Build", agentID: kai, edits: true)]))
+        let job: [String: Any] = ["version": 1, "type": "dispatchJob", "requestID": "r3", "runID": "lgw-abc-1",
+                                  "agentID": kai.uuidString, "operationID": "lgw-abc-1/build-1", "title": "Build",
+                                  "text": "Make the change", "access": "write"]
+        XCTAssertEqual(PluginPanelMessage.decode(job, panel: agents), .dispatchJob(requestID: "r3", job: .init(
+            runID: "lgw-abc-1", agentID: kai, operationID: "lgw-abc-1/build-1", title: "Build",
+            text: "Make the change", edits: true)))
+        XCTAssertEqual(PluginPanelMessage.decode(["version": 1, "type": "openAgentChat", "runID": "lgw-abc-1",
+                                                  "agentID": kai.uuidString], panel: agents),
+                       .openAgentChat(runID: "lgw-abc-1", agentID: kai))
+
+        let rejected: [[String: Any]] = [
+            job.merging(["agentID": "not-a-uuid"]) { $1 },
+            job.merging(["operationID": "has space"]) { $1 },
+            job.merging(["access": "admin"]) { $1 },
+            job.merging(["text": String(repeating: "a", count: 16_001)]) { $1 },
+            job.merging(["extra": true]) { $1 },
+            ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "T", "steps": [[String: Any]]()],
+            ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "Line\u{7}bell", "steps": steps],
+            ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "T",
+             "steps": Array(repeating: steps[0], count: 41)],
+        ]
+        for body in rejected { XCTAssertNil(PluginPanelMessage.decode(body, panel: agents), "\(body)") }
+        XCTAssertNil(PluginPanelMessage.decode(job, panel: panel))  // no agents.dispatch
+    }
+
+    func testHandOffsNeedTheRunToBeAllowedForThatAgent() throws {
+        let handoffs = PluginPanelHandoffs()
+        let nova = UUID(), kai = UUID()
+        let job = PluginPanelMessage.Handoff(runID: "run-1", agentID: kai, operationID: "run-1/build-1",
+                                             title: "Build", text: "Do it", edits: true)
+        XCTAssertThrowsError(try handoffs.check(job))
+        handoffs.allow("run-1", agents: [nova])
+        XCTAssertThrowsError(try handoffs.check(job))  // allowed agents are per run and per agent
+        handoffs.allow("run-1", agents: [kai])
+        XCTAssertNoThrow(try handoffs.check(job))
+        XCTAssertThrowsError(try handoffs.check(.init(runID: "run-2", agentID: kai, operationID: "run-2/x",
+                                                      title: "X", text: "Y", edits: false)))
+        XCTAssertNil(handoffs.session(run: "run-1", agent: kai))
+        handoffs.bind(run: "run-1", agent: kai, session: "s-1")
+        XCTAssertEqual(handoffs.session(run: "run-1", agent: kai), "s-1")
+        XCTAssertNil(handoffs.session(run: "run-1", agent: nova))
     }
 
     func testBridgeConvertsBackendJSONForThePage() {
