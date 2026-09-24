@@ -503,6 +503,57 @@ def delete_extension_mcp(
     return _mutate(service, remove, "mcp_removed", refresh_mcp=True)
 
 
+def get_extension_plugin_settings(
+    service: ServiceDependency, plugin_id: str = Query(..., max_length=300),
+) -> dict[str, Any]:
+    try:
+        return service.core.extensions.plugin_settings(plugin_id)
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+
+
+def set_extension_plugin_settings(
+    service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    try:
+        return service.core.extensions.set_plugin_settings(
+            str(body.get("plugin_id") or ""), body.get("values"),
+            expected_revision=str(body.get("revision") or ""),
+        )
+    except ExtensionError as exc:
+        status = 409 if "changed elsewhere" in str(exc) else 422
+        raise HTTPException(status, str(exc)) from exc
+
+
+def call_extension_plugin_panel_tool(
+    service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Let a plugin's own window call its own MCP tools, and nothing else."""
+    plugin_id, tool = str(body.get("plugin_id") or ""), str(body.get("tool") or "")
+    arguments = _mcp_arguments(body)
+    manager = service.core.extensions
+    try:
+        record = manager._plugin(plugin_id)
+        panels = [item for item in manager._plugin_view(record).get("panels") or []
+                  if "plugin.tools" in item["capabilities"]]
+    except ExtensionError as exc:
+        raise _extension_failure(exc) from exc
+    if not panels:
+        raise HTTPException(403, "this plugin has no window that may call its tools")
+    servers = [
+        server for server in manager.mcp_servers(service.core.cwd)
+        if server.get("origin") == "plugin" and server.get("plugin_id") == record.get("id")
+        and server.get("active", True) and server.get("enabled", True)
+    ]
+    if not servers:
+        raise HTTPException(409, "the plugin is not enabled for this project")
+    for server in servers:
+        content = service.core.mcp.call_tool(str(server["id"]), tool, arguments)
+        if not content.startswith("Error: MCP tool is no longer available"):
+            return {"content": content, "is_error": content.startswith("Error:")}
+    raise HTTPException(404, f"the plugin has no tool named {tool}")
+
+
 def register_routes(router: APIRouter) -> None:
     routes = (
         ("/api/extensions", get_extensions, ["GET"]),
@@ -523,6 +574,9 @@ def register_routes(router: APIRouter) -> None:
         ("/api/extensions/plugins/enable", enable_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/update", update_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/rollback", rollback_extension_plugin, ["POST"]),
+        ("/api/extensions/plugins/settings", get_extension_plugin_settings, ["GET"]),
+        ("/api/extensions/plugins/settings", set_extension_plugin_settings, ["POST"]),
+        ("/api/extensions/plugins/panel-tool", call_extension_plugin_panel_tool, ["POST"]),
         (
             "/api/extensions/plugins/{plugin_id:path}",
             uninstall_extension_plugin,
