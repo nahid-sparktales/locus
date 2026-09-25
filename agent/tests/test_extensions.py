@@ -1031,3 +1031,153 @@ def test_service_opt_out_hides_connector_and_blocks_direct_invocation(tmp_path):
     registry.set_user_capability_policy({"mcp": False})
     assert registry.connector_schemas() == []
     assert not registry.connector_tool_allowed("gmail_fetch_thread", "mail-on")
+
+
+SETTINGS_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "plan_approval": {"type": "boolean", "default": True, "title": "Ask before changes"},
+        "max_repairs": {"type": "integer", "minimum": 0, "maximum": 2, "default": 2},
+        "mode": {"type": "string", "enum": ["fast", "careful"], "default": "careful"},
+    },
+}
+
+
+def _panel_plugin(root: Path, *, panel: dict | None = None, schema: dict | None = None,
+                  server: dict | None = None) -> Path:
+    _plugin(root)
+    (root / "ui").mkdir()
+    (root / "ui/index.html").write_text("<!doctype html><title>Workflows</title>")
+    (root / "settings.schema.json").write_text(json.dumps(schema or SETTINGS_SCHEMA))
+    manifest_path = root / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["locus"] = {"panels": [panel or {
+        "id": "workflows", "title": "Workflows", "entrypoint": "./ui/index.html", "version": 1,
+        "capabilities": ["plugin.settings", "plugin.tools", "chat.compose"],
+        "tools": ["decide"], "settings_schema": "./settings.schema.json",
+    }]}
+    manifest_path.write_text(json.dumps(manifest))
+    if server is not None:
+        (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"fixture": server}}))
+    return root
+
+
+def test_plugin_panels_parse_and_reject_unsafe_declarations(tmp_path):
+    parsed = parse_plugin(_panel_plugin(tmp_path / "ok"))
+    [panel] = parsed["panels"]
+    assert panel["capabilities"] == ["chat.compose", "plugin.settings", "plugin.tools"]
+    assert panel["tools"] == ["decide"] and panel["settings_schema"] == SETTINGS_SCHEMA
+    assert parsed["screens"] == []
+    assert parsed["mcp_servers"][0]["panel_tools"] == ["decide"]
+    base = {"id": "w", "title": "W", "entrypoint": "ui/index.html", "version": 1}
+    agents = parse_plugin(_panel_plugin(tmp_path / "agents", panel={
+        **base, "capabilities": ["agents.dispatch", "agents.read"]}))
+    assert agents["panels"][0]["capabilities"] == ["agents.dispatch", "agents.read"]
+    for index, (panel, schema) in enumerate([
+        ({**base, "capabilities": ["credentials.read"]}, None),
+        ({**base, "capabilities": ["agents.interact"]}, None),  # Agent World screens only
+        ({**base, "capabilities": [], "tools": ["decide"]}, None),
+        ({**base, "capabilities": [], "settings_schema": "./settings.schema.json"}, None),
+        ({**base, "capabilities": ["plugin.settings"]}, None),  # no schema file declared
+        ({**base, "capabilities": ["plugin.settings"], "settings_schema": "./settings.schema.json"},
+         {"type": "object", "additionalProperties": False,
+          "properties": {"nested": {"type": "object"}}}),
+        ({**base, "capabilities": ["plugin.settings"], "settings_schema": "./settings.schema.json"},
+         {"type": "object", "additionalProperties": False,
+          "properties": {"n": {"type": "integer", "maximum": 2, "default": 5}}}),
+        ({**base, "entrypoint": "../escape.html", "capabilities": []}, None),
+        ({**base, "version": 2, "capabilities": []}, None),
+    ]):
+        with pytest.raises(ExtensionError):
+            parse_plugin(_panel_plugin(tmp_path / f"bad{index}", panel=panel, schema=schema))
+
+
+def test_plugin_settings_defaults_validation_revision_and_privacy(tmp_path):
+    market = tmp_path / "market"
+    _marketplace(market, _panel_plugin(market / "plugins/fixture"))
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    source = manager.add_marketplace(str(market))
+    trust = manager.inspect_catalog_plugin(source["id"], "fixture")
+    assert trust["trust"]["panels"][0]["tools"] == ["decide"]
+    assert trust["capability_diff"]["kind"] == "new_install"
+    installed = manager.install_plugin(source["id"], "fixture", expected_digest=trust["digest"])
+    current = manager.plugin_settings(installed["id"])
+    assert current["values"] == {"plan_approval": True, "max_repairs": 2, "mode": "careful"}
+    for bad in ({"max_repairs": 3}, {"mode": "reckless"}, {"plan_approval": "yes"},
+                {"unknown": 1}, ["not", "an", "object"]):
+        with pytest.raises(ExtensionError):
+            manager.set_plugin_settings(installed["id"], bad, expected_revision=current["revision"])
+    saved = manager.set_plugin_settings(installed["id"], {"max_repairs": 0, "mode": "fast"},
+                                        expected_revision=current["revision"])
+    assert saved["values"] == {"plan_approval": True, "max_repairs": 0, "mode": "fast"}
+    with pytest.raises(ExtensionError, match="changed elsewhere"):
+        manager.set_plugin_settings(installed["id"], {}, expected_revision=current["revision"])
+    stored = next(manager.plugin_data_root.glob("*/locus-settings.json"))
+    assert json.loads(stored.read_text()) == {"max_repairs": 0, "mode": "fast"}
+    assert stored.stat().st_mode & 0o077 == 0
+    view = next(item for item in manager.snapshot()["plugins"] if item["id"] == installed["id"])
+    assert view["panels"][0]["id"] == "workflows"
+    assert manager.capabilities()["plugin_panels"] is True
+
+
+def test_panel_tools_are_hidden_from_agents_but_callable_from_the_window(tmp_path):
+    from ollama_code import server as server_mod
+    from ollama_code.core import AgentCore
+
+    market = tmp_path / "market"
+    plugin = _panel_plugin(market / "plugins/fixture", server={
+        "command": sys.executable, "args": ["${PLUGIN_ROOT}/fixture_mcp.py"]})
+    (plugin / "fixture_mcp.py").write_text(
+        "import os\n"
+        "from mcp.server import MCPServer\n"
+        "from mcp.types import ToolAnnotations\n"
+        "server=MCPServer('fixture')\n"
+        "@server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))\n"
+        "def status() -> str:\n    return 'status ok'\n"
+        "@server.tool()\n"
+        "def decide(choice: str) -> str:\n"
+        "    return 'decided ' + choice + ' panel=' + os.environ.get('LOCUS_PANEL_TOOLS', '')\n"
+        "server.run('stdio')\n"
+    )
+    _marketplace(market, plugin)
+    core = AgentCore(cwd=str(tmp_path), config={"model": "fixture", "max_iterations": 2})
+    core.mcp.close()
+    core.extensions = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    source = core.extensions.add_marketplace(str(market))
+    trust = core.extensions.inspect_catalog_plugin(source["id"], "fixture")
+    installed = core.extensions.install_plugin(source["id"], "fixture",
+                                               expected_digest=trust["digest"])
+    core.mcp = MCPManager(core.extensions)
+    try:
+        core.mcp.refresh(wait=True)
+        core.tool_registry = ToolRegistry(core.extensions, core.mcp)
+        assert [tool["name"] for tool in core.mcp.available_tools()] == ["status"]
+        assert not any("decide" in item["function"]["name"]
+                       for item in core.tool_registry.schemas())
+        service = server_mod.ChatService(core)
+        with TestClient(server_mod.create_app(chat_service=service)) as client:
+            called = client.post("/api/extensions/plugins/panel-tool", json={
+                "plugin_id": installed["id"], "tool": "decide",
+                "arguments": {"choice": "approve"}})
+            assert called.status_code == 200, called.text
+            assert called.json()["content"].startswith("decided approve panel=decide")
+            status = client.post("/api/extensions/plugins/panel-tool", json={
+                "plugin_id": installed["id"], "tool": "status", "arguments": {}})
+            assert status.json()["content"].startswith("status ok")
+            missing = client.post("/api/extensions/plugins/panel-tool", json={
+                "plugin_id": installed["id"], "tool": "nope", "arguments": {}})
+            assert missing.status_code == 404
+            settings = client.get("/api/extensions/plugins/settings",
+                                  params={"plugin_id": installed["id"]}).json()
+            saved = client.post("/api/extensions/plugins/settings", json={
+                "plugin_id": installed["id"], "values": {"mode": "fast"},
+                "revision": settings["revision"]})
+            assert saved.status_code == 200 and saved.json()["values"]["mode"] == "fast"
+            stale = client.post("/api/extensions/plugins/settings", json={
+                "plugin_id": installed["id"], "values": {}, "revision": settings["revision"]})
+            assert stale.status_code == 409
+            unknown = client.post("/api/extensions/plugins/panel-tool", json={
+                "plugin_id": "nobody/nothing", "tool": "decide", "arguments": {}})
+            assert unknown.status_code == 422
+    finally:
+        core.mcp.close()

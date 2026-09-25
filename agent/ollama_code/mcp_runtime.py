@@ -103,6 +103,10 @@ def _stdio_environment(
         if str(name) in parent:
             environment[str(name)] = parent[str(name)]
     environment.update({str(key): str(value) for key, value in (credentials.get("env") or {}).items()})
+    if server.get("panel_tools"):
+        # Tells the server which of its tools Locus keeps away from agents,
+        # after the manifest env so a manifest cannot claim it.
+        environment["LOCUS_PANEL_TOOLS"] = ",".join(server["panel_tools"])
     return environment
 
 
@@ -496,6 +500,9 @@ class MCPManager:
             item["approval_mode"] = policy
             item["server_fingerprint"] = record.get("fingerprint")
             item["enabled"] = (not enabled or item["name"] in enabled) and item["name"] not in disabled and policy != "disabled"
+            # Declared by the plugin's own window: callable from that window,
+            # never offered to an agent.
+            item["panel_only"] = item["name"] in set(server.get("panel_tools") or [])
             if item["enabled"]:
                 tools.append(dict(item))
         record["tools"] = tools
@@ -1457,7 +1464,8 @@ class MCPManager:
             return copy.deepcopy(value) if value else None
 
     def _publish_tools(self) -> None:
-        tools = [dict(tool) for record in self._clients.values() for tool in record.get("tools", [])]
+        tools = [dict(tool) for record in self._clients.values() for tool in record.get("tools", [])
+                 if not tool.get("panel_only")]
         resources = [
             dict(item) for record in self._clients.values()
             for item in record.get("resources", [])

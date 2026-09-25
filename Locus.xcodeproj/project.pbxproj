@@ -644,6 +644,7 @@
 		8BA04921A82B30A488609DA3 /* AgentCrewChatRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4468044B62BC04BC79ACA71E /* AgentCrewChatRouting.swift */; };
 		8BC3955D274A019EBDDCBFB6 /* BoardComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D11E0BAC6F49E550293B84AF /* BoardComponents.swift */; };
 		8BE0B6BB9E02A5AF6F762C73 /* BrowserAnnotationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70017AB3BFB7BC69CBD1CC85 /* BrowserAnnotationView.swift */; };
+		8CAE0DBEBA2CC49E72358EDB /* PluginPanelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61FD73F9EBBECB796DF2E69D /* PluginPanelTests.swift */; };
 		8CBC036DA6CEEF17656E8B2D /* RemoteRuntimesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71040196A923A3C90608E39 /* RemoteRuntimesView.swift */; };
 		8CBE06FD28807E0451EE8405 /* phantom-wallet-sdk-87ad8fac.LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = AACFA65EC868C40AB5EA7EF2 /* phantom-wallet-sdk-87ad8fac.LICENSE */; };
 		8D0D3628DF581FC8029BDB30 /* AppModel+LibraryIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34042859A6A1543659939A4E /* AppModel+LibraryIntegration.swift */; };
@@ -662,6 +663,7 @@
 		917BE414C2912ACACE77A90F /* OutputsLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8744B144B8FFDE5CAF58BF58 /* OutputsLibraryStore.swift */; };
 		91A88A8CF2A91EDDD134388A /* SoloCollaborationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF15EE81F7D4326DB39BE70 /* SoloCollaborationModel.swift */; };
 		91B8E09CC1D08A1CC84F44E6 /* SocialStudioWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48303212EDDD5F02190E2E3B /* SocialStudioWindowController.swift */; };
+		91C2D1A34C83CC43EC800395 /* PluginPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7918E978FDBE47B90013FFD /* PluginPanel.swift */; };
 		91DFFC281AA6FF86775D2E48 /* IdentityVaultLocalApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32BCC3E03454E18967FBB9DE /* IdentityVaultLocalApplication.swift */; };
 		920E67FE0C0C95DD895561A6 /* OnboardingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7319E19CEAC14B0E501AB68B /* OnboardingModelTests.swift */; };
 		923DF8CAA37F1F297C48DDAC /* TransportSecurity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268B56AD1DA01122C727F4E1 /* TransportSecurity.swift */; };
@@ -770,6 +772,7 @@
 		A93697BFBAAFA103C9EC4B50 /* WalletRPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F07AB72AB3D46BF6E5B8EDC2 /* WalletRPCClient.swift */; };
 		A9815ADD31E61246D8AD55C0 /* VoiceCloudClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 252379D65C8C61E943C94FE4 /* VoiceCloudClient.swift */; };
 		A9D4687D36ECA1A0D4C32575 /* AppModel+UITestFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A65C8C0698978C8CF184FCA3 /* AppModel+UITestFixtures.swift */; };
+		AA0C541352BCB28C9752610A /* PluginPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7918E978FDBE47B90013FFD /* PluginPanel.swift */; };
 		AA76D00EDD6D70C5A259F4BF /* IdentityVaultDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = B753A7B8BD43A11BD1D0D5A7 /* IdentityVaultDocuments.swift */; };
 		AAB4305047AB7D8E83D21E5A /* SoloHelperControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7EEDBAAD24F9F97D28B661 /* SoloHelperControlsView.swift */; };
 		AAB46A4AB141829909142EFC /* BoardCardEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A9E871DA3F9B9253434404 /* BoardCardEdits.swift */; };
@@ -998,6 +1001,7 @@
 		D9DDF5CAAAFF9DF6ED241CC6 /* PermissionPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BF95EE575D10DBDE8FA1B3 /* PermissionPromptView.swift */; };
 		DA2C12E8C12321852FD18CF3 /* SessionOutputWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */; };
 		DA40727CF7CBCF2373F02707 /* AccountEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FD1471F0D2805148D40887 /* AccountEditorView.swift */; };
+		DA711C5BD787B2808F7A0FFE /* PluginPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7918E978FDBE47B90013FFD /* PluginPanel.swift */; };
 		DA7A4D8766795F0B3E069A2E /* TranscriptSelectionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 418F31828D4EE1F1E605A01F /* TranscriptSelectionGeometry.swift */; };
 		DA93FDB52763A2AE42AFBEED /* ChatAttachmentIngest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CCD53839428838B380300D2 /* ChatAttachmentIngest.swift */; };
 		DAA177BDA6203719C85C8481 /* SessionOutputWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */; };
@@ -1010,6 +1014,7 @@
 		DD91D26D55202523E05B0B26 /* BrowserCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491C7A81B9570B8692EB32B2 /* BrowserCapture.swift */; };
 		DE96E85D89B4F533476BBB82 /* WalletSignerXPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9506793B59FF339DD8E1CB39 /* WalletSignerXPCClient.swift */; };
 		DEE086E72E88A3A7C12DCE35 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D427058C21A8F1993C532E8 /* CredentialStore.swift */; };
+		DF4E56E39033AC9E1AA9D157 /* PluginPanelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61FD73F9EBBECB796DF2E69D /* PluginPanelTests.swift */; };
 		DF4EED0CBE018E930BAB2E88 /* OptionalQuestionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273C7C6585F49C796917D50B /* OptionalQuestionPanel.swift */; };
 		DFAC8FDDD0DF98523ACD7947 /* OutputsLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8744B144B8FFDE5CAF58BF58 /* OutputsLibraryStore.swift */; };
 		E020DAE3F1488137787AF6CE /* ClaudeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09E3AE782CFF94B92C10492 /* ClaudeComponent.swift */; };
@@ -1446,6 +1451,7 @@
 		60A24FCB395145B7670EAC9D /* BrowserInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInteractionTests.swift; sourceTree = "<group>"; };
 		615928980C39345E4A0DE168 /* WalletConnectDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletConnectDriver.swift; sourceTree = "<group>"; };
 		61DCAB1A0871266055F11C11 /* TeamRunLiveModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamRunLiveModelTests.swift; sourceTree = "<group>"; };
+		61FD73F9EBBECB796DF2E69D /* PluginPanelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginPanelTests.swift; sourceTree = "<group>"; };
 		622AFAF0F2B7F699AB240371 /* CompanionWireTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionWireTypes.swift; sourceTree = "<group>"; };
 		62B12CAEF07E276D57FCCE3F /* BoardToolSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardToolSupport.swift; sourceTree = "<group>"; };
 		633FA68C21AF424C79BEF512 /* AppModel+ImageGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+ImageGeneration.swift"; sourceTree = "<group>"; };
@@ -1630,6 +1636,7 @@
 		C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalRuntimeCoordinator.swift; sourceTree = "<group>"; };
 		C71040196A923A3C90608E39 /* RemoteRuntimesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRuntimesView.swift; sourceTree = "<group>"; };
 		C71ED07E3C0848F3EFA00364 /* UsageAccounting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAccounting.swift; sourceTree = "<group>"; };
+		C7918E978FDBE47B90013FFD /* PluginPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginPanel.swift; sourceTree = "<group>"; };
 		C891A9ABEC569CC001A4952F /* RuntimesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimesSettingsView.swift; sourceTree = "<group>"; };
 		CA782425EED25AF7E54297D6 /* ComposerWorkflowPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerWorkflowPopover.swift; sourceTree = "<group>"; };
 		CA812E808A560BC759B643F5 /* SessionOutputWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionOutputWatcher.swift; sourceTree = "<group>"; };
@@ -1867,6 +1874,7 @@
 				928A9C1E5F1E4F7BF2E6D28E /* OrchestrationRunsModelTests.swift */,
 				7EE6591E5FA0BE34D456851A /* OutputsLibraryTests.swift */,
 				5E1CF6E34451F264F94F7E0D /* PinnedSummaryTests.swift */,
+				61FD73F9EBBECB796DF2E69D /* PluginPanelTests.swift */,
 				EA9331EF9C7239D1CD7BDA9A /* ProviderAccountsModelTests.swift */,
 				8CA2D97F3A89DB248F9337A0 /* RenderingOutputTests.swift */,
 				5FD4AFD13DD77EE4D9D02609 /* ResponseEventTests.swift */,
@@ -2219,6 +2227,7 @@
 				535F3FB7D434799FB66DADAA /* PinnedSummaryModel.swift */,
 				E3BD017D09599617E1B75708 /* PinnedSummaryView.swift */,
 				BEF0BEF00F2EA8083877CC21 /* PlanApprovalPromptView.swift */,
+				C7918E978FDBE47B90013FFD /* PluginPanel.swift */,
 				97EA856108016CB840EBF5D8 /* PluginScreenHost.swift */,
 				D99C4113009BE46AB55CB21C /* ProviderAccounts.swift */,
 				6B40E69DB26D5BD1E2411C89 /* ProviderAccountsModel.swift */,
@@ -3163,6 +3172,7 @@
 				5516FECCDB33B01F4FBF501F /* PinnedSummaryView.swift in Sources */,
 				065FE772E8FCEA67E761D8A1 /* PlanApprovalPromptView.swift in Sources */,
 				0A248BE271B07F2507705328 /* PlanningModels.swift in Sources */,
+				DA711C5BD787B2808F7A0FFE /* PluginPanel.swift in Sources */,
 				FAEA1E63F21AE06B248BE7CB /* PluginScreenHost.swift in Sources */,
 				8D75D56D885AD06DD4265249 /* ProviderAccounts.swift in Sources */,
 				ED765BB5DEE7F89B6AF31192 /* ProviderAccountsModel.swift in Sources */,
@@ -3336,6 +3346,7 @@
 				AE7A7798A6B2868B653AFE09 /* OrchestrationRunsModelTests.swift in Sources */,
 				A112A8FC82AF9978FEC31C62 /* OutputsLibraryTests.swift in Sources */,
 				D16940498B346B575CD0BD99 /* PinnedSummaryTests.swift in Sources */,
+				8CAE0DBEBA2CC49E72358EDB /* PluginPanelTests.swift in Sources */,
 				99269C98285C63BEAD6A3D7A /* ProviderAccountsModelTests.swift in Sources */,
 				963B9D9EC9D19EDADE83FD3C /* RenderingOutputTests.swift in Sources */,
 				6279DC80A88DB803A9A75CEF /* ResponseEventTests.swift in Sources */,
@@ -3589,6 +3600,7 @@
 				A65F5C66EE1B6AF9A98C783C /* PinnedSummaryView.swift in Sources */,
 				77D7EC97E924FD976475CB02 /* PlanApprovalPromptView.swift in Sources */,
 				154881CE47DF253042F47D62 /* PlanningModels.swift in Sources */,
+				AA0C541352BCB28C9752610A /* PluginPanel.swift in Sources */,
 				B009619F4F7641B294D39429 /* PluginScreenHost.swift in Sources */,
 				4C716EA94327E1CAE0B35444 /* ProviderAccounts.swift in Sources */,
 				47B3CDF21F3C3571F1583A71 /* ProviderAccountsModel.swift in Sources */,
@@ -3762,6 +3774,7 @@
 				75CCC46CDF26F2B1684363EF /* OrchestrationRunsModelTests.swift in Sources */,
 				CB588949411419DA38BE7821 /* OutputsLibraryTests.swift in Sources */,
 				548EC6B4C413E0DDE3E35361 /* PinnedSummaryTests.swift in Sources */,
+				DF4E56E39033AC9E1AA9D157 /* PluginPanelTests.swift in Sources */,
 				4D30ED3EDC3B5514924CA2A0 /* ProviderAccountsModelTests.swift in Sources */,
 				2CAB6D6137A82C27C5AD9EF7 /* RenderingOutputTests.swift in Sources */,
 				020738D4DCBF5D53A5DF3F20 /* ResponseEventTests.swift in Sources */,
@@ -4018,6 +4031,7 @@
 				03C10CEF97FFD2D8224B79F9 /* PinnedSummaryView.swift in Sources */,
 				256879DA732D84F76E2BC2AB /* PlanApprovalPromptView.swift in Sources */,
 				85C62BF9DCEEAE372A2A0DD9 /* PlanningModels.swift in Sources */,
+				91C2D1A34C83CC43EC800395 /* PluginPanel.swift in Sources */,
 				CB1CBE60641E20C63C256F27 /* PluginScreenHost.swift in Sources */,
 				51D77886CD14A17749DF5B8E /* ProviderAccounts.swift in Sources */,
 				1D80797E3077B172BFA7D4F4 /* ProviderAccountsModel.swift in Sources */,
