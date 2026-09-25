@@ -98,10 +98,10 @@ final class PluginPanelTests: XCTestCase {
                                            .init(title: "Build", agentID: kai, edits: true)]))
         let job: [String: Any] = ["version": 1, "type": "dispatchJob", "requestID": "r3", "runID": "lgw-abc-1",
                                   "agentID": kai.uuidString, "operationID": "lgw-abc-1/build-1", "title": "Build",
-                                  "text": "Make the change", "access": "write"]
+                                  "text": "Make the change", "access": "write", "workspace": "/Users/me/app"]
         XCTAssertEqual(PluginPanelMessage.decode(job, panel: agents), .dispatchJob(requestID: "r3", job: .init(
             runID: "lgw-abc-1", agentID: kai, operationID: "lgw-abc-1/build-1", title: "Build",
-            text: "Make the change", edits: true)))
+            text: "Make the change", edits: true, workspace: "/Users/me/app")))
         XCTAssertEqual(PluginPanelMessage.decode(["version": 1, "type": "openAgentChat", "runID": "lgw-abc-1",
                                                   "agentID": kai.uuidString], panel: agents),
                        .openAgentChat(runID: "lgw-abc-1", agentID: kai))
@@ -112,6 +112,7 @@ final class PluginPanelTests: XCTestCase {
             job.merging(["access": "admin"]) { $1 },
             job.merging(["text": String(repeating: "a", count: 16_001)]) { $1 },
             job.merging(["extra": true]) { $1 },
+            job.merging(["workspace": "relative/path"]) { $1 },
             ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "T", "steps": [[String: Any]]()],
             ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "Line\u{7}bell", "steps": steps],
             ["version": 1, "type": "confirmRun", "requestID": "r", "runID": "x", "title": "T",
@@ -125,14 +126,18 @@ final class PluginPanelTests: XCTestCase {
         let handoffs = PluginPanelHandoffs()
         let nova = UUID(), kai = UUID()
         let job = PluginPanelMessage.Handoff(runID: "run-1", agentID: kai, operationID: "run-1/build-1",
-                                             title: "Build", text: "Do it", edits: true)
+                                             title: "Build", text: "Do it", edits: true, workspace: "/w")
         XCTAssertThrowsError(try handoffs.check(job))
         handoffs.allow("run-1", agents: [nova])
         XCTAssertThrowsError(try handoffs.check(job))  // allowed agents are per run and per agent
         handoffs.allow("run-1", agents: [kai])
         XCTAssertNoThrow(try handoffs.check(job))
         XCTAssertThrowsError(try handoffs.check(.init(runID: "run-2", agentID: kai, operationID: "run-2/x",
-                                                      title: "X", text: "Y", edits: false)))
+                                                      title: "X", text: "Y", edits: false, workspace: "/w")))
+        XCTAssertTrue(handoffs.beginCreating(run: "run-1", agent: kai))
+        XCTAssertFalse(handoffs.beginCreating(run: "run-1", agent: kai))  // one chat per agent per run
+        handoffs.endCreating(run: "run-1", agent: kai)
+        XCTAssertTrue(handoffs.beginCreating(run: "run-1", agent: kai))
         XCTAssertNil(handoffs.session(run: "run-1", agent: kai))
         handoffs.bind(run: "run-1", agent: kai, session: "s-1")
         XCTAssertEqual(handoffs.session(run: "run-1", agent: kai), "s-1")

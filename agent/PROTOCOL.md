@@ -1732,8 +1732,10 @@ screens.
   them.
 
 The page posts version-1 messages to `webkit.messageHandlers.locusPanel` and
-receives `hello` and `response` messages through
-`window.locusPanel.receive(message)`. `getSettings`/`saveSettings` need
+receives `hello` (with the window's `project` name and `workspace` path) and
+`response` messages through `window.locusPanel.receive(message)`. A request
+Locus refuses (malformed, or missing a capability) still gets a `response`
+with `ok: false` when it carried a valid `requestID`. `getSettings`/`saveSettings` need
 `plugin.settings`; `callTool` needs `plugin.tools`; `composeChat` (a draft
 the user sends) needs `chat.compose`; `listAgents` needs `agents.read` and
 returns saved agents' ID, name, role, provider kind, model, access ceiling
@@ -1743,7 +1745,8 @@ and availability, never instructions, accounts or credentials.
 only after the user allows it natively: `confirmRun` names a run and its
 steps' saved agents, and Locus shows its own sheet listing each agent with
 provider, model and the steps that edit files. Only after the user allows the
-run does `dispatchJob` for that run and one of those agents create or reuse
+run, and only when the job's `workspace` is the window's own project, does
+`dispatchJob` for that run and one of those agents create or reuse
 that agent's chat for the run in the window's project and send the text,
 prefixed with the plugin's name, the run and the step, through the normal
 saved-agent turn (profile access ceiling, MCP policy and permissions apply).

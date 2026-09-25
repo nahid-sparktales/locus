@@ -23,6 +23,7 @@ enum PluginPanelMessage: Equatable {
     struct Handoff: Equatable {
         let runID: String; let agentID: UUID; let operationID: String
         let title: String; let text: String; let edits: Bool
+        let workspace: String
     }
 
     static let maxSettingsBytes = 64 * 1024
@@ -85,7 +86,7 @@ enum PluginPanelMessage: Equatable {
             }
             return .confirmRun(requestID: requestID, runID: runID, title: title, steps: steps)
         case "dispatchJob":
-            guard keys == ["version", "type", "requestID", "runID", "agentID", "operationID", "title", "text", "access"],
+            guard keys == ["version", "type", "requestID", "runID", "agentID", "operationID", "title", "text", "access", "workspace"],
                   panel.capabilities.contains("agents.dispatch"), let requestID,
                   let runID = (value["runID"] as? String).flatMap(Self.reference),
                   let agentID = (value["agentID"] as? String).flatMap(UUID.init(uuidString:)),
@@ -93,9 +94,11 @@ enum PluginPanelMessage: Equatable {
                   let title = (value["title"] as? String).flatMap({ Self.line($0, limit: 200) }),
                   let text = value["text"] as? String,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= maxDraftCharacters,
-                  let access = value["access"] as? String, ["read", "write"].contains(access) else { return nil }
+                  let access = value["access"] as? String, ["read", "write"].contains(access),
+                  let workspace = value["workspace"] as? String, workspace.hasPrefix("/"), workspace.count <= 4096 else { return nil }
             return .dispatchJob(requestID: requestID, job: Handoff(
-                runID: runID, agentID: agentID, operationID: operationID, title: title, text: text, edits: access == "write"))
+                runID: runID, agentID: agentID, operationID: operationID, title: title, text: text,
+                edits: access == "write", workspace: workspace))
         case "openAgentChat":
             guard keys == ["version", "type", "runID", "agentID"], panel.capabilities.contains("agents.dispatch"),
                   let runID = (value["runID"] as? String).flatMap(Self.reference),
@@ -170,9 +173,12 @@ struct PluginPanelBridge {
 struct PluginPanelHost: NSViewRepresentable {
     let target: PluginPanelWindowController.Target
     let project: String
+    let workspace: String
     let bridge: PluginPanelBridge
 
-    func makeCoordinator() -> Coordinator { Coordinator(target: target, project: project, bridge: bridge) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(target: target, project: project, workspace: workspace, bridge: bridge)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -206,12 +212,13 @@ struct PluginPanelHost: NSViewRepresentable {
         weak var web: WKWebView?
         let target: PluginPanelWindowController.Target
         let project: String
+        let workspace: String
         let bridge: PluginPanelBridge
         let files: PluginScreenSchemeHandler
         private var ready = false
 
-        init(target: PluginPanelWindowController.Target, project: String, bridge: PluginPanelBridge) {
-            self.target = target; self.project = project; self.bridge = bridge
+        init(target: PluginPanelWindowController.Target, project: String, workspace: String, bridge: PluginPanelBridge) {
+            self.target = target; self.project = project; self.workspace = workspace; self.bridge = bridge
             files = PluginScreenSchemeHandler(root: URL(fileURLWithPath: target.root))
         }
 
@@ -225,13 +232,21 @@ struct PluginPanelHost: NSViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard !files.revoked, message.frameInfo.isMainFrame,
                   message.frameInfo.request.url?.scheme == PluginScreenSchemeHandler.scheme,
-                  message.frameInfo.request.url?.host == PluginScreenSchemeHandler.host,
-                  let action = PluginPanelMessage.decode(message.body, panel: target.panel) else { return }
+                  message.frameInfo.request.url?.host == PluginScreenSchemeHandler.host else { return }
+            guard let action = PluginPanelMessage.decode(message.body, panel: target.panel) else {
+                // Answer a refused request so the page doesn't wait for a reply that never comes.
+                if let id = (message.body as? [String: Any])?["requestID"] as? String, id.count <= 64,
+                   id.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" }) {
+                    send(["version": 1, "type": "response", "requestID": id, "ok": false,
+                          "error": "Locus refused this request: it is malformed or needs a capability this window doesn't have."])
+                }
+                return
+            }
             switch action {
             case .ready:
                 ready = true
-                send(["version": 1, "type": "hello", "project": project, "panel": target.panel.id,
-                      "capabilities": target.panel.capabilities])
+                send(["version": 1, "type": "hello", "project": project, "workspace": workspace,
+                      "panel": target.panel.id, "capabilities": target.panel.capabilities])
             case .getSettings(let id):
                 answer(id) { try await self.bridge.settings() }
             case .saveSettings(let id, let values, let revision):
@@ -312,7 +327,7 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        entries[key]?.window.close()
+        if let stale = entries[key]?.window { Self.close(stale) }
         let project = URL(fileURLWithPath: workspace).lastPathComponent
         let handoffs = PluginPanelHandoffs()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 760),
@@ -324,7 +339,7 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: PluginPanelHost(
-            target: target, project: project,
+            target: target, project: project, workspace: workspace,
             bridge: Self.bridge(target, workspace: workspace, appModel: appModel, handoffs: handoffs, window: window)
         ))
         entries[key] = Entry(window: window, target: target, workspace: workspace, handoffs: handoffs)
@@ -339,10 +354,16 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
                     && ($0.panels ?? []).contains(entry.target.panel)
             }
             if !enabled {
-                entry.window.close()
+                Self.close(entry.window)
                 entries.removeValue(forKey: key)
             }
         }
+    }
+
+    /// Ends open sheets first: a pending run confirmation then answers "not allowed".
+    private static func close(_ window: NSWindow) {
+        for sheet in window.sheets { window.endSheet(sheet, returnCode: .abort) }
+        window.close()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -410,6 +431,9 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
         }
         bridge.dispatch = { [weak appModel] job in
             guard let appModel else { throw PluginPanelHandoffs.Refusal.unavailable }
+            guard SessionSummary.canonicalWorkspacePath(job.workspace) == workspace else {
+                throw PluginPanelHandoffs.Refusal.otherProject
+            }
             try handoffs.check(job)
             guard let profile = appModel.agentProfiles.first(where: { $0.id == job.agentID }) else {
                 throw PluginPanelHandoffs.Refusal.unknownAgent
@@ -417,6 +441,11 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
             var sessionID = handoffs.session(run: job.runID, agent: job.agentID)
             if let existing = sessionID, appModel.sessionCatalog.snapshot.sessionsByID[existing] == nil { sessionID = nil }
             if sessionID == nil {
+                // Claimed before the first await so a quick second hand-off can't open a second chat.
+                guard handoffs.beginCreating(run: job.runID, agent: job.agentID) else {
+                    throw PluginPanelHandoffs.Refusal.busy
+                }
+                defer { handoffs.endCreating(run: job.runID, agent: job.agentID) }
                 sessionID = try await appModel.createSavedAgentConversation(profile, workspace: workspace).id
                 handoffs.bind(run: job.runID, agent: job.agentID, session: sessionID!)
             }
@@ -444,19 +473,24 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
 @MainActor
 final class PluginPanelHandoffs {
     enum Refusal: LocalizedError {
-        case notConfirmed, unknownAgent, busy, unavailable
+        case notConfirmed, unknownAgent, busy, unavailable, otherProject
         var errorDescription: String? {
             switch self {
             case .notConfirmed: "not_confirmed: allow hand-offs for this run first"
             case .unknownAgent: "That agent isn't one of your saved agents in Locus."
             case .busy: "busy: the agent is still working on its previous step"
             case .unavailable: "Locus can't reach that agent right now."
+            case .otherProject: "This run belongs to another project. Hand it off from that project's window."
             }
         }
     }
 
     private var allowed: [String: Set<UUID>] = [:]
     private var sessions: [String: String] = [:]
+    private var creating: Set<String> = []
+
+    func beginCreating(run: String, agent: UUID) -> Bool { creating.insert(run + "\n" + agent.uuidString).inserted }
+    func endCreating(run: String, agent: UUID) { creating.remove(run + "\n" + agent.uuidString) }
 
     func allow(_ runID: String, agents: Set<UUID>) { allowed[runID, default: []].formUnion(agents) }
 
