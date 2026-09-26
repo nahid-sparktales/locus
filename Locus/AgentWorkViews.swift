@@ -19,6 +19,7 @@ extension AppModel {
 
 struct AgentWorkPanel: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var activity: ActivityCenterModel
     @EnvironmentObject private var schedules: ScheduleModel
     @Environment(\.locusViewColors) private var colors
@@ -40,7 +41,7 @@ struct AgentWorkPanel: View {
                 if let assignment { Text(assignment.status).font(.locus(size: 11)).foregroundStyle(colors.signalDeep) }
             }
             if let assignment {
-                Text(model.agentProfiles.first(where: { $0.id == assignment.profileID })?.name ?? "Saved agent")
+                Text(agentTeams.agentProfiles.first(where: { $0.id == assignment.profileID })?.name ?? "Saved agent")
                     .font(.locus(size: 12, weight: .medium))
                 if let date = assignment.scheduledAt, assignment.runID == nil {
                     Text(date, format: .dateTime.month().day().hour().minute()).font(.locus(size: 11))
@@ -85,7 +86,7 @@ struct AgentWorkPanel: View {
         .locusSheet(item: $assignmentSource) { AgentWorkAssignmentSheet(source: $0).modifier(LocusWorldSheetTheme()) }
         .locusSheet(item: $result) { run in
             ActivityResultReader(run: run, title: assignment?.title ?? source.title,
-                agentName: model.agentProfiles.first(where: { $0.id == assignment?.profileID })?.name ?? "Agent",
+                agentName: agentTeams.agentProfiles.first(where: { $0.id == assignment?.profileID })?.name ?? "Agent",
                 onBack: { result = nil })
                 .frame(minWidth: 640, idealWidth: 900, minHeight: 560, idealHeight: 720)
         }
@@ -120,6 +121,7 @@ struct AgentWorkPanel: View {
 
 struct AgentWorkAssignmentSheet: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locusViewColors) private var colors
     let source: AgentWorkSource
@@ -136,7 +138,7 @@ struct AgentWorkAssignmentSheet: View {
             Text(source.title).font(.locus(size: 13)).foregroundStyle(colors.muted)
             Picker("Agent", selection: $agentID) {
                 Text("Choose an agent").tag(UUID?.none)
-                ForEach(model.agentProfiles) { profile in Text("@\(profile.name)").tag(Optional(profile.id)) }
+                ForEach(agentTeams.agentProfiles) { profile in Text("@\(profile.name)").tag(Optional(profile.id)) }
             }.accessibilityIdentifier("agentWork.agent")
             Text("Instructions").font(.locus(size: 12, weight: .semibold))
             TextEditor(text: $prompt).font(.locus(size: 13)).scrollContentBackground(.hidden)
@@ -165,7 +167,7 @@ struct AgentWorkAssignmentSheet: View {
         .disabled(submitting).interactiveDismissDisabled(submitting)
         .onAppear {
             prompt = source.prompt
-            let tagged = source.agentIDs.filter { id in model.agentProfiles.contains { $0.id == id } }
+            let tagged = source.agentIDs.filter { id in agentTeams.agentProfiles.contains { $0.id == id } }
             agentID = tagged.count == 1 ? tagged.first : nil
             if let proposed = source.suggestedDate, proposed > Date() { date = proposed; scheduled = true }
         }
