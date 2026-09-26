@@ -184,6 +184,7 @@ POST /api/extensions/plugins/rollback
 GET /api/extensions/plugins/settings
 POST /api/extensions/plugins/settings
 POST /api/extensions/plugins/panel-tool
+POST /api/integrations/jira
 DELETE /api/extensions/plugins/{plugin_id:path}
 POST /api/extensions/skills/import
 POST /api/extensions/skills/enable

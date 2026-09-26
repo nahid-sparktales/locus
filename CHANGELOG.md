@@ -4,6 +4,14 @@
 
 ### Added
 
+- Plugins can open their own windows from Extensions and Agent World's Work
+  menu, including the LangGraph Workflows canvas, settings, and saved-agent
+  handoffs with native run confirmation.
+- Board cards, calendar events, and notes can be assigned to saved agents;
+  completed work supports previews, review, and revision requests.
+- Agent portraits and offline provider and plugin logos are bundled with the app.
+- Workspace boards can link Jira issues through an existing Atlassian connection.
+
 - The Local Line gains Marineford-area and New World islands, Sabaody, Zunesha,
   and a flying pink dragon around Wano, with packaged generation provenance.
 - Captain’s Quarters opens across the browser preview, with a searchable crew
@@ -20,6 +28,10 @@
   the main window. Card handoffs create a draft chat in the board's workspace.
 
 ### Fixed
+
+- Installed plugins, marketplace entries, and installation reviews display
+  plugin artwork. Local marketplaces pick up newly added plugins when opened.
+- Plugin windows and logo metadata are preserved together in extension updates.
 
 - Calm Belts align across the Red Line, island docks face their shores, and
   ships use the mountain entrance instead of crossing the Calm Belt.

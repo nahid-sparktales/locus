@@ -16,21 +16,37 @@ def plugin(root, icon="./assets/icon.svg"):
     return root / "assets/icon.svg"
 
 
-def test_plugin_svg_artwork_is_available_in_catalog_review_and_install(tmp_path):
+@pytest.mark.parametrize("with_panel", [False, True])
+def test_plugin_svg_artwork_is_available_in_catalog_review_and_install(tmp_path, with_panel):
     path = plugin(tmp_path / "plugin")
     path.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="10" fill="#123456"/></svg>')
+    if with_panel:
+        root = tmp_path / "plugin"
+        (root / "ui").mkdir()
+        (root / "ui/index.html").write_text("<!doctype html><title>Workflows</title>")
+        manifest_path = root / ".codex-plugin/plugin.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["locus"] = {"panels": [{
+            "id": "workflows", "title": "Workflows", "entrypoint": "ui/index.html",
+            "version": 1, "capabilities": ["chat.compose"],
+        }]}
+        manifest_path.write_text(json.dumps(manifest))
     (tmp_path / "marketplace.json").write_text(json.dumps({
         "plugins": [{"name": "fixture", "source": "./plugin"}],
     }))
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     market = manager.add_marketplace(str(tmp_path))
     expected = base64.b64encode(path.read_bytes()).decode()
-    assert manager.catalog()[0]["icon_data"] == expected
+    catalog_entry = manager.catalog()[0]
+    assert catalog_entry["icon_data"] == expected
     review = manager.inspect_catalog_plugin(market["id"], "fixture")
     assert review["plugin"]["icon_data"] == expected
     installed = manager.install_plugin(market["id"], "fixture", expected_digest=review["digest"])
     assert installed["icon_data"] == expected
-    assert manager.snapshot()["plugins"][0]["icon_data"] == expected
+    snapshot_plugin = manager.snapshot()["plugins"][0]
+    assert snapshot_plugin["icon_data"] == expected
+    for entry in (catalog_entry["capabilities"], review["plugin"], installed, snapshot_plugin):
+        assert [panel["id"] for panel in entry["panels"]] == (["workflows"] if with_panel else [])
 
 
 @pytest.mark.parametrize("svg", [
