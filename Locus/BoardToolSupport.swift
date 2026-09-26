@@ -521,6 +521,9 @@ extension BoardSnapshot {
             "updated_at": Self.time(card.updatedAt),
             "created_by": Self.authorPayload(card.createdBy),
         ]
+        if let jira = card.jira {
+            payload["jira"] = ["key": jira.key, "status": jira.status, "url": jira.url?.absoluteString ?? ""]
+        }
         if full {
             payload["timeline"] = card.timeline.map { entry -> [String: Any] in
                 [

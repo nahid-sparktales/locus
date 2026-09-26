@@ -1,4 +1,4 @@
-# Social Studio for Locus
+# Social Studio · OpenPost for Locus
 
 Social Studio is an optional native social media workspace, installed and opened
 the same way as Agent World. It follows [OpenPost's](https://github.com/getopenpost/openpost)
@@ -9,7 +9,8 @@ appearance, controls, conversations, and project boundaries.
 
 Build the version of Locus in this repository. In **Settings → Extensions**, add
 this repository as a local marketplace if the workspace has not discovered it
-already. Install **Social Studio**, review its `social.workspace` capability,
+already. Search **OpenPost** or **Social Studio** in Marketplace and install
+**Social Studio · OpenPost**, review its `social.workspace` capability,
 and choose **Open Social Studio**. The **Work → Social Studio…** menu reopens it.
 Each project has its own window, drafts, brand voice, and OpenPost connection.
 Older Locus builds show the capability as unsupported rather than loading an

@@ -9,6 +9,10 @@ struct AgentWorldCommands: Commands {
                 Button(screen.screen.title + "…") { model.open(pluginID: screen.pluginID, screenID: screen.screen.id) }
                     .accessibilityIdentifier("menu.pluginScreen.\(screen.id)")
             }
+            ForEach(model.availablePanels) { panel in
+                Button(panel.panel.title + "…") { model.openPanel(pluginID: panel.pluginID, panelID: panel.panel.id) }
+                    .accessibilityIdentifier("menu.pluginPanel.\(panel.id)")
+            }
         }
     }
 }

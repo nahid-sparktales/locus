@@ -1,0 +1,113 @@
+{
+  "generator": "Built-in image_gen imagegen tool",
+  "mode": "generate",
+  "generatedOn": "2026-09-25",
+  "notes": "15 separate image-generation calls. Original PNGs copied unchanged into the asset catalog. The app creates a bounded avatar thumbnail only when a picture is selected.",
+  "portraits": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-atlas.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original brass-and-navy robotic owl navigator with large warm amber glass eyes, tiny etched star details on its rounded metal forehead, and a cream canvas collar. Intelligent, gentle expression. Background: muted midnight teal. Palette: burnished brass, navy enamel, cream, amber."
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-nova.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original curious astronaut with a friendly round face, warm brown skin, short dark curls visible through a clear bubble helmet, pearl-white suit and lilac collar. Background muted lavender. Sophisticated pearl, violet and soft peach palette."
+    },
+    {
+      "id": "kitsune",
+      "name": "Kitsune",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-kitsune.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original clever orange fox explorer, plush sculpted fur, bright jade eyes, cream muzzle, wearing a simple midnight-blue neck scarf. Background muted warm terracotta. A calm playful smile, ears contained inside the frame."
+    },
+    {
+      "id": "moss",
+      "name": "Moss",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-moss.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original gentle forest guardian, a small rounded moss-covered stone golem with luminous warm eyes and a tiny fern sprouting from its head, earthy ceramic texture. Background soft sage green, contrasting deep moss and cream stone."
+    },
+    {
+      "id": "orbit",
+      "name": "Orbit",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-orbit.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original friendly graphite robot cat with smooth rounded ears, bright cyan glass eyes and subtle copper accents, a compact ceramic neck collar. Background muted arctic blue. Dark slate, cyan and brushed copper palette."
+    },
+    {
+      "id": "sage",
+      "name": "Sage",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-sage.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original kindly elderly Asian woman scholar with silver hair in a tidy bun, round brass glasses, warm smile, wearing a plum high-collared jacket with a cream scarf. Background soft dusty mauve. Dignified and curious."
+    },
+    {
+      "id": "tide",
+      "name": "Tide",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-tide.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original cheerful pink axolotl sea explorer with delicate coral-pink gills, glossy dark eyes and a tiny navy sailor collar with cream trim. Background muted turquoise. Soft peach skin and nautical blue accents."
+    },
+    {
+      "id": "pixel",
+      "name": "Pixel",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-pixel.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original clever raccoon inventor with expressive dark eyes, soft silver fur and characteristic charcoal mask, wearing small brass goggles resting safely on its forehead and an ochre canvas collar. Background soft slate violet."
+    },
+    {
+      "id": "sol",
+      "name": "Sol",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-sol.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original friendly young lion navigator with a sculpted circular golden mane, warm amber eyes, a confident gentle smile and a burgundy canvas collar. Background muted deep aubergine, golden and burnt-orange highlights."
+    },
+    {
+      "id": "bloom",
+      "name": "Bloom",
+      "collection": "Originals",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-bloom.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: an original whimsical mushroom forest sprite with a rounded ivory face, warm curious dark eyes, a terracotta mushroom cap dotted with cream spots, and a deep sage leaf collar. Background dusty blush pink. Elegant collectible character, charming and calm."
+    },
+    {
+      "id": "luffy",
+      "name": "Luffy",
+      "collection": "One Piece",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-luffy.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: Monkey D. Luffy from One Piece, recognizable smiling young adult male pirate, black tousled hair, straw hat with red band, tiny scar under his left eye, red vest visible at shoulders. Joyful adventurous grin. Faithful distinctive character features reinterpreted as a premium stylized 3D collectible portrait. Background warm ocean turquoise."
+    },
+    {
+      "id": "zoro",
+      "name": "Zoro",
+      "collection": "One Piece",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-zoro.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: Roronoa Zoro from One Piece, recognizable adult male swordsman, short spiky moss-green hair, scar crossing his closed left eye, three small gold earrings on his left ear, dark green robe visible at shoulders. Calm confident smirk. No swords in frame. Faithful distinctive character features reinterpreted as a premium stylized 3D collectible portrait. Background deep forest teal."
+    },
+    {
+      "id": "nami",
+      "name": "Nami",
+      "collection": "One Piece",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-nami.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: Nami from One Piece, recognizable adult woman navigator with flowing orange hair and warm brown eyes, cheerful confident smile, a simple cream nautical shirt with a teal collar visible at shoulders, modest fully clothed head-and-shoulders portrait. Faithful distinctive character features reinterpreted as a premium stylized 3D collectible portrait. Background soft sky blue."
+    },
+    {
+      "id": "chopper",
+      "name": "Chopper",
+      "collection": "One Piece",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-chopper.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: Tony Tony Chopper from One Piece, recognizable cute reindeer doctor with a blue nose, soft brown fur, small antlers and his familiar pink top hat with a single clean white medical cross symbol, no lettering. Friendly delighted expression. Faithful distinctive character features reinterpreted as a premium stylized 3D collectible portrait. Background soft mint green. The hat and antlers must fit comfortably inside the square."
+    },
+    {
+      "id": "law",
+      "name": "Law",
+      "collection": "One Piece",
+      "asset": "Locus/Resources/Assets.xcassets/AgentPortrait-law.imageset/portrait.png",
+      "prompt": "Use case: stylized-concept. Asset type: premium square profile picture for an AI agent overview. Create exactly ONE standalone square 1024x1024 image, not a collage. A polished stylized 3D character portrait with sculpted forms, tactile matte materials, subtle fine texture, warm key light and clean soft shadows, expressive friendly face, carefully shaped silhouette. Close head-and-shoulders framing, front or slight three-quarter view, face centered and large, full head comfortably inside the central 76% so circular and rounded-square cropping both work. Simple softly lit solid-color studio background, visually distinct from the character. Strong readability at 48px. No text, lettering, watermark, UI, border, badges, extra characters, or hands in frame. Subject: Trafalgar Law from One Piece, recognizable adult male pirate with a white fuzzy hat with irregular black spots, small gold hoop earrings, short dark goatee and sideburns, calm clever smile, mustard-yellow hoodie visible at shoulders with no printed text or emblem. Faithful distinctive character features reinterpreted as a premium stylized 3D collectible portrait. Background muted indigo blue."
+    }
+  ]
+}

@@ -330,6 +330,7 @@ private struct ExtensionsSettingsView: View {
                 ForEach(extensionsModel.extensions.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
+                            PluginLogo(name: plugin.name, displayName: plugin.displayName, iconData: plugin.iconData)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(plugin.displayName ?? plugin.name)
                                     .font(.locus(size: 12, weight: .semibold))
@@ -392,6 +393,11 @@ private struct ExtensionsSettingsView: View {
                                 Button("Open \(screen.title)") { model.agentWorld.open(pluginID: plugin.id, screenID: screen.id) }
                                     .disabled(!workspaceEnabled || !screen.isSupported || extensionsModel.extensions.capabilities.pluginScreens != true)
                                     .accessibilityIdentifier("extensions.openScreen.\(screen.id)")
+                            }
+                            ForEach(plugin.panels ?? []) { panel in
+                                Button("Open \(panel.title)") { model.agentWorld.openPanel(pluginID: plugin.id, panelID: panel.id) }
+                                    .disabled(!workspaceEnabled || !panel.isSupported || extensionsModel.extensions.capabilities.pluginPanels != true)
+                                    .accessibilityIdentifier("extensions.openPanel.\(panel.id)")
                             }
                             Spacer()
                             Button("Uninstall", role: .destructive) {
@@ -488,9 +494,7 @@ private struct ExtensionsSettingsView: View {
 
                     ForEach(extensionsModel.extensionCatalog) { entry in
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "shippingbox")
-                                .frame(width: 22, height: 22)
-                                .foregroundStyle(viewColors.muted)
+                            PluginLogo(name: entry.name, displayName: entry.displayName, iconData: entry.iconData)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.displayName ?? entry.name)
                                     .font(.locus(size: 11, weight: .semibold))
@@ -612,6 +616,7 @@ private struct ExtensionsSettingsView: View {
                                     name: server.name,
                                     url: server.url,
                                     presetID: server.presetID,
+                                    pluginID: server.pluginID,
                                     size: 30
                                 )
                                 .overlay(alignment: .bottomTrailing) {
@@ -967,8 +972,12 @@ private struct PluginTrustReviewView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(item.entry.installed ? "Review plugin update" : "Review plugin")
                 .font(.locus(size: 16, weight: .bold))
-            Text(item.trust.plugin.displayName ?? item.trust.plugin.name)
-                .font(.locus(size: 12, weight: .semibold))
+            HStack(spacing: 10) {
+                PluginLogo(name: item.trust.plugin.name, displayName: item.trust.plugin.displayName,
+                           iconData: item.trust.plugin.iconData, size: 40)
+                Text(item.trust.plugin.displayName ?? item.trust.plugin.name)
+                    .font(.locus(size: 12, weight: .semibold))
+            }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow { Text("Publisher"); Text(item.trust.plugin.author ?? "Not provided") }
                 GridRow {
@@ -994,6 +1003,13 @@ private struct PluginTrustReviewView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Screen: \(screen.title)").font(.locus(size: 10, weight: .semibold))
                     Text("Opens a local window. " + screen.capabilityDescription)
+                        .font(.locus(size: 9))
+                }
+            }
+            ForEach(item.trust.trust.panels ?? []) { panel in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Window: \(panel.title)").font(.locus(size: 10, weight: .semibold))
+                    Text("Opens a local window with no network access. " + panel.capabilityDescription)
                         .font(.locus(size: 9))
                 }
             }
@@ -1150,6 +1166,7 @@ private struct MCPEnableReviewView: View {
                     name: server.name,
                     url: server.url,
                     presetID: server.presetID,
+                    pluginID: server.pluginID,
                     size: 34
                 )
                 Label("Connection verified", systemImage: "checkmark.shield.fill")

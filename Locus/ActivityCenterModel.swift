@@ -54,6 +54,7 @@ final class ActivityCenterModel: ObservableObject {
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var acknowledgedWarningRunIDs: Set<String> = []
 
+    var runsDidRefresh: ([OrchestrationRun]) -> Void = { _ in }
     private var backend: BackendService?
     private var persistenceEnabled = false
     private var defaults: UserDefaults = .standard
@@ -219,6 +220,7 @@ final class ActivityCenterModel: ObservableObject {
                 as: OrchestrationRunsResponse.self
             )
             activityRuns = response.runs
+            runsDidRefresh(response.runs)
             hasLoadedActivity = true
             let attention: AttentionResponse = try await backend.get(
                 "/api/attention", query: [URLQueryItem(name: "limit", value: "500")],

@@ -13,7 +13,9 @@
     "developerName": "SparkTales",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Open Agent World in Locus to meet my saved agents."
+    "defaultPrompt": "Open Agent World in Locus to meet my saved agents.",
+    "iconSmall": "./assets/icon.svg",
+    "iconLarge": "./assets/icon.svg"
   },
   "locus": {
     "screens": [

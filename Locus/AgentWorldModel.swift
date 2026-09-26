@@ -126,6 +126,8 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var transfers: [AgentWorldTransfer] = []
     @Published private(set) var residents: [AgentWorldResident] = []
     @Published private(set) var availableScreens: [AvailableScreen] = []
+    /// Plugin-owned windows (``locus.panels``), separate from Agent World.
+    @Published private(set) var availablePanels: [PluginPanelWindowController.Target] = []
     @Published private(set) var selection: String?
     @Published private(set) var activeScreen: AvailableScreen?
     @Published private(set) var workspace = ""
@@ -183,6 +185,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var defaults: UserDefaults?
     private var window: NSWindow?
     private let socialStudioWindows = SocialStudioWindowController()
+    private let pluginPanelWindows = PluginPanelWindowController()
     private var refreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
     private var selectionToken = UUID()
@@ -275,7 +278,17 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func refresh() {
         socialStudioWindows.refresh(catalog: catalog)
+        pluginPanelWindows.refresh(catalog: catalog)
         let currentWorkspace = SessionSummary.canonicalWorkspacePath(workspaceProvider())
+        let panels: [PluginPanelWindowController.Target] = catalog.capabilities.pluginPanels == true
+            ? catalog.plugins.filter { Self.enabled($0, workspace: currentWorkspace) && $0.error == nil }.flatMap { plugin in
+                guard let root = plugin.root, root.hasPrefix("/") else { return [PluginPanelWindowController.Target]() }
+                return (plugin.panels ?? []).filter(\.isSupported).map {
+                    .init(pluginID: plugin.id, pluginName: plugin.displayName ?? plugin.name,
+                          digest: plugin.digest, root: root, panel: $0)
+                }
+            } : []
+        if availablePanels != panels { availablePanels = panels }
         let candidates: [AvailableScreen] = catalog.capabilities.pluginScreens == true
             ? catalog.plugins.filter { Self.enabled($0, workspace: currentWorkspace) && $0.error == nil }.flatMap { plugin in
                 guard let root = plugin.root, root.hasPrefix("/") else { return [AvailableScreen]() }
@@ -330,6 +343,14 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         } else {
             conversationBusy = false; pendingCount = 0
         }
+    }
+
+    func openPanel(pluginID: String, panelID: String) {
+        refresh()
+        guard let appModel, let target = availablePanels.first(where: {
+            $0.pluginID == pluginID && $0.panel.id == panelID
+        }) else { error = "Install and enable this plugin for the project in Extensions."; return }
+        pluginPanelWindows.open(target, workspace: workspaceProvider(), appModel: appModel)
     }
 
     func open(pluginID: String? = nil, screenID: String? = nil) {

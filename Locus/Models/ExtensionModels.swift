@@ -9,6 +9,7 @@ struct ExtensionCapabilities: Codable, Hashable {
     var hooks = false
     var sandboxed = false
     var pluginScreens: Bool? = nil
+    var pluginPanels: Bool? = nil
     var sse: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
@@ -16,6 +17,7 @@ struct ExtensionCapabilities: Codable, Hashable {
         case streamableHTTP = "streamable_http"
         case mcpApps = "mcp_apps"
         case pluginScreens = "plugin_screens"
+        case pluginPanels = "plugin_panels"
     }
 }
 
@@ -116,6 +118,66 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
     }
 }
 
+/// A plugin-owned window. Unlike a screen it never reaches Locus data: it can
+/// only use its own plugin's settings and MCP tools, and draft (never send) a
+/// chat message for the user.
+struct ExtensionPluginPanel: Codable, Identifiable, Hashable {
+    static let supportedCapabilities: Set<String> = [
+        "plugin.settings", "plugin.tools", "chat.compose", "agents.read", "agents.dispatch",
+    ]
+
+    let id: String
+    let title: String
+    let entrypoint: String
+    let version: Int
+    let capabilities: [String]
+    let tools: [String]
+
+    init(id: String, title: String, entrypoint: String, version: Int, capabilities: [String], tools: [String] = []) {
+        self.id = id; self.title = title; self.entrypoint = entrypoint
+        self.version = version; self.capabilities = capabilities; self.tools = tools
+    }
+
+    enum CodingKeys: String, CodingKey { case id, title, entrypoint, version, capabilities, tools }
+
+    /// Lenient so a malformed panel from a newer backend disables that panel
+    /// instead of failing the whole extensions snapshot.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decode(String.self, forKey: .id)) ?? ""
+        title = (try? container.decode(String.self, forKey: .title)) ?? ""
+        entrypoint = (try? container.decode(String.self, forKey: .entrypoint)) ?? ""
+        version = (try? container.decode(Int.self, forKey: .version)) ?? 0
+        capabilities = (try? container.decode([String].self, forKey: .capabilities)) ?? []
+        tools = (try? container.decode([String].self, forKey: .tools)) ?? []
+    }
+
+    var capabilityDescription: String {
+        var parts = capabilities.map { capability in
+            switch capability {
+            case "plugin.settings": "Can read and save this plugin's own settings."
+            case "plugin.tools": "Can use this plugin's own tools."
+            case "chat.compose": "Can draft a chat message for you to review and send."
+            case "agents.read": "Can see your saved agents' names, roles, providers and models (never credentials)."
+            case "agents.dispatch": "Can hand steps to your saved agents' chats after you allow each run in Locus."
+            default: capability
+            }
+        }
+        if !tools.isEmpty {
+            parts.append("Tools only this window may use, never an agent: \(tools.joined(separator: ", ")).")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    var isSupported: Bool {
+        version == 1 && !id.isEmpty && !title.isEmpty
+            && Set(capabilities).isSubset(of: Self.supportedCapabilities)
+            && (tools.isEmpty || capabilities.contains("plugin.tools"))
+            && PluginScreenFiles.isSafeRelativePath(entrypoint)
+            && ["html", "htm"].contains(URL(fileURLWithPath: entrypoint).pathExtension.lowercased())
+    }
+}
+
 struct ExtensionPlugin: Codable, Identifiable, Hashable {
     let id: String
     let name: String
@@ -136,9 +198,11 @@ struct ExtensionPlugin: Codable, Identifiable, Hashable {
     let error: String?
     var root: String? = nil
     var screens: [ExtensionPluginScreen]? = nil
+    var iconData: String? = nil
+    var panels: [ExtensionPluginPanel]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, version, author, digest, skills, scripts, unsupported, error, root, screens
+        case id, name, description, version, author, digest, skills, scripts, unsupported, error, root, screens, panels
         case displayName = "display_name"
         case enabledGlobal = "enabled_global"
         case enabledWorkspaces = "enabled_workspaces"
@@ -146,6 +210,7 @@ struct ExtensionPlugin: Codable, Identifiable, Hashable {
         case previousVersions = "previous_versions"
         case mcpServers = "mcp_servers"
         case updateAvailable = "update_available"
+        case iconData = "icon_data"
     }
 }
 
@@ -449,12 +514,14 @@ struct ExtensionCatalogEntry: Codable, Identifiable, Hashable {
     let version: String?
     let author: String?
     let error: String?
+    var iconData: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, category, available, installed, version, author, error
         case displayName = "display_name"
         case marketplaceID = "marketplace_id"
         case installedVersion = "installed_version"
+        case iconData = "icon_data"
     }
 }
 
@@ -481,13 +548,14 @@ struct PluginTrustMCPServer: Codable, Hashable {
 
 struct PluginTrustSummary: Codable, Hashable {
     var screens: [ExtensionPluginScreen]? = nil
+    var panels: [ExtensionPluginPanel]? = nil
     let skills: Int
     let skillScripts: [String]
     let mcpServers: [PluginTrustMCPServer]
     let unsupported: [String]
 
     enum CodingKeys: String, CodingKey {
-        case skills, unsupported, screens
+        case skills, unsupported, screens, panels
         case skillScripts = "skill_scripts"
         case mcpServers = "mcp_servers"
     }
@@ -499,10 +567,12 @@ struct PluginTrustDescription: Codable, Hashable {
     let description: String?
     let version: String?
     let author: String?
+    var iconData: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, description, version, author
         case displayName = "display_name"
+        case iconData = "icon_data"
     }
 }
 

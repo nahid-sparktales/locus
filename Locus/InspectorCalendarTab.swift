@@ -511,6 +511,11 @@ struct InspectorCalendarTab: View {
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
     @Environment(\.locusViewColors) private var viewColors
 
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var schedules: ScheduleModel
+    @EnvironmentObject private var activity: ActivityCenterModel
+    @ObservedObject private var ledger = AgentWorkLedger.shared
+    @State private var selectedWork: AgentWorkSource?
     @ObservedObject private var store = LocusCalendarStore.shared
     @State private var showingNewEvent = false
     @State private var editingEvent: LocusCalendarEntry?
@@ -546,6 +551,18 @@ struct InspectorCalendarTab: View {
             calendarContent
         }
         .onAppear { store.refresh() }
+        .task { await schedules.refreshScheduledTasks(announceFailure: false); await activity.refreshActivityRuns(announceFailure: false) }
+        .onReceive(schedules.$scheduledTasks) { ledger.reconcile(runs: activity.activityRuns, schedules: $0) }
+        .locusSheet(item: $selectedWork) { source in
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text(source.title).font(.locus(size: 17, weight: .semibold))
+                    Spacer()
+                    Button("Done") { selectedWork = nil }.buttonStyle(.locus())
+                }
+                AgentWorkPanel(source: source)
+            }.padding(22).frame(width: 500).background(viewColors.panel)
+        }
         .locusSheet(isPresented: $showingNewEvent) {
             CalendarEventComposer(store: store).modifier(LocusWorldSheetTheme())
         }
@@ -662,7 +679,8 @@ struct InspectorCalendarTab: View {
         let isToday = calendar.isDateInToday(date)
         let isCurrentMonth = calendar.isDate(date, equalTo: store.displayedMonth, toGranularity: .month)
         let dayEvents = store.events(on: date)
-        let hasEvents = !dayEvents.isEmpty
+        let dayWork = work(on: date)
+        let hasEvents = !dayEvents.isEmpty || !dayWork.isEmpty
         return Button {
             store.selectedDate = date
         } label: {
@@ -673,7 +691,7 @@ struct InspectorCalendarTab: View {
                     .fill(hasEvents ? (isSelected ? viewColors.brandInk : viewColors.signalDeep) : .clear)
                     .frame(width: 3, height: 3)
                 if expanded {
-                    Text(dayEvents.first?.title ?? " ").font(.locus(size: 9)).lineLimit(1)
+                    Text(dayEvents.first?.title ?? dayWork.first?.title ?? " ").font(.locus(size: 9)).lineLimit(1)
                         .padding(.horizontal, 3)
                 }
             }
@@ -691,19 +709,20 @@ struct InspectorCalendarTab: View {
 
     private var agenda: some View {
         let dayEvents = store.events(on: store.selectedDate)
+        let dayWork = work(on: store.selectedDate)
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                     .font(.locus(size: 12, weight: .semibold))
                 Spacer()
-                Text("\(dayEvents.count) event\(dayEvents.count == 1 ? "" : "s")")
+                Text("\(dayEvents.count) events · \(dayWork.count) agent tasks")
                     .font(.locus(size: 10))
                     .foregroundStyle(viewColors.textSecondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
 
-            if dayEvents.isEmpty {
+            if dayEvents.isEmpty && dayWork.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "calendar.day.timeline.left")
                         .font(.locus(size: 20))
@@ -719,6 +738,19 @@ struct InspectorCalendarTab: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
+                        ForEach(dayWork) { record in
+                            Button { selectedWork = record.source } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "sparkles").foregroundStyle(viewColors.signalDeep)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(record.title).font(.locus(size: 12, weight: .semibold)).lineLimit(2)
+                                        Text(record.status).font(.locus(size: 11)).foregroundStyle(viewColors.muted)
+                                    }
+                                    Spacer()
+                                    if let date = record.scheduledAt { Text(date, style: .time).font(.locus(size: 11)) }
+                                }.padding(12).background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.locus()).help("View scheduled agent work")
+                        }
                         ForEach(dayEvents) { event in
                             Button { editingEvent = event } label: { CalendarEventRow(event: event) }
                                 .buttonStyle(.plain)
@@ -731,6 +763,13 @@ struct InspectorCalendarTab: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func work(on date: Date) -> [AgentWorkRecord] {
+        ledger.records.filter {
+            $0.workspace == BoardStore.canonicalWorkspace(model.agentWorkWorkspace)
+                && $0.scheduledAt.map { Calendar.current.isDate($0, inSameDayAs: date) } == true
+        }.sorted { ($0.scheduledAt ?? .distantPast) < ($1.scheduledAt ?? .distantPast) }
     }
 
     private var monthDates: [Date] {
@@ -818,6 +857,7 @@ private struct CalendarEventComposer: View {
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
     @Environment(\.locusViewColors) private var viewColors
 
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var store: LocusCalendarStore
     var event: LocusCalendarEntry? = nil
     @Environment(\.dismiss) private var dismiss
@@ -833,49 +873,55 @@ private struct CalendarEventComposer: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(event == nil ? "New Event" : "Event details")
-                .font(.locus(size: 18, weight: .semibold))
-            TextField("Title", text: $title)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("calendar.event.title")
-            AgentMentionPicker(selectedIDs: $taggedAgentIDs)
-            Toggle("All day", isOn: $allDay)
-            DatePicker("Starts", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
-            DatePicker("Ends", selection: $end, in: start..., displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
-            Picker("Calendar", selection: $calendarID) {
-                Text("Locus Calendar · Built in").tag("locus")
-                ForEach(store.calendars.filter { $0.allowsContentModifications || $0.calendarIdentifier == event?.calendarID }, id: \.calendarIdentifier) { calendar in
-                    Text("\(calendar.title) · \(calendar.source.title)")
-                        .tag(calendar.calendarIdentifier)
-                }
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(event == nil ? "New Event" : "Event details")
+                        .font(.locus(size: 18, weight: .semibold))
+                    TextField("Title", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("calendar.event.title")
+                    AgentMentionPicker(selectedIDs: $taggedAgentIDs)
+                    Toggle("All day", isOn: $allDay)
+                    DatePicker("Starts", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                    DatePicker("Ends", selection: $end, in: start..., displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                    Picker("Calendar", selection: $calendarID) {
+                        Text("Locus Calendar · Built in").tag("locus")
+                        ForEach(store.calendars.filter { $0.allowsContentModifications || $0.calendarIdentifier == event?.calendarID }, id: \.calendarIdentifier) { calendar in
+                            Text("\(calendar.title) · \(calendar.source.title)")
+                                .tag(calendar.calendarIdentifier)
+                        }
+                    }
+                    .disabled(event != nil)
+                    TextField("Location", text: $location)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Notes", text: $notes, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(2...5)
+                    if let event {
+                        AgentWorkPanel(source: .calendar(event, workspace: model.agentWorkWorkspace), prepareAssignment: {
+                            guard event.writable else { return .calendar(event, workspace: model.agentWorkWorkspace) }
+                            guard save(dismissWhenDone: false) else { return nil }
+                            var updated = event
+                            updated.title = title; updated.notes = notes; updated.startDate = start
+                            updated.agentIDs = taggedAgentIDs; updated.calendarID = calendarID
+                            return .calendar(updated, workspace: model.agentWorkWorkspace)
+                        })
+                        Text("Assign work saves your event changes. Later edits or deletion won’t change an existing assignment; pause it from Agent work.")
+                            .font(.locus(size: 10)).foregroundStyle(viewColors.muted).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.locus(size: 11))
+                            .foregroundStyle(viewColors.coral)
+                    }
+
+                }.padding(22)
             }
-            .disabled(event != nil)
-            TextField("Location", text: $location)
-                .textFieldStyle(.roundedBorder)
-            TextField("Notes", text: $notes, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(2...5)
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.locus(size: 11))
-                    .foregroundStyle(viewColors.coral)
-            }
-            HStack {
-                if let event, event.writable {
-                    Button("Delete event", role: .destructive) { confirmingDelete = true }
-                }
-                Spacer()
-                Button(event?.writable == false ? "Close" : "Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(event == nil ? "Add Event" : "Save changes", action: save)
-                    .buttonStyle(.locus(.primary))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(event?.writable == false || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (allDay ? Calendar.current.startOfDay(for: end) < Calendar.current.startOfDay(for: start) : end <= start))
-            }
+            Divider().overlay(viewColors.line)
+            footer.padding(18)
         }
-        .padding(22)
-        .frame(width: 430)
+        .frame(width: 460, height: event == nil ? 530 : 680)
         .onAppear {
             if let event {
                 title = event.title; start = event.startDate; end = event.endDate
@@ -897,7 +943,23 @@ private struct CalendarEventComposer: View {
         } message: { Text("This removes the event from its calendar.") }
     }
 
-    private func save() {
+    private var footer: some View {
+        HStack {
+            if let event, event.writable {
+                Button("Delete event", role: .destructive) { confirmingDelete = true }
+            }
+            Spacer()
+            Button(event?.writable == false ? "Close" : "Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Button(event == nil ? "Add Event" : "Save changes", action: { _ = save() })
+                .buttonStyle(.locus(.primary))
+                .keyboardShortcut(.defaultAction)
+                .disabled(event?.writable == false || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (allDay ? Calendar.current.startOfDay(for: end) < Calendar.current.startOfDay(for: start) : end <= start))
+        }
+    }
+
+    @discardableResult
+    private func save(dismissWhenDone: Bool = true) -> Bool {
         let formatter = ISO8601DateFormatter()
         let calendar = Calendar.current
         let eventStart = allDay ? calendar.startOfDay(for: start) : start
@@ -908,12 +970,13 @@ private struct CalendarEventComposer: View {
             "notes": notes, "calendar_id": calendarID, "agent_ids": taggedAgentIDs.map(\.uuidString)]
         if let event { arguments["event_id"] = event.id }
         let result = store.perform(tool: event == nil ? "calendar_create" : "calendar_update", arguments: arguments)
-        if let error = result["error"] as? String { errorMessage = error; return }
+        if let error = result["error"] as? String { errorMessage = error; return false }
         store.selectedDate = start
         store.displayedMonth = Calendar.current.date(
             from: Calendar.current.dateComponents([.year, .month], from: start)
         ) ?? start
         store.refresh()
-        dismiss()
+        if dismissWhenDone { dismiss() }
+        return true
     }
 }

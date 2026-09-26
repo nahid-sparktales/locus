@@ -1,0 +1,190 @@
+{
+  "updated": "2026-09-25",
+  "purpose": "Offline service-identification logos. Trademarks belong to their respective owners; their use does not imply endorsement.",
+  "sources": [
+    {
+      "id": "anthropic",
+      "source": "https://cdn.prod.website-files.com/67ce28cfec624e2b733f8a52/67d31dd7aa394792257596c5_webclip.png",
+      "brandPage": "https://www.anthropic.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-anthropic.imageset/logo.png",
+      "sha256": "c91922918edeef31af5e969413c0eecf583707d14588de3fecc1d649b4303bf7",
+      "bytes": 3175
+    },
+    {
+      "id": "huggingFace",
+      "source": "https://huggingface.co/front/assets/huggingface_logo-noborder.svg",
+      "brandPage": "https://huggingface.co/brand",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-huggingFace.imageset/logo.svg",
+      "sha256": "3613c73f07ccae19118bfe6d2f8cd127183d08cf99468a708e090953e116ed0a",
+      "bytes": 4634
+    },
+    {
+      "id": "lmStudio",
+      "source": "https://lmstudio.ai/assets/marketing/logo-192x192.png",
+      "brandPage": "https://lmstudio.ai",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-lmStudio.imageset/logo.png",
+      "sha256": "e79ff2ac0fece5c0a76fcb8b20a29226794d11824ee7c7a2f521dcde0f88e12b",
+      "bytes": 12829
+    },
+    {
+      "id": "vLLM",
+      "source": "https://vllm.ai/vLLM-Logo.svg",
+      "brandPage": "https://vllm.ai",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-vLLM.imageset/logo.svg",
+      "sha256": "12a0812e247cef4b31160e0d0267142ffe491491537f3e275d8bc645b61eb1a8",
+      "bytes": 3502
+    },
+    {
+      "id": "google",
+      "source": "https://www.gstatic.com/images/branding/product/2x/googleg_96dp.png",
+      "brandPage": "https://www.google.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-google.imageset/logo.png",
+      "sha256": "d9ad8ab348dcf98cdf293f4b6ea8f558bf760298368bfa81e5468cf52b8803cd",
+      "bytes": 4812
+    },
+    {
+      "id": "metaMask",
+      "source": "https://metamask.io/favicons/default/favicon.svg",
+      "brandPage": "https://metamask.io",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-metaMask.imageset/logo.svg",
+      "sha256": "bb4609771e2b623c33c53745f035f80fe99e7bbf1564ad75a31eab010efb8800",
+      "bytes": 2082
+    },
+    {
+      "id": "phantom",
+      "source": "https://phantom.com/_web_platform_assets/favicon.svg",
+      "brandPage": "https://phantom.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-phantom.imageset/logo.svg",
+      "sha256": "3f601873ff260e9ef88109ac52c2bfc50642d49151f8c805e3fccc8ca5d6ce7b",
+      "bytes": 1390
+    },
+    {
+      "id": "slush",
+      "source": "https://cdn.prod.website-files.com/680905cfdc450738383648a6/680905cfdc45073838364973_favicon.svg",
+      "brandPage": "https://slush.app",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-slush.imageset/logo.svg",
+      "sha256": "bed2ce97be466b65482b634efae532bbc0b93b9b6e7ad0264ddc792a42505f00",
+      "bytes": 1734
+    },
+    {
+      "id": "context7",
+      "source": "https://context7.com/favicon.ico",
+      "brandPage": "https://context7.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-context7.imageset/logo.png",
+      "sha256": "a8b23e6374e7b7c165a39b4dbd4c4a11a470fe272bf85dc26eac3ce37f8be5e3",
+      "bytes": 3287,
+      "notes": "Official icon converted losslessly from ICO to PNG; artwork unchanged."
+    },
+    {
+      "id": "github",
+      "source": "https://github.githubassets.com/favicons/favicon.svg",
+      "brandPage": "https://github.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-github.imageset/logo.svg",
+      "sha256": "6a9577cd4f7fa6b75bde1025af85b944e9dd1388373b55ccba6e9f80ac2eae60",
+      "bytes": 959
+    },
+    {
+      "id": "supabase",
+      "source": "https://supabase.com/favicon/apple-icon-180x180.png",
+      "brandPage": "https://supabase.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-supabase.imageset/logo.png",
+      "sha256": "0aa15704ed8683f321b408b147c91f52c56707cebf7ce79bc6be262af7b583d3",
+      "bytes": 2472
+    },
+    {
+      "id": "kimi",
+      "source": "https://www.kimi.com/pwa-192.png",
+      "brandPage": "https://www.kimi.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-kimi.imageset/logo.png",
+      "sha256": "6c14f9c3062e953b3ed57ae3e19db931c1c1bba38d4d8d55550544f31d55e469",
+      "bytes": 21645
+    },
+    {
+      "id": "openAI",
+      "source": "https://developers.openai.com",
+      "brandPage": "https://openai.com/brand/",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-openAI.imageset/logo.svg",
+      "sha256": "d77de962da3dc996dff10ba81bb4d074fd3ff668e2e273a9cb79111306501b95",
+      "notes": "Official inline Blossom SVG; currentColor resolved to black for a white icon surface. Geometry unchanged."
+    },
+    {
+      "id": "claude",
+      "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/claude.svg",
+      "brandPage": "https://claude.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-claude.imageset/logo.svg",
+      "sha256": "2d6fda79eb18ddccca35b799eeb3cece0dfabc22520ce3b10abd25668df9fa93",
+      "notes": "Claude mark distributed by Simple Icons under CC0. Geometry unchanged."
+    },
+    {
+      "id": "sentry",
+      "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/sentry.svg",
+      "brandPage": "https://sentry.io/branding/",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-sentry.imageset/logo.svg",
+      "sha256": "8ba32902ffbac503784607374f57df5e3cbcf57a99d0adff03e735575500adc6",
+      "notes": "Sentry mark distributed by Simple Icons under CC0. Geometry unchanged."
+    },
+    {
+      "id": "ollama",
+      "source": "https://ollama.com/public/apple-touch-icon.png",
+      "brandPage": "https://ollama.com",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-ollama.imageset/logo.png",
+      "sha256": "8a5d4f0444d756d1d64c6615eb163ecd71fba180bd07c4199e88461c921778d1",
+      "notes": "Unmodified published artwork."
+    },
+    {
+      "id": "gmail",
+      "source": "https://www.gstatic.com/images/branding/productlogos/gmail_2026/v2/web/192px.svg",
+      "brandPage": "https://workspace.google.com/products/gmail/",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-gmail.imageset/logo.svg",
+      "sha256": "0a242131424b796a26247a8edd41d66fa294da6d177897526a19b7e81aedfdb8",
+      "notes": "Unmodified artwork."
+    },
+    {
+      "id": "googleCalendar",
+      "source": "https://www.gstatic.com/images/branding/productlogos/calendar_2026/v2/web/192px.svg",
+      "brandPage": "https://workspace.google.com/products/calendar/",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-googleCalendar.imageset/logo.svg",
+      "sha256": "7f55cd877b2261948168db3d2e9468c0cf3f07766789489e853a0f9931dff8ea",
+      "notes": "Unmodified artwork."
+    },
+    {
+      "id": "telegram",
+      "source": "https://telegram.org/img/t_logo.svg",
+      "brandPage": "https://telegram.org",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-telegram.imageset/logo.svg",
+      "sha256": "85059d5e5bf7bda91ebab30664993c49867a26be6b947834aca16c846581766a",
+      "notes": "Unmodified artwork."
+    },
+    {
+      "id": "jira",
+      "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/jira.svg",
+      "brandPage": "https://www.atlassian.com/software/jira",
+      "asset": "Locus/Resources/Assets.xcassets/Brand-jira.imageset/logo.svg",
+      "sha256": "68f8703698538ee7863bf69b72bf9f0d78a72d218e7eb7e0617237ae43ae5ade",
+      "notes": "Unmodified artwork. Distributed by Simple Icons under CC0."
+    }
+  ],
+  "originalArtwork": [
+    {
+      "id": "agent-world",
+      "asset": "Locus/Resources/Assets.xcassets/Plugin-agent-world.imageset/logo.svg",
+      "author": "Locus",
+      "license": "Apache-2.0",
+      "notes": "Original plugin artwork, not the external framework/service logo."
+    },
+    {
+      "id": "langgraph-workflow",
+      "asset": "Locus/Resources/Assets.xcassets/Plugin-langgraph-workflow.imageset/logo.svg",
+      "author": "Locus",
+      "license": "Apache-2.0",
+      "notes": "Original plugin artwork, not the external framework/service logo."
+    },
+    {
+      "id": "social-studio",
+      "asset": "Locus/Resources/Assets.xcassets/Plugin-social-studio.imageset/logo.svg",
+      "author": "Locus",
+      "license": "Apache-2.0",
+      "notes": "Original plugin artwork, not the external framework/service logo."
+    }
+  ]
+}

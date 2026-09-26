@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs><linearGradient id="ocean" x2="0.8" y2="1"><stop stop-color="#164A69"/><stop offset="1" stop-color="#092B42"/></linearGradient></defs>
+  <rect x="1" y="1" width="126" height="126" rx="29" fill="url(#ocean)"/>
+  <circle cx="64" cy="61" r="40" fill="none" stroke="#75D9CE" stroke-width="3" opacity="0.7"/>
+  <ellipse cx="64" cy="78" rx="39" ry="15" fill="#187A88"/>
+  <path d="M32 78 45 60 62 66 79 52 96 77 80 88 49 89Z" fill="#91DAC0"/>
+  <path d="M64 23 71 49 96 56 71 63 64 90 57 63 32 56 57 49Z" fill="#F8D68D"/>
+  <path d="M64 23V56L96 56 71 49Z" fill="#FFF4D6"/>
+  <circle cx="64" cy="56" r="7" fill="#123E57"/>
+  <path d="M26 100C38 93 44 107 56 100S75 93 87 100 97 102 103 98" fill="none" stroke="#75D9CE" stroke-width="4" stroke-linecap="round"/>
+</svg>

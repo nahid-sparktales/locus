@@ -7,6 +7,7 @@ memory and never reach this module's JSON files.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -38,6 +40,18 @@ MAX_PLUGIN_SCREENS = 16
 PLUGIN_SCREEN_CAPABILITIES = frozenset({
     "agents.read", "agents.interact", "world.preferences", "social.workspace",
 })
+# Plugin panels are plugin-owned windows. Their capabilities never reach
+# Locus data: they cover the plugin's own settings, the plugin's own MCP
+# tools, and drafting (never sending) a chat message for the user.
+MAX_PLUGIN_PANELS = 4
+# agents.read lists saved agents (name, role, provider, model; never credentials);
+# agents.dispatch hands a job to an agent's chat after the user allows it natively.
+PLUGIN_PANEL_CAPABILITIES = frozenset({"plugin.settings", "plugin.tools", "chat.compose",
+                                       "agents.read", "agents.dispatch"})
+MAX_SETTINGS_SCHEMA_BYTES = 64 * 1024
+MAX_SETTINGS_PROPERTIES = 64
+_SETTING_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
 
 def _load_mcp_catalog() -> tuple[int, tuple[dict[str, Any], ...]]:
@@ -224,6 +238,126 @@ def parse_skill(path: Path, *, source: str, plugin_id: str | None = None) -> dic
     }
 
 
+def _html_entrypoint(root: Path, value: Any, label: str) -> str:
+    """A local HTML file inside the plugin, as a normalized relative path."""
+    entrypoint = value
+    if not isinstance(entrypoint, str) or not 1 <= len(entrypoint) <= 1024:
+        raise ExtensionError(f"{label} requires a local HTML entrypoint")
+    if entrypoint.startswith("./"):
+        entrypoint = entrypoint[2:]
+    if any(part in {"", ".", ".."} for part in entrypoint.split("/")) \
+            or any(character in entrypoint for character in "\\:%?#") \
+            or any(ord(character) < 32 or ord(character) == 127 for character in entrypoint):
+        raise ExtensionError(f"{label} entrypoint must stay inside the plugin")
+    candidate = root / entrypoint
+    if candidate.suffix.lower() not in {".html", ".htm"}:
+        raise ExtensionError(f"{label} entrypoint must be an HTML file")
+    if not _inside(root, candidate):
+        raise ExtensionError(f"{label} entrypoint escapes the plugin")
+    if not candidate.is_file():
+        raise ExtensionError(f"{label} entrypoint is missing: {entrypoint}")
+    return entrypoint
+
+
+def _printable_title(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 120 \
+            or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ExtensionError(f"{label} title must contain 1–120 printable characters")
+    return value.strip()
+
+
+def _settings_schema(root: Path, value: Any, label: str) -> dict[str, Any]:
+    """Load a flat settings schema: an object of boolean/number/string fields."""
+    path = _component_path(root, value)
+    if path is None or not path.is_file():
+        raise ExtensionError(f"{label} requires a settings_schema file")
+    schema = _read_json(path, MAX_SETTINGS_SCHEMA_BYTES)
+    if schema.get("type") != "object" or schema.get("additionalProperties") is not False:
+        raise ExtensionError(f"{label} settings must be an object with additionalProperties false")
+    allowed_top = {"$schema", "type", "title", "description", "properties", "required",
+                   "additionalProperties"}
+    properties = schema.get("properties")
+    if set(schema) - allowed_top or not isinstance(properties, dict) \
+            or not 1 <= len(properties) <= MAX_SETTINGS_PROPERTIES:
+        raise ExtensionError(f"{label} settings schema has unsupported keys or too many fields")
+    field_keys = {"type", "title", "description", "default", "enum", "minimum", "maximum",
+                  "maxLength"}
+    for name, field in properties.items():
+        if not _SETTING_NAME_RE.fullmatch(str(name)) or not isinstance(field, dict) \
+                or set(field) - field_keys \
+                or field.get("type") not in {"boolean", "integer", "number", "string"}:
+            raise ExtensionError(f"{label} setting {name!r} is not a supported field")
+        if "enum" in field and (field["type"] != "string" or not isinstance(field["enum"], list)
+                                or not 1 <= len(field["enum"]) <= 32):
+            raise ExtensionError(f"{label} setting {name!r} has an invalid choice list")
+    try:
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import SchemaError
+        Draft202012Validator.check_schema(schema)
+        for field in properties.values():
+            if "default" in field:
+                Draft202012Validator(field).validate(field["default"])
+    except SchemaError as exc:
+        raise ExtensionError(f"{label} settings schema is invalid: {exc.message}") from exc
+    except Exception as exc:  # noqa: BLE001 - jsonschema ValidationError for defaults
+        raise ExtensionError(f"{label} setting default is invalid: {exc}") from exc
+    return schema
+
+
+def _validate_settings(schema: dict[str, Any], values: dict[str, Any]) -> None:
+    from jsonschema import Draft202012Validator
+    errors = sorted(Draft202012Validator(schema).iter_errors(values), key=lambda e: list(e.path))
+    if errors:
+        where = "/".join(str(part) for part in errors[0].path) or "settings"
+        raise ExtensionError(f"{where}: {errors[0].message}")
+
+
+def _parse_plugin_panels(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate plugin-owned windows (``locus.panels``). Older Locus ignores them."""
+    locus = manifest.get("locus")
+    if not isinstance(locus, dict) or "panels" not in locus:
+        return []
+    raw_panels = locus["panels"]
+    if not isinstance(raw_panels, list) or len(raw_panels) > MAX_PLUGIN_PANELS:
+        raise ExtensionError(f"locus.panels must be a list of at most {MAX_PLUGIN_PANELS} panels")
+    panels: list[dict[str, Any]] = []
+    for panel in raw_panels:
+        if not isinstance(panel, dict):
+            raise ExtensionError("each Locus panel must be an object")
+        identifier = panel.get("id")
+        if not isinstance(identifier, str) or not _NAME_RE.fullmatch(identifier) \
+                or any(item["id"] == identifier for item in panels):
+            raise ExtensionError("panel ids must be unique lowercase names")
+        label = f"panel {identifier}"
+        if type(panel.get("version")) is not int or panel.get("version") != 1:
+            raise ExtensionError(f"{label} requires supported bridge version 1")
+        capabilities = panel.get("capabilities", [])
+        if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) \
+                or any(value not in PLUGIN_PANEL_CAPABILITIES for value in capabilities):
+            raise ExtensionError(f"{label} requests unsupported capabilities")
+        tools = panel.get("tools", [])
+        if not isinstance(tools, list) or len(tools) > 32 or any(
+                not isinstance(name, str) or not _TOOL_NAME_RE.fullmatch(name) for name in tools):
+            raise ExtensionError(f"{label} tools must be a list of MCP tool names")
+        if tools and "plugin.tools" not in capabilities:
+            raise ExtensionError(f"{label} declares panel tools without plugin.tools")
+        schema = None
+        if "plugin.settings" in capabilities:
+            schema = _settings_schema(root, panel.get("settings_schema"), label)
+        elif panel.get("settings_schema") is not None:
+            raise ExtensionError(f"{label} declares settings without plugin.settings")
+        panels.append({
+            "id": identifier,
+            "title": _printable_title(panel.get("title"), label),
+            "entrypoint": _html_entrypoint(root, panel.get("entrypoint"), label),
+            "version": 1,
+            "capabilities": sorted(capabilities),
+            "tools": sorted(set(tools)),
+            "settings_schema": schema,
+        })
+    return panels
+
+
 def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate opt-in Locus screens without granting their requested capabilities."""
     if "locus" not in manifest:
@@ -262,22 +396,7 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
             raise ExtensionError(f"screen {identifier} declares duplicate capabilities")
         if "social.workspace" in capabilities and (identifier != "social-studio" or capabilities != ["social.workspace"]):
             raise ExtensionError("social.workspace requires the native social-studio screen with no additional capabilities")
-        entrypoint = screen.get("entrypoint")
-        if not isinstance(entrypoint, str) or not 1 <= len(entrypoint) <= 1024:
-            raise ExtensionError(f"screen {identifier} requires a local HTML entrypoint")
-        if entrypoint.startswith("./"):
-            entrypoint = entrypoint[2:]
-        if any(part in {"", ".", ".."} for part in entrypoint.split("/")) \
-                or any(character in entrypoint for character in "\\:%?#") \
-                or any(ord(character) < 32 or ord(character) == 127 for character in entrypoint):
-            raise ExtensionError(f"screen {identifier} entrypoint must stay inside the plugin")
-        candidate = root / entrypoint
-        if candidate.suffix.lower() not in {".html", ".htm"}:
-            raise ExtensionError(f"screen {identifier} entrypoint must be an HTML file")
-        if not _inside(root, candidate):
-            raise ExtensionError(f"screen {identifier} entrypoint escapes the plugin")
-        if not candidate.is_file():
-            raise ExtensionError(f"screen {identifier} entrypoint is missing: {entrypoint}")
+        entrypoint = _html_entrypoint(root, screen.get("entrypoint"), f"screen {identifier}")
         screens.append({
             "id": identifier,
             "title": title.strip(),
@@ -286,6 +405,49 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
             "capabilities": sorted(capabilities),
         })
     return screens
+
+
+def _plugin_icon(root: Path, interface: dict[str, Any]) -> str | None:
+    """Read small, inert artwork without fetching URLs or leaving the package.
+
+    Missing/invalid artwork falls back to the app's brand registry. SVG is
+    restricted to shapes and local paint references before native rendering.
+    """
+    svg_tags = {"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline",
+                "polygon", "defs", "linearGradient", "radialGradient", "stop",
+                "clipPath", "mask", "title", "desc", "use"}
+    for field in ("iconSmall", "iconLarge"):
+        try:
+            path = _component_path(root, interface.get(field))
+            if not path or not path.is_file() or path.stat().st_size > 256 * 1024:
+                continue
+            data = path.read_bytes()
+            if not data or len(data) > 256 * 1024:
+                continue
+            if path.suffix.lower() == ".svg":
+                if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+                    continue
+                tree = ET.fromstring(data)
+                if tree.tag.split("}")[-1] != "svg":
+                    continue
+                for element in tree.iter():
+                    if element.tag.split("}")[-1] not in svg_tags:
+                        raise ValueError("SVG contains non-shape content")
+                    for attribute, value in element.attrib.items():
+                        key = attribute.split("}")[-1].lower()
+                        if key.startswith("on") or key == "base" or "\\" in value \
+                                or (key == "href" and not value.startswith("#")):
+                            raise ValueError("SVG contains an external or active reference")
+                        local_paint_removed = re.sub(r"url\(\s*['\"]?#[\w.-]+['\"]?\s*\)", "", value, flags=re.I)
+                        if re.search(r"url\s*\(|@import|javascript:|expression\s*\(", local_paint_removed, re.I):
+                            raise ValueError("SVG contains external paint")
+            elif not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8\xff")
+                      or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")):
+                continue
+            return base64.b64encode(data).decode("ascii")
+        except (ExtensionError, OSError, ValueError, ET.ParseError):
+            continue
+    return None
 
 
 def parse_plugin(root: Path) -> dict[str, Any]:
@@ -302,6 +464,10 @@ def parse_plugin(root: Path) -> dict[str, Any]:
     interface = manifest.get("interface") if isinstance(manifest.get("interface"), dict) else {}
     author = manifest.get("author") if isinstance(manifest.get("author"), dict) else {}
     screens = _parse_plugin_screens(root, manifest)
+    panels = _parse_plugin_panels(root, manifest)
+    # Tools a panel declares are for that window only: Locus hides them from
+    # agents, so a model can never call, for example, an approval tool.
+    panel_tools = sorted({name for panel in panels for name in panel["tools"]})
 
     skills_root = _component_path(root, manifest.get("skills"), "./skills/")
     skills: list[dict[str, Any]] = []
@@ -334,6 +500,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
                 "plugin_data": "",
                 "enabled_global": True,
                 "enabled_workspaces": [],
+                "panel_tools": panel_tools,
             })
             mcp_servers.append(config)
 
@@ -366,6 +533,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
         "description": description,
         "display_name": str(interface.get("displayName") or name.replace("-", " ").title()),
         "short_description": str(interface.get("shortDescription") or description),
+        "icon_data": _plugin_icon(root, interface),
         "long_description": str(interface.get("longDescription") or description),
         "category": str(interface.get("category") or "Other"),
         "author": {
@@ -379,6 +547,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
         "skill_errors": skill_errors,
         "mcp_servers": mcp_servers,
         "screens": screens,
+        "panels": panels,
         "scripts": scripts,
         "unsupported": unsupported,
         "manifest": manifest,
@@ -769,6 +938,7 @@ class ExtensionManager:
             "oauth": True,
             "mcp_apps": False,
             "plugin_screens": True,
+            "plugin_panels": True,
             "hooks": False,
             "npm_marketplaces": False,
             "ssh_marketplaces": False,
@@ -1003,6 +1173,13 @@ class ExtensionManager:
         }
 
     def catalog(self, query: str = "", marketplace_id: str = "") -> list[dict[str, Any]]:
+        # A local source can gain plugins without a Git refresh. Read its
+        # current catalog when opening Marketplace, even outside that project.
+        for marketplace in list(self._state["marketplaces"]):
+            if marketplace.get("kind") == "local" and (
+                not marketplace_id or marketplace.get("id") == marketplace_id
+            ):
+                self.refresh_marketplace(str(marketplace["id"]))
         term = query.strip().lower()
         installed = {str(item.get("id")): item for item in self._state["plugins"]}
         out: list[dict[str, Any]] = []
@@ -1026,6 +1203,7 @@ class ExtensionManager:
                             "version": parsed["version"],
                             "author": parsed["author"].get("name") or None,
                             "screens": parsed["screens"],
+                            "icon_data": parsed["icon_data"],
                             "capabilities": self._trust_summary(parsed),
                         })
                     except ExtensionError as exc:
@@ -1839,6 +2017,57 @@ class ExtensionManager:
             raise ExtensionError("plugin not installed")
         return record
 
+    def _settings_panel(self, plugin_id: str) -> tuple[dict[str, Any], dict[str, Any], Path]:
+        record = self._plugin(plugin_id)
+        parsed = parse_plugin(Path(str(record["root"])))
+        panel = next((item for item in parsed["panels"] if item["settings_schema"]), None)
+        if panel is None:
+            raise ExtensionError("this plugin has no settings")
+        return record, panel["settings_schema"], \
+            self.plugin_data_root / _slug(plugin_id) / "locus-settings.json"
+
+    def plugin_settings(self, plugin_id: str) -> dict[str, Any]:
+        """The plugin's settings: stored values over schema defaults.
+
+        Stored in the plugin's data folder (``${PLUGIN_DATA}``) so the
+        plugin's own MCP server can read them; never shared with Locus.
+        """
+        _, schema, path = self._settings_panel(plugin_id)
+        stored: dict[str, Any] = {}
+        error = None
+        if path.is_file():
+            try:
+                stored = _read_json(path, MAX_SETTINGS_SCHEMA_BYTES)
+                _validate_settings(schema, stored)
+            except ExtensionError as exc:
+                stored, error = {}, f"Saved settings were invalid and were ignored: {exc}"
+        defaults = {name: field["default"] for name, field in schema["properties"].items()
+                    if "default" in field}
+        return {
+            "plugin_id": plugin_id, "schema": schema, "values": {**defaults, **stored},
+            "revision": hashlib.sha256(json.dumps(stored, sort_keys=True).encode()).hexdigest(),
+            "error": error,
+        }
+
+    def set_plugin_settings(
+        self, plugin_id: str, values: Any, *, expected_revision: str,
+    ) -> dict[str, Any]:
+        with self._guard:
+            current = self.plugin_settings(plugin_id)
+            if expected_revision != current["revision"]:
+                raise ExtensionError("settings changed elsewhere; reload and try again")
+            _, schema, path = self._settings_panel(plugin_id)
+            if not isinstance(values, dict):
+                raise ExtensionError("settings must be an object")
+            _validate_settings(schema, values)
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temporary = path.with_suffix(".tmp")
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(values, handle, sort_keys=True)
+            os.replace(temporary, path)
+        return self.plugin_settings(plugin_id)
+
     def _plugin_view(self, record: dict[str, Any]) -> dict[str, Any]:
         try:
             parsed = parse_plugin(Path(str(record["root"])))
@@ -1866,6 +2095,7 @@ class ExtensionManager:
                 "disabled_workspaces": list(record.get("disabled_workspaces") or []),
                 "update_available": False,
                 "screens": [],
+                "panels": [],
                 "error": str(exc),
             }
 
@@ -1888,7 +2118,7 @@ class ExtensionManager:
             key: parsed[key] for key in (
                 "name", "version", "description", "display_name", "short_description",
                 "long_description", "category", "homepage", "repository", "license",
-                "skills", "mcp_servers", "screens", "scripts", "unsupported",
+                "skills", "mcp_servers", "screens", "panels", "scripts", "unsupported", "icon_data",
             )
         }
         view["author"] = parsed["author"].get("name") or None
@@ -1899,6 +2129,10 @@ class ExtensionManager:
         return {
             "skills": len(parsed["skills"]),
             "screens": list(parsed["screens"]),
+            "panels": [
+                {key: panel[key] for key in ("id", "title", "capabilities", "tools")}
+                for panel in parsed["panels"]
+            ],
             "skill_scripts": list(parsed["scripts"]),
             "mcp_servers": [
                 {
@@ -1952,6 +2186,17 @@ class ExtensionManager:
                 changes.append(f"Changes screen entrypoint or bridge version for {identifier}")
         for identifier in sorted(old_screens.keys() - new_screens.keys()):
             changes.append(f"Removes screen {identifier}")
+        old_panels = {item["id"]: item for item in old.get("panels", [])}
+        for panel in parsed["panels"]:
+            previous_panel = old_panels.get(panel["id"])
+            if previous_panel is None:
+                changes.append(f"Adds window {panel['title']} ({panel['id']})")
+            elif (panel["capabilities"], panel["tools"], panel["entrypoint"]) != (
+                previous_panel["capabilities"], previous_panel["tools"], previous_panel["entrypoint"]
+            ):
+                changes.append(f"Changes capabilities, tools or entrypoint for window {panel['id']}")
+        for identifier in sorted(old_panels.keys() - {item["id"] for item in parsed["panels"]}):
+            changes.append(f"Removes window {identifier}")
         old_servers = {item["name"]: item for item in old["mcp_servers"]}
         for server in parsed["mcp_servers"]:
             if server["name"] not in old_servers:

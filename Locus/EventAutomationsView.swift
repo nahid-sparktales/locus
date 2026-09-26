@@ -555,7 +555,7 @@ struct ConfigureAgentView: View {
                     Spacer()
                     Menu {
                         ForEach(ConnectorKind.allCases) { kind in
-                            Button { connectionSheet = kind } label: { Label(kind.title, systemImage: kind.symbol) }
+                            Button { connectionSheet = kind } label: { Label { Text(kind.title) } icon: { ConnectorLogo(kind: kind, size: 18) } }
                         }
                     } label: { Label("Connect source", systemImage: "plus") }
                     .buttonStyle(.borderedProminent).accessibilityIdentifier("eventAutomations.addConnection")
@@ -566,7 +566,7 @@ struct ConfigureAgentView: View {
                     ForEach(ConnectorKind.allCases) { kind in
                         Button { connectionSheet = kind } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: kind.symbol).foregroundStyle(viewColors.signalDeep).frame(width: 26)
+                                ConnectorLogo(kind: kind).foregroundStyle(viewColors.signalDeep)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(kind.title).font(.locus(size: 11, weight: .semibold))
                                     Text(connectionDescription(kind)).font(.locus(size: 9)).foregroundStyle(viewColors.muted)
@@ -592,7 +592,7 @@ struct ConfigureAgentView: View {
     private func sourceRow(_ connection: ConnectorConnection) -> some View {
         let users = automation.triggers.filter { $0.connectionID == connection.id || $0.actionConnectionIDs.contains(connection.id) }
         return HStack(alignment: .top, spacing: 12) {
-            Image(systemName: connection.kind.symbol).font(.locus(size: 16))
+            ConnectorLogo(kind: connection.kind).font(.locus(size: 16))
                 .foregroundStyle(viewColors.signalDeep).frame(width: 30, height: 32)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -938,7 +938,7 @@ private struct ConnectorSetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Connect \(kind.title)", systemImage: kind.symbol)
+                Label { Text("Connect \(kind.title)") } icon: { ConnectorLogo(kind: kind, size: 26) }
                     .font(.locus(size: 15, weight: .bold))
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -1251,7 +1251,7 @@ private struct EventTriggerEditorView: View {
                     }
                     Menu {
                         ForEach(addableConnectorKinds) { kind in
-                            Button { connectionSheet = kind } label: { Label(kind.title, systemImage: kind.symbol) }
+                            Button { connectionSheet = kind } label: { Label { Text(kind.title) } icon: { ConnectorLogo(kind: kind, size: 18) } }
                                 .accessibilityIdentifier("eventTrigger.addSource.\(kind.rawValue)")
                         }
                     } label: {
