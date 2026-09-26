@@ -70,6 +70,16 @@ final class ScheduleModelTests: XCTestCase {
         XCTAssertNoBackendTraffic()
     }
 
+    func testScheduleCreationReturnsItsDurableIDForSourceLinking() async throws {
+        BackendStub.respond(toPath: "/api/schedules") { _ in Self.scheduleJSON(id: "source-assignment") }
+        let model = makeModel()
+        var draft = ScheduleEditorDraft()
+        draft.name = "Task"; draft.prompt = "Research"; draft.workspaceRoot = "/tmp"; draft.model = "llama3"
+        let id = await model.saveScheduleWithID(draft, creationID: "source-assignment")
+        XCTAssertEqual(id, "source-assignment")
+        XCTAssertEqual(model.scheduledTasks.first?.id, id)
+    }
+
     func testSavingSchedulePinsCapturedWorkspaceAndExecutionEnvironment() async throws {
         let profileID = UUID().uuidString
         for editing in [false, true] {

@@ -69,6 +69,15 @@ def get_extensions(service: ServiceDependency) -> dict[str, Any]:
     return _extension_snapshot(service)
 
 
+def jira_board_action(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from ..jira_bridge import jira_action
+
+    try:
+        return jira_action(service.core, body)
+    except (ExtensionError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 def get_extension_catalog(
     service: ServiceDependency,
     query: str = Query("", max_length=500),
@@ -532,6 +541,7 @@ def register_routes(router: APIRouter) -> None:
         ("/api/extensions/skills/enable", enable_extension_skill, ["POST"]),
         ("/api/extensions/skills/{skill_id:path}", remove_extension_skill, ["DELETE"]),
         ("/api/extensions/mcp", upsert_extension_mcp, ["POST"]),
+        ("/api/integrations/jira", jira_board_action, ["POST"]),
         (
             "/api/extensions/mcp/presets/materialize",
             materialize_extension_mcp_preset,

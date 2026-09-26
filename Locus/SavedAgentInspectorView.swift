@@ -401,7 +401,6 @@ private struct SavedAgentOverviewContent: View {
     @State private var readingResult: SavedAgentOverviewSnapshot.LatestResult?
     @State private var activeResultRequest: ResultRequest?
     @State private var choosingPicture = false
-    @State private var pictureError: String?
 
     private var profile: AgentProfile {
         agentTeams.agentProfiles.first { $0.id == initialProfile.id } ?? initialProfile
@@ -491,20 +490,10 @@ private struct SavedAgentOverviewContent: View {
         }
         .foregroundStyle(ink)
         .accessibilityIdentifier("savedAgent.overview")
-        .fileImporter(isPresented: $choosingPicture, allowedContentTypes: [.image]) { result in
-            do {
-                let url = try result.get()
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                guard size <= AgentAvatarImage.maximumSourceBytes else { throw AgentAvatarImage.AvatarError.tooLarge }
-                let data = try AgentAvatarImage.normalized(Data(contentsOf: url, options: .mappedIfSafe))
-                agentTeams.setAgentAvatar(data, profileID: profile.id)
-            } catch { pictureError = error.localizedDescription }
+        .locusSheet(isPresented: $choosingPicture) {
+            AgentPicturePicker(profile: profile, currentData: agentTeams.agentAvatarData[profile.id])
+                .id(profile.id)
         }
-        .alert("Couldn’t change the picture", isPresented: Binding(
-            get: { pictureError != nil }, set: { if !$0 { pictureError = nil } }
-        )) { Button("OK") { pictureError = nil } } message: { Text(pictureError ?? "") }
         .task(id: profile.id) {
             guard model.persistenceEnabled, !model.isUITesting else { return }
             await refresh()
@@ -895,9 +884,10 @@ private struct SavedAgentOverviewContent: View {
             sectionTitle("Connections", symbol: "point.3.connected.trianglepath.dotted")
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "cpu").foregroundStyle(secondary)
-                        .frame(width: 28, height: 28)
-                        .background(secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    ProviderLogo(name: snapshot.route.title,
+                                 url: accounts.providerAccounts.first { $0.id == snapshot.route.accountID }?.resolvedBaseURL,
+                                 presetID: accounts.providerAccounts.first { $0.id == snapshot.route.accountID }?.kind.rawValue,
+                                 size: 28)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(snapshot.route.title).font(.locus(size: 13, weight: .medium))

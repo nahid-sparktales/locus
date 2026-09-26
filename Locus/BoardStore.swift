@@ -221,6 +221,43 @@ final class BoardStore: ObservableObject {
         }
     }
 
+    /// Pulling Jira is atomic and never overwrites a conflicting local edit.
+    /// Agent tags, task progress, comments and local columns stay owned by Locus.
+    func importJira(_ issues: [JiraIssueLink]) throws {
+        try commit(by: .user) { state in
+            for issue in issues {
+                let title = try Self.validatedTitle(issue.remoteTitle)
+                let details = try Self.validatedDetails(issue.remoteDetails)
+                if let index = state.cards.firstIndex(where: { $0.jira?.identity == issue.identity }),
+                   let previous = state.cards[index].jira {
+                    var card = state.cards[index]
+                    let titleConflict = card.title != previous.remoteTitle && title != previous.remoteTitle && card.title != title
+                    let detailsConflict = card.details != previous.remoteDetails && details != previous.remoteDetails && card.details != details
+                    guard !titleConflict && !detailsConflict else {
+                        throw JiraBoardError.message("Conflicting edits on \(issue.key). Your local changes are saved. Compare the card with Jira, then make the conflicting fields match before syncing again.")
+                    }
+                    if card.title == previous.remoteTitle { card.title = title }
+                    if card.details == previous.remoteDetails { card.details = details }
+                    card.jira = issue
+                    if card != state.cards[index] {
+                        Self.record(["Synced \(issue.key) from Jira"], by: .user, on: &card)
+                        state.cards[index] = card
+                    }
+                } else {
+                    guard state.cards.count < Self.maximumCards else { throw BoardStoreError.boardFull }
+                    guard BoardFile.cardNumbers.contains(state.nextNumber) else { throw BoardStoreError.cardNumbersExhausted }
+                    let proposed = issue.statusCategory == "done" ? "done" : issue.statusCategory == "indeterminate" ? "in-progress" : "todo"
+                    let column = state.columns.first { $0.id == proposed } ?? state.columns[0]
+                    let now = Self.timestamp()
+                    let card = BoardCard(id: UUID(), number: state.nextNumber, title: title, details: details,
+                        columnID: column.id, priority: .none, labels: [], assignee: nil, createdAt: now, updatedAt: now,
+                        createdBy: .user, timeline: [], jira: issue)
+                    state.nextNumber += 1; state.cards.append(card)
+                }
+            }
+        }
+    }
+
     /// Only non-nil arguments change. `assignee` is doubly optional: `nil`
     /// leaves it alone, while `.some(nil)` or `""` clears it.
     func updateCard(
@@ -375,6 +412,9 @@ final class BoardStore: ObservableObject {
     func chatPrompt(for card: BoardCard) -> String {
         var parts = ["Work on board card \(key(for: card)): \(card.title)"]
         if !card.details.isEmpty { parts.append(card.details) }
+        if let jira = card.jira {
+            parts.append("Jira source: \(jira.key) (\(jira.status)). \(jira.url?.absoluteString ?? "")")
+        }
         parts.append("When you make progress, update the card with board_update_card / board_comment.")
         return parts.joined(separator: "\n\n")
     }

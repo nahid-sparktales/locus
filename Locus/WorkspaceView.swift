@@ -2060,7 +2060,7 @@ struct ActivityCenterView: View {
 
 /// The message reader is deliberately independent from chat navigation. Its task
 /// is cancelled on selection changes, and a failed read never acknowledges mail.
-private struct ActivityResultReader: View {
+struct ActivityResultReader: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var activity: ActivityCenterModel
     @Environment(\.locusOceanTheme) private var ocean
@@ -2070,6 +2070,12 @@ private struct ActivityResultReader: View {
     let title: String
     let agentName: String
     let onBack: () -> Void
+    @ObservedObject private var ledger = AgentWorkLedger.shared
+    @State private var website: URL?
+    @State private var revision = ""
+    @State private var revising = false
+    @State private var revisionError: String?
+    @State private var revisionRunID: String?
     @State private var output: ChatBlock?
     @State private var loading = true
     @State private var failed = false
@@ -2100,6 +2106,47 @@ private struct ActivityResultReader: View {
             .font(.locus(size: 11)).buttonStyle(ActivityActionButtonStyle())
             .padding(.horizontal, 20).padding(.vertical, 10)
             Divider().overlay(colors.line)
+            GeometryReader { geometry in
+                if hasPreview && geometry.size.width < 780 {
+                    previewPane
+                } else {
+                    HSplitView {
+                        resultContent.frame(minWidth: 300)
+                        if hasPreview { previewPane.frame(minWidth: 320, idealWidth: geometry.size.width * 0.55) }
+                    }
+                }
+            }
+            revisionComposer
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(colors.white.opacity(0.45))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("activity.result.reader")
+        .environment(\.openURL, OpenURLAction { url in
+            if ["https", "http"].contains(url.scheme ?? "") {
+                preview = nil; website = url; return .handled
+            }
+            return .systemAction
+        })
+        .onDisappear { previewTask?.cancel() }
+        .task(id: loadAttempt) {
+            loading = true; failed = false; output = nil
+            do {
+                let result = try await model.loadActivityOutput(run)
+                guard !Task.isCancelled else { return }
+                output = result
+                loading = false
+                activity.markActivitySeen(run)
+            } catch {
+                guard !Task.isCancelled else { return }
+                loading = false; failed = true
+            }
+        }
+    }
+
+    private var hasPreview: Bool { preview != nil || website != nil }
+
+    private var resultContent: some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -2143,25 +2190,71 @@ private struct ActivityResultReader: View {
                 }
                 .padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }.accessibilityIdentifier("activity.result.content")
+    }
+
+    private var previewPane: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label(preview?.title ?? "Website preview", systemImage: "doc.richtext")
+                    .font(.locus(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button("Close preview") { preview = nil; website = nil }.buttonStyle(.locus())
+                    .accessibilityIdentifier("activity.result.closePreview")
+            }.padding(12).background(colors.panel)
+            Divider().overlay(colors.line)
+            if let website { ActivityWebsitePreview(url: website).id(website).environment(\.openURL, OpenURLAction { .systemAction($0) }) }
+            else if let preview { DocumentPreviewView(request: preview).id(preview.url) }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(colors.surfaceCanvas)
+    }
+
+    @ViewBuilder private var revisionComposer: some View {
+        if run.state == "completed" {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Review with \(agentName)", systemImage: "bubble.left.and.text.bubble.right")
+                        .font(.locus(size: 12, weight: .semibold))
+                    Spacer()
+                    if let record = ledger.records.last(where: { $0.runID == run.id }) {
+                        Button(record.reviewed ? "Reviewed" : "Mark reviewed") {
+                            do { try ledger.markReviewed(runID: run.id) }
+                            catch { revisionError = error.localizedDescription }
+                        }.buttonStyle(.locus()).disabled(record.reviewed || revising)
+                            .accessibilityIdentifier("activity.result.reviewed")
+                    }
+                }
+                if let revisionRunID {
+                    HStack {
+                        Label("Revision started. You can keep reviewing this result.", systemImage: "checkmark.circle")
+                            .font(.locus(size: 11)).foregroundStyle(colors.signalDeep)
+                        Spacer()
+                        Button("View progress") {
+                            activity.openActivityCenter(focus: .run(revisionRunID))
+                        }.buttonStyle(.locus())
+                    }
+                } else {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        TextField("Describe what you’d like changed…", text: $revision, axis: .vertical)
+                            .textFieldStyle(.plain).lineLimit(2...4).font(.locus(size: 12))
+                            .padding(10).background(colors.surfaceCard, in: RoundedRectangle(cornerRadius: 10))
+                            .accessibilityLabel("Requested changes").accessibilityIdentifier("activity.result.revision")
+                        if revising { ProgressView().controlSize(.small) }
+                        Button("Request changes") { requestRevision() }
+                            .buttonStyle(.locus(.primary))
+                            .disabled(revising || revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("activity.result.requestChanges")
+                    }.disabled(revising)
+                }
+                if let revisionError { Text(revisionError).font(.locus(size: 11)).foregroundStyle(colors.warning) }
+            }.padding(14).background(colors.panel)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(colors.white.opacity(0.45))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("activity.result.reader")
-        .locusSheet(item: $preview) { DocumentPreviewSheet(request: $0).appFeatureEnvironment(from: model) }
-        .onDisappear { previewTask?.cancel() }
-        .task(id: loadAttempt) {
-            loading = true; failed = false; output = nil
-            do {
-                let result = try await model.loadActivityOutput(run)
-                guard !Task.isCancelled else { return }
-                output = result
-                loading = false
-                activity.markActivitySeen(run)
-            } catch {
-                guard !Task.isCancelled else { return }
-                loading = false; failed = true
-            }
+    }
+
+    private func requestRevision() {
+        guard !revising else { return }; revising = true; revisionError = nil
+        Task { @MainActor in
+            defer { revising = false }
+            do { revisionRunID = try await model.requestActivityRevision(run, instructions: revision); revision = "" }
+            catch { revisionError = error.localizedDescription }
         }
     }
 
@@ -2199,7 +2292,7 @@ private struct ActivityResultReader: View {
             previewError = "This file is no longer available in the task’s workspace."
             return
         }
-        previewError = nil
+        previewError = nil; website = nil
         preview = DocumentPreviewRequest(url: url, title: url.lastPathComponent,
             reference: reference.documentReference ?? DocumentReference(workspace: workspace, path: reference.relativePath))
     }
@@ -2212,9 +2305,11 @@ private struct ActivityResultReader: View {
     private func previewSavedOutput(_ item: LibraryOutput, version: OutputVersion) async {
         previewError = nil
         if item.isWebsite, let url = URL(string: item.target), ["https", "http"].contains(url.scheme ?? "") {
-            NSWorkspace.shared.open(url)
+            guard !Task.isCancelled else { return }
+            preview = nil; website = url
         } else if let url = await model.outputsLibrary.store.versionURL(item, version: version) {
             guard !Task.isCancelled else { return }
+            website = nil
             preview = DocumentPreviewRequest(url: url, title: item.title)
         } else if !Task.isCancelled {
             previewError = version.unavailableReason ?? "This saved file is no longer available."
@@ -2980,7 +3075,14 @@ private struct ModelPickerPopover: View {
 
     private func routeSection(_ section: ModelPickerSection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            sectionLabel(agentTeams.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            HStack(spacing: 7) {
+                if let account = section.account {
+                    ProviderLogo(kind: account.kind, name: account.displayName, url: account.resolvedBaseURL, size: 20)
+                } else {
+                    ProviderLogo(name: "Ollama", size: 20)
+                }
+                sectionLabel(agentTeams.teamModeEnabled ? "SOLO · \(section.title)" : section.title.uppercased())
+            }
             if let message = section.emptyMessage {
                 Text(message)
                     .font(.locus(size: 9))

@@ -2,8 +2,9 @@
 
 ## Current agent workflow
 
-Select an agent or ship to open **Overview**, the same agent page used in the main
-workspace. It includes settings, chats, automations, connections, and recent results.
+Select an agent or ship on the map to follow it with a compact chat panel.
+In Captain’s Quarters, **Overview** is the same agent page used in the main
+workspace, with settings, chats, automations, connections, and recent results.
 **Chat** opens its conversation with the native tools alongside it. Use **Show tools**
 or **Hide tools** to control the split view without leaving the chat.
 **New chat**, **Crew Chat**, and agent editing remain available inside Agent World.
@@ -13,8 +14,8 @@ shared agent overview, chat, and workspace tools. Calendar and Task board have
 direct navigation and stay beside chat when a conversation is active. The crew
 overview lists all agents as cards, even before one is selected. Accounts, Plugins, Connections, automations, Library, and
 Identity Vault use the existing native controls. The task board is Locus’s shared
-project board; it is not an Atlassian Jira connection. Board cards can open a new,
-profile-bound chat in the world with an editable draft, without sending it.
+project board. Board cards can open a profile-bound chat with an editable draft,
+or use **Assign work** to explicitly start or schedule an agent task.
 
 Captain’s Quarters has a full ship-deck backdrop and defaults to warm wood,
 cream, and brass. **Settings → Captain’s Quarters appearance** keeps **Ocean blue**
@@ -27,13 +28,64 @@ controls. Both event and board editors include an **@ Tag an agent** picker;
 tags store stable agent IDs and show current profile names. Tags identify agents;
 they do not automatically dispatch work or send calendar invitations.
 
-Click the camera on an agent’s Overview to choose a profile picture. Right-click
-the picture to remove it. Pictures appear in the regular sidebar, agent picker,
+Click the camera on an agent’s Overview to choose from 10 original portraits and
+5 One Piece portraits (Luffy, Zoro, Nami, Chopper, and Law), or upload your own.
+Preview a choice and select **Use picture** to save it; Cancel keeps the current
+picture. Choose **Use initials** or right-click the picture to remove it.
+The gallery follows the current world or Captain's Quarters theme.
+Artwork paths and generation prompts are recorded in `AgentPortraits.json`.
+Pictures appear in the regular sidebar, agent picker,
 overview, and world crew list. They are cropped locally to 256px thumbnails,
 persisted separately from execution profiles, and excluded from plugin snapshots.
 
 The native **Activity Center** shows live tasks, approvals, results, refresh errors,
 and recovery actions. The snail communicator opens that same Activity Center.
+Completed work opens a result reader with saved file and website previews. Wide
+readers keep the answer and preview side by side; compact readers keep the revision
+composer visible below the preview. **Request changes** sends an explicit follow-up
+to the original saved agent and conversation, using its current permissions. It does
+not start a new unrelated chat. **Mark reviewed** moves a linked board task to Done.
+
+### Assignments from the board and calendar
+
+Open a card or a saved calendar event, choose **Assign work**, select an agent,
+review its instructions, then choose **Start now** or **Schedule**. Tags preselect an
+agent only when exactly one tagged profile is available. Tags alone never dispatch
+work. Scheduling uses Locus’s existing one-time scheduler and requires Locus to be
+running. Scheduled assignments appear alongside calendar events in their project.
+The assignment panel shows progress, schedule pause/resume controls, and the saved
+result. Completed board assignments move to Review; explicit review moves them to
+Done. Custom board columns and manually completed cards are preserved.
+
+Assignments are saved under `Agent Work/assignments.json` in the edition’s application
+support directory. Run and schedule IDs are recorded before submission. Restoring
+assignments never dispatches work. Unconfirmed submissions direct the user to Activity
+Center, and reconciliation uses exact run and project identity to avoid duplicate work.
+Only the latest assignment for a card changes its board progress.
+
+### Jira Cloud
+
+Use **Task board → Jira → Connect Atlassian** to sign in through the official
+[Atlassian Rovo connection](https://developer.atlassian.com/cloud/rovo-mcp/guides/supported-tools/).
+Locus uses its existing OAuth and Keychain flow; it does not collect a Jira API token.
+Choose a site and a JQL filter, then **Sync issues to board**. Search results are
+paginated and committed together. Existing cards stay on the board when they leave
+the filter. A failed page or conflicting edit leaves the board unchanged.
+
+A linked card can **Pull latest**, **Publish changes**, or select an available **Jira
+status**. Publishing updates the title and edited description only; edited descriptions
+are sent as plain text. Unedited rich descriptions remain intact in Jira. Agent tags,
+comments and local task columns stay local. The Jira status is shown separately, so
+an agent completing work does not automatically close a Jira issue. Pulling merges
+independent edits and flags conflicting fields for comparison. Publishing reads Jira
+first to detect conflicting changes and reads it again to verify the result; concurrent
+remote edits during the write are still subject to Jira’s own API behavior.
+
+This connector targets Jira Cloud with the flat v2 tool catalog. Available actions
+still depend on the connected account, organization permissions, and enabled tools.
+Live sign-in and a real Jira round trip require a connected Atlassian account; automated
+tests cover the adapter, pagination, persistence, conflicts and write confirmation with
+local fixtures.
 
 When work starts, ships reserve the nearest free island by navigable sailing
 distance. Existing reservations survive queued and attention states, and release

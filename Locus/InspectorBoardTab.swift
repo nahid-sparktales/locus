@@ -26,6 +26,7 @@ struct InspectorBoardTab: View {
     @State private var columnTitleDraft = ""
     @State private var actionError: String?
     @State private var openingChat = false
+    @State private var showingJira = false
 
     static let columnWidth: CGFloat = 232
     private static let quickAddAnchor = "board.quickAdd.anchor"
@@ -63,6 +64,7 @@ struct InspectorBoardTab: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
+        .locusSheet(isPresented: $showingJira) { JiraBoardSheet(store: store) }
         .locusSheet(item: $openCard) { selection in
             BoardCardDetailSheet(store: store, cardID: selection.id, onWorkInChat: workInChat)
         }
@@ -126,6 +128,9 @@ struct InspectorBoardTab: View {
             if store.isAvailable {
                 searchField
             }
+            Button("Jira") { showingJira = true }
+                .buttonStyle(.locus()).disabled(!store.isAvailable)
+                .help("Connect and sync Jira issues").accessibilityIdentifier("board.jira")
             if openingChat {
                 ProgressView().controlSize(.small)
                     .help("Opening a new chat for this card")

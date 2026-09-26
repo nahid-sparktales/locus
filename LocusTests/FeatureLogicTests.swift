@@ -2184,7 +2184,7 @@ final class FeatureLogicTests: XCTestCase {
     func testProviderBrandIdentityResolvesKnownAndCustomProviders() {
         XCTAssertEqual(
             ProviderBrandIdentity.resolve(name: "Claude Max").id,
-            .anthropic
+            .claude
         )
         XCTAssertEqual(
             ProviderBrandIdentity.resolve(

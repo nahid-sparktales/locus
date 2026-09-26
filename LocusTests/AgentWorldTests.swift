@@ -257,6 +257,21 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertThrowsError(try AgentAvatarImage.normalized(Data(count: AgentAvatarImage.maximumSourceBytes + 1)))
     }
 
+    func testBundledAgentPortraitsLoadAndFitTheAvatarStore() throws {
+        let portraits = AgentPortraitPreset.allCases
+        XCTAssertEqual(portraits.filter { !$0.isOnePiece }.count, 10)
+        XCTAssertEqual(portraits.filter(\.isOnePiece).count, 5)
+        XCTAssertEqual(Set(portraits.map(\.assetName)).count, 15)
+        for portrait in portraits {
+            let data = try portrait.imageData()
+            XCTAssertLessThanOrEqual(data.count, AgentAvatarImage.maximumStoredBytes, portrait.name)
+            let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil), portrait.name)
+            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil), portrait.name)
+            XCTAssertEqual(image.width, 256, portrait.name)
+            XCTAssertEqual(image.height, 256, portrait.name)
+        }
+    }
+
     func testAgentPicturesPersistSeparatelyAndAreRemovedWithAgent() throws {
         let suite = "AgentWorldAvatarTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

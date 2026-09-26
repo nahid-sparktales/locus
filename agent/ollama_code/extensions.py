@@ -7,6 +7,7 @@ memory and never reach this module's JSON files.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -288,6 +290,49 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
     return screens
 
 
+def _plugin_icon(root: Path, interface: dict[str, Any]) -> str | None:
+    """Read small, inert artwork without fetching URLs or leaving the package.
+
+    Missing/invalid artwork falls back to the app's brand registry. SVG is
+    restricted to shapes and local paint references before native rendering.
+    """
+    svg_tags = {"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline",
+                "polygon", "defs", "linearGradient", "radialGradient", "stop",
+                "clipPath", "mask", "title", "desc", "use"}
+    for field in ("iconSmall", "iconLarge"):
+        try:
+            path = _component_path(root, interface.get(field))
+            if not path or not path.is_file() or path.stat().st_size > 256 * 1024:
+                continue
+            data = path.read_bytes()
+            if not data or len(data) > 256 * 1024:
+                continue
+            if path.suffix.lower() == ".svg":
+                if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+                    continue
+                tree = ET.fromstring(data)
+                if tree.tag.split("}")[-1] != "svg":
+                    continue
+                for element in tree.iter():
+                    if element.tag.split("}")[-1] not in svg_tags:
+                        raise ValueError("SVG contains non-shape content")
+                    for attribute, value in element.attrib.items():
+                        key = attribute.split("}")[-1].lower()
+                        if key.startswith("on") or key == "base" or "\\" in value \
+                                or (key == "href" and not value.startswith("#")):
+                            raise ValueError("SVG contains an external or active reference")
+                        local_paint_removed = re.sub(r"url\(\s*['\"]?#[\w.-]+['\"]?\s*\)", "", value, flags=re.I)
+                        if re.search(r"url\s*\(|@import|javascript:|expression\s*\(", local_paint_removed, re.I):
+                            raise ValueError("SVG contains external paint")
+            elif not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8\xff")
+                      or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")):
+                continue
+            return base64.b64encode(data).decode("ascii")
+        except (ExtensionError, OSError, ValueError, ET.ParseError):
+            continue
+    return None
+
+
 def parse_plugin(root: Path) -> dict[str, Any]:
     root = root.resolve()
     manifest_path = root / ".codex-plugin/plugin.json"
@@ -366,6 +411,7 @@ def parse_plugin(root: Path) -> dict[str, Any]:
         "description": description,
         "display_name": str(interface.get("displayName") or name.replace("-", " ").title()),
         "short_description": str(interface.get("shortDescription") or description),
+        "icon_data": _plugin_icon(root, interface),
         "long_description": str(interface.get("longDescription") or description),
         "category": str(interface.get("category") or "Other"),
         "author": {
@@ -1003,6 +1049,13 @@ class ExtensionManager:
         }
 
     def catalog(self, query: str = "", marketplace_id: str = "") -> list[dict[str, Any]]:
+        # A local source can gain plugins without a Git refresh. Read its
+        # current catalog when opening Marketplace, even outside that project.
+        for marketplace in list(self._state["marketplaces"]):
+            if marketplace.get("kind") == "local" and (
+                not marketplace_id or marketplace.get("id") == marketplace_id
+            ):
+                self.refresh_marketplace(str(marketplace["id"]))
         term = query.strip().lower()
         installed = {str(item.get("id")): item for item in self._state["plugins"]}
         out: list[dict[str, Any]] = []
@@ -1026,6 +1079,7 @@ class ExtensionManager:
                             "version": parsed["version"],
                             "author": parsed["author"].get("name") or None,
                             "screens": parsed["screens"],
+                            "icon_data": parsed["icon_data"],
                             "capabilities": self._trust_summary(parsed),
                         })
                     except ExtensionError as exc:
@@ -1888,7 +1942,7 @@ class ExtensionManager:
             key: parsed[key] for key in (
                 "name", "version", "description", "display_name", "short_description",
                 "long_description", "category", "homepage", "repository", "license",
-                "skills", "mcp_servers", "screens", "scripts", "unsupported",
+                "skills", "mcp_servers", "screens", "scripts", "unsupported", "icon_data",
             )
         }
         view["author"] = parsed["author"].get("name") or None

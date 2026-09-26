@@ -102,6 +102,11 @@ struct BoardCardDetailSheet: View {
                         properties(card)
                         AgentMentionPicker(selectedIDs: $edits.draft.agentIDs)
                             .onChange(of: edits.draft.agentIDs) { _, _ in save() }
+                        AgentWorkPanel(source: .board(card, store: store), prepareAssignment: {
+                            guard save(), let current = self.card else { return nil }
+                            return .board(current, store: store)
+                        })
+                        JiraCardPanel(store: store, cardID: card.id, beforeAction: save, hasPendingEdits: edits.hasFieldChanges)
                         descriptionSection
                         if let errorMessage {
                             Text(errorMessage)

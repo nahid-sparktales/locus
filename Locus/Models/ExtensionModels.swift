@@ -136,6 +136,7 @@ struct ExtensionPlugin: Codable, Identifiable, Hashable {
     let error: String?
     var root: String? = nil
     var screens: [ExtensionPluginScreen]? = nil
+    var iconData: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, version, author, digest, skills, scripts, unsupported, error, root, screens
@@ -146,6 +147,7 @@ struct ExtensionPlugin: Codable, Identifiable, Hashable {
         case previousVersions = "previous_versions"
         case mcpServers = "mcp_servers"
         case updateAvailable = "update_available"
+        case iconData = "icon_data"
     }
 }
 
@@ -449,12 +451,14 @@ struct ExtensionCatalogEntry: Codable, Identifiable, Hashable {
     let version: String?
     let author: String?
     let error: String?
+    var iconData: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, category, available, installed, version, author, error
         case displayName = "display_name"
         case marketplaceID = "marketplace_id"
         case installedVersion = "installed_version"
+        case iconData = "icon_data"
     }
 }
 
@@ -499,10 +503,12 @@ struct PluginTrustDescription: Codable, Hashable {
     let description: String?
     let version: String?
     let author: String?
+    var iconData: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, description, version, author
         case displayName = "display_name"
+        case iconData = "icon_data"
     }
 }
 

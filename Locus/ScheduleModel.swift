@@ -121,7 +121,11 @@ final class ScheduleModel: ObservableObject {
     }
 
     func saveSchedule(_ draft: ScheduleEditorDraft) async -> Bool {
-        guard let backend else { return false }
+        await saveScheduleWithID(draft) != nil
+    }
+
+    func saveScheduleWithID(_ draft: ScheduleEditorDraft, creationID: String? = nil) async -> String? {
+        guard let backend else { return nil }
         var workflow = draft.workflow
         if workflow.steps.count == 1,
            workflow.steps[0].type == .agent,
@@ -132,11 +136,11 @@ final class ScheduleModel: ObservableObject {
         }
         guard let rule = encodedJSONObject(draft.rule()) else {
             toastHandler("The schedule rule could not be saved")
-            return false
+            return nil
         }
         if let issue = draftIssue(draft) {
             toastHandler(issue)
-            return false
+            return nil
         }
         var body: [String: Any] = [
             "name": draft.name,
@@ -160,7 +164,10 @@ final class ScheduleModel: ObservableObject {
         if draft.provider != "ollama" {
             body["provider_account_id"] = draft.providerAccountID ?? ""
         }
-        if draft.id == nil { body["enabled"] = true }
+        if draft.id == nil {
+            body["enabled"] = true
+            if let creationID { body["id"] = creationID }
+        }
         if draft.id == nil, let profileID = draft.agentProfileID { body["agent_profile_id"] = profileID }
         isSavingSchedule = true
         defer { isSavingSchedule = false }
@@ -186,10 +193,10 @@ final class ScheduleModel: ObservableObject {
             // session list to show it.
             await refreshMetadata()
             toastHandler(draft.id == nil ? "Agent created" : "Agent updated")
-            return true
+            return saved.id
         } catch {
             toastHandler("Could not save schedule: \(error.localizedDescription)")
-            return false
+            return nil
         }
     }
 

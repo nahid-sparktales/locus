@@ -1308,6 +1308,9 @@ final class AppModel: ObservableObject {
         )
         configureTaskCapsules()
         configureAgentWorld()
+        activity.runsDidRefresh = { [weak self] runs in
+            AgentWorkLedger.shared.reconcile(runs: runs, schedules: self?.schedule.scheduledTasks ?? [])
+        }
         agentTeamsModel.profilesChanged = { [weak self] in
             guard let self else { return }
             self.agentCrewChat.refresh()

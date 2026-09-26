@@ -775,6 +775,7 @@ class MCPManager:
         *,
         media_receiver: Callable[[list[dict[str, Any]]], None] | None = None,
         invocation_context: dict[str, str] | None = None,
+        output_limit: int = MAX_OUTPUT,
     ) -> str:
         if self._closed:
             return "Error: MCP runtime is closed."
@@ -782,7 +783,8 @@ class MCPManager:
         media: list[dict[str, Any]] = []
         context = {**(self.context_provider() or {}), **(invocation_context or {})}
         future = asyncio.run_coroutine_threadsafe(
-            self._call_tool(server_id, tool_name, arguments, media, context), self._loop
+            self._call_tool(server_id, tool_name, arguments, media, context,
+                            output_limit=max(1, min(output_limit, 1_000_000))), self._loop
         )
         record = self._clients.get(server_id)
         timeout = float((record or {}).get("server", {}).get("tool_timeout_sec") or 60) + 5
@@ -916,6 +918,7 @@ class MCPManager:
         self, server_id: str, tool_name: str, arguments: dict[str, Any],
         media: list[dict[str, Any]] | None = None,
         context: dict[str, str] | None = None,
+        *, output_limit: int = MAX_OUTPUT,
     ) -> str:
         record = self._clients.get(server_id)
         if record is None:
@@ -971,7 +974,7 @@ class MCPManager:
             except Exception as second:
                 return f"Error: MCP tool failed after reconnect: {self._server_error_text(server_id, second)}"
         self._register_resource_links(server_id, tool_name, result, context)
-        return self._format_result(result, media)
+        return self._format_result(result, media, output_limit=output_limit)
 
     async def _tool_progress(
         self,
@@ -1102,7 +1105,7 @@ class MCPManager:
         )
 
     @staticmethod
-    def _format_result(result: Any, media: list[dict[str, Any]] | None = None) -> str:
+    def _format_result(result: Any, media: list[dict[str, Any]] | None = None, *, output_limit: int = MAX_OUTPUT) -> str:
         from .mcp_media import normalize_mcp_media
 
         images, omissions = normalize_mcp_media(list(getattr(result, "content", []) or []))
@@ -1135,7 +1138,7 @@ class MCPManager:
         text = "\n\n".join(chunk for chunk in chunks if chunk).strip() or "(empty MCP result)"
         if bool(getattr(result, "is_error", False)) and not text.startswith("Error"):
             text = "Error: " + text
-        return _truncate(text, MAX_OUTPUT)
+        return _truncate(text, output_limit)
 
     def _register_resource_links(
         self, server_id: str, tool_name: str, result: Any, context: dict[str, str] | None = None,

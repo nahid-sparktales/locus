@@ -330,6 +330,7 @@ private struct ExtensionsSettingsView: View {
                 ForEach(extensionsModel.extensions.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
+                            PluginLogo(name: plugin.name, displayName: plugin.displayName, iconData: plugin.iconData)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(plugin.displayName ?? plugin.name)
                                     .font(.locus(size: 12, weight: .semibold))
@@ -488,9 +489,7 @@ private struct ExtensionsSettingsView: View {
 
                     ForEach(extensionsModel.extensionCatalog) { entry in
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "shippingbox")
-                                .frame(width: 22, height: 22)
-                                .foregroundStyle(viewColors.muted)
+                            PluginLogo(name: entry.name, displayName: entry.displayName, iconData: entry.iconData)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.displayName ?? entry.name)
                                     .font(.locus(size: 11, weight: .semibold))
@@ -612,6 +611,7 @@ private struct ExtensionsSettingsView: View {
                                     name: server.name,
                                     url: server.url,
                                     presetID: server.presetID,
+                                    pluginID: server.pluginID,
                                     size: 30
                                 )
                                 .overlay(alignment: .bottomTrailing) {
@@ -967,8 +967,12 @@ private struct PluginTrustReviewView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(item.entry.installed ? "Review plugin update" : "Review plugin")
                 .font(.locus(size: 16, weight: .bold))
-            Text(item.trust.plugin.displayName ?? item.trust.plugin.name)
-                .font(.locus(size: 12, weight: .semibold))
+            HStack(spacing: 10) {
+                PluginLogo(name: item.trust.plugin.name, displayName: item.trust.plugin.displayName,
+                           iconData: item.trust.plugin.iconData, size: 40)
+                Text(item.trust.plugin.displayName ?? item.trust.plugin.name)
+                    .font(.locus(size: 12, weight: .semibold))
+            }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow { Text("Publisher"); Text(item.trust.plugin.author ?? "Not provided") }
                 GridRow {
@@ -1150,6 +1154,7 @@ private struct MCPEnableReviewView: View {
                     name: server.name,
                     url: server.url,
                     presetID: server.presetID,
+                    pluginID: server.pluginID,
                     size: 34
                 )
                 Label("Connection verified", systemImage: "checkmark.shield.fill")

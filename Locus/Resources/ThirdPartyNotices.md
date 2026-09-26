@@ -200,3 +200,18 @@ under `AgentRuntime/source/ollama_code/builtin_skills/agent-dispatcher/`.
 Ollama, Hugging Face services, hosted models, and model weights are not
 distributed with Locus. Locus only connects to services configured by the
 user.
+# Provider and plugin identification artwork
+
+Provider marks are bundled for offline identification of their services. All
+third-party trademarks belong to their respective owners; inclusion does not
+imply endorsement. Original proportions and colours are retained on neutral
+surfaces. Exact source URLs, asset paths and checksums are recorded in
+`Docs/BrandAssets.json` in the source distribution.
+
+Claude, Sentry and Jira vector marks are distributed by
+[Simple Icons](https://github.com/simple-icons/simple-icons) under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+Other provider artwork comes from the providers' own websites and brand assets.
+Agent World, LangGraph Workflows, and Social Studio use original Locus artwork,
+licensed under Apache-2.0. The workflow and studio marks identify Locus plugins,
+not the external LangGraph framework or OpenPost service.
