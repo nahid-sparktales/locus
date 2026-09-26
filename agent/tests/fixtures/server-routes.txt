@@ -181,6 +181,9 @@ POST /api/extensions/plugins/install
 POST /api/extensions/plugins/enable
 POST /api/extensions/plugins/update
 POST /api/extensions/plugins/rollback
+GET /api/extensions/plugins/settings
+POST /api/extensions/plugins/settings
+POST /api/extensions/plugins/panel-tool
 DELETE /api/extensions/plugins/{plugin_id:path}
 POST /api/extensions/skills/import
 POST /api/extensions/skills/enable

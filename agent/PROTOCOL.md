@@ -1705,3 +1705,50 @@ Timeouts also release pending native-tool and approval waits. Temporary
 identity, configuration, and tool policies are restored afterward. Agent
 World conversations use this path with ordinary admission, event streaming,
 permissions, cancellation, and persistence.
+
+## Plugin panels
+
+`GET /api/extensions` returns `capabilities.plugin_panels` when plugins may
+declare windows. A plugin declares up to four under `locus.panels`, each with
+`id`, `title`, a local HTML `entrypoint`, `version` 1, `capabilities`, the
+`tools` only that window may call, and for `plugin.settings` a flat JSON
+Schema (`settings_schema`). Panels appear in the plugin view, trust summary
+and capability diff, so adding a window or a capability needs a new review.
+Locus opens each panel in its own window (Agent World's Work menu, or the
+plugin's row in Extensions), with the same local-only web view rules as
+screens.
+
+- `GET /api/extensions/plugins/settings?plugin_id=…` returns `schema`,
+  `values` (stored values over defaults), `revision` and `error`.
+  `POST /api/extensions/plugins/settings` with `plugin_id`, `values` and the
+  `revision` it read replaces the stored values after schema validation
+  (409 when they changed elsewhere). Values live in the plugin's data folder
+  as `locus-settings.json` (0600) for the plugin's own server to read.
+- `POST /api/extensions/plugins/panel-tool` with `plugin_id`, `tool` and
+  `arguments` calls a tool of that plugin's own enabled servers, for a panel
+  with `plugin.tools`. Tools listed in a panel's `tools` are removed from
+  every agent's tool list, and the plugin's stdio servers receive their names
+  in `LOCUS_PANEL_TOOLS`, so a server can register them only when Locus hides
+  them.
+
+The page posts version-1 messages to `webkit.messageHandlers.locusPanel` and
+receives `hello` (with the window's `project` name and `workspace` path) and
+`response` messages through `window.locusPanel.receive(message)`. A request
+Locus refuses (malformed, or missing a capability) still gets a `response`
+with `ok: false` when it carried a valid `requestID`. `getSettings`/`saveSettings` need
+`plugin.settings`; `callTool` needs `plugin.tools`; `composeChat` (a draft
+the user sends) needs `chat.compose`; `listAgents` needs `agents.read` and
+returns saved agents' ID, name, role, provider kind, model, access ceiling
+and availability, never instructions, accounts or credentials.
+
+`agents.dispatch` is the one way a panel's JavaScript leads to a prompt, and
+only after the user allows it natively: `confirmRun` names a run and its
+steps' saved agents, and Locus shows its own sheet listing each agent with
+provider, model and the steps that edit files. Only after the user allows the
+run, and only when the job's `workspace` is the window's own project, does
+`dispatchJob` for that run and one of those agents create or reuse
+that agent's chat for the run in the window's project and send the text,
+prefixed with the plugin's name, the run and the step, through the normal
+saved-agent turn (profile access ceiling, MCP policy and permissions apply).
+The permission is held by the window and ends when it closes.
+`openAgentChat` shows a chat the window handed work to.
