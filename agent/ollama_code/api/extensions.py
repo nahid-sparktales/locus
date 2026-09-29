@@ -78,6 +78,30 @@ def jira_board_action(service: ServiceDependency, body: dict[str, Any] = Body(de
         raise HTTPException(422, str(exc)) from exc
 
 
+def chatgpt_app_catalog(service: ServiceDependency, account_id: str = Query(""), refresh: bool = Query(False)) -> dict[str, Any]:
+    from ..chatgpt_apps import catalog
+    from ..codex_app_server import CodexAppServerError
+    try:
+        return catalog(service.codex_for(account_id), refresh=refresh)
+    except (CodexAppServerError, ValueError) as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+def chatgpt_app_enable(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from ..chatgpt_apps import set_enabled
+    from ..codex_app_server import CodexAppServerError
+    if not isinstance(body.get("enabled"), bool):
+        raise HTTPException(422, "enabled must be a boolean")
+    try:
+        with service.state_mutation():
+            return set_enabled(service.codex_for(str(body.get("account_id") or "")),
+                               str(body.get("id") or ""), body["enabled"])
+    except AgentBusyError as exc:
+        raise _busy_http() from exc
+    except (CodexAppServerError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 def get_extension_catalog(
     service: ServiceDependency,
     query: str = Query("", max_length=500),
@@ -563,9 +587,30 @@ def call_extension_plugin_panel_tool(
     raise HTTPException(404, f"the plugin has no tool named {tool}")
 
 
+def open_mcp_app(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from ..mcp_apps import open_app
+    return _mcp_preview(service, lambda: open_app(service.core, str(body.get("server_id") or ""),
+                       str(body.get("tool") or ""), str(body.get("call_id") or "")))
+
+
+def call_mcp_app(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from jsonschema import SchemaError, ValidationError
+
+    from ..mcp_apps import call_app
+    try:
+        return _mcp_preview(service, lambda: call_app(service.core, str(body.get("view_id") or ""),
+            str(body.get("tool") or ""), _mcp_arguments(body), body.get("confirmed") is True))
+    except (ValidationError, SchemaError) as exc:
+        raise HTTPException(422, "App arguments did not match the tool's schema") from exc
+
+
 def register_routes(router: APIRouter) -> None:
     routes = (
         ("/api/extensions", get_extensions, ["GET"]),
+        ("/api/extensions/mcp/app/open", open_mcp_app, ["POST"]),
+        ("/api/extensions/mcp/app/call", call_mcp_app, ["POST"]),
+        ("/api/extensions/chatgpt/apps", chatgpt_app_catalog, ["GET"]),
+        ("/api/extensions/chatgpt/apps/enable", chatgpt_app_enable, ["POST"]),
         ("/api/extensions/catalog", get_extension_catalog, ["GET"]),
         ("/api/extensions/catalog/trust", inspect_extension_plugin, ["GET"]),
         ("/api/extensions/marketplaces", add_extension_marketplace, ["POST"]),

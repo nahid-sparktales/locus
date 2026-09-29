@@ -297,7 +297,7 @@ def test_allowed_prompt_images_reach_classic_model_and_chat_with_call_identity(t
     core.tool_registry = ToolRegistry(core.extensions, core.mcp)
     core.tool_registry.set_mcp_agent_policy({"server_ids": ["remote-1"], "prompts": ["triage"]})
     core.run_turn("Load the triage prompt")
-    assert calls == [("remote-1", "triage", {"project": "app"}, {"tool_call_id": "prompt-image"})]
+    assert calls == [("remote-1", "triage", {"project": "app"}, {"tool_call_id": "prompt-image", "session_id": core.session.session_id})]
     observations = [message for message in core.client.seen_messages[-1] if message.get("attachments")]
     assert len(observations) == 1 and observations[0]["attachments"][0]["data"] == ENCODED
     saved = core.session.path.read_text()
@@ -397,7 +397,7 @@ def test_solo_authority_preserves_image_envelope_and_worker_provenance(tmp_path)
     )
     assert isinstance(output, dict), output
     assert output["content_items"][1]["imageUrl"] == f"data:image/png;base64,{ENCODED}"
-    assert contexts == [{"tool_call_id": "worker-image-call", "job_id": "worker"}]
+    assert contexts == [{"tool_call_id": "worker-image-call", "job_id": "worker", "session_id": core.session.session_id}]
     result = next(event for event in events if event["type"] == "tool_result")
     assert result["node_id"] == "/root/worker" and result["media"]
     assert ENCODED not in json.dumps(events)

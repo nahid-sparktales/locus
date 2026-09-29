@@ -6764,6 +6764,7 @@ private struct ToolActivityView: View {
                     MCPImagePreview(reference: reference)
                         .padding(.leading, 30)
                 }
+                MCPAppResultView(callID: tool.toolID).padding(.leading, 30)
             }
         }
     }
@@ -7142,6 +7143,7 @@ private struct ToolCardView: View {
                     Rectangle().fill(viewColors.line).frame(height: 1)
                 }
             }
+            MCPAppResultView(callID: tool.toolID)
             if let media = tool.media, !media.isEmpty {
                 ForEach(media) { reference in
                     MCPImagePreview(reference: reference)

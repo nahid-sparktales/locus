@@ -491,11 +491,11 @@ def test_recommended_mcp_presets_are_inert_scoped_and_idempotent(tmp_path, monke
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     presets = manager.snapshot()["mcp_presets"]
     assert [item["id"] for item in presets] == [
-        "context7", "github", "sentry", "supabase", "openai-docs"
+        "context7", "github", "sentry", "supabase", "openai-docs", "jira", "notion", "slack", "google-calendar", "google-drive"
     ]
     assert all(item["installed"] is False for item in presets)
     github = next(item for item in presets if item["id"] == "github")
-    assert github["catalog_version"] == 2
+    assert github["catalog_version"] == 3
     assert github["oauth_strategy"] == "github_device"
 
     with pytest.raises(ExtensionError, match="project reference"):
@@ -536,7 +536,7 @@ def test_github_preset_state_migration_preserves_user_scope(tmp_path):
     assert server["custom_marker"] == "keep-me"
     assert server["preset_id"] == "github"
     assert server["oauth_strategy"] == "github_device"
-    assert server["preset_provenance"]["catalog_version"] == 2
+    assert server["preset_provenance"]["catalog_version"] == 3
 
 
 def test_oauth_metadata_discovery_validates_issuer_and_does_not_follow_redirects(monkeypatch):

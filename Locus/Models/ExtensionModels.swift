@@ -299,7 +299,7 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
     /// Native credential scope. Display names, enablement, timeouts, and access
     /// policy do not change the identity of the server receiving credentials.
     var credentialBinding: String {
-        let value: [String: Any] = [
+        var value: [String: Any] = [
             "transport": transport, "url": url ?? "", "command": command ?? "",
             "auth": auth ?? "none",
             "oauth": [
@@ -309,6 +309,10 @@ struct ExtensionMCPServer: Codable, Identifiable, Hashable {
                 "allow_loopback_http": oauth?.allowLoopbackHTTP ?? false,
             ],
         ]
+        if transport == "stdio" {
+            value["args"] = args ?? []
+            value["cwd"] = cwd ?? ""
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -333,13 +337,19 @@ struct MCPServerCatalog: Decodable {
     let prompts: [MCPPromptEntry]
 }
 
+struct MCPAppToolUI: Decodable {
+    let resourceURI: String?
+    enum CodingKeys: String, CodingKey { case resourceURI = "resource_uri" }
+}
+
 struct MCPToolCatalogEntry: Decodable {
     let name: String
     var description: String?
     var approvalMode: String?
     var enabled: Bool?
+    var ui: MCPAppToolUI?
     enum CodingKeys: String, CodingKey {
-        case name, description, enabled
+        case name, description, enabled, ui
         case approvalMode = "approval_mode"
     }
     var permissionMetadata: ExtensionToolMetadata {

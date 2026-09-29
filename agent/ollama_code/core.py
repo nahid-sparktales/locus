@@ -2302,6 +2302,26 @@ class AgentCore:
                 "tools": schemas,
             }, sort_keys=True, default=str).encode()).hexdigest()
         manager = self.codex_manager
+        # Hosted apps are opt-in per ChatGPT account. Restricted helper/agent
+        # policies keep their existing ceiling; broad workspace agents may use
+        # selected apps, with a native approval on every hosted tool call.
+        if self.provider == "chatgpt" and allow_tools and hasattr(manager, "codex_home"):
+            from dataclasses import replace
+
+            from .chatgpt_apps import selected_apps
+            policy, ceiling, role = self.tool_registry.mcp_agent_policy_snapshot()
+            apps_allowed = (getattr(self, "helper_allowed_tools", None) is None
+                            and not getattr(self, "identity_mode", False)
+                            and self.tool_registry._user_allows("search_extension_tools")
+                            and self.tool_registry._user_allows("web_fetch")
+                            and self.agent_mode not in {"plan", "grill"} and ceiling != "read_only" and role not in {"dispatcher", "reviewer"}
+                            and (policy is None or ("*" in (policy.get("server_ids") or [])
+                                and "*" in (policy.get("tools") or [])
+                                and not policy.get("excluded_server_ids"))))
+            app_ids = tuple(selected_apps(manager.codex_home)) if apps_allowed else ()
+            if app_ids:
+                thread_options = replace(thread_options or getattr(manager, "thread_defaults", CodexThreadOptions()), app_ids=app_ids, approval_policy="on-request")
+                fingerprint = hashlib.sha256((fingerprint + json.dumps(app_ids)).encode()).hexdigest()
         def run_managed(**kwargs):
             if self.provider == "claude_plan":
                 kwargs["max_turns"] = dynamic_call_limit
@@ -2601,7 +2621,7 @@ class AgentCore:
                         })
 
                 def handle_event(event: dict[str, Any]) -> None:
-                    nonlocal usage, native_model_calls
+                    nonlocal usage, native_model_calls, native_tool_steps
                     nonlocal native_prompt_tokens, native_completion_tokens
                     method = str(event.get("method") or "")
                     params = event.get("params")
@@ -2618,6 +2638,29 @@ class AgentCore:
                         user_item = params.get("item") or {}
                         if user_item.get("type") == "userMessage":
                             self._native_guidance_applied(str(user_item.get("clientId") or user_item.get("clientUserMessageId") or ""))
+                            return
+                    if method in {"item/started", "item/completed"}:
+                        hosted = params.get("item") or {}
+                        if hosted.get("type") == "mcpToolCall" and thread_options and thread_options.app_ids:
+                            context = hosted.get("appContext") or {}
+                            name = str(hosted.get("tool") or "app action")[:200]
+                            label = str(context.get("appName") or "ChatGPT app")[:200]
+                            summary = f"{label}: {context.get('actionName') or name}"
+                            identifier = str(hosted.get("id") or "")
+                            if method == "item/started":
+                                native_tool_steps += 1
+                                self._emit({"type": "tool_call_proposed", "id": identifier, "tool": name,
+                                            "summary": summary, "detail": json.dumps(hosted.get("arguments") or {})[:32000],
+                                            "auto": False, "origin": "chatgpt_app"})
+                            else:
+                                result = hosted.get("result") or {}
+                                content = "\n".join(str(part.get("text") or "") for part in result.get("content") or []
+                                                    if isinstance(part, dict) and part.get("type") == "text")
+                                content = content or json.dumps(result.get("structuredContent") or {})
+                                error = hosted.get("error") or {}
+                                self._emit({"type": "tool_result", "id": identifier, "tool": name, "summary": summary,
+                                            "result": str(error.get("message") or content)[:64000],
+                                            "ok": hosted.get("status") == "completed", "origin": "chatgpt_app"})
                             return
                     if method == "item/started":
                         item = params.get("item")
@@ -2742,6 +2785,18 @@ class AgentCore:
                         self._interrupt.set()
                         return "Error: Locus stopped this turn at its configured tool-step budget."
                     native_tool_requests += 1
+                    if name == "__chatgpt_app_approval":
+                        if not thread_options or not thread_options.app_ids or self.agent_mode in {"plan", "grill"}:
+                            return "deny"
+                        request_id = uuid.uuid4().hex[:12]
+                        detail = json.dumps(arguments, ensure_ascii=False)[:32000]
+                        summary = "Allow this ChatGPT app action once?"
+                        self._emit({"type": "permission_request", "request_id": request_id,
+                                    "id": call_id, "tool": "ChatGPT app", "summary": summary,
+                                    "detail": detail, "always_eligible": False,
+                                    "preview": {"summary": summary, "detail": detail}})
+                        choice = decider("ChatGPT app", summary, detail, request_id) if decider else "deny"
+                        return "once" if choice == "once" and not self._interrupt.is_set() else "deny"
                     if name != "attach_output_parts":
                         native_tool_steps += 1
                     if parity:
@@ -4537,6 +4592,7 @@ class AgentCore:
                                         **{key: str(value) for key, value in (event_context or {}).items()
                                            if key in {"run_id", "job_id"} and value is not None},
                                         "tool_call_id": call_id,
+                                        "session_id": self.session.session_id,
                                     }}
                                    if info.get("origin") == "mcp" or tc.name in {"read_extension_resource", "load_extension_prompt"} else {}),
                             )

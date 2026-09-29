@@ -70,6 +70,7 @@ include = ["ollama_code*"]
 [tool.setuptools.package-data]
 # Include nested role guides, their references, and bundled helper scripts in wheels.
 ollama_code = [
+    "catalogs/*.json",
     "builtin_skills/**/*",
     "builtin_skills/understand-anything/upstream/.claude-plugin/*",
     "builtin_skills/understand-anything/upstream/packages/tree-sitter-swift-wasm/.swift-grammar-pin",

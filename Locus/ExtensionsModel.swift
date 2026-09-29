@@ -19,6 +19,14 @@ final class ExtensionsModel: ObservableObject {
     @Published private(set) var mcpProbeErrors: [String: String] = [:]
     @Published private(set) var mcpCatalogs: [String: MCPServerCatalog] = [:]
 
+    @Published private(set) var chatGPTApps: [ChatGPTDirectoryApp] = []
+    @Published private(set) var chatGPTAppsMessage = ""
+    @Published private(set) var isLoadingChatGPTApps = false
+    private var chatGPTAppsRequest = UUID()
+    private var chatGPTAppsAccountID = ""
+    @Published private(set) var mcpApps: [String: MCPAppReference] = [:]
+    private let googleWorkspaceOAuth = GmailOAuthCoordinator()
+
     private let mcpAuthCoordinator: MCPAuthCoordinator
     private let credentialStore: any MCPCredentialStoring
     private var extensionRefreshTask: Task<Void, Never>?
@@ -50,6 +58,11 @@ final class ExtensionsModel: ObservableObject {
     /// Backend extension and MCP events, routed here by AppModel's dispatcher.
     func ingest(_ type: String, _ event: [String: Any]) {
         switch type {
+        case "mcp_app_available":
+            guard let callID = event["call_id"] as? String, !callID.isEmpty,
+                  let serverID = event["server_id"] as? String, let tool = event["tool"] as? String else { return }
+            if mcpApps.count >= 100, let key = mcpApps.keys.first { mcpApps.removeValue(forKey: key) }
+            mcpApps[callID] = MCPAppReference(serverID: serverID, tool: tool, callID: callID)
         case "extensions_changed", "mcp_status", "mcp_credential_refresh":
             extensionRefreshTask?.cancel()
             extensionRefreshTask = Task { @MainActor [weak self] in
@@ -74,6 +87,20 @@ final class ExtensionsModel: ObservableObject {
         default:
             break
         }
+    }
+
+    func openMCPApp(_ reference: MCPAppReference) async throws -> MCPAppDocument {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        return try await backend.post("/api/extensions/mcp/app/open", body: [
+            "server_id": reference.serverID, "tool": reference.tool, "call_id": reference.callID,
+        ], timeout: 90, as: MCPAppDocument.self)
+    }
+
+    func callMCPApp(_ viewID: String, tool: String, arguments: [String: Any]) async throws -> JSONValue {
+        guard let backend else { throw URLError(.notConnectedToInternet) }
+        return try await backend.post("/api/extensions/mcp/app/call", body: [
+            "view_id": viewID, "tool": tool, "arguments": arguments, "confirmed": true,
+        ], timeout: 90, as: JSONValue.self)
     }
 
     func refreshExtensions() async {
@@ -126,6 +153,35 @@ final class ExtensionsModel: ObservableObject {
         } catch {
             extensionErrorMessage = error.localizedDescription
         }
+    }
+
+    func refreshChatGPTApps(accountID: String, force: Bool = false) async {
+        guard let backend else { return }
+        let request = UUID(); chatGPTAppsRequest = request
+        chatGPTAppsAccountID = accountID
+        chatGPTApps = []; chatGPTAppsMessage = ""; isLoadingChatGPTApps = true
+        defer { if chatGPTAppsRequest == request { isLoadingChatGPTApps = false } }
+        do {
+            let result = try await backend.get("/api/extensions/chatgpt/apps", query: [
+                URLQueryItem(name: "account_id", value: accountID),
+                URLQueryItem(name: "refresh", value: force ? "true" : "false"),
+            ], timeout: 90, as: ChatGPTDirectoryResponse.self)
+            guard chatGPTAppsRequest == request else { return }
+            chatGPTApps = result.apps; chatGPTAppsMessage = result.message
+        } catch {
+            guard chatGPTAppsRequest == request else { return }
+            chatGPTAppsMessage = error.localizedDescription
+        }
+    }
+
+    func setChatGPTApp(_ app: ChatGPTDirectoryApp, enabled: Bool, accountID: String) async {
+        guard let backend else { return }
+        do {
+            _ = try await backend.post("/api/extensions/chatgpt/apps/enable", body: [
+                "account_id": accountID, "id": app.id, "enabled": enabled,
+            ], timeout: 90, as: ExtensionOperationResponse.self)
+            if chatGPTAppsAccountID == accountID { await refreshChatGPTApps(accountID: accountID, force: true) }
+        } catch { extensionErrorMessage = error.localizedDescription }
     }
 
     func addMarketplace(source: String, name: String = "") async {
@@ -617,6 +673,28 @@ final class ExtensionsModel: ObservableObject {
         _ server: ExtensionMCPServer,
         completion: ((Bool) -> Void)? = nil
     ) {
+        if server.oauthStrategy == "google_workspace" {
+            Task {
+                do {
+                    let clientID = Bundle.main.object(forInfoDictionaryKey: "LocusGoogleOAuthClientID") as? String ?? ""
+                    let scheme = Bundle.main.object(forInfoDictionaryKey: "LocusGoogleOAuthCallbackScheme") as? String ?? ""
+                    let scopes = server.presetID == "google-calendar"
+                        ? ["https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/calendar.events"]
+                        : ["https://www.googleapis.com/auth/drive.readonly"]
+                    let credentials = try await googleWorkspaceOAuth.authenticate(clientID: clientID, callbackScheme: scheme, scopes: scopes)
+                    guard let current = extensions.mcpServers.first(where: { $0.id == server.id }),
+                          current.credentialBinding == server.credentialBinding else {
+                        throw EventConnectorClientError.invalidResponse("Connection settings changed during sign-in. Try again.")
+                    }
+                    let data = try JSONSerialization.data(withJSONObject: credentials)
+                    let saved = await setMCPCredentials(serverID: server.id, values: [
+                        "env": ["LOCUS_GOOGLE_CREDENTIALS": String(decoding: data, as: UTF8.self)],
+                    ])
+                    completion?(saved)
+                } catch { extensionErrorMessage = error.localizedDescription; completion?(false) }
+            }
+            return
+        }
         mcpAuthCoordinator.authorize(
             server: server,
             onDeviceCode: { [weak self] prompt in

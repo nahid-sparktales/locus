@@ -45,6 +45,7 @@ class CodexThreadOptions:
     web_search: bool = False
     include_environment_context: bool = False
     image_generation: bool = False
+    app_ids: tuple[str, ...] = ()
 
 
 _DEFAULT_THREAD_OPTIONS = CodexThreadOptions()
@@ -255,7 +256,8 @@ class CodexAppServerManager:
             'tool_suggest = false\n'
             'plugins = false\n'
             'goals = false\n'
-            'apps = false\n'
+            'apps = true\n'
+            'tool_call_mcp_elicitation = false\n'
             'multi_agent = false\n'
             'multi_agent_v2 = false\n'
             f'standalone_web_search = {search_flag}\n'
@@ -270,6 +272,11 @@ class CodexAppServerManager:
             '[tools.experimental_request_user_input]\n'
             'enabled = false\n'
         )
+        from .chatgpt_apps import app_policy, selected_apps
+        for app_id, settings in app_policy(selected_apps(self.codex_home)).items():
+            content += f"\n[apps.{json.dumps(app_id)}]\n"
+            for key, value in settings.items():
+                content += f"{key} = {json.dumps(value)}\n"
         # This is an isolated Locus-owned CODEX_HOME. Rewrite only its policy
         # file so an app update cannot retain a looser, older tool inventory;
         # auth.json and the helper's other credential state are untouched.
@@ -549,13 +556,14 @@ class CodexAppServerManager:
     @staticmethod
     def thread_config(options: CodexThreadOptions | None = None) -> dict[str, Any]:
         options = options or _DEFAULT_THREAD_OPTIONS
+        from .chatgpt_apps import app_policy
         return {
             "web_search": "cached" if options.web_search else "disabled",
             # Request the provider's user-visible reasoning summary. Raw
             # reasoning deltas remain private and are never mapped to Locus.
             "model_reasoning_summary": "auto",
             "include_permissions_instructions": False,
-            "include_apps_instructions": False,
+            "include_apps_instructions": bool(options.app_ids),
             "include_collaboration_mode_instructions": False,
             "include_environment_context": options.include_environment_context,
             "features": {
@@ -566,13 +574,15 @@ class CodexAppServerManager:
                 "tool_suggest": False,
                 "plugins": False,
                 "goals": False,
-                "apps": False,
+                "apps": bool(options.app_ids),
+                "tool_call_mcp_elicitation": False,
                 "multi_agent": False,
                 "multi_agent_v2": False,
                 "standalone_web_search": options.web_search,
                 "web_search_request": options.web_search,
                 "web_search_cached": options.web_search,
             },
+            "apps": app_policy(list(options.app_ids)),
             "agents": {"enabled": False},
             "skills": {"include_instructions": False},
             "tools": {
@@ -750,6 +760,16 @@ class CodexAppServerManager:
                     raise CodexAppServerError(str(failure.get("message") or "ChatGPT turn failed"))
                 method = str(event.get("method") or "")
                 identifier = event.get("id")
+                if identifier is not None and method in {"item/tool/requestUserInput", "tool/requestUserInput"}:
+                    from .chatgpt_apps import approval_answers
+                    params = event.get("params") or {}
+                    decision = tool_handler("__chatgpt_app_approval", params, str(identifier)) if tool_handler else "deny"
+                    self.respond(identifier, approval_answers(params, decision == "once"))
+                    continue
+                if identifier is not None and method == "mcpServer/elicitation/request":
+                    # No browser credential or arbitrary form submission can be inferred.
+                    self.respond(identifier, {"action": "decline"})
+                    continue
                 if identifier is not None and method != "item/tool/call":
                     self.respond_error(
                         identifier, -32601, "Locus accepts only registered dynamic tool calls"

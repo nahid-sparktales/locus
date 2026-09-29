@@ -179,6 +179,7 @@ class MCPManager:
         self._public_prompts: list[dict[str, Any]] = []
         self._resource_cache: dict[tuple[str, str], tuple[float, str]] = {}
         self._tasks: dict[str, dict[str, Any]] = {}
+        self._app_results: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.task_store: Any | None = None
         self.context_provider: Callable[[], dict[str, str]] = lambda: {}
         self._elicitation_waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -355,8 +356,10 @@ class MCPManager:
                     transport_http = http_factory(headers=headers)
                     await transport_http.__aenter__()
                     transport = streamable_http_client(url, http_client=transport_http)
+            from mcp.client.extension import advertise
             client = Client(
-                transport, read_timeout_seconds=float(server.get("tool_timeout_sec") or 60),
+                transport, extensions=[advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})],
+                read_timeout_seconds=float(server.get("tool_timeout_sec") or 60),
                 message_handler=message_handler, elicitation_callback=elicitation_handler,
                 list_roots_callback=roots_handler if server.get("share_workspace_root") else None,
                 mode=str(server.get("protocol_mode") or "auto"),
@@ -465,7 +468,9 @@ class MCPManager:
             schema_digest = hashlib.sha256(
                 json.dumps({"input": serialized_schema, "annotations": annotations}, sort_keys=True).encode()
             ).hexdigest()
+            from .mcp_apps import ui_metadata
             tools.append({
+                "ui": ui_metadata(tool),
                 "server_id": server_id,
                 "server_name": str(server.get("name") or server_id),
                 "name": tool.name,
@@ -814,6 +819,29 @@ class MCPManager:
                 future.cancel()
                 return f"Error: MCP tool {tool_name} failed: {self._server_error_text(server_id, exc)}"
 
+    def app_result(self, server_id: str, name: str, call_id: str) -> dict[str, Any]:
+        with self._guard:
+            return copy.deepcopy(self._app_results.get((server_id, name, call_id), {}))
+
+    def app_resource(self, server_id: str, uri: str) -> dict[str, Any]:
+        self._ensure_started()
+        async def read():
+            from .mcp_apps import resource_payload
+            record = self._clients.get(server_id)
+            if not record:
+                raise ExtensionError("MCP server is disconnected")
+            server = next((s for s in self.extensions.mcp_servers() if s["id"] == server_id), {})
+            if server.get("resource_access") == "none" or (server.get("resource_access") == "selected"
+                    and uri not in (server.get("enabled_resources") or [])):
+                raise ExtensionError("Resource access is disabled for this app")
+            return resource_payload(await record["client"].read_resource(uri), uri)
+        future = asyncio.run_coroutine_threadsafe(read(), self._loop)
+        try:
+            return future.result(timeout=65)
+        except Exception as exc:
+            future.cancel()
+            raise ExtensionError(str(exc)) from exc
+
     def lookup_task(self, task_id: str) -> dict[str, Any]:
         """Refresh one persisted MCP task only after an explicit user action."""
         if self.task_store is None:
@@ -980,6 +1008,19 @@ class MCPManager:
                 )
             except Exception as second:
                 return f"Error: MCP tool failed after reconnect: {self._server_error_text(server_id, second)}"
+        try:
+            payload = result.model_dump(by_alias=True, exclude_none=True)
+            call_id = str((context or {}).get("call_id") or (context or {}).get("tool_call_id") or "")
+            if len(json.dumps(payload).encode()) <= 2 * 1024 * 1024:
+                with self._guard:
+                    if len(self._app_results) >= 32:
+                        self._app_results.pop(next(iter(self._app_results)))
+                    self._app_results[(server_id, tool_name, call_id)] = {"input": arguments, "result": payload, "session_id": (context or {}).get("session_id", "")}
+                if tool.get("ui", {}).get("resource_uri"):
+                    self.emit({"type": "mcp_app_available", "server_id": server_id, "tool": tool_name,
+                               "call_id": call_id, "session_id": (context or {}).get("session_id", "")})
+        except (AttributeError, TypeError, ValueError):
+            pass
         self._register_resource_links(server_id, tool_name, result, context)
         return self._format_result(result, media, output_limit=output_limit)
 
@@ -1468,7 +1509,7 @@ class MCPManager:
 
     def _publish_tools(self) -> None:
         tools = [dict(tool) for record in self._clients.values() for tool in record.get("tools", [])
-                 if not tool.get("panel_only")]
+                 if not tool.get("panel_only") and "model" in tool.get("ui", {}).get("visibility", ["model", "app"])]
         resources = [
             dict(item) for record in self._clients.values()
             for item in record.get("resources", [])

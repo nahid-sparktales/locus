@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -60,7 +61,7 @@ def _load_mcp_catalog() -> tuple[int, tuple[dict[str, Any], ...]]:
     value = _read_json(path, 256 * 1024)
     version = value.get("version")
     presets = value.get("presets")
-    if version != 2 or not isinstance(presets, list) or len(presets) != 5 \
+    if version != 3 or not isinstance(presets, list) or not 1 <= len(presets) <= 100 \
             or any(not isinstance(item, dict) for item in presets):
         raise RuntimeError("the bundled MCP preset catalog is invalid")
     return version, tuple(dict(item) for item in presets)
@@ -416,7 +417,7 @@ def _plugin_icon(root: Path, interface: dict[str, Any]) -> str | None:
     svg_tags = {"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline",
                 "polygon", "defs", "linearGradient", "radialGradient", "stop",
                 "clipPath", "mask", "title", "desc", "use"}
-    for field in ("iconSmall", "iconLarge"):
+    for field in ("iconSmall", "iconLarge", "composerIcon", "logo"):
         try:
             path = _component_path(root, interface.get(field))
             if not path or not path.is_file() or path.stat().st_size > 256 * 1024:
@@ -452,10 +453,35 @@ def _plugin_icon(root: Path, interface: dict[str, Any]) -> str | None:
 
 def parse_plugin(root: Path) -> dict[str, Any]:
     root = root.resolve()
-    manifest_path = root / ".codex-plugin/plugin.json"
+    portable_path = root / "plugin.json"
+    portable = None
+    if portable_path.is_file():
+        candidate = _read_json(portable_path, MAX_MANIFEST_BYTES)
+        if candidate.get("$schema") == "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json":
+            portable = candidate
+    manifest_path = portable_path if portable is not None else root / ".codex-plugin/plugin.json"
     if not manifest_path.is_file():
-        raise ExtensionError("plugin is missing .codex-plugin/plugin.json")
-    manifest = _read_json(manifest_path, MAX_MANIFEST_BYTES)
+        raise ExtensionError("plugin needs a portable plugin.json or .codex-plugin/plugin.json")
+    manifest = portable if portable is not None else _read_json(manifest_path, MAX_MANIFEST_BYTES)
+    if portable is not None:
+        extensions = portable.get("extensions") or {}
+        if not isinstance(extensions, dict):
+            raise ExtensionError("plugin extensions must be an object")
+        # Identity and portable components always belong to the root manifest.
+        # An OpenAI overlay cannot redirect skills or MCP servers elsewhere.
+        overlay = extensions.get("com.openai")
+        if overlay is None and (root / ".codex-plugin/plugin.json").is_file():
+            overlay = _read_json(root / ".codex-plugin/plugin.json", MAX_MANIFEST_BYTES)
+        if overlay is not None and not isinstance(overlay, dict):
+            raise ExtensionError("com.openai must be an object")
+        manifest = {**manifest, **{key: value for key, value in (overlay or {}).items()
+                    if key in {"interface", "apps", "hooks"}}}
+        locus = extensions.get("com.locus") or {}
+        if not isinstance(locus, dict):
+            raise ExtensionError("com.locus must be an object")
+        manifest["locus"] = locus
+        manifest["skills"] = "./skills/"
+        manifest["mcpServers"] = "./mcp.json"
     name = _safe_name(manifest.get("name"), "plugin name")
     version = str(manifest.get("version") or "local").strip()[:80] or "local"
     description = str(manifest.get("description") or "").strip()
@@ -936,7 +962,7 @@ class ExtensionManager:
             "streamable_http": True,
             "stdio": True,
             "oauth": True,
-            "mcp_apps": False,
+            "mcp_apps": True,
             "plugin_screens": True,
             "plugin_panels": True,
             "hooks": False,
@@ -1761,6 +1787,15 @@ class ExtensionManager:
         if existing:
             return self._public_server(existing)
 
+        if preset.get("bundled_adapter"):
+            return self.upsert_mcp_server({
+                "name": preset["name"], "command": sys.executable,
+                "args": [str(Path(__file__).with_name("google_workspace_mcp.py")), preset["bundled_adapter"]],
+                "auth": "none", "enabled": True, "enabled_global": False,
+                "preset_id": preset_id, "oauth_strategy": "google_workspace",
+                "default_tools_approval_mode": "annotations",
+                "preset_provenance": {"catalog_version": MCP_CATALOG_VERSION, "source_url": preset["source_url"]},
+            }, server_id=f"user:{preset_id}:preset")
         url = str(preset["url"])
         if preset.get("requires_project_ref"):
             scoped = project_ref.strip()

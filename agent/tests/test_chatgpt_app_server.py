@@ -1079,3 +1079,75 @@ def test_managed_turn_without_usage_updates_still_reports_one_call(tmp_path):
 
     assert terminal["model_calls"] == 1
     assert terminal["tool_steps"] == 0
+
+
+def test_hosted_app_request_uses_only_native_one_time_approval(monkeypatch):
+    manager = CodexAppServerManager(helper_path='/fake/codex')
+    responses = []
+    questions = {'questions': [{'id': 'mcp_tool_call_approval_c1', 'options': [
+        {'label': 'Allow'}, {'label': 'Allow for this session'}, {'label': 'Cancel'}]}]}
+    def request(method, params=None, **kwargs):
+        if method == 'turn/start':
+            for target in manager._thread_queues.get(params['threadId'], []):
+                target.put({'id': 8, 'method': 'item/tool/requestUserInput', 'params': questions})
+                target.put({'method': 'turn/completed', 'params': {'threadId': params['threadId'], 'turn': {}}})
+        return {'turn': {'id': 'turn-1'}}
+    monkeypatch.setattr(manager, 'request', request)
+    monkeypatch.setattr(manager, 'respond', lambda identifier, body: responses.append(body))
+    calls = []
+    def handler(name, arguments, identifier):
+        calls.append((name, identifier))
+        return 'once'
+    manager.run_turn(thread_id='t1', text='fixture', tool_handler=handler)
+    assert calls == [('__chatgpt_app_approval', '8')]
+    assert responses == [{'answers': {'mcp_tool_call_approval_c1': {'answers': ['Allow']}}}]
+
+
+@pytest.mark.parametrize('restriction', ['none', 'plan', 'grill', 'read_only', 'mcp_off', 'network_off', 'identity', 'helper', 'just_chat'])
+def test_hosted_apps_respect_visible_agent_permissions(tmp_path, restriction):
+    runtime = ParityFakeRuntime()
+    runtime.codex_home = tmp_path / 'codex-home'
+    runtime.codex_home.mkdir()
+    (runtime.codex_home / 'locus-apps.json').write_text('["calendar"]')
+    core = _managed_core(tmp_path, runtime)
+    if restriction in {'plan', 'grill'}:
+        core.agent_mode = restriction
+    elif restriction == 'read_only':
+        core.tool_registry.set_mcp_agent_policy({'server_ids': ['*'], 'tools': ['*']}, access_ceiling='read_only')
+    elif restriction == 'mcp_off':
+        core.tool_registry.set_user_capability_policy({'mcp': False})
+    elif restriction == 'network_off':
+        core.tool_registry.set_user_capability_policy({'network': False})
+    elif restriction == 'identity':
+        core.identity_mode = True
+    elif restriction == 'helper':
+        core.helper_allowed_tools = {'read_file'}
+    core.run_turn('fixture', allow_tools=restriction != 'just_chat')
+    if restriction == 'identity':
+        assert runtime.start_kwargs == []
+        return
+    options = runtime.start_kwargs[-1]['options'] or runtime.thread_defaults
+    assert options.app_ids == (('calendar',) if restriction == 'none' else ())
+    if restriction == 'none':
+        assert options.approval_policy == 'on-request'
+
+
+def test_hosted_app_calls_appear_in_chat_activity(tmp_path):
+    class AppRuntime(ParityFakeRuntime):
+        def run_turn(self, *, event_handler, **kwargs):
+            item = {'id': 'app-call', 'type': 'mcpToolCall', 'tool': 'list_events',
+                    'appContext': {'appName': 'Calendar'}, 'arguments': {}}
+            event_handler({'method': 'item/started', 'params': {'item': item}})
+            event_handler({'method': 'item/completed', 'params': {'item': {
+                **item, 'status': 'completed', 'result': {'content': [{'type': 'text', 'text': 'No events'}]}}}})
+            return super().run_turn(event_handler=event_handler, **kwargs)
+    runtime = AppRuntime()
+    runtime.codex_home = tmp_path / 'codex-home'
+    runtime.codex_home.mkdir()
+    (runtime.codex_home / 'locus-apps.json').write_text('["calendar"]')
+    core = _managed_core(tmp_path, runtime)
+    events = []
+    core.on_event(events.append)
+    core.run_turn('fixture')
+    assert any(e.get('type') == 'tool_call_proposed' and e['summary'] == 'Calendar: list_events' for e in events)
+    assert any(e.get('type') == 'tool_result' and e['result'] == 'No events' and e['ok'] for e in events)

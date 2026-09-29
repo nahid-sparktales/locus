@@ -172,6 +172,10 @@ GET /api/git/status
 GET /api/git/diff
 GET /api/tools
 GET /api/extensions
+GET /api/extensions/chatgpt/apps
+POST /api/extensions/chatgpt/apps/enable
+POST /api/extensions/mcp/app/open
+POST /api/extensions/mcp/app/call
 GET /api/extensions/catalog
 GET /api/extensions/catalog/trust
 POST /api/extensions/marketplaces

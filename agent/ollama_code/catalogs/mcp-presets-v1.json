@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "presets": [
     {
       "id": "context7",
@@ -62,6 +62,70 @@
       "auth": "none",
       "scopes": [],
       "warning": "This read-only server retrieves public OpenAI documentation."
+    },
+    {
+      "id": "jira",
+      "name": "jira",
+      "display_name": "Jira & Confluence",
+      "description": "Issues, projects, pages and team work.",
+      "url": "https://mcp.atlassian.com/v2/mcp",
+      "source_url": "https://atlassian.github.io/atlassian-mcp-server/",
+      "auth": "auto",
+      "scopes": [],
+      "warning": "Your Atlassian permissions apply. An administrator may need to approve Locus."
+    },
+    {
+      "id": "notion",
+      "name": "notion",
+      "display_name": "Notion",
+      "description": "Pages, databases and team knowledge.",
+      "url": "https://mcp.notion.com/mcp",
+      "source_url": "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+      "auth": "auto",
+      "scopes": [],
+      "warning": "Choose which workspace to connect. Tools can read and update shared pages."
+    },
+    {
+      "id": "slack",
+      "name": "slack",
+      "display_name": "Slack",
+      "description": "Channel conversations, search and team actions.",
+      "url": "https://mcp.slack.com/mcp",
+      "source_url": "https://docs.slack.dev/ai/slack-mcp-server/",
+      "auth": "bearer",
+      "scopes": [],
+      "warning": "Requires a user token from an internal or Slack Marketplace app approved for MCP. Slack does not support automatic client registration."
+    },
+    {
+      "id": "google-calendar",
+      "name": "google-calendar",
+      "display_name": "Google Calendar",
+      "description": "Calendars, availability and events for every Locus agent.",
+      "url": "https://www.googleapis.com/calendar/v3",
+      "source_url": "https://developers.google.com/workspace/calendar/api/v3/reference",
+      "auth": "none",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        "https://www.googleapis.com/auth/calendar.events"
+      ],
+      "warning": "Uses the bundled Locus adapter. Google sign-in must be configured for this build. Reads calendars and creates or changes events after approval.",
+      "bundled_adapter": "calendar",
+      "oauth_strategy": "google_workspace"
+    },
+    {
+      "id": "google-drive",
+      "name": "google-drive",
+      "display_name": "Google Drive",
+      "description": "Find and read documents, spreadsheets and presentations.",
+      "url": "https://www.googleapis.com/drive/v3",
+      "source_url": "https://developers.google.com/workspace/drive/api/reference/rest/v3/files",
+      "auth": "none",
+      "scopes": [
+        "https://www.googleapis.com/auth/drive.readonly"
+      ],
+      "warning": "Uses the bundled Locus adapter. Google sign-in must be configured for this build. Read-only file search and document content.",
+      "bundled_adapter": "drive",
+      "oauth_strategy": "google_workspace"
     }
   ]
 }

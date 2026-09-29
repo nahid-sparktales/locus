@@ -175,59 +175,14 @@ private struct ExtensionsSettingsView: View {
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     private enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed"
-        case marketplace = "Marketplace"
+        case marketplace = "Browse"
         case mcp = "MCP Servers"
         case skills = "Skills"
         var id: String { rawValue }
     }
 
-    private struct RecommendedPlugin: Identifiable {
-        let name: String
-        let purpose: String
-        let permissions: String
-        let symbol: String
-        var id: String { name }
-    }
-
-    private static let recommendedPluginBacklog = [
-        RecommendedPlugin(
-            name: "Linear",
-            purpose: "Issues, roadmaps, and implementation context.",
-            permissions: "teams, projects, issues, and comments",
-            symbol: "checklist"
-        ),
-        RecommendedPlugin(
-            name: "Slack",
-            purpose: "Team discussions, approvals, and incident coordination.",
-            permissions: "selected workspaces and channels",
-            symbol: "bubble.left.and.bubble.right"
-        ),
-        RecommendedPlugin(
-            name: "Sentry",
-            purpose: "Production errors, traces, releases, and service health.",
-            permissions: "selected organizations and projects",
-            symbol: "waveform.path.ecg"
-        ),
-        RecommendedPlugin(
-            name: "PostHog",
-            purpose: "Product analytics, sessions, and feature flags.",
-            permissions: "selected projects and analytics data",
-            symbol: "chart.xyaxis.line"
-        ),
-        RecommendedPlugin(
-            name: "Notion",
-            purpose: "Specifications, decisions, and internal documentation.",
-            permissions: "explicitly shared pages and databases",
-            symbol: "doc.text"
-        ),
-    ]
-
     @EnvironmentObject private var model: AppModel
-    @State private var tab: Tab = .installed
-    @State private var search = ""
-    @State private var marketplaceID = ""
-    @State private var marketplaceSource = ""
-    @State private var marketplaceName = ""
+    @State private var tab: Tab = .marketplace
     @State private var review: PluginInstallReview?
     @State private var editorPresented = false
     @State private var editingServer: ExtensionMCPServer?
@@ -265,7 +220,18 @@ private struct ExtensionsSettingsView: View {
             Group {
                 switch tab {
                 case .installed: installedPane
-                case .marketplace: marketplacePane
+                case .marketplace:
+                    IntegrationBrowserView(
+                        reviewPlugin: { entry in
+                            Task {
+                                if let trust = await extensionsModel.inspectPlugin(entry) {
+                                    review = PluginInstallReview(entry: entry, trust: trust)
+                                }
+                            }
+                        },
+                        connectPreset: { presetReview = $0 },
+                        manageConnections: { tab = .mcp }
+                    )
                 case .mcp: mcpPane
                 case .skills: skillsPane
                 }
@@ -415,128 +381,6 @@ private struct ExtensionsSettingsView: View {
         }
     }
 
-    private var marketplacePane: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Picker("Source", selection: $marketplaceID) {
-                    Text("All sources").tag("")
-                    ForEach(extensionsModel.extensions.marketplaces) { source in
-                        Text(source.name).tag(source.id)
-                    }
-                }
-                .frame(maxWidth: 230)
-                TextField("Search plugins", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
-                    }
-                Button("Search") {
-                    Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
-                }
-            }
-            HStack {
-                TextField("Local folder, owner/repo, or HTTPS Git URL", text: $marketplaceSource)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Name (optional)", text: $marketplaceName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 130)
-                Button("Add source") {
-                    let source = marketplaceSource
-                    marketplaceSource = ""
-                    Task { await extensionsModel.addMarketplace(source: source, name: marketplaceName) }
-                }
-                .disabled(marketplaceSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .font(.locus(size: 9))
-
-            ScrollView {
-                LazyVStack(spacing: 9) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Recommended next")
-                                .font(.locus(size: 11, weight: .semibold))
-                            Spacer()
-                            Text("Opt-in · review permissions before install")
-                                .font(.locus(size: 8))
-                                .foregroundStyle(viewColors.muted)
-                        }
-                        ForEach(Self.recommendedPluginBacklog) { recommendation in
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: recommendation.symbol)
-                                    .frame(width: 22, height: 22)
-                                    .foregroundStyle(viewColors.muted)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(recommendation.name)
-                                        .font(.locus(size: 10, weight: .semibold))
-                                    Text(recommendation.purpose)
-                                        .font(.locus(size: 9))
-                                        .foregroundStyle(viewColors.muted)
-                                    Text("Review: \(recommendation.permissions)")
-                                        .font(.locus(size: 8))
-                                        .foregroundStyle(viewColors.warning)
-                                }
-                                Spacer()
-                                Button("Find") {
-                                    search = recommendation.name
-                                    Task {
-                                        await extensionsModel.refreshExtensionCatalog(
-                                            query: recommendation.name,
-                                            marketplaceID: marketplaceID
-                                        )
-                                    }
-                                }
-                            }
-                            .padding(9)
-                            .locusCard(radius: 8)
-                        }
-                    }
-                    .padding(.bottom, 6)
-
-                    ForEach(extensionsModel.extensionCatalog) { entry in
-                        HStack(alignment: .top, spacing: 10) {
-                            PluginLogo(name: entry.name, displayName: entry.displayName, iconData: entry.iconData)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.displayName ?? entry.name)
-                                    .font(.locus(size: 11, weight: .semibold))
-                                Text(entry.description?.isEmpty == false ? entry.description! : (entry.category ?? "Plugin"))
-                                    .font(.locus(size: 9))
-                                    .foregroundStyle(viewColors.muted)
-                                    .lineLimit(2)
-                                if let error = entry.error {
-                                    Text(error).font(.locus(size: 8)).foregroundStyle(viewColors.coral)
-                                }
-                            }
-                            Spacer()
-                            Button(entry.installed ? "Review update" : "Review & install") {
-                                Task {
-                                    if let trust = await extensionsModel.inspectPlugin(entry) {
-                                        review = PluginInstallReview(entry: entry, trust: trust)
-                                    }
-                                }
-                            }
-                            .disabled(!entry.available || model.isBusy)
-                        }
-                        .padding(11)
-                        .locusCard(radius: 9)
-                    }
-                    if extensionsModel.extensionCatalog.isEmpty {
-                        ContentUnavailableView(
-                            "No plugins found",
-                            systemImage: "magnifyingglass",
-                            description: Text("Add or refresh a marketplace source, then search again.")
-                        )
-                        .frame(minHeight: 260)
-                    }
-                }
-                .padding(.bottom, 10)
-            }
-        }
-        .padding(.horizontal, 14)
-        .onChange(of: marketplaceID) {
-            Task { await extensionsModel.refreshExtensionCatalog(query: search, marketplaceID: marketplaceID) }
-        }
-    }
-
     private var mcpPane: some View {
         VStack(spacing: 10) {
             HStack {
@@ -683,7 +527,7 @@ private struct ExtensionsSettingsView: View {
                                 Menu("Default: \(policyTitle(server.approvalMode))") {
                                     policyButtons(serverID: server.id, tool: nil)
                                 }
-                                if server.auth == "oauth" || server.auth == "auto" {
+                                if server.auth == "oauth" || server.auth == "auto" || server.oauthStrategy == "google_workspace" {
                                     Button(server.hasCredentials == true ? "Reconnect account" : "Connect account") {
                                         extensionsModel.authenticateMCPServer(server)
                                     }
@@ -869,7 +713,7 @@ private struct ExtensionsSettingsView: View {
             guard let server = await extensionsModel.materializeMCPPreset(preset, projectRef: projectRef) else {
                 return
             }
-            if useTokenFallback {
+            if useTokenFallback || preset.auth == "bearer" {
                 credentialServer = server
                 return
             }
@@ -878,7 +722,7 @@ private struct ExtensionsSettingsView: View {
                     enableAfterProbe = server
                 }
             }
-            if server.auth == "auto" || server.auth == "oauth" {
+            if server.auth == "auto" || server.auth == "oauth" || server.oauthStrategy == "google_workspace" {
                 extensionsModel.authenticateMCPServer(server) { success in
                     if success { Task { await probe() } }
                 }
@@ -1091,7 +935,7 @@ private struct MCPPresetReviewView: View {
                 }
                 GridRow {
                     Text("Sign-in")
-                    Text(preset.auth == "auto" ? "OAuth discovery with PKCE" : "Not required")
+                    Text(preset.id.hasPrefix("google-") ? "Google account" : preset.auth == "auto" ? "Account sign-in" : preset.auth == "bearer" ? "Provider access token" : "Not required")
                 }
                 GridRow {
                     Text("Scopes")
@@ -1504,13 +1348,16 @@ private struct MCPServerCatalogView: View {
     @State private var preview: MCPPreviewSelection?
 
     var body: some View {
-        DisclosureGroup("Resources and prompts", isExpanded: $expanded) {
+        DisclosureGroup("Resources, prompts and apps", isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Browsing metadata does not grant access. Previews and completions also use the current agent's permissions.")
                     .foregroundStyle(viewColors.muted)
                 if loading { ProgressView().controlSize(.small) }
                 if let error { Text(error).foregroundStyle(viewColors.coral).textSelection(.enabled) }
                 if let catalog = extensionsModel.mcpCatalogs[server.id] {
+                    ForEach((catalog.tools ?? []).filter { $0.ui?.resourceURI != nil && $0.enabled != false }, id: \.name) { tool in
+                        MCPAppLauncher(reference: MCPAppReference(serverID: server.id, tool: tool.name, callID: ""))
+                    }
                     Picker("Resource access", selection: $resourceAccess) {
                         Text("All resources").tag("all")
                         Text("Selected resources").tag("selected")

@@ -365,7 +365,7 @@ extension AppModel {
             gitWorkspace.refreshStatus()
             knowledge.scheduleWorkspaceKnowledgeReindex(workspacePath)
 
-        case "extensions_changed", "mcp_status", "mcp_credential_refresh",
+        case "extensions_changed", "mcp_status", "mcp_credential_refresh", "mcp_app_available",
              "mcp_auth_required", "mcp_input_required", "mcp_input_rejected":
             extensionsModel.ingest(type, event)
 

@@ -97,5 +97,11 @@ status**, and cancellation controls. Opening the Inspector reads saved task
 records; an explicit status check contacts the server. Structured input forms
 support choices, multiple selections, defaults, and validated numeric values.
 
-Sampling, MCP Apps, audio payloads, arbitrary binary downloads, and persistent
+MCP Apps can open interactive results within chat. The host supports the standard
+initialization, tool input/result notifications, scoped tool calls, text drafts,
+and reviewed HTTPS links. It blocks direct network requests, embedded frames,
+forms, and device access; only declared HTTPS asset origins may load. See
+[Apps and plugins](AppsAndPlugins.md) for the portability contract and limits.
+
+Sampling, audio payloads, arbitrary binary downloads, and persistent
 connection-log history are not supported by this expansion.

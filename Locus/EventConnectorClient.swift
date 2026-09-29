@@ -104,7 +104,7 @@ struct GmailOAuthConfiguration: Equatable {
 final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
 
-    func authenticate(clientID: String, callbackScheme: String) async throws -> [String: String] {
+    func authenticate(clientID: String, callbackScheme: String, scopes: [String] = ["https://www.googleapis.com/auth/gmail.modify"]) async throws -> [String: String] {
         let configuration = try GmailOAuthConfiguration(
             clientID: clientID,
             callbackScheme: callbackScheme
@@ -117,7 +117,7 @@ final class GmailOAuthCoordinator: NSObject, ASWebAuthenticationPresentationCont
             URLQueryItem(name: "client_id", value: configuration.clientID),
             URLQueryItem(name: "redirect_uri", value: configuration.redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/gmail.modify"),
+            URLQueryItem(name: "scope", value: scopes.joined(separator: " ")),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
