@@ -4599,11 +4599,14 @@ final class LocusUITests: XCTestCase {
         XCTAssertLessThan(reader.frame.width, 760)
         XCTAssertFalse(anyElement("activity.resultList").exists, "Compact windows give the result the full content width")
         let resultText = "The stock check is complete. Two items are available."
-        let output = reader.descendants(matching: .staticText)
+        let readerText = reader.descendants(matching: .staticText)
+        let output = readerText
             .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", resultText, resultText)).firstMatch
         XCTAssertTrue(output.waitForExistence(timeout: 3))
         XCTAssertTrue(output.isHittable)
-        XCTAssertFalse(reader.descendants(matching: .any)
+        // Both assertions inspect rendered prose. Asking every accessibility
+        // element for a string value can stall snapshots of the result reader.
+        XCTAssertFalse(readerText
             .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "unrelated to the selected task result", "unrelated to the selected task result")).firstMatch.exists)
         XCTAssertTrue(reader.buttons["Mark unread"].exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
