@@ -319,6 +319,44 @@ def test_marketplace_install_scope_update_and_rollback(tmp_path):
     assert manager.rollback_plugin(installed["id"])["version"] == "1.0.0"
 
 
+def _no_git(command):
+    pytest.fail(f"catalog must not run Git: {command}")
+
+
+def test_remote_catalog_entry_shows_its_description_without_cloning(tmp_path, monkeypatch):
+    market = tmp_path / "market"
+    (market / ".agents/plugins").mkdir(parents=True)
+    (market / ".agents/plugins/marketplace.json").write_text(json.dumps({"plugins": [
+        {"name": "remote", "source": {"source": "url", "url": "https://example.com/remote.git"},
+         "description": "  Remote\n plugin.  "},
+        {"name": "long", "source": {"source": "url", "url": "https://example.com/long.git"},
+         "description": "x" * 600},
+        {"name": "noisy", "source": {"source": "url", "url": "https://example.com/noisy.git"},
+         "description": "bell\x07"},
+    ]}))
+    manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
+    manager.add_marketplace(str(market))
+    monkeypatch.setattr(ExtensionManager, "_run_git", staticmethod(_no_git))
+    entries = {item["name"]: item for item in manager.catalog()}
+    assert entries["remote"]["available"] is True
+    assert entries["remote"]["description"] == "Remote plugin."
+    assert entries["long"]["description"] == "x" * 500
+    assert entries["noisy"]["description"] == ""
+
+
+def test_repo_marketplace_lists_trading_bot_from_its_git_repository(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    manager = ExtensionManager(str(repo), root=tmp_path / "state")
+    monkeypatch.setattr(ExtensionManager, "_run_git", staticmethod(_no_git))
+    entry = next(item for item in manager.catalog() if item["name"] == "trading-bot")
+    assert entry["source"] == {
+        "source": "url", "url": "https://github.com/nahid-sparktales/Trading-Bot.git",
+    }
+    assert entry["available"] is True
+    assert entry["category"] == "Finance"
+    assert "paper-trading desk" in entry["description"]
+
+
 def test_credentials_are_memory_only(tmp_path):
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     server = manager.upsert_mcp_server({

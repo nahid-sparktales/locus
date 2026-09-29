@@ -4,6 +4,10 @@
 
 ### Added
 
+- Trading Bot is available in the Locus marketplace: run a paper-trading desk
+  from Work → Trading Bot… and let agents start analyses and read results.
+  Marketplace entries from Git show their catalog description before install.
+
 - Plugins can open their own windows from Extensions and Agent World's Work
   menu, including the LangGraph Workflows canvas, settings, and saved-agent
   handoffs with native run confirmation.
