@@ -20,6 +20,7 @@ from ollama_code.extensions import (
 )
 from ollama_code.mcp_runtime import (
     MCPManager,
+    _fingerprint,
     _sensitive_elicitation_schema,
     _validated_form_content,
     _verified_elicitation_url,
@@ -1181,3 +1182,13 @@ def test_panel_tools_are_hidden_from_agents_but_callable_from_the_window(tmp_pat
             assert unknown.status_code == 422
     finally:
         core.mcp.close()
+
+
+def test_plugin_folder_change_changes_the_server_fingerprint():
+    server = {"id": "plugin:demo:tools", "command": "/bin/sh", "args": ["${PLUGIN_ROOT}/bin/launch"],
+              "plugin_root": "/cache/demo/1.0.0", "plugin_data": "/data/demo"}
+    for moved in ({**server, "plugin_root": "/cache/demo/1.0.0-abcdef123456"},
+                  {**server, "plugin_data": "/data/demo-2"}):
+        for connection_only in (False, True):
+            assert _fingerprint(server, {}, connection_only=connection_only) \
+                != _fingerprint(moved, {}, connection_only=connection_only)

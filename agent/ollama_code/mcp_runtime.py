@@ -31,6 +31,9 @@ def _fingerprint(
         key: server.get(key)
         for key in (
             "id", "transport", "url", "command", "args", "cwd", "env", "env_vars",
+            # ${PLUGIN_ROOT}/${PLUGIN_DATA} resolve from these at spawn, so a
+            # reinstall into a new folder must reconnect.
+            "plugin_root", "plugin_data",
             "http_headers", "env_http_headers", "enabled_tools", "disabled_tools",
             "enabled_resources", "enabled_prompts", "resource_access", "protocol_mode",
             "share_workspace_root", "bearer_token_env_var",
