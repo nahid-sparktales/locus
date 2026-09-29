@@ -286,6 +286,7 @@ extension AppModel {
             sessionInfo = info
             activeTaskRecord = info.task
         }
+        if !attachingActiveWork { _ = await syncPreferredPermissionModeAndWait(to: runtime.service) }
         sendComputerControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         sendBrowserCapability(to: runtime.service)
@@ -298,7 +299,6 @@ extension AppModel {
         runtime.needsConnectorCapabilitySync = !sendConnectorCapability(
             to: runtime.service
         )
-        if !attachingActiveWork { _ = await syncPreferredPermissionModeAndWait(to: runtime.service) }
         runtime.isAttaching = false
         syncBrowserProtectedSessions()
         return runtime
@@ -322,6 +322,7 @@ extension AppModel {
                   runtime.isConnected,
                   !self.isShuttingDown
             else { return }
+            self.flushPendingNativeCapabilities()
             self.eventAutomations.wakeDispatcher()
             self.drainGoalQueuedMessages(sessionID: runtime.sessionID)
             self.goals.wake()
@@ -514,6 +515,7 @@ extension AppModel {
     }
 
     private func handleWorkerEvent(_ event: [String: Any], runtime: ChatWorkerRuntime) {
+        if deferRejectedNativeCapability(event, on: runtime.service) { return }
         goals.handleEvent(event, sessionID: runtime.sessionID)
         if handleOptionalQuestionEvent(event, sessionID: runtime.sessionID) { return }
         if taskCapsules.activeStageSessions[runtime.sessionID] != nil {

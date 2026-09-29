@@ -30,9 +30,8 @@ struct ChatAdmissionQueue {
         sessionIDs.first == sessionID
     }
 
-    /// Preserve FIFO among chats that can start now while allowing an older
-    /// writer blocked on a shared local workspace to stop holding unrelated
-    /// work behind it.
+    /// Preserve FIFO among ready chats without letting a reconnecting or
+    /// configuring worker hold unrelated conversations behind it.
     func isFirstEligible(
         _ sessionID: String,
         where isEligible: (String) -> Bool

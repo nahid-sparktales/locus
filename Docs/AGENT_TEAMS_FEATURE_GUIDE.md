@@ -156,6 +156,8 @@ Use the sidebar add button to choose:
 
 Selecting a workspace opens its most recent chat. If it has none, Locus creates a blank chat. Use the workspace's new-chat button or `⌘N` to create another chat under the active workspace. Older chats without workspace information appear under **Other Chats**.
 
+Separate chats can run in parallel, including Work chats in the same project with the same model account. Settings → General → **Parallel chats and agent events** sets the limit; messages within one chat still run in order. New Git chats use separate worktrees by default to isolate edits. Chats opened in the current folder share its files.
+
 Example: add `~/Projects/Locus` and `~/Projects/Website`. Each sidebar group keeps a separate chat history while remaining backed by its actual project folder.
 
 ### Recoverable individual chat deletion

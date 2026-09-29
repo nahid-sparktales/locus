@@ -443,7 +443,7 @@ extension AppModel {
             "scope": scope == nil ? "all" : "application",
         ]
         if let scope { payload["application"] = scope.scopePayload }
-        _ = transport.send(payload)
+        sendNativeCapability(payload, to: transport)
     }
 
     static func effectiveComputerControlEnabled(
@@ -488,7 +488,7 @@ extension AppModel {
                 "state": target.device.state.rawValue,
             ]
         }
-        _ = transport.send(payload)
+        sendNativeCapability(payload, to: transport)
     }
 
     /// Tell every live backend, not just whichever one happens to be in front.
@@ -507,14 +507,8 @@ extension AppModel {
 
     func sendBrowserCapability(to transport: BackendService) {
         sendOptionalQuestionCapability(to: transport)
-        _ = transport.send(["type": "set_identity_control", "enabled": true])
-        let delivered = transport.send(browserCapabilityPayload)
-        // The agent refuses capability changes mid-turn and Swift historically
-        // dropped the answer, so a toggle during a long turn was lost until the
-        // next reconnect. Retry once the turn is over instead.
-        if !delivered || isBusy {
-            pendingBrowserCapabilityTransports.append(transport)
-        }
+        sendNativeCapability(["type": "set_identity_control", "enabled": true], to: transport)
+        sendNativeCapability(browserCapabilityPayload, to: transport)
     }
 
     private var browserCapabilityPayload: [String: Any] {
@@ -531,28 +525,28 @@ extension AppModel {
     /// its tools. Every live Locus transport gets this handshake once it is
     /// connected; the actual workspace and scope stay enforced in Swift.
     func sendNotesCapability(to transport: BackendService) {
-        _ = transport.send([
+        sendNativeCapability([
             "type": "set_notes_control",
             "enabled": true,
-        ])
+        ], to: transport)
     }
 
     /// Built-in Calendar is always available. EventKit enforces system permission
     /// separately for connected calendar overlays.
     func sendCalendarCapability(to transport: BackendService) {
-        _ = transport.send([
+        sendNativeCapability([
             "type": "set_calendar_control",
             "enabled": true,
-        ])
+        ], to: transport)
     }
 
     /// The board is app-owned workspace data, so every live Locus transport
     /// advertises it; the workspace is still resolved here, not by the runtime.
     func sendBoardCapability(to transport: BackendService) {
-        _ = transport.send([
+        sendNativeCapability([
             "type": "set_board_control",
             "enabled": true,
-        ])
+        ], to: transport)
     }
 
     #if LOCUS_WALLET
@@ -560,10 +554,10 @@ extension AppModel {
     /// security-reviewed native signer is available. A release without that
     /// signer has no advertised wallet surface to guess or call.
     func sendWalletCapability(to transport: BackendService) {
-        _ = transport.send([
+        sendNativeCapability([
             "type": "set_wallet_control",
             "capability": (walletGateway.capability as Any?) ?? NSNull(),
-        ])
+        ], to: transport)
     }
 
     #endif
@@ -629,15 +623,62 @@ extension AppModel {
     }
 
     #endif
-    /// Re-announce anything the agent refused while it was busy.
-    func flushPendingBrowserCapability() {
-        guard !pendingBrowserCapabilityTransports.isEmpty else { return }
-        let transports = pendingBrowserCapabilityTransports
-        pendingBrowserCapabilityTransports.removeAll()
+    /// Busy belongs to the destination worker, not whichever chat is visible.
+    func nativeCapabilityTransportIsBusy(_ transport: BackendService) -> Bool {
+        if let runtime = taskWorkers.values.first(where: { $0.service === transport }) {
+            return runtime.occupiesExecutionSlot || runtime.isPreparingForDispatch
+        }
+        return transport === backend && conversationBackend === backend && isBusy
+    }
+
+    private func deferNativeCapabilities(to transport: BackendService) {
+        if !pendingNativeCapabilityTransports.contains(where: { $0 === transport }) {
+            pendingNativeCapabilityTransports.append(transport)
+        }
+    }
+
+    private func sendNativeCapability(_ payload: [String: Any], to transport: BackendService) {
+        if nativeCapabilityTransportIsBusy(transport) || !transport.send(payload) {
+            deferNativeCapabilities(to: transport)
+        }
+    }
+
+    /// A turn can start between the idle check and socket delivery. Keep that
+    /// internal handshake out of the transcript and retry its latest settings.
+    func deferRejectedNativeCapability(_ event: [String: Any], on transport: BackendService) -> Bool {
+        guard event["type"] as? String == "command_error",
+              event["message"] as? String == "Wait for the active turn to finish.",
+              let operation = event["operation"] as? String,
+              ["set_computer_control", "set_simulator_control", "set_identity_control",
+               "set_browser_control", "set_notes_control", "set_calendar_control",
+               "set_board_control", "set_wallet_control"].contains(operation)
+        else { return false }
+        deferNativeCapabilities(to: transport)
+        return true
+    }
+
+    /// A completed chat must never flush updates into another running chat.
+    func flushPendingNativeCapabilities() {
+        guard !pendingNativeCapabilityTransports.isEmpty else { return }
+        let transports = pendingNativeCapabilityTransports
+        pendingNativeCapabilityTransports.removeAll()
         for transport in transports {
-            if !transport.send(browserCapabilityPayload) {
-                pendingBrowserCapabilityTransports.append(transport)
+            let runtime = taskWorkers.values.first { $0.service === transport }
+            guard transport === backend || runtime != nil else { continue }
+            if nativeCapabilityTransportIsBusy(transport) {
+                deferNativeCapabilities(to: transport)
+                continue
             }
+            let owner = runtime?.sessionID ?? currentSessionID
+            sendComputerControlCapability(to: transport, sessionID: owner)
+            sendSimulatorControlCapability(to: transport, sessionID: owner)
+            sendBrowserCapability(to: transport)
+            sendNotesCapability(to: transport)
+            sendCalendarCapability(to: transport)
+            sendBoardCapability(to: transport)
+            #if LOCUS_WALLET
+            sendWalletCapability(to: transport)
+            #endif
         }
     }
 

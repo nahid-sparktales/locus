@@ -618,14 +618,10 @@ extension AppModel {
                 $0 !== runtime && $0.occupiesExecutionSlot
             }.count
             if chatAdmissionQueue.isFirstEligible(runtime.sessionID, where: { sessionID in
-                guard let candidate = taskWorkers[sessionID], candidate.acceptsNewTurns else {
-                    return false
-                }
-                return !hasLocalWriterCollision(for: candidate)
+                taskWorkers[sessionID]?.acceptsNewTurns == true
             }),
                occupied < AppSettings.clampMaximumActiveChats(settings.maximumActiveChats),
-               runtime.acceptsNewTurns,
-               !hasLocalWriterCollision(for: runtime) {
+               runtime.acceptsNewTurns {
                 chatAdmissionQueue.remove(runtime.sessionID)
                 runtime.executionState = .running
                 runtime.startedAt = Date()
@@ -705,25 +701,6 @@ extension AppModel {
             eventAutomations.wakeDispatcher()
         }
         return true
-    }
-
-    private func hasLocalWriterCollision(for runtime: ChatWorkerRuntime) -> Bool {
-        guard runtime.dispatchedMode == .work || runtime.dispatchedMode == .grill,
-              runtime.sessionInfo?.environment?["type"] != ChatExecutionEnvironment.worktree.rawValue,
-              let root = runtime.sessionInfo?.environment?["canonical_repository"]
-                ?? runtime.sessionInfo?.workspaceRoot ?? runtime.sessionInfo?.cwd
-        else { return false }
-        let canonical = URL(fileURLWithPath: root).standardizedFileURL.path
-        return taskWorkers.values.contains { other in
-            guard other !== runtime, other.occupiesExecutionSlot,
-                  other.dispatchedMode == .work || other.dispatchedMode == .grill,
-                  other.sessionInfo?.environment?["type"]
-                    != ChatExecutionEnvironment.worktree.rawValue,
-                  let otherRoot = other.sessionInfo?.environment?["canonical_repository"]
-                    ?? other.sessionInfo?.workspaceRoot ?? other.sessionInfo?.cwd
-            else { return false }
-            return URL(fileURLWithPath: otherRoot).standardizedFileURL.path == canonical
-        }
     }
 
     func updateBackgroundChatState(_ runtime: ChatWorkerRuntime) {  // internal(for: AppModel extension files)

@@ -430,10 +430,9 @@ class RuntimeSupervisor:
                     worker = await self.ensure_worker(record["session_id"], record["workspace"])
                     if worker.active_command:
                         continue
-                    # Shared local workspaces retain single-writer admission.
-                    if any(other.active_command and self.store.worker(other.session_id)["workspace"] == record["workspace"]
-                           for other in self.workers.values() if other is not worker):
-                        continue
+                    # Conversation workers are independent even when their
+                    # project folder is shared. Keep per-chat ordering and the
+                    # global limit; worktree selection owns edit isolation.
                     item = commands[0]
                     command = dict(self.private.read().get(f"command:{item['id']}", item["command"]))
                     try:

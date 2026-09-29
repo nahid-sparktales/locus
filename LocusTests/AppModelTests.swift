@@ -457,6 +457,103 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSeparateWorkChatsInSameLocalProjectStartInParallel() async throws {
+        let model = AppModel(startImmediately: false)
+        model.settings.maximumActiveChats = 2
+        let first = transcriptWorker("first", model: model)
+        let second = transcriptWorker("second", model: model)
+        defer { first.stop(); second.stop() }
+        for worker in [first, second] {
+            worker.process.attach(to: worker.service.currentBaseURL)
+            worker.isConnected = true
+            worker.isAttaching = false
+            worker.dispatchedMode = .work
+            var info = sessionInfo(id: worker.sessionID)
+            info["workspace_root"] = "/tmp/shared-project"
+            info["execution_path"] = "/tmp/shared-project"
+            info["environment"] = ["type": "local", "canonical_repository": "/tmp/shared-project"]
+            worker.sessionInfo = try JSONDecoder().decode(SessionInfo.self,
+                from: JSONSerialization.data(withJSONObject: info))
+        }
+        first.executionState = .running
+        let admission = Task { await model.waitForChatExecutionSlot(second) }
+        for _ in 0..<100 where second.executionState != .running {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(second.executionState, .running, "A shared project must not serialize separate chats")
+        XCTAssertEqual(first.executionState, .running, "Starting another chat must leave the original running")
+        admission.cancel()
+        let admitted = await admission.value
+        XCTAssertTrue(admitted)
+        XCTAssertTrue(model.chatAdmissionQueue.sessionIDs.isEmpty)
+    }
+
+    @MainActor
+    func testParallelChatAdmissionStillHonorsConfiguredLimitAndCancellation() async throws {
+        let model = AppModel(startImmediately: false)
+        model.settings.maximumActiveChats = 1
+        let first = transcriptWorker("first", model: model)
+        let second = transcriptWorker("second", model: model)
+        defer { first.stop(); second.stop() }
+        first.executionState = .running
+        second.process.attach(to: second.service.currentBaseURL)
+        second.isConnected = true
+        second.isAttaching = false
+        let admission = Task { await model.waitForChatExecutionSlot(second) }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(second.executionState, .queued)
+        XCTAssertEqual(model.chatAdmissionQueue.sessionIDs, [second.sessionID])
+        admission.cancel()
+        let admitted = await admission.value
+        XCTAssertFalse(admitted)
+        XCTAssertTrue(model.chatAdmissionQueue.sessionIDs.isEmpty)
+    }
+
+    @MainActor
+    func testNativeCapabilityBusyStateBelongsToDestinationChat() {
+        let model = AppModel(startImmediately: false)
+        let running = transcriptWorker("running", model: model)
+        let idle = transcriptWorker("idle", model: model)
+        model.currentSessionID = running.sessionID
+        model.isBusy = true
+        running.executionState = .running
+        idle.executionState = .completed
+        XCTAssertTrue(model.nativeCapabilityTransportIsBusy(running.service))
+        XCTAssertFalse(model.nativeCapabilityTransportIsBusy(idle.service))
+        XCTAssertFalse(model.nativeCapabilityTransportIsBusy(model.backend))
+        model.currentSessionID = idle.sessionID
+        model.isBusy = false
+        XCTAssertTrue(model.nativeCapabilityTransportIsBusy(running.service))
+        idle.isPreparingForDispatch = true
+        XCTAssertTrue(model.nativeCapabilityTransportIsBusy(idle.service))
+    }
+
+    @MainActor
+    func testBusyNativeCapabilityRejectionsAreDeferredWithoutChatErrors() {
+        let model = AppModel(startImmediately: false)
+        let worker = transcriptWorker("running", model: model)
+        model.currentSessionID = worker.sessionID
+        model.isBusy = true
+        worker.executionState = .running
+        model.handleEventForTesting(["type": "message_start"])
+        let count = model.blocks.count
+        for operation in ["set_computer_control", "set_simulator_control", "set_browser_control",
+                          "set_identity_control", "set_notes_control", "set_calendar_control", "set_board_control"] {
+            model.handle(["type": "command_error", "operation": operation,
+                          "message": "Wait for the active turn to finish."], source: worker.service)
+        }
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.blocks.count, count)
+        XCTAssertEqual(model.pendingNativeCapabilityTransports.count, 1)
+        XCTAssertTrue(model.pendingNativeCapabilityTransports.first === worker.service)
+        model.flushPendingNativeCapabilities()
+        XCTAssertEqual(model.pendingNativeCapabilityTransports.count, 1, "Running destinations must remain deferred")
+        model.handle(["type": "command_error", "operation": "set_model",
+                      "message": "Wait for the active turn to finish."], source: worker.service)
+        XCTAssertEqual(model.blocks.last?.kind, .error, "User command failures remain visible")
+    }
+
+    @MainActor
     func testResumeBlocksEveryDraftAdmissionUntilOwnedMetadataIsReady() async throws {
         let model = transcriptLoadModel()
         defer { stopTranscriptLoadModel(model) }

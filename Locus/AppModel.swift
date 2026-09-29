@@ -610,8 +610,8 @@ final class AppModel: ObservableObject {
     var pendingChatTurns: [String: Task<Void, Never>] = [:]  // internal(for: AppModel extension files)
     var pendingChatTurnTokens: [String: UUID] = [:]  // internal(for: AppModel extension files)
     var pendingSimulatorActions: [String: (sessionID: String, task: Task<Void, Never>)] = [:]  // internal(for: AppModel extension files)
-    /// Backends that refused the browser handshake because a turn was running.
-    var pendingBrowserCapabilityTransports: [BackendService] = []  // internal(for: AppModel extension files)
+    /// Backends awaiting native-tool setup after their own active turn finishes.
+    var pendingNativeCapabilityTransports: [BackendService] = []  // internal(for: AppModel extension files)
     var pendingMainConnectorCapabilitySync = false  // internal(for: AppModel extension files)
     var conversationBackend: BackendService {  // internal(for: AppModel extension files)
         taskWorkers[currentSessionID]?.service ?? backend

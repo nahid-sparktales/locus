@@ -20,6 +20,49 @@ def runtime(tmp_path):
     return value
 
 
+@pytest.mark.parametrize("limit", [1, 2])
+def test_parallel_chats_in_same_project_obey_chat_limit_not_workspace_lock(runtime, monkeypatch, limit):
+    from unittest.mock import AsyncMock
+
+    from ollama_code.runtime_automation import RuntimeAutomation
+
+    async def scenario():
+        runtime.limit = limit
+        workspace = runtime.store.worker("worker")["workspace"]
+        runtime.store.save_worker("second", workspace, keep_running=True)
+        for session in ["worker", "second"]:
+            runtime.workers[session] = SimpleNamespace(session_id=session, active_command="")
+            runtime.enqueue(session, {"type": "user_message", "mode": "work", "text": session,
+                                      "request_id": session + "-first"})
+        runtime.enqueue("worker", {"type": "user_message", "mode": "work", "text": "follow-up",
+                                   "request_id": "worker-second"})
+        sent = []
+
+        async def ensure(session, workspace):
+            return runtime.workers[session]
+
+        async def send(worker, command):
+            sent.append((worker.session_id, command["request_id"]))
+
+        async def end_tick(_):
+            raise asyncio.CancelledError
+
+        runtime.ensure_worker = ensure
+        runtime.send = send
+        runtime.relay_controller_presence = lambda: None
+        monkeypatch.setattr(RuntimeAutomation, "tick", AsyncMock())
+        monkeypatch.setattr("ollama_code.runtime.asyncio.sleep", end_tick)
+        with pytest.raises(asyncio.CancelledError):
+            await runtime.coordinate()
+
+        assert sent == [("worker", "worker-first"), ("second", "second-first")][:limit]
+        assert runtime.store.commands("worker")[0]["id"] == "worker-second"
+        assert runtime.workers["worker"].active_command == "worker-first"
+        assert bool(runtime.workers["second"].active_command) == (limit == 2)
+
+    asyncio.run(scenario())
+
+
 def test_saved_agent_runtime_uses_profile_route_and_rejects_removed_profile(runtime, monkeypatch):
     import uuid
     from unittest.mock import AsyncMock

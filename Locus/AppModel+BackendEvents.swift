@@ -733,7 +733,6 @@ extension AppModel {
             flushPendingTokens()
             finalizeStreamingBlocks()
             resolveDanglingPermissions()
-            flushPendingBrowserCapability()
             let reason = event["reason"] as? String ?? "complete"
             recordAutomaticModelRoutingOutcome(
                 sessionID: currentSessionID,
@@ -779,6 +778,7 @@ extension AppModel {
             if let completedWorker {
                 prepareChatWorkerForNextDispatch(completedWorker)
             } else {
+                flushPendingNativeCapabilities()
                 eventAutomations.wakeDispatcher()
                 syncPreferredPermissionMode(to: conversationBackend)
             }
@@ -906,6 +906,7 @@ extension AppModel {
             // the worker's final session writes.
 
         case "command_error":
+            if deferRejectedNativeCapability(event, on: source ?? conversationBackend) { return }
             if event["operation"] as? String == "set_connector_control" {
                 // This is an internal capability handshake, not a failed user
                 // request. Retry after the turn without polluting its transcript.
