@@ -178,7 +178,14 @@ private struct ExtensionsSettingsView: View {
         case marketplace = "Browse"
         case mcp = "MCP Servers"
         case skills = "Skills"
-        var id: String { rawValue }
+        var id: String {
+            switch self {
+            case .installed: "installed"
+            case .marketplace: "marketplace"
+            case .mcp: "mcp-servers"
+            case .skills: "skills"
+            }
+        }
     }
 
     @EnvironmentObject private var model: AppModel
@@ -196,7 +203,7 @@ private struct ExtensionsSettingsView: View {
                 ForEach(Tab.allCases) { tab in
                     Text(tab.rawValue)
                         .tag(tab)
-                        .accessibilityIdentifier("extensions.tab.\(tab.id.lowercased().replacingOccurrences(of: " ", with: "-"))")
+                        .accessibilityIdentifier("extensions.tab.\(tab.id)")
                 }
             }
             .pickerStyle(.segmented)

@@ -537,8 +537,12 @@ final class AppModelTests: XCTestCase {
         worker.executionState = .running
         model.handleEventForTesting(["type": "message_start"])
         let count = model.blocks.count
-        for operation in ["set_computer_control", "set_simulator_control", "set_browser_control",
-                          "set_identity_control", "set_notes_control", "set_calendar_control", "set_board_control"] {
+        var operations = ["set_computer_control", "set_simulator_control", "set_browser_control",
+                          "set_identity_control", "set_notes_control", "set_calendar_control", "set_board_control"]
+        #if LOCUS_WALLET
+        operations.append("set_wallet_control")
+        #endif
+        for operation in operations {
             model.handle(["type": "command_error", "operation": operation,
                           "message": "Wait for the active turn to finish."], source: worker.service)
         }

@@ -648,11 +648,20 @@ extension AppModel {
     func deferRejectedNativeCapability(_ event: [String: Any], on transport: BackendService) -> Bool {
         guard event["type"] as? String == "command_error",
               event["message"] as? String == "Wait for the active turn to finish.",
-              let operation = event["operation"] as? String,
-              ["set_computer_control", "set_simulator_control", "set_identity_control",
-               "set_browser_control", "set_notes_control", "set_calendar_control",
-               "set_board_control", "set_wallet_control"].contains(operation)
+              let operation = event["operation"] as? String
         else { return false }
+        switch operation {
+        case "set_computer_control", "set_simulator_control", "set_identity_control",
+             "set_browser_control", "set_notes_control", "set_calendar_control",
+             "set_board_control":
+            break
+        #if LOCUS_WALLET
+        case "set_wallet_control":
+            break
+        #endif
+        default:
+            return false
+        }
         deferNativeCapabilities(to: transport)
         return true
     }
