@@ -1186,11 +1186,16 @@ class ExtensionManager:
         if installation == "NOT_AVAILABLE":
             available = False
             error = error or "plugin is not available from this marketplace"
+        # Remote entries are not cloned until review, so the catalog's own
+        # description is all Marketplace can show before install.
+        description = entry.get("description")
+        description = " ".join(description.split())[:500] if isinstance(description, str) else ""
         return {
             "id": f"{marketplace_id}/{name}",
             "name": name,
             "marketplace_id": marketplace_id,
             "category": str(entry.get("category") or "Other"),
+            "description": description if description.isprintable() else "",
             "source": normalized_source,
             "available": available,
             "error": error,
@@ -1218,7 +1223,7 @@ class ExtensionManager:
                 item["installed"] = plugin is not None
                 item["installed_version"] = plugin.get("version") if plugin else None
                 item["display_name"] = str(item.get("name") or "").replace("-", " ").title()
-                item["description"] = ""
+                item["description"] = str(item.get("description") or "")
                 item["screens"] = []
                 if item.get("available") and item.get("source", {}).get("source") == "local":
                     try:

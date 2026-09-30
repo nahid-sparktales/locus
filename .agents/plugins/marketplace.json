@@ -21,6 +21,19 @@
         "authentication": "ON_USE"
       },
       "category": "Productivity"
+    },
+    {
+      "name": "trading-bot",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/nahid-sparktales/Trading-Bot.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Finance",
+      "description": "Run the TradingAgents paper-trading desk from Locus and let your agents start analyses and read the results."
     }
   ]
 }

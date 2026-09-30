@@ -202,6 +202,7 @@ and interface checks are defined in the [CI workflow](.github/workflows/ci.yml).
 - [Agent teams](Docs/AGENT_TEAMS_FEATURE_GUIDE.md)
 - [Agent World plugin](Docs/AgentWorld.md) — interact with saved agents in a 3D outpost
 - [Social Studio plugin](Docs/SocialStudio.md) — draft, research, and plan social posts; connect OpenPost for publishing
+- [Trading Bot plugin](Docs/TradingBot.md) — run a multi-agent paper-trading desk your agents can use
 - [Library and Getting Started](Docs/LibraryAndGettingStarted.md)
 - [Task Capsules](Docs/TaskCapsules.md)
 - [Image generation and interactive answers](Docs/LocusImageAndInteractiveAnswersImplementation.md)
