@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.3.0 — 2026-09-30
+
 ### Added
 
 - Trading Bot is available in the Locus marketplace: run a paper-trading desk
@@ -32,6 +34,14 @@
   the main window. Card handoffs create a draft chat in the board's workspace.
 
 ### Fixed
+
+- Multiple chats can work in the same shared project concurrently; capability
+  refreshes wait until active work can safely accept them.
+- Plugin MCP servers reconnect when their plugin folder changes, and extension
+  tabs keep stable identifiers.
+- The wallet-free app excludes wallet capabilities from its available tools.
+- The bundled Python runtime updates PyJWT to resolve the dependency audit.
+- Calendar access failures show an explanation instead of silently doing nothing.
 
 - Installed plugins, marketplace entries, and installation reviews display
   plugin artwork. Local marketplaces pick up newly added plugins when opened.
