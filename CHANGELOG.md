@@ -40,7 +40,7 @@
 - Plugin MCP servers reconnect when their plugin folder changes, and extension
   tabs keep stable identifiers.
 - The wallet-free app excludes wallet capabilities from its available tools.
-- The bundled Python runtime updates PyJWT to resolve the dependency audit.
+- The bundled Python runtime updates PyJWT and urllib3 to resolve the dependency audit.
 - Calendar access failures show an explanation instead of silently doing nothing.
 
 - Installed plugins, marketplace entries, and installation reviews display
