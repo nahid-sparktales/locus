@@ -317,8 +317,8 @@ mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
     echo "error: missing bundled MCP preset catalog" >&2
     exit 1
 }
-/usr/bin/grep -Fq -- '"version": 2' "${mcp_catalog}" || {
-    echo "error: bundled MCP preset catalog is not version 2" >&2
+/usr/bin/grep -Fq -- '"version": 3' "${mcp_catalog}" || {
+    echo "error: bundled MCP preset catalog is not version 3" >&2
     exit 1
 }
 

@@ -22,11 +22,11 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 3.2.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v3.2.0/Locus-macOS.zip).
-> This wallet-free release adds a Calendar and a shared Board to the inspector, both
-> usable by you and your agents. Install this download once if you use 2.6.0 or earlier;
+> [Download Locus 3.3.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v3.3.0/Locus-macOS.zip).
+> This wallet-free release adds specialist agent templates, assignable board work,
+> plugin windows, and reliability fixes. Install this download once if you use 2.6.0 or earlier;
 > existing chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v3.2.0).
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v3.3.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 
