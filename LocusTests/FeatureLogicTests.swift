@@ -1645,7 +1645,7 @@ final class FeatureLogicTests: XCTestCase {
     // MARK: - Inspector chrome
 
     func testInspectorTabsAreStableAndUnique() {
-        XCTAssertEqual(InspectorTab.allCases.count, 16)
+        XCTAssertEqual(InspectorTab.allCases.count, 17)
         let raws = InspectorTab.allCases.map(\.rawValue)
         XCTAssertEqual(Set(raws).count, raws.count)
         XCTAssertEqual(Set(InspectorTab.allCases.map(\.symbol)).count, raws.count)
@@ -1659,6 +1659,9 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(InspectorTab(rawValue: "agent"), .agent)
         XCTAssertEqual(InspectorTab.agent.title, "Agent")
         XCTAssertEqual(InspectorTab.agent.symbol, LocusSymbol.robot)
+        XCTAssertEqual(InspectorTab(rawValue: "companion"), .companion)
+        XCTAssertEqual(InspectorTab.companion.title, "Companion")
+        XCTAssertFalse(InspectorTab.companion.isWorkspaceTab)
         XCTAssertFalse(
             InspectorTab.workspaceTabs.contains(.agent),
             "the agent overview is session-scoped like Overview, not a workspace panel"
@@ -1689,7 +1692,7 @@ final class FeatureLogicTests: XCTestCase {
     func testInspectorShortcutsPreserveExistingKeysAndAddNotesOnNine() {
         XCTAssertEqual(
             InspectorTab.allCases.map(\.shortcutKey),
-            ["1", nil, "2", "3", "4", "5", nil, "9", nil, nil, "6", "7", "8", nil, nil, nil]
+            ["1", nil, nil, "2", "3", "4", "5", nil, "9", nil, nil, "6", "7", "8", nil, nil, nil]
         )
     }
 
@@ -2240,18 +2243,43 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertNil(saved.localContextWindow)
     }
 
-    func testThemePaletteResolvesWarmLightAndDarkColors() throws {
+    func testThemePaletteResolvesNeutralLightAndDarkColors() throws {
         let light = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .aqua)))
         let dark = LocusTheme.palette(for: try XCTUnwrap(NSAppearance(named: .darkAqua)))
 
-        assertColor(light.ink, red: 0.086, green: 0.094, blue: 0.078)
-        assertColor(light.paper, red: 0.953, green: 0.945, blue: 0.918)
-        assertColor(dark.ink, hex: 0xF2EEE4)
-        assertColor(dark.paper, hex: 0x171713)
-        assertColor(dark.white, hex: 0x292820)
+        assertColor(light.ink, hex: 0x181818)
+        assertColor(light.paper, hex: 0xFAFAFA)
+        assertColor(light.paperDeep, hex: 0xF1F1F1)
+        assertColor(light.panel, hex: 0xFFFFFF)
+        assertColor(light.white, hex: 0xFFFFFF)
+        assertColor(dark.ink, hex: 0xF5F5F5)
+        assertColor(dark.paper, hex: 0x171717)
+        assertColor(dark.white, hex: 0x282828)
         assertColor(dark.signalDeep, hex: 0xB6E33B)
         assertColor(dark.coral, hex: 0xD39F87)
         assertColor(dark.permissionInk, hex: 0xD3BAA3)
+    }
+
+    func testStandardChromeStaysAchromaticWithAReadableSurfaceHierarchy() throws {
+        for palette in [LocusTheme.lightPalette, LocusTheme.darkPalette] {
+            for token in [palette.ink, palette.inkSoft, palette.muted, palette.paper,
+                          palette.paperDeep, palette.panel, palette.white, palette.line, palette.lineStrong] {
+                let color = try XCTUnwrap(token.usingColorSpace(.sRGB))
+                XCTAssertEqual(color.redComponent, color.greenComponent, accuracy: 0.0001)
+                XCTAssertEqual(color.greenComponent, color.blueComponent, accuracy: 0.0001)
+            }
+        }
+        let light = LocusTheme.lightPalette
+        XCTAssertLessThan(relativeLuminance(light.ink), relativeLuminance(light.inkSoft))
+        XCTAssertLessThan(relativeLuminance(light.inkSoft), relativeLuminance(light.muted))
+        XCTAssertLessThan(relativeLuminance(light.paperDeep), relativeLuminance(light.paper))
+        XCTAssertLessThan(relativeLuminance(light.paper), relativeLuminance(light.panel))
+        let dark = LocusTheme.darkPalette
+        XCTAssertGreaterThan(relativeLuminance(dark.ink), relativeLuminance(dark.inkSoft))
+        XCTAssertGreaterThan(relativeLuminance(dark.inkSoft), relativeLuminance(dark.muted))
+        XCTAssertLessThan(relativeLuminance(dark.paper), relativeLuminance(dark.panel))
+        XCTAssertLessThan(relativeLuminance(dark.panel), relativeLuminance(dark.paperDeep))
+        XCTAssertLessThan(relativeLuminance(dark.paperDeep), relativeLuminance(dark.white))
     }
 
     func testSemanticTextColorsMeetNormalTextContrastAcrossPaperSurfaces() throws {
@@ -3156,12 +3184,12 @@ final class FeatureLogicTests: XCTestCase {
         session.updateAppearance(isDark: false)
         let view = try XCTUnwrap(session.hostView as? LocusLocalProcessTerminalView)
 
-        assertColor(view.nativeBackgroundColor, red: 0.953, green: 0.945, blue: 0.918)
-        assertColor(view.nativeForegroundColor, red: 0.086, green: 0.094, blue: 0.078)
+        assertColor(view.nativeBackgroundColor, hex: 0xFAFAFA)
+        assertColor(view.nativeForegroundColor, hex: 0x181818)
 
         session.updateAppearance(isDark: true)
-        assertColor(view.nativeBackgroundColor, hex: 0x171713)
-        assertColor(view.nativeForegroundColor, hex: 0xF2EEE4)
+        assertColor(view.nativeBackgroundColor, hex: 0x171717)
+        assertColor(view.nativeForegroundColor, hex: 0xF5F5F5)
     }
 
     @MainActor

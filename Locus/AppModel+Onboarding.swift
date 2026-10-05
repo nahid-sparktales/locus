@@ -5,11 +5,7 @@ import Foundation
 
 extension AppModel {
     func presentCompanion() {
-        if primaryCompanionProfile != nil {
-            openCompanionDestination()
-        } else {
-            onboarding.beginCompanionSetup()
-        }
+        openCompanionMainConversation()
     }
 
     func configureOnboarding(defaults: UserDefaults?, existingInstallation: Bool) {
@@ -65,12 +61,11 @@ extension AppModel {
             return
         }
         onboarding.dismiss()
-        openCompanionDestination()
         guard isAgentOnline else {
             showToast("Your companion is ready. Connect a model to start chatting.")
             return
         }
-        if !companionConversationIsSelected { startCompanionConversation() }
+        openCompanionMainConversation()
     }
 
     func chooseOnboardingWorkspace() {

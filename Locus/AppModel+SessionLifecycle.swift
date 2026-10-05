@@ -11,11 +11,11 @@ extension AppModel {
     /// A tab switch restores selection only; `resume` owns draft capture,
     /// background workers, and cancellation of superseded transcript loads.
     func switchSidebarDestination(_ destination: SidebarDestination) {
-        guard destination != sidebarDestination else { return }
         if destination == .companion {
             openCompanionDestination()
             return
         }
+        guard destination != sidebarDestination else { return }
         if destination == .agents, let profile = agentProfiles.first(where: { $0.id == selectedSavedAgentID })
             ?? agentProfiles.first {
             selectSavedAgent(profile)
@@ -322,6 +322,10 @@ extension AppModel {
     }
 
     func resume(_ session: SessionSummary, destination: SidebarDestination? = nil) {
+        if destination == .companion {
+            openCompanionChat(session)
+            return
+        }
         agentCrewChatPresented = false
         if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
@@ -344,11 +348,7 @@ extension AppModel {
         if let agentID = session.agentTriggerID?.nilIfEmpty {
             selectedAgentID = agentID
         }
-        let isCompanionChat = session.savedAgentProfileID != nil
-            && session.savedAgentProfileID == agentTeamsModel.primaryCompanionID
-            && !session.isAgentEventChat && session.agentTriggerID?.nilIfEmpty == nil
-        sidebarDestination = destination == .companion && isCompanionChat ? .companion
-            : session.isAgentChat ? .agents : .ask
+        sidebarDestination = session.isAgentChat ? .agents : .ask
         prepareSplitSelection(session.id)
         if let runtime = taskWorkers[session.id] {
             activateWorkerSession(session, runtime: runtime)

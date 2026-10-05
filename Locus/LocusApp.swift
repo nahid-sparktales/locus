@@ -249,14 +249,20 @@ struct LocusApp: App {
         }
 
         MenuBarExtra {
-            LocusMenuBarView(presenter: mainWindowPresenter)
+            CompanionMenuBarView(presenter: mainWindowPresenter)
                 .appFeatureEnvironment(from: model)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
+                .accentColor(model.accentActionColor)
+                .foregroundStyle(LocusTheme.textPrimary)
+                .tint(model.accentActionColor)
+                .environment(\.locusAccent, model.effectiveAccent)
         } label: {
             Image("MenuBarIcon")
                 .renderingMode(.template)
                 .accessibilityLabel(AppEdition.current.displayName)
+                .accessibilityIdentifier("companion.menubar.toggle")
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 
     /// Accessibility fixtures render one surface as the window root. This
@@ -496,51 +502,6 @@ final class LocusApplicationDelegate: NSObject, NSApplicationDelegate,
         return lifecycle?.applicationShouldTerminate(sender) ?? .terminateNow
     }
 
-}
-
-private struct LocusMenuBarView: View {
-    @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var activityCenter: ActivityCenterModel
-    @EnvironmentObject private var schedule: ScheduleModel
-    @Environment(\.openWindow) private var openWindow
-    let presenter: MainWindowPresenter
-
-    var body: some View {
-        Button("Open \(AppEdition.current.displayName)") { revealMainWindow() }
-            .keyboardShortcut("o")
-        Button("Configure Agent…") {
-            revealMainWindow()
-            model.presentConfigureAgent(draftText: "")
-        }
-        Divider()
-        if runningCount > 0 {
-            Text("\(runningCount) \(runningCount == 1 ? "task" : "tasks") running")
-        } else {
-            Text("No work running")
-        }
-        if let next = schedule.nextScheduledTask, let date = next.nextRunDate {
-            Text("Next: \(next.name) · \(date.formatted(date: .omitted, time: .shortened))")
-        } else {
-            Text("No upcoming schedules")
-        }
-        Divider()
-        Button("Quit Locus") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
-        EmptyView()
-            .onAppear { presenter.install(openWindow) }
-    }
-
-    private var runningCount: Int {
-        activityCenter.visibleActivityRuns.filter {
-            ["queued", "dispatching", "running", "reviewing", "waiting_permission",
-             "waiting_computer", "waiting_dispatch_approval", "paused"].contains($0.state)
-        }.count
-    }
-
-    private func revealMainWindow() {
-        presenter.install(openWindow)
-        presenter.present()
-    }
 }
 
 /// Captures `openWindow` while the main scene is alive, before the user has

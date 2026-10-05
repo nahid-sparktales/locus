@@ -1,71 +1,40 @@
 import SwiftUI
 
-/// Identity and real status within the companion tab. Its name opens the
-/// existing profile; conversations remain in the normal workspace below.
+/// A persistent shortcut to the companion's full conversation, beside accounts.
 struct CompanionSidebarEntry: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
-    @EnvironmentObject private var onboarding: OnboardingModel
     @Environment(\.locusViewColors) private var colors
-    @Environment(\.companionActivityPresentation) private var activitySource
 
     private var profile: AgentProfile? {
         agentTeams.agentProfiles.first { $0.id == agentTeams.primaryCompanionID }
     }
 
     var body: some View {
-        Button {
-            if let profile { model.selectSavedAgent(profile) }
-            else { onboarding.beginCompanionSetup() }
-        } label: {
-            Group {
+        Button { model.openCompanionMainConversation() } label: {
+            HStack(spacing: 8) {
                 if let profile {
-                    VStack(spacing: -5) {
-                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 84)
-                            .zIndex(1)
-                        VStack(spacing: 3) {
-                            Text(profile.name)
-                                .font(.locus(size: 15, weight: .semibold)).lineLimit(1)
-                            if let activitySource {
-                                CompanionSidebarStatus(source: activitySource, profileID: profile.id)
-                            } else {
-                                Text("Your companion").font(.locus(size: 11))
-                                    .foregroundStyle(colors.textSecondary)
-                            }
-                        }
-                        .frame(minWidth: 106, maxWidth: 168)
-                        .padding(.horizontal, 12).padding(.vertical, 10)
-                        .background(colors.panel, in: RoundedRectangle(cornerRadius: 18))
-                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(colors.line, lineWidth: 1))
-                    }
-                    .frame(maxWidth: .infinity)
+                    AgentAvatarView(profileID: profile.id, name: profile.name, size: 24)
+                        .accessibilityHidden(true)
                 } else {
-                    HStack(spacing: 10) {
-                    CompanionCharacterView(appearance: onboarding.companion.draft.appearance,
-                        size: 32, animationsEnabled: false,
-                        customImageData: onboarding.companion.draft.avatarData)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Set up your companion")
-                            .font(.locus(size: 12, weight: .semibold)).lineLimit(1)
-                        Text("A familiar face for your work")
-                            .font(.locus(size: 10)).foregroundStyle(colors.textSecondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    }
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.locus(size: 12, weight: .medium)).frame(width: 24)
                 }
+                Text("Companion").font(.locus(size: 10, weight: .semibold))
+                Spacer(minLength: 4)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20).padding(.vertical, 9)
+            .foregroundStyle(colors.inkSoft)
+            .padding(.horizontal, 8).frame(height: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.locus())
-        .help(profile.map { "Open \($0.name)’s profile, conversations, and activity" }
-              ?? "Personalize an agent without connecting a model")
+        .help("Open your companion in the main conversation")
+        .accessibilityLabel("Companion")
         .accessibilityIdentifier("sidebar.companion")
     }
 }
 
-private struct CompanionSidebarStatus: View {
+struct CompanionSidebarStatus: View {
     @ObservedObject var source: CompanionActivityPresentation
     let profileID: UUID
     @Environment(\.locusViewColors) private var colors

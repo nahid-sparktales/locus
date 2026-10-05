@@ -109,7 +109,9 @@ final class CompanionPointerTrackingView: NSView {
         isTracking = true
         movementMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
             MainActor.assumeIsolated {
-                guard let self, NSApp.isActive, event.window === self.window,
+                // A nonactivating menu-bar panel can be key while Locus is inactive.
+                // This app-local monitor still accepts only its own key window's events.
+                guard let self, event.window === self.window,
                       self.window?.isKeyWindow == true else { return }
                 self.updatePointer(event)
             }

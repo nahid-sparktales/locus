@@ -20,7 +20,7 @@ final class CompanionActivityPresentation: ObservableObject {
     }
 
     func summary(profileID: UUID) -> CompanionActivitySummary? { app?.companionActivitySummary(profileID: profileID) }
-    var scopeID: String { app.map { SessionSummary.canonicalWorkspacePath($0.workspacePath) } ?? "" }
+    func scopeID(profileID: UUID) -> String { app?.companionActivityWorkspacePath(profileID: profileID) ?? "" }
 }
 
 struct CompanionCompletionReactionGate {
@@ -75,7 +75,7 @@ struct CompanionActivityCharacterView: View {
     var body: some View {
         let summary = source.summary(profileID: profileID)
         let livePose = summary?.pose ?? .idle
-        let input = ReactionInput(scopeID: "\(source.scopeID)|\(profileID.uuidString)", event: summary?.latestCompletion)
+        let input = ReactionInput(scopeID: "\(source.scopeID(profileID: profileID))|\(profileID.uuidString)", event: summary?.latestCompletion)
         // Pending approvals and errors retain visual priority over a success
         // from a different task, while unread/activity counts remain separate.
         let pose: CompanionCharacterPose = reactionRunID != nil && livePose == .idle ? .completed : livePose

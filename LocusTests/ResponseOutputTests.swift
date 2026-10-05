@@ -26,6 +26,33 @@ final class ResponseOutputTests: XCTestCase {
         )])
     }
 
+    func testSideConversationFileReferencesUseTheirOwnFolderWithoutChangingCenter() throws {
+        let (root, workspace) = try fixture()
+        let companion = root.appendingPathComponent("companion")
+        try FileManager.default.createDirectory(at: companion, withIntermediateDirectories: true)
+        try "Companion result".write(to: companion.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+        try "Private project result".write(to: workspace.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+        let app = AppModel(startImmediately: false)
+        app.pendingWorkspacePath = workspace.path
+        app.draftText = "Unsent project work"
+        let reference = try XCTUnwrap(WorkspaceArtifactReference.classify("result.txt", workspacePath: companion.path))
+        app.openWorkspaceReference(reference, workspace: companion.path)
+        XCTAssertEqual(app.fileViewerRequest?.url.resolvingSymlinksInPath(), reference.url.resolvingSymlinksInPath())
+        let viewer = try XCTUnwrap(app.fileViewerRequest)
+        XCTAssertTrue(viewer.belongsToWorkspace(companion.path))
+        XCTAssertFalse(viewer.belongsToWorkspace(workspace.path), "A companion file cannot offer Add to Context for the center chat")
+        let centerViewer = WorkspaceFileViewerRequest(url: workspace.appendingPathComponent("result.txt"),
+                                                      relativePath: "result.txt", location: nil)
+        XCTAssertNotEqual(viewer.id, centerViewer.id, "Same-named files in separate conversations reload the viewer")
+        XCTAssertEqual(app.pendingWorkspacePath, workspace.path)
+        XCTAssertEqual(app.draftText, "Unsent project work")
+
+        app.fileViewerRequest = nil
+        app.openWorkspaceReference(reference, workspace: workspace.path)
+        XCTAssertNil(app.fileViewerRequest, "The same relative name in another folder cannot substitute for the original file")
+        XCTAssertEqual(app.draftText, "Unsent project work")
+    }
+
     private func writing(body: String = "Hello there.\n\nHere is the original draft.") -> ResponsePart {
         ResponsePart(type: "writing", id: "email", title: "Introduction", variant: "email", subject: "Hello", body: body)
     }

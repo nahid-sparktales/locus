@@ -27,9 +27,7 @@ struct WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.sidebarDestination == .companion, !model.companionConversationIsSelected {
-                CompanionDestinationView(sidebarVisible: sidebarVisible, showSidebar: showSidebar)
-            } else if model.agentCrewChatPresented, model.sidebarDestination == .agents {
+            if model.agentCrewChatPresented, model.sidebarDestination == .agents {
                 AgentCrewChatView(model: model.agentCrewChat, sidebarVisible: sidebarVisible, showSidebar: showSidebar)
                     .id(model.agentCrewChat.workspace)
             } else if presentsAgentOverview, let profile = model.savedAgentOverviewProfile {
@@ -3263,14 +3261,6 @@ struct SidebarDestinationControl: View {
     var body: some View {
         HStack(spacing: 0) {
             segment(
-                title: SidebarDestination.companion.title,
-                selected: destination == .companion,
-                identifier: "sidebar.mode.companion"
-            ) {
-                select(.companion)
-            }
-
-            segment(
                 title: SidebarDestination.agents.title,
                 selected: destination == .agents,
                 identifier: "sidebar.mode.agents"
@@ -3297,10 +3287,9 @@ struct SidebarDestinationControl: View {
         .shadow(color: viewColors.ink.opacity(0.08), radius: 2, y: 1)
         .layoutPriority(2)
         .animation(LocusMotion.spatial, value: destination)
-        .help(destination == .companion ? "Your companion and this project’s conversations"
-              : destination == .agents ? "Showing agent conversations" : "Showing workspaces and chats")
+        .help(destination == .agents ? "Showing agent conversations" : "Showing workspaces and chats")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Companion, Agent, or Work")
+        .accessibilityLabel("Agent or Work")
         .accessibilityValue(destination.title)
         .accessibilityIdentifier("sidebar.destination")
     }
@@ -7223,12 +7212,21 @@ private struct MCPImagePreview: View {
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.responseOutputContext) private var context
     let reference: ToolMediaReference
     @State private var data: Data?
     @State private var image: NSImage?
     @State private var failure: String?
 
     var body: some View {
+        if context.allowsForegroundToolResults {
+            preview
+        } else {
+            ForegroundToolResultNotice(title: "View tool image in full conversation")
+        }
+    }
+
+    private var preview: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let image {
                 Image(nsImage: image)

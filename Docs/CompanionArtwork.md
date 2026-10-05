@@ -53,11 +53,40 @@ Scout's approved full-body atlas is compiled from the built-in image generation
 output using `Tools/PrepareCompanionAtlases.py --version 2`, with actual distinct
 state/direction poses, one uniform transform across the sheet, and alpha-edge
 cleanup. Its source/output hashes and prompt are in
-[generation prompts](CompanionGenerationPrompts.md). Earlier atlases' larger
-transparent insets receive a consistent 1.4 display scale across poses. At a shared
-cell size the visible idle silhouettes now occupy 174–193 pixels in height
-(Scout: 181), rather than treating transparent cell bounds as the character size.
-Native tests check this ratio and retain legacy decoding coverage.
+[generation prompts](CompanionGenerationPrompts.md).
+
+## Consistent displayed size
+
+The shared sprite renderer measures each atlas once when it is decoded. The
+first idle frame's visible silhouette (alpha greater than 32) establishes its
+resting height; every nontransparent pixel across all state and gaze frames
+establishes its safety bounds, including faint shadows and accessories. These
+are source-pixel measurements, not changes to the artwork:
+
+| Character | Resting silhouette height | All-frame alpha bounds, width × height |
+| --- | ---: | ---: |
+| Pitou | 193 | 158 × 198 |
+| Scout | 181 | 160 × 192 |
+| Ninja | 134 | 117 × 146 |
+| Clover | 132 | 125 × 145 |
+| Shadow | 135 | 115 × 146 |
+| Pirate | 124 | 125 × 145 |
+| Gon, retained for saved selections | 128 | 129 × 145 |
+
+All seven now have a resting silhouette height of 78% of their shared square
+view: 21.84 points at 28 points, 34.32 at 44, and 140.4 at 180. This replaces the
+rough 1/1.4 display multipliers. Resting feet share a baseline, with a small
+adjustment where needed to keep the entire animation inside a 4% safety inset.
+The same cached scale and translation apply to every frame. Jumps, bows, and
+head turns retain their original proportions and offsets; individual frames
+are never independently resized or recentered. A future atlas with exceptionally
+wide or tall action poses is fit within that same safety inset.
+
+This layout is used by the hero, gallery, sidebar, picker, conversation header,
+and profile through `CompanionCharacterView`. No PNG bytes, saved appearance,
+identity, or playback timing change. Native tests cover equal resting heights,
+every state/gaze frame's full alpha bounds, stable pose proportions, invalid host
+sizes, empty artwork rejection, and the legacy whole-image pointer margin.
 
 ## Original local characters
 
@@ -79,7 +108,7 @@ in-app portrait picker are static art: they receive only subtle whole-image move
 never simulated face or limb articulation. The cancellable view task respects Reduce
 Motion, the app's animation preference, scene inactivity, per-window occlusion/minimization, app hiding, and view disappearance.
 Window closure and renderer detachment remove all native visibility observers.
-Status labels remain accessible with motion off. Decorative breathing does not
+Status labels remain accessible with motion off. Decorative idle poses do not
 represent agent activity or invoke a model.
 
 Custom art remains in the existing agent portrait data store. Imports accept an

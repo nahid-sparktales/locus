@@ -40,7 +40,7 @@ struct AgentPicturePicker: View {
     @State private var errorMessage: String?
 
     private enum Collection: String, CaseIterable, Identifiable {
-        case characters = "Characters", originals = "Originals", all = "All pictures", onePiece = "One Piece"
+        case characters = "Characters", all = "All pictures", onePiece = "One Piece"
         var id: String { rawValue }
     }
 
@@ -53,8 +53,8 @@ struct AgentPicturePicker: View {
         _draftData = State(initialValue: currentData)
         _draftAppearance = State(initialValue: currentAppearance)
         _draftAnimations = State(initialValue: animationsEnabled)
-        _filter = State(initialValue: currentAppearance?.kind == .bundledSprite ? .characters
-            : currentAppearance?.kind == .builtIn ? .originals : .all)
+        _filter = State(initialValue: currentAppearance?.kind == .bundledSprite || currentAppearance?.kind == .builtIn
+            ? .characters : .all)
         _choiceName = State(initialValue: currentAppearance?.displayName ?? (currentData == nil ? "Initials" : "Current picture"))
     }
 
@@ -98,7 +98,7 @@ struct AgentPicturePicker: View {
                 .accessibilityIdentifier("agentPicture.collection")
 
             ScrollView {
-                if filter == .characters || filter == .originals {
+                if filter == .characters {
                     characterGallery
                 } else {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 5), spacing: 16) {
@@ -180,22 +180,10 @@ struct AgentPicturePicker: View {
     private var characterGallery: some View {
         VStack(alignment: .leading, spacing: 14) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 10) {
-                if filter == .characters {
-                    ForEach(CompanionBundledSprite.allCases) { sprite in
-                        characterButton(appearance: .init(sprite: sprite), selected: draftAppearance?.bundledSprite == sprite,
-                            identifier: "agentPicture.sprite.\(sprite.id)") {
-                            chooseCharacter(.init(sprite: sprite))
-                        }
-                    }
-                } else {
-                    ForEach(CompanionCharacterKind.allCases) { character in
-                        characterButton(appearance: .init(character: character, palette: draftAppearance?.palette ?? .mint),
-                            selected: draftAppearance?.builtIn == character,
-                            identifier: "agentPicture.character.\(character.id)") {
-                            chooseCharacter(CompanionAppearance(character: character,
-                                palette: draftAppearance?.palette ?? .mint,
-                                accessory: draftAppearance?.accessory ?? .none))
-                        }
+                ForEach(CompanionBundledSprite.allCases) { sprite in
+                    characterButton(appearance: .init(sprite: sprite), selected: draftAppearance?.bundledSprite == sprite,
+                        identifier: "agentPicture.sprite.\(sprite.id)") {
+                        chooseCharacter(.init(sprite: sprite))
                     }
                 }
             }
@@ -203,28 +191,10 @@ struct AgentPicturePicker: View {
                 Button("Surprise me") {
                     let selection = CompanionAppearance.surprise(seed: UInt64.random(in: .min ... .max))
                     chooseCharacter(selection)
-                    filter = .originals
                 }.buttonStyle(.locus()).accessibilityIdentifier("agentPicture.surprise")
                 Spacer()
                 Button("Import picture…") { importing = true }
                     .buttonStyle(.locus()).accessibilityIdentifier("agentPicture.upload")
-            }
-            if draftAppearance?.supportsAppearanceControls == true {
-                HStack(spacing: 10) {
-                    Text("Accent").font(.locus(size: 11))
-                    ForEach(CompanionPalette.allCases) { palette in
-                        Button { draftAppearance?.palette = palette } label: {
-                            Circle().fill(palette.color).frame(width: 21, height: 21)
-                                .overlay(Circle().stroke(draftAppearance?.palette == palette ? colors.ink : .clear, lineWidth: 2).padding(-3))
-                        }.buttonStyle(.locus(.icon)).accessibilityLabel("\(palette.name) accent")
-                            .accessibilityAddTraits(draftAppearance?.palette == palette ? .isSelected : [])
-                    }
-                    Spacer()
-                    Picker("Accessory", selection: Binding(get: { draftAppearance?.accessory ?? .none },
-                        set: { draftAppearance?.accessory = $0 })) {
-                        ForEach(CompanionAccessory.allCases) { Text($0.name).tag($0) }
-                    }.frame(width: 175)
-                }.padding(.vertical, 4)
             }
         }.padding(.horizontal, 22).padding(.bottom, 16)
     }

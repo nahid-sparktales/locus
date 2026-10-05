@@ -1,15 +1,22 @@
 import AppKit
 import Foundation
 
-/// Navigation-only transport. It resumes two empty fixture transcripts and
+/// Navigation-only transport. It resumes empty fixture transcripts and
 /// rejects every other mutation; it never connects a provider or executes work.
 private final class CompanionChatUITestProtocol: URLProtocol {
     static let profileID = UUID(uuidString: "C0111111-1111-4111-8111-111111111111")!
     static let companionSessionID = "companion-fixture-chat"
+    static let projectSessionID = "companion-fixture-project"
     static let workSessionID = "companion-fixture-work"
+    static let homesRoot = URL(fileURLWithPath: "/private/tmp/locus-companion-ui-agent-homes")
+    static let homePath = homesRoot.appendingPathComponent(profileID.uuidString.lowercased())
+        .appendingPathComponent("Workspace").path
+    static let sessionIDs = [companionSessionID, projectSessionID, workSessionID]
+
+    static func workspace(_ id: String) -> String { id == companionSessionID ? homePath : "/tmp" }
 
     static func sessionInfo(_ id: String) -> SessionInfo {
-        SessionInfo(model: "qwen3:8b", host: "http://localhost:11434", cwd: "/tmp",
+        SessionInfo(model: "qwen3:8b", host: "http://localhost:11434", cwd: workspace(id),
                     session: id, sessionID: id, messages: 0, approxTokens: 0,
                     promptTokens: 0, completionTokens: 0, maxIterations: 40,
                     hasProjectContext: false, provider: "ollama",
@@ -23,13 +30,21 @@ private final class CompanionChatUITestProtocol: URLProtocol {
     override func startLoading() {
         guard let url = request.url else { return }
         let sessionID = url.pathComponents.dropLast().last ?? ""
-        let knownSession = [Self.companionSessionID, Self.workSessionID].contains(sessionID)
+        let knownSession = Self.sessionIDs.contains(sessionID)
+        let detailID = url.lastPathComponent
         let response: [String: Any]
         let status: Int
         if request.httpMethod == "POST", url.path.hasSuffix("/resume"), knownSession,
            let data = try? JSONEncoder().encode(Self.sessionInfo(sessionID)),
            let info = try? JSONSerialization.jsonObject(with: data) {
             response = ["ok": true, "messages": [], "session_info": info]
+            status = 200
+        } else if request.httpMethod == "GET", url.path == "/api/sessions/\(detailID)",
+                  Self.sessionIDs.contains(detailID) {
+            response = ["id": detailID, "messages": [], "preview": "", "cwd": Self.workspace(detailID),
+                        "workspace_root": Self.workspace(detailID), "archived": false,
+                        "agent_profile_id": detailID != Self.workSessionID
+                            ? Self.profileID.uuidString as Any : NSNull()]
             status = 200
         } else if request.httpMethod == "GET" {
             response = ["goals": [], "runs": [], "goal": NSNull(), "task": NSNull()]
@@ -972,6 +987,11 @@ extension AppModel {
     /// Opt-in test state uses the canonical profile owner and normal empty
     /// chats. Runtime availability here is a fixture, not a live-model claim.
     private func seedCompanionChatFixture(workspace: String) {
+        agentHomesRootOverride = CompanionChatUITestProtocol.homesRoot
+        // Seed the empty fixture chat's existing directory so normal resume's
+        // workspace-availability guard is exercised without real user files.
+        try? FileManager.default.createDirectory(atPath: CompanionChatUITestProtocol.homePath,
+                                                 withIntermediateDirectories: true)
         let profile = AgentProfile(id: CompanionChatUITestProtocol.profileID,
                                    name: "Pitou", model: "qwen3:8b")
         agentProfiles = [profile]
@@ -980,20 +1000,24 @@ extension AppModel {
         sessions = [
             SessionSummary(id: CompanionChatUITestProtocol.companionSessionID,
                            name: "Companion UI fixture", preview: "", mtime: 2, size: 0,
-                           title: "Companion UI fixture", cwd: workspace,
+                           title: "Companion UI fixture", cwd: CompanionChatUITestProtocol.homePath,
+                           agentProfileID: profile.id.uuidString),
+            SessionSummary(id: CompanionChatUITestProtocol.projectSessionID,
+                           name: "Project companion fixture", preview: "", mtime: 3, size: 0,
+                           title: "Project companion fixture", cwd: workspace,
                            agentProfileID: profile.id.uuidString),
             SessionSummary(id: CompanionChatUITestProtocol.workSessionID,
                            name: "Work UI fixture", preview: "", mtime: 1, size: 0,
                            title: "Work UI fixture", cwd: workspace),
         ]
-        installTranscriptSession(CompanionChatUITestProtocol.companionSessionID, blocks: [])
-        sessionInfo = CompanionChatUITestProtocol.sessionInfo(CompanionChatUITestProtocol.companionSessionID)
+        installTranscriptSession(CompanionChatUITestProtocol.workSessionID, blocks: [])
+        sessionInfo = CompanionChatUITestProtocol.sessionInfo(CompanionChatUITestProtocol.workSessionID)
         lastSidebarSessionIDs[SidebarDestination.ask.rawValue] = CompanionChatUITestProtocol.workSessionID
-        selectedSavedAgentID = profile.id
+        selectedSavedAgentID = nil
         selectedAgentID = nil
         savedAgentOverviewID = nil
         emptySidebarDestination = nil
-        sidebarDestination = .companion
+        sidebarDestination = .ask
         inspectorCollapsed = true
         isBusy = false
         draftText = ""

@@ -85,8 +85,8 @@ struct CompanionAppearance: Codable, Hashable {
         return self
     }
 
-    /// All choices are local and deterministic. The resulting reference is persisted,
-    /// so a launch never re-rolls the character, even if the palette list later grows.
+    /// Only the six current sprite choices participate. The resulting asset ID
+    /// is persisted directly; legacy artwork stays readable but is not re-offered.
     static func surprise(seed: UInt64) -> CompanionAppearance {
         var value = seed
         func next(_ count: Int) -> Int {
@@ -96,11 +96,7 @@ struct CompanionAppearance: Codable, Hashable {
             mixed = (mixed ^ (mixed >> 27)) &* 0x94D049BB133111EB
             return Int((mixed ^ (mixed >> 31)) % UInt64(count))
         }
-        return CompanionAppearance(
-            character: CompanionCharacterKind.allCases[next(CompanionCharacterKind.allCases.count)],
-            palette: CompanionPalette.allCases[next(CompanionPalette.allCases.count)],
-            accessory: CompanionAccessory.allCases[next(CompanionAccessory.allCases.count)],
-            variationSeed: seed)
+        return CompanionAppearance(sprite: CompanionBundledSprite.allCases[next(CompanionBundledSprite.allCases.count)])
     }
 }
 
@@ -126,9 +122,6 @@ enum CompanionBundledSprite: String, Codable, CaseIterable, Identifiable {
         }
     }
     var resourceName: String { displayName }
-    /// The earlier generated atlases have a larger transparent safety inset.
-    /// Their common scale stays consistent across every pose, including gaze.
-    var presentationScale: Double { self == .pitou || self == .scout ? 1 : 1.4 }
     var detail: String {
         switch self {
         case .pitou: "Your original Pitou"

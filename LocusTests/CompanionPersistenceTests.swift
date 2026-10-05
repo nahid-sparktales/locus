@@ -349,6 +349,27 @@ final class CompanionPersistenceTests: XCTestCase {
         XCTAssertTrue(other.agentAppearances.isEmpty)
     }
 
+    func testExplicitCompanionFolderRestoresThroughCanonicalProfileInIsolatedSuite() throws {
+        let profiles = store()
+        let id = try profiles.commitCompanion(.init(name: "Pitou"))
+        let app = AppModel(startImmediately: false)
+        defer { app.toastCenter.cancelPendingDismissal() }
+        app.agentTeamsModel.restore(persistenceEnabled: true, defaults: defaults)
+        app.selectCompanionWorkspace("/var/tmp")
+        let restored = store()
+        XCTAssertEqual(restored.primaryCompanionID, id)
+        XCTAssertEqual(restored.agentProfiles.first?.workspacePreferences?.defaultProjectPath,
+                       SessionSummary.canonicalWorkspacePath("/var/tmp"))
+        XCTAssertEqual(restored.agentProfiles.first?.model, "", "Folder choice does not configure execution")
+        XCTAssertEqual(restored.agentProfiles.first?.accessCeiling, .readOnly)
+        let otherName = "CompanionFolderOtherEdition.\(UUID().uuidString)"
+        let otherDefaults = try XCTUnwrap(UserDefaults(suiteName: otherName))
+        defer { otherDefaults.removePersistentDomain(forName: otherName) }
+        let other = store(in: otherDefaults)
+        XCTAssertNil(other.primaryCompanionID)
+        XCTAssertTrue(other.agentProfiles.isEmpty)
+    }
+
     func testDeletingCompanionDoesNotResurrectItsJournalOnRestart() throws {
         let model = store()
         _ = try model.commitCompanion(.init())

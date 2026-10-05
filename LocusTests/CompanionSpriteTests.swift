@@ -108,30 +108,133 @@ final class CompanionSpriteTests: XCTestCase {
         XCTAssertEqual(CompanionAppearance(sprite: .scout).displayName, "Scout")
     }
 
-    func testDisplayedCharactersHaveComparableVisibleHeight() throws {
-        // Compare real opaque pixels rather than the identically sized transparent cells.
-        let pitou = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: .pitou)?.frame(row: .idle, index: 0))
-        let reference = try opaqueHeight(pitou)
+    func testEveryCharacterHasTheSameRestingHeightAtCompactAndHeroSizes() throws {
+        let sourceHeights: [CompanionBundledSprite: CGFloat] = [
+            .pitou: 193, .scout: 181, .ninja: 134, .clover: 132, .shadow: 135, .pirate: 124, .gon: 128,
+        ]
         for sprite in CompanionBundledSprite.supportedAssets {
-            let frame = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: sprite)?.frame(row: .idle, index: 0))
-            let ratio = try opaqueHeight(frame) * sprite.presentationScale / reference
-            XCTAssertGreaterThanOrEqual(ratio, 0.86, sprite.displayName)
-            XCTAssertLessThanOrEqual(ratio, 1.08, sprite.displayName)
+            let atlas = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: sprite))
+            let frame = try XCTUnwrap(atlas.frame(row: .idle, index: 0))
+            let bounds = try alphaBounds(frame, threshold: 32)
+            XCTAssertEqual(bounds, atlas.layout.referenceBounds, sprite.displayName)
+            XCTAssertEqual(bounds.height, try XCTUnwrap(sourceHeights[sprite]), sprite.displayName)
+            for edge: CGFloat in [28, 44, 180, 220] {
+                let displayed = atlas.layout.displayBounds(for: bounds, in: CGSize(width: edge, height: edge))
+                XCTAssertEqual(displayed.height, edge * 0.78, accuracy: 0.0001, sprite.displayName)
+                XCTAssertEqual(displayed.midX, edge / 2, accuracy: 0.0001, sprite.displayName)
+                XCTAssertEqual(displayed.maxY / edge, 0.88, accuracy: 0.006, sprite.displayName)
+            }
         }
     }
 
-    private func opaqueHeight(_ image: CGImage) throws -> Double {
+    func testEveryPoseAndGazePreservesAllPixelsWithinTheSharedSafetyInset() throws {
+        for sprite in CompanionBundledSprite.supportedAssets {
+            let atlas = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: sprite))
+            for row in CompanionSpriteRow.allCases {
+                for index in 0..<row.frameCount {
+                    guard let frame = atlas.frame(row: row, index: index) else { continue }
+                    // Include even alpha=1 shadows/edges, not just the solid
+                    // silhouette used to choose the resting character height.
+                    let bounds = try alphaBounds(frame, threshold: 0)
+                    XCTAssertTrue(atlas.layout.contentBounds.contains(bounds), "\(sprite) \(row) \(index)")
+                    for edge: CGFloat in [28, 44, 180, 220] {
+                        let displayed = atlas.layout.displayBounds(for: bounds, in: CGSize(width: edge, height: edge))
+                        XCTAssertGreaterThanOrEqual(displayed.minX, edge * 0.04 - 0.0001)
+                        XCTAssertGreaterThanOrEqual(displayed.minY, edge * 0.04 - 0.0001)
+                        XCTAssertLessThanOrEqual(displayed.maxX, edge * 0.96 + 0.0001)
+                        XCTAssertLessThanOrEqual(displayed.maxY, edge * 0.96 + 0.0001)
+                    }
+                }
+            }
+        }
+    }
+
+    func testAtlasTransformPreservesPoseDifferencesRatherThanResizingEveryFrame() throws {
+        for sprite in CompanionBundledSprite.supportedAssets {
+            let atlas = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: sprite))
+            let size = CGSize(width: 180, height: 180)
+            let reference = atlas.layout.displayBounds(for: atlas.layout.referenceBounds, in: size)
+            let jumping = try alphaBounds(XCTUnwrap(atlas.frame(row: .jumping, index: 0)), threshold: 32)
+            let displayed = atlas.layout.displayBounds(for: jumping, in: size)
+            XCTAssertEqual(displayed.height / reference.height,
+                           jumping.height / atlas.layout.referenceBounds.height, accuracy: 0.0001)
+            XCTAssertEqual((displayed.minY - reference.minY) / reference.height,
+                           (jumping.minY - atlas.layout.referenceBounds.minY) / atlas.layout.referenceBounds.height,
+                           accuracy: 0.0001)
+            XCTAssertLessThan(jumping.height, atlas.layout.referenceBounds.height, sprite.displayName)
+        }
+    }
+
+    func testLayoutCentersNonSquareHostsAndRejectsInvalidHostSizes() throws {
+        let atlas = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: .pitou))
+        let square = atlas.layout.imageFrame(in: CGSize(width: 44, height: 44))
+        let wide = atlas.layout.imageFrame(in: CGSize(width: 88, height: 44))
+        let tall = atlas.layout.imageFrame(in: CGSize(width: 44, height: 88))
+        XCTAssertEqual(wide, square.offsetBy(dx: 22, dy: 0))
+        XCTAssertEqual(tall, square.offsetBy(dx: 0, dy: 22))
+        for size in [CGSize.zero, CGSize(width: -1, height: 44),
+                     CGSize(width: CGFloat.nan, height: 44), CGSize(width: 44, height: CGFloat.infinity)] {
+            XCTAssertEqual(atlas.layout.imageFrame(in: size), .zero)
+        }
+    }
+
+    func testLegacyWholeImagePointerMotionRetainsItsSafetyMargin() throws {
+        let atlas = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: .gon))
+        for edge: CGFloat in [28, 44, 180, 220] {
+            let bounds = atlas.layout.displayBounds(for: atlas.layout.contentBounds, in: CGSize(width: edge, height: edge))
+            for pointerX: CGFloat in [-1, 0, 1] {
+                let angle = Double(CompanionSteppedMotion.snapped(pointerX * 2)) * .pi / 180
+                let cosine = CGFloat(cos(angle)), sine = CGFloat(sin(angle))
+                for pointerY: CGFloat in [-1, 0, 1] {
+                    for x in [bounds.minX, bounds.maxX] {
+                        for y in [bounds.minY, bounds.maxY] {
+                            let dx = x - edge / 2, dy = y - edge
+                            let movedX = edge / 2 + dx * cosine - dy * sine
+                                + CompanionSteppedMotion.snapped(pointerX * edge * 0.015)
+                            let movedY = edge + dx * sine + dy * cosine
+                                + CompanionSteppedMotion.snapped(pointerY * edge * 0.01)
+                            XCTAssertGreaterThanOrEqual(movedX, 0)
+                            XCTAssertGreaterThanOrEqual(movedY, 0)
+                            XCTAssertLessThanOrEqual(movedX, edge)
+                            XCTAssertLessThanOrEqual(movedY, edge)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func alphaBounds(_ image: CGImage, threshold: UInt8) throws -> CGRect {
         var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
         return try pixels.withUnsafeMutableBytes { buffer in
             let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
                 bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue))
             context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
             let bytes = buffer.bindMemory(to: UInt8.self)
-            let occupied = (0..<image.height).filter { row in
-                (0..<image.width).contains { column in bytes[(row * image.width + column) * 4 + 3] > 32 }
+            var minX = image.width, minY = image.height, maxX = -1, maxY = -1
+            for y in 0..<image.height {
+                for x in 0..<image.width where bytes[(y * image.width + x) * 4 + 3] > threshold {
+                    minX = min(minX, x); minY = min(minY, y)
+                    maxX = max(maxX, x); maxY = max(maxY, y)
+                }
             }
-            return Double(try XCTUnwrap(occupied.last) - XCTUnwrap(occupied.first) + 1)
+            guard maxX >= minX, maxY >= minY else { throw CompanionSpriteAtlas.ValidationError.invalidFrame }
+            return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+        }
+    }
+
+    func testAtlasRejectsEmptyArtworkInsteadOfComputingAnInvalidScale() throws {
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1536, pixelsHigh: 1872,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let pixels = try XCTUnwrap(image.bitmapData)
+        pixels.initialize(repeating: 0, count: image.bytesPerRow * image.pixelsHigh)
+        let bytes = try XCTUnwrap(image.representation(using: .png, properties: [:]))
+        XCTAssertThrowsError(try CompanionSpriteAtlas(data: bytes)) { error in
+            guard case CompanionSpriteAtlas.ValidationError.invalidFrame = error else {
+                return XCTFail("Expected empty-frame validation, got \(error)")
+            }
         }
     }
 

@@ -84,11 +84,17 @@ extension AppModel {
     }
 
     func openWorkspaceReference(_ reference: WorkspaceArtifactReference) {
+        openWorkspaceReference(reference, workspace: workspacePath)
+    }
+
+    /// Side conversations keep their own execution folder. Revalidate against
+    /// that explicit folder and leave the center's workspace and draft intact.
+    func openWorkspaceReference(_ reference: WorkspaceArtifactReference, workspace: String) {
         // Re-checked rather than trusted: the reference was classified when the
         // message rendered, and this is the security boundary at activation.
         guard let contained = MarkdownLinkPolicy.containedWorkspaceFileURL(
             reference.relativePath,
-            workspacePath: workspacePath
+            workspacePath: workspace
         ),
         contained == reference.url.standardizedFileURL.resolvingSymlinksInPath(),
         FileManager.default.fileExists(atPath: contained.path)
@@ -96,26 +102,33 @@ extension AppModel {
             showToast("That file is no longer available in this workspace")
             return
         }
-        openWorkspaceArtifact(reference, at: contained)
+        openWorkspaceArtifact(reference, at: contained, workspace: workspace)
     }
 
     /// The one place that decides what activating a produced file does.
     private func openWorkspaceArtifact(
         _ reference: WorkspaceArtifactReference,
-        at url: URL
+        at url: URL,
+        workspace: String? = nil
     ) {
+        let root = workspace ?? workspacePath
         if let document = reference.documentReference {
-            library.activate(workspace: workspacePath)
+            library.activate(workspace: root)
             library.isPresented = true
             library.open(document)
             return
         }
         switch WorkspaceArtifactOpener.destination(for: reference) {
         case .filesTab(let line, let column):
+            if SessionSummary.canonicalWorkspacePath(root) != SessionSummary.canonicalWorkspacePath(workspacePath) {
+                fileViewerRequest = WorkspaceFileViewerRequest(url: url, relativePath: reference.relativePath,
+                    location: line.map { WorkspacePreviewLocation(line: $0, column: column) })
+                return
+            }
             selectInspectorTab(.files)
             workspaceFiles.preview(url, line: line, column: column)
         case .libraryPreview:
-            library.activate(workspace: workspacePath)
+            library.activate(workspace: root)
             library.isPresented = true
             library.showPreview(url: url, title: url.lastPathComponent)
         }

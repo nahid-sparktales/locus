@@ -36,14 +36,17 @@ final class CompanionIntegrationTests: XCTestCase {
 
     func testOfflineStartSelectsCanonicalProfileAndRemainsRetryable() throws {
         let app = AppModel(startImmediately: false)
+        let inspector = app.inspectorTab
         app.onboarding.beginCompanionSetup()
         app.onboarding.setCompanionName("Mochi")
         app.finishCompanionSetup(startChat: true)
         let id = try XCTUnwrap(app.agentTeamsModel.primaryCompanionID)
         XCTAssertNil(app.savedAgentOverviewID)
-        XCTAssertEqual(app.sidebarDestination, .companion)
-        XCTAssertEqual(app.emptySidebarDestination, .companion)
-        XCTAssertEqual(app.selectedSavedAgentID, id)
+        XCTAssertEqual(app.sidebarDestination, .ask)
+        XCTAssertNil(app.emptySidebarDestination)
+        XCTAssertEqual(app.inspectorTab, inspector)
+        XCTAssertNil(app.companionPanel.selectedSessionID)
+        XCTAssertEqual(app.primaryCompanionProfile?.id, id)
         XCTAssertFalse(app.onboarding.isPresented)
         XCTAssertFalse(app.isBusy)
         XCTAssertFalse(app.pendingSessionReset)
@@ -51,6 +54,77 @@ final class CompanionIntegrationTests: XCTestCase {
         app.finishCompanionSetup(startChat: true)
         XCTAssertEqual(app.agentProfiles.filter { $0.id == id }.count, 1)
         XCTAssertEqual(app.agentTeamsModel.primaryCompanionID, id)
+    }
+
+    func testMainCompanionEntryBeforeSetupOpensSetupWithoutChangingWork() {
+        let app = AppModel(startImmediately: false)
+        app.installTranscriptSession("work", blocks: [ChatBlock(kind: .assistant, text: "Current work")])
+        app.draftText = "Keep this draft"
+        app.isBusy = true
+        let inspector = app.inspectorTab
+        app.openCompanionMainConversation()
+        XCTAssertTrue(app.onboarding.showsCompanionSetup)
+        XCTAssertEqual(app.currentSessionID, "work")
+        XCTAssertEqual(app.draftText, "Keep this draft")
+        XCTAssertTrue(app.isBusy)
+        XCTAssertEqual(app.inspectorTab, inspector)
+        XCTAssertTrue(app.agentProfiles.isEmpty)
+    }
+
+    func testMainCompanionEntryRevealsCurrentChatWithoutReloadingApprovalOrDraft() throws {
+        let app = AppModel(startImmediately: false)
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        app.agentProfiles = [profile]
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        let chat = SessionSummary(id: "current-companion", name: "Current", preview: "", mtime: 1, size: 0,
+                                  cwd: "/tmp", agentProfileID: profile.id.uuidString)
+        app.sessions = [chat]
+        app.initialWorkspacePath = "/tmp"
+        app.installTranscriptSession(chat.id, blocks: [ChatBlock(kind: .assistant, text: "Live work")])
+        app.draftText = "Unsent follow-up"
+        app.isBusy = true
+        app.handleEventForTesting(["type": "permission_request", "id": "tool", "tool": "write_file", "request_id": "approval"])
+        app.savedAgentOverviewID = profile.id
+        let ownership = app.transcriptPresentation.sessionOwnershipToken
+        let inspector = app.inspectorTab
+        app.openCompanionMainConversation()
+        XCTAssertEqual(app.sidebarDestination, .agents)
+        XCTAssertNil(app.savedAgentOverviewID)
+        XCTAssertEqual(app.selectedSavedAgentID, profile.id)
+        XCTAssertEqual(app.currentSessionID, chat.id)
+        XCTAssertEqual(app.draftText, "Unsent follow-up")
+        XCTAssertTrue(app.isBusy)
+        XCTAssertEqual(app.activePermissionRequest?.requestID, "approval")
+        XCTAssertNil(app.activeTranscriptLoad)
+        XCTAssertEqual(app.transcriptPresentation.sessionOwnershipToken, ownership)
+        XCTAssertEqual(app.inspectorTab, inspector)
+        XCTAssertNil(app.companionPanel.selectedSessionID)
+    }
+
+    func testMainCompanionEntryDoesNotReplaceAnotherForegroundRunOrReset() throws {
+        for reason in ["busy", "approval", "reset"] {
+            let app = AppModel(startImmediately: false)
+            let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+            app.agentProfiles = [profile]
+            try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+            app.initialWorkspacePath = "/tmp"
+            app.sessions = [SessionSummary(id: "companion", name: "Companion", preview: "", mtime: 1, size: 0,
+                                           cwd: "/tmp", agentProfileID: profile.id.uuidString)]
+            app.installTranscriptSession("work", blocks: [ChatBlock(kind: .assistant, text: "Live work")])
+            app.draftText = "Keep work draft"
+            if reason == "busy" { app.isBusy = true }
+            if reason == "reset" { app.pendingSessionReset = true }
+            if reason == "approval" {
+                app.handleEventForTesting(["type": "permission_request", "id": "tool", "tool": "write_file", "request_id": "approval"])
+            }
+            app.openCompanionMainConversation()
+            XCTAssertEqual(app.currentSessionID, "work", reason)
+            XCTAssertEqual(app.draftText, "Keep work draft", reason)
+            XCTAssertEqual(app.sidebarDestination, .ask, reason)
+            XCTAssertNil(app.activeTranscriptLoad, reason)
+            XCTAssertTrue(app.creatingSavedAgentChatIDs.isEmpty, reason)
+            app.toastCenter.cancelPendingDismissal()
+        }
     }
 
     func testLinkingExistingProfilePreservesRouteAccessMemoryAndCustomPortrait() throws {
@@ -90,8 +164,9 @@ final class CompanionIntegrationTests: XCTestCase {
         app.draftText = "Unsent work draft"
         app.isBusy = true
         app.switchSidebarDestination(.companion)
-        XCTAssertEqual(app.sidebarDestination, .companion)
-        XCTAssertEqual(app.emptySidebarDestination, .companion)
+        XCTAssertEqual(app.sidebarDestination, .ask)
+        XCTAssertNil(app.emptySidebarDestination)
+        XCTAssertEqual(app.inspectorTab, .companion)
         XCTAssertEqual(app.currentSessionID, work.id)
         XCTAssertEqual(app.draftText, "Unsent work draft")
         XCTAssertTrue(app.agentProfiles.isEmpty)
@@ -107,7 +182,7 @@ final class CompanionIntegrationTests: XCTestCase {
 
     func testCompanionChatsExcludeOtherProjectsAgentsAutomationsAndArchives() throws {
         let app = AppModel(startImmediately: false)
-        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
         let other = AgentProfile(name: "Other", model: "fixture")
         app.agentProfiles = [profile, other]
         try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
@@ -124,25 +199,95 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertNotEqual(app.companionSessionKey(workspace: "/tmp"), app.companionSessionKey(workspace: "/var/tmp"))
     }
 
-    func testCompanionWorkspaceHonorsNewSelectionAndExplicitWorktreeRoot() {
+    func testCompanionDefaultsToStableLazyHomeIndependentOfCenterProject() throws {
         let app = AppModel(startImmediately: false)
+        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        app.agentProfiles = [profile]
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
         let old = SessionSummary(id: "old", name: "old", preview: "", mtime: 1, size: 0,
             cwd: "/old/project", workspaceRoot: "/old/project", executionPath: "/tmp/worktree")
         app.sessions = [old]
         app.installTranscriptSession(old.id, blocks: [])
+        let home = app.savedAgentHomePath(profile)
+        XCTAssertEqual(app.companionWorkspacePath, home)
+        XCTAssertTrue(home.hasSuffix("/\(profile.id.uuidString.lowercased())/Workspace"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home))
         app.initialWorkspacePath = "/new/project"
-        XCTAssertEqual(app.companionWorkspacePath, SessionSummary.canonicalWorkspacePath("/new/project"),
-                       "Old transcript metadata must not override the selected project")
+        XCTAssertEqual(app.companionWorkspacePath, home)
         app.initialWorkspacePath = "/tmp/worktree"
-        XCTAssertEqual(app.companionWorkspacePath, SessionSummary.canonicalWorkspacePath("/old/project"))
+        XCTAssertEqual(app.companionWorkspacePath, home)
         app.pendingWorkspacePath = "/newer/project"
-        XCTAssertEqual(app.companionWorkspacePath, SessionSummary.canonicalWorkspacePath("/newer/project"),
-                       "A pending workspace selection wins even before its transcript loads")
+        app.openCompanionDestination()
+        XCTAssertEqual(app.companionWorkspacePath, home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home), "Opening the panel must not create a directory")
+        app.agentProfiles[0].name = "Renamed companion"
+        XCTAssertEqual(app.companionWorkspacePath, home)
+        app.selectCompanionWorkspace(home + "/.")
+        XCTAssertEqual(app.companionWorkspacePath, home)
+        XCTAssertNil(app.primaryCompanionProfile?.workspacePreferences?.defaultProjectPath)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home), "An equivalent home path must also remain lazy")
+        app.toastCenter.cancelPendingDismissal()
+    }
+
+    func testCompanionExplicitFolderAndResetPreserveCenterProfileAndLinkedHistory() throws {
+        let app = AppModel(startImmediately: false)
+        let profile = AgentProfile(name: "Pitou", model: "fixture", instructions: "Keep instructions",
+                                   accessCeiling: .workspaceWrite,
+                                   workspacePreferences: .init(projectPaths: ["/tmp"]))
+        app.agentProfiles = [profile]
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        app.initialWorkspacePath = "/central-project"
+        app.installTranscriptSession("work", blocks: [ChatBlock(kind: .assistant, text: "Central work")])
+        app.draftText = "Private central draft"
+        app.isBusy = true
+        let ownership = app.transcriptPresentation.sessionOwnershipToken
+        let original = try XCTUnwrap(app.primaryCompanionProfile)
+        let home = app.savedAgentHomePath(profile)
+        app.selectCompanionWorkspace("/var/tmp")
+        XCTAssertEqual(app.companionWorkspacePath, SessionSummary.canonicalWorkspacePath("/var/tmp"))
+        XCTAssertEqual(app.currentSessionID, "work")
+        XCTAssertEqual(app.initialWorkspacePath, "/central-project")
+        XCTAssertEqual(app.draftText, "Private central draft")
+        XCTAssertTrue(app.isBusy)
+        XCTAssertEqual(app.transcriptPresentation.sessionOwnershipToken, ownership)
+        var expected = original
+        expected.workspacePreferences = .init(projectPaths: ["/tmp", "/var/tmp"], defaultProjectPath: "/var/tmp")
+        XCTAssertEqual(app.primaryCompanionProfile, expected)
+        app.selectCompanionWorkspace(home)
+        XCTAssertEqual(app.companionWorkspacePath, home)
+        XCTAssertNil(app.primaryCompanionProfile?.workspacePreferences?.defaultProjectPath)
+        XCTAssertEqual(app.primaryCompanionProfile?.workspacePreferences?.projectPaths,
+                       AgentWorkspacePreferences(projectPaths: ["/tmp", "/var/tmp"]).projectPaths)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home), "Resetting the selection remains lazy")
+        XCTAssertEqual(app.currentSessionID, "work")
+        XCTAssertEqual(app.draftText, "Private central draft")
+        app.toastCenter.cancelPendingDismissal()
+    }
+
+    func testCompanionFolderValidationPreservesChoiceAndMissingExplicitFolderNeverFallsBack() throws {
+        let app = AppModel(startImmediately: false)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root); app.toastCenter.cancelPendingDismissal() }
+        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        app.agentProfiles = [profile]
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        app.selectCompanionWorkspace(root.path)
+        let selected = SessionSummary.canonicalWorkspacePath(root.path)
+        for invalid in ["relative/folder", "/tmp/\u{0}bad", root.appendingPathComponent("missing").path] {
+            app.selectCompanionWorkspace(invalid)
+            XCTAssertEqual(app.companionWorkspacePath, selected)
+        }
+        try FileManager.default.removeItem(at: root)
+        XCTAssertEqual(app.companionWorkspacePath, selected)
+        XCTAssertThrowsError(try app.prepareSavedAgentWorkspace(profile, workspace: app.companionWorkspacePath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: selected))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app.savedAgentHomePath(profile)))
     }
 
     func testClickingActiveCompanionRowPreservesRunApprovalAndDraft() throws {
         let app = AppModel(startImmediately: false)
-        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
         app.agentProfiles = [profile]
         try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
         let chat = SessionSummary(id: "ours", name: "ours", preview: "", mtime: 1, size: 0,
@@ -169,14 +314,14 @@ final class CompanionIntegrationTests: XCTestCase {
 
     func testCompanionActionsDoNotSupersedeCurrentTranscriptLoad() throws {
         let app = AppModel(startImmediately: false)
-        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
         app.agentProfiles = [profile]
         try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
         let chat = SessionSummary(id: "ours", name: "ours", preview: "", mtime: 1, size: 0,
             cwd: "/tmp", agentProfileID: profile.id.uuidString)
         app.sessions = [chat]
         app.initialWorkspacePath = "/tmp"
-        app.agentRuntimePhase = .online
+        app.agentRuntimePhase = .unavailable("Fixture offline")
         let ownership = app.beginTranscriptSessionLoad(chat.id)
         app.draftText = "Loading draft"
         app.openCompanionChat(chat)
@@ -185,12 +330,13 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertEqual(app.transcriptInputState, .loading)
         XCTAssertTrue(app.transcriptPresentation.ownsSessionLoad(ownership))
         XCTAssertEqual(app.draftText, "Loading draft")
-        XCTAssertNil(app.activeTranscriptLoad, "Explicit navigation must not start a competing load")
+        XCTAssertNil(app.activeTranscriptLoad, "Explicit navigation must not start a competing central load")
+        app.companionPanel.loadTask?.cancel()
     }
 
     func testAlreadySelectedCompanionChatDoesNotReloadOrLoseDraft() throws {
         let app = AppModel(startImmediately: false)
-        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
         app.agentProfiles = [profile]
         try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
         let chat = SessionSummary(id: "ours", name: "ours", preview: "", mtime: 1, size: 0,
@@ -201,11 +347,15 @@ final class CompanionIntegrationTests: XCTestCase {
         app.draftText = "Companion draft"
         app.isBusy = true
         app.openCompanionDestination()
-        XCTAssertTrue(app.companionConversationIsSelected)
+        XCTAssertFalse(app.companionConversationIsSelected, "Default panel chat must be independent of the center")
+        app.openCompanionChat(chat)
+        XCTAssertTrue(app.companionPanel.isForegroundConversation)
+        app.companionPanel.draft = "Must not replace the central draft"
+        XCTAssertFalse(app.companionPanel.canSend)
         XCTAssertEqual(app.draftText, "Companion draft")
         XCTAssertNil(app.activeTranscriptLoad)
         XCTAssertNil(app.savedAgentOverviewID)
         XCTAssertTrue(app.creatingSavedAgentChatIDs.isEmpty)
-        XCTAssertEqual(app.lastSidebarSessionIDs[app.companionSessionKey(workspace: "/tmp")], chat.id)
+        XCTAssertNil(app.lastSidebarSessionIDs[app.companionSessionKey(workspace: "/tmp")], "Offline selection has not loaded durable ownership")
     }
 }

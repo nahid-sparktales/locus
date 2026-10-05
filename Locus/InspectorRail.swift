@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Context, Terminal, Browser, Notes, Calendar, and Board
+/// the window edge: Companion, Context, Terminal, Browser, Notes, Calendar, and Board
 /// stay within reach, while the vertical-ellipsis menu contains Side Chat and
 /// every additional workspace panel, including Simulator, Model Router, and
 /// Proxies.
@@ -42,12 +42,13 @@ struct InspectorRail: View {
             panelToggleButton
             Rectangle().fill(viewColors.line).frame(width: 24, height: 1).padding(.vertical, 5)
                 .accessibilityHidden(true)
-            if model.sidebarDestination != .ask {
+            if model.sidebarDestination == .agents {
                 // Agents mode leads with the selected agent.
                 railTab(.agent)
             }
+            railTab(.companion)
             railTab(.preview)
-            if model.sidebarDestination != .ask {
+            if model.sidebarDestination == .agents {
                 railTab(.runs)
             }
             railTab(.terminal)
@@ -139,7 +140,7 @@ struct InspectorRail: View {
                 }
             }
         } label: {
-            Image(locusSymbol: tab.symbol)
+            railIcon(for: tab)
                 .font(.locus(size: 13, weight: .medium))
                 .foregroundStyle(selected ? viewColors.ink : viewColors.muted)
                 .overlay(alignment: .topTrailing) {
@@ -173,6 +174,14 @@ struct InspectorRail: View {
         .accessibilityIdentifier("inspector.rail.\(tab.rawValue)")
     }
 
+    @ViewBuilder private func railIcon(for tab: InspectorTab) -> some View {
+        if tab == .companion {
+            CompanionInspectorRailIcon()
+        } else {
+            Image(locusSymbol: tab.symbol)
+        }
+    }
+
     private var moreMenu: some View {
         Menu {
             Button("Show Request Overview") { model.presentRequestOverview(replacingInspector: true) }
@@ -186,7 +195,7 @@ struct InspectorRail: View {
 
             Divider()
 
-            ForEach(Self.menuTabs.filter { model.sidebarDestination == .ask || $0 != .runs }) { tab in
+            ForEach(Self.menuTabs.filter { model.sidebarDestination != .agents || $0 != .runs }) { tab in
                 Button(menuTitle(for: tab)) {
                     withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         model.selectInspectorTab(tab)
@@ -236,6 +245,20 @@ struct InspectorRail: View {
         return tab.title
     }
 
+}
+
+/// Observe profile presentation only in the companion button; a rename or
+/// appearance edit does not invalidate the rest of the inspector rail.
+private struct CompanionInspectorRailIcon: View {
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+
+    var body: some View {
+        if let profile = agentTeams.agentProfiles.first(where: { $0.id == agentTeams.primaryCompanionID }) {
+            AgentAvatarView(profileID: profile.id, name: profile.name, size: 28)
+        } else {
+            Image(locusSymbol: InspectorTab.companion.symbol)
+        }
+    }
 }
 
 /// Workspace-level actions sit beside the model picker in the conversation

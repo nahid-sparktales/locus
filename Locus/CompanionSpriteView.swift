@@ -3,6 +3,16 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Locus's sprite-style timing and pose grid. This is a presentation choice,
+/// not a playback contract inferred from another application's artwork.
+enum CompanionSteppedMotion {
+    static let frameMilliseconds = 125  // Eight distinct poses per second.
+
+    static func snapped(_ value: CGFloat) -> CGFloat {
+        value.isFinite ? value.rounded() : 0
+    }
+}
+
 /// The approved atlas geometry is fixed. In particular, work is row 7;
 /// directional running is reserved for an actual directional interaction.
 enum CompanionSpriteRow: Int, CaseIterable {
@@ -18,20 +28,21 @@ enum CompanionSpriteRow: Int, CaseIterable {
         }
     }
 
-    /// Locus playback timings; idle includes longer rests for occasional blinks.
+    /// Whole 8fps ticks with deliberate holds instead of eased in-between poses.
+    /// Idle rests keep a decorative character distinct from active work.
     /// The atlas contains pixels, not an embedded production playback clock.
     var frameDurations: [Int] {
+        let ticks: [Int]
         switch self {
-        case .idle: [2_100, 120, 1_400, 2_100, 120, 1_400]
-        case .runningRight, .runningLeft: [120, 120, 120, 120, 120, 120, 120, 220]
-        case .waving: [140, 140, 140, 280]
-        case .jumping: [140, 140, 140, 140, 280]
-        case .failed: [140, 140, 140, 140, 140, 140, 140, 240]
-        case .waiting: [150, 150, 150, 150, 150, 260]
-        case .working: [120, 120, 120, 120, 120, 220]
-        case .review: [150, 150, 150, 150, 150, 280]
-        case .lookFirst, .lookSecond: Array(repeating: 140, count: 8)
+        case .idle: ticks = [16, 1, 1, 16, 1, 1]
+        case .runningRight, .runningLeft, .failed: ticks = [1, 1, 1, 1, 1, 1, 1, 2]
+        case .waving: ticks = [1, 1, 1, 2]
+        case .jumping: ticks = [1, 1, 1, 1, 2]
+        case .waiting, .review: ticks = [2, 2, 2, 2, 2, 3]
+        case .working: ticks = [1, 1, 1, 1, 1, 2]
+        case .lookFirst, .lookSecond: ticks = Array(repeating: 1, count: 8)
         }
+        return ticks.map { $0 * CompanionSteppedMotion.frameMilliseconds }
     }
 
     static func row(for pose: CompanionCharacterPose) -> CompanionSpriteRow {
@@ -46,6 +57,48 @@ enum CompanionSpriteRow: Int, CaseIterable {
     }
 }
 
+/// One transform for the whole atlas, measured from its actual artwork rather
+/// than the transparent cell. Never normalize individual animation frames:
+/// a jump, bow, or turn must retain its original change in pose and position.
+struct CompanionSpriteLayout {
+    static let restingHeightFraction: CGFloat = 0.78
+    static let safetyInsetFraction: CGFloat = 0.04
+    let referenceBounds: CGRect
+    let contentBounds: CGRect
+    private let scale: CGFloat
+    private let origin: CGPoint
+
+    init(referenceBounds: CGRect, contentBounds: CGRect) {
+        self.referenceBounds = referenceBounds
+        self.contentBounds = contentBounds
+        let available = 1 - 2 * Self.safetyInsetFraction
+        scale = min(Self.restingHeightFraction / referenceBounds.height,
+                    available / contentBounds.width, available / contentBounds.height)
+        // Align resting feet, then reserve room for every state, accessory,
+        // faint shadow, and directional look pose without cropping artwork.
+        let desired = CGPoint(x: 0.5 - referenceBounds.midX * scale,
+                              y: 0.88 - referenceBounds.maxY * scale)
+        origin = CGPoint(
+            x: min(max(desired.x, Self.safetyInsetFraction - contentBounds.minX * scale),
+                   1 - Self.safetyInsetFraction - contentBounds.maxX * scale),
+            y: min(max(desired.y, Self.safetyInsetFraction - contentBounds.minY * scale),
+                   1 - Self.safetyInsetFraction - contentBounds.maxY * scale))
+    }
+
+    func displayBounds(for sourceBounds: CGRect, in size: CGSize) -> CGRect {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return .zero }
+        let edge = min(size.width, size.height)
+        return CGRect(x: (size.width - edge) / 2 + (origin.x + sourceBounds.minX * scale) * edge,
+                      y: (size.height - edge) / 2 + (origin.y + sourceBounds.minY * scale) * edge,
+                      width: sourceBounds.width * scale * edge, height: sourceBounds.height * scale * edge)
+    }
+
+    func imageFrame(in size: CGSize) -> CGRect {
+        displayBounds(for: CGRect(x: 0, y: 0, width: CompanionSpriteAtlas.cellWidth,
+                                  height: CompanionSpriteAtlas.cellHeight), in: size)
+    }
+}
+
 /// One decoded atlas and its immutable cell crops are shared by every visible
 /// instance. There is no separate image store and no frame decoding during playback.
 final class CompanionSpriteAtlas {
@@ -56,6 +109,7 @@ final class CompanionSpriteAtlas {
     let version: Int
     let pixelWidth: Int
     let pixelHeight: Int
+    let layout: CompanionSpriteLayout
     private let frames: [CompanionSpriteRow: [CGImage]]
 
     enum ValidationError: Error { case invalidType, invalidDimensions, invalidTransparency, invalidFrame }
@@ -77,15 +131,55 @@ final class CompanionSpriteAtlas {
         version = height == 2_288 ? 2 : 1
         pixelWidth = width; pixelHeight = height
         var cells: [CompanionSpriteRow: [CGImage]] = [:]
+        var referenceBounds: CGRect?
+        var contentBounds = CGRect.null
         for row in CompanionSpriteRow.allCases where row.rawValue < height / Self.cellHeight {
             cells[row] = try (0..<row.frameCount).map { column in
                 let rect = CGRect(x: column * Self.cellWidth, y: row.rawValue * Self.cellHeight,
                     width: Self.cellWidth, height: Self.cellHeight)
-                guard let cell = image.cropping(to: rect) else { throw ValidationError.invalidFrame }
+                guard let cell = image.cropping(to: rect), let bounds = Self.alphaBounds(in: cell) else {
+                    throw ValidationError.invalidFrame
+                }
+                if row == .idle, column == 0 { referenceBounds = bounds.art }
+                contentBounds = contentBounds.union(bounds.content)
                 return cell
             }
         }
+        guard let referenceBounds else { throw ValidationError.invalidFrame }
         frames = cells
+        layout = CompanionSpriteLayout(referenceBounds: referenceBounds, contentBounds: contentBounds)
+    }
+
+    private static func alphaBounds(in image: CGImage) -> (art: CGRect, content: CGRect)? {
+        // Decode into an explicit byte layout once per cached cell, rather than
+        // depending on ImageIO's source color space or premultiplication format.
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        return pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var art = CGRect.null
+            var content = CGRect.null
+            for y in 0..<image.height {
+                var firstContent = image.width, lastContent = -1
+                var firstArt = image.width, lastArt = -1
+                for x in 0..<image.width {
+                    let alpha = bytes[(y * image.width + x) * 4 + 3]
+                    if alpha > 0 { firstContent = min(firstContent, x); lastContent = x }
+                    if alpha > 32 { firstArt = min(firstArt, x); lastArt = x }
+                }
+                if lastContent >= firstContent {
+                    content = content.union(CGRect(x: firstContent, y: y, width: lastContent - firstContent + 1, height: 1))
+                }
+                if lastArt >= firstArt {
+                    art = art.union(CGRect(x: firstArt, y: y, width: lastArt - firstArt + 1, height: 1))
+                }
+            }
+            guard !art.isNull else { return nil }
+            return (art, content)
+        }
     }
 
     func frame(row: CompanionSpriteRow, index: Int) -> CGImage? {
@@ -151,11 +245,17 @@ struct CompanionSpriteView: View {
     private var displayedFrame: Int { lookFrame?.index ?? (activeKey == playbackKey ? frameIndex : 0) }
 
     var body: some View {
-        Group {
+        GeometryReader { geometry in
             if let frame = atlas.frame(row: displayedRow, index: displayedFrame) {
-                Image(decorative: frame, scale: 1).resizable().interpolation(.high).scaledToFit()
+                let imageFrame = atlas.layout.imageFrame(in: geometry.size)
+                Image(decorative: frame, scale: 1).resizable().interpolation(.high)
+                    .frame(width: imageFrame.width, height: imageFrame.height)
+                    .position(x: imageFrame.midX, y: imageFrame.midY)
             }
         }
+        // Source cells change discretely even if surrounding navigation uses
+        // an animated SwiftUI transaction. The original raster art stays intact.
+        .transaction { $0.animation = nil }
         .accessibilityHidden(true)
         .task(id: playbackKey) { await play() }
     }

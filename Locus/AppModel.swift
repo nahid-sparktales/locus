@@ -428,6 +428,7 @@ final class AppModel: ObservableObject {
         ? OutputsLibraryStore(directory: NotesStore.applicationSupportDirectory.appendingPathComponent("ResponseOutputLibrary"))
         : OutputsLibraryStore())
     let onboarding = OnboardingModel()
+    let companionPanel = CompanionPanelModel()
     let agentInspector = AgentInspectorModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
     /// observes this directly, and republishing here would invalidate the whole
@@ -1380,6 +1381,7 @@ final class AppModel: ObservableObject {
             }
         }
 
+        companionPanel.configure(app: self)
         configureLibraryFeatures()
         configureIdentityVault()
         configureOnboarding(

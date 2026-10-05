@@ -144,7 +144,8 @@ extension AppModel {
     /// Uses the existing worker lifecycle and global admission queue, pinned to
     /// the resident's workspace and profile for every submitted turn, including
     /// an explicit model choice saved for this conversation.
-    func sendAgentWorldTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode, runID: String = UUID().uuidString) async throws {
+    func sendAgentWorldTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode, runID: String = UUID().uuidString,
+                            preservingForeground: Bool = false) async throws {
         guard [.ask, .work].contains(mode), !isShuttingDown,
               let profile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw AgentWorldError.unavailable("This agent profile is unavailable.")
@@ -220,7 +221,8 @@ extension AppModel {
                     return
                 }
                 refreshSplitPane(sessionID)
-                await refreshMetadata()
+                if preservingForeground { try? await refreshCompanionConversationCatalog() }
+                else { await refreshMetadata() }
             } catch {
                 failure = error
                 if let worker = taskWorkers[sessionID] {
