@@ -370,11 +370,13 @@
 		416E82DEA3FFA5964E98F6D1 /* IdentityVaultCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354CEF47ED7CCEC272666944 /* IdentityVaultCoordinator.swift */; };
 		4184E19AA261284FEE639A3B /* CompanionPanelModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20F8C7FB3B813D909A6FEBC2 /* CompanionPanelModel.swift */; };
 		41BA46E2384171111BE67650 /* TextSelectionMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB36421DC413C2F3F5BDA72 /* TextSelectionMenu.swift */; };
+		41CC9031AF09E1FF932D2CE4 /* LegacyAgentWorldPreferenceMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95C825874E47CEA6BA3DDC1 /* LegacyAgentWorldPreferenceMigration.swift */; };
 		41F8A0001D657B015E587B7B /* InspectorPlanTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD0CDE34355390B1AB4691E /* InspectorPlanTab.swift */; };
 		426A637C69A40ECCC368708E /* AgentInspectorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9562D71A05C50114A2C06A0C /* AgentInspectorUITests.swift */; };
 		42927488EC3A3862DCDC786A /* WalletReleaseHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA04206C0C456E08825BAD13 /* WalletReleaseHistoryTests.swift */; };
 		4297547C774045019671A8CF /* AgentInstructionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2619AB05A65A0972B3D6352D /* AgentInstructionsModel.swift */; };
 		42BDCFD67627901A00A62137 /* LibraryWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1107B5AE8736B7D66F24D696 /* LibraryWorkspaceView.swift */; };
+		42DD8C3E42A8AF7F6DC8AC87 /* LegacyAgentWorldPreferenceMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95C825874E47CEA6BA3DDC1 /* LegacyAgentWorldPreferenceMigration.swift */; };
 		42F424012E5FEC0EA83731EC /* SimulatorControlService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC12D6A9C390215CBA2E83B /* SimulatorControlService.swift */; };
 		4306E6106E7461AA380CA9F1 /* GitHubConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D31BF62A06142F7A228ABB2 /* GitHubConnectionTests.swift */; };
 		434EC61340C47BC3152C5FE4 /* ExtensionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 819B94A8EAA15CE9EDBDDC53 /* ExtensionModels.swift */; };
@@ -937,6 +939,7 @@
 		B5ECDC950FF418A39185AC5A /* BackgroundServicesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BC4DF20CC84C89DD48D30CB /* BackgroundServicesModel.swift */; };
 		B66C0DBCA32A11AE952AEEE8 /* SocialStudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31B7A43AD13A64EA2A49C54B /* SocialStudioTests.swift */; };
 		B681F607CD7C75E74B7AB7DA /* EventConnectorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113F63D8FC35F53C8044F1A4 /* EventConnectorClient.swift */; };
+		B6BA28F872A34E164F7C1D0E /* LegacyAgentWorldPreferenceMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95C825874E47CEA6BA3DDC1 /* LegacyAgentWorldPreferenceMigration.swift */; };
 		B6BBB6D8A3DD4C0B3DB9AB74 /* CompanionSpriteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C1BA104039C1CEF65991A2 /* CompanionSpriteView.swift */; };
 		B6DB73E37F4D8EE80C094F01 /* SystemSymbolCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A76D4F569E237BCCF2F9F59 /* SystemSymbolCatalogTests.swift */; };
 		B6EAAE618A5706F1E68180AF /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 603951DA29612321B84516AE /* SessionModels.swift */; };
@@ -1903,6 +1906,7 @@
 		F8ADBF6F317252F03078BBE9 /* TaskCapsuleTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCapsuleTypes.swift; sourceTree = "<group>"; };
 		F9101B0FC031593F78262CC9 /* AgentManagementPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentManagementPresentation.swift; sourceTree = "<group>"; };
 		F95947ACE0751337457A57CD /* TerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSession.swift; sourceTree = "<group>"; };
+		F95C825874E47CEA6BA3DDC1 /* LegacyAgentWorldPreferenceMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyAgentWorldPreferenceMigration.swift; sourceTree = "<group>"; };
 		FA2F4D55B6CB8B4C966BACBE /* ProviderModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderModelCatalog.swift; sourceTree = "<group>"; };
 		FA4922F1049987BA8E942B04 /* CompanionMenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionMenuBarView.swift; sourceTree = "<group>"; };
 		FAE95B12D4CC3E3AFB18920D /* DocumentPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentPreviewView.swift; sourceTree = "<group>"; };
@@ -2449,6 +2453,7 @@
 				C18DF12402ABC3DF35FEADFC /* JSONBridging.swift */,
 				1784B6FA8992300112DCC986 /* JSONValue.swift */,
 				D8E292075DE9F84B3C78158F /* LandingFlowModel.swift */,
+				F95C825874E47CEA6BA3DDC1 /* LegacyAgentWorldPreferenceMigration.swift */,
 				A736ED1A022C230257FB3FDF /* LibraryUITestFixtureView.swift */,
 				1107B5AE8736B7D66F24D696 /* LibraryWorkspaceView.swift */,
 				C55065A982A7FB563B8DEA87 /* LocalRuntimeCoordinator.swift */,
@@ -3436,6 +3441,7 @@
 				6E01F3F323FEB9B36A9F40AE /* JiraBoard.swift in Sources */,
 				6090F484085EA72767388AB4 /* JiraBoardViews.swift in Sources */,
 				32158CEC81B5A660AE1DEA34 /* LandingFlowModel.swift in Sources */,
+				41CC9031AF09E1FF932D2CE4 /* LegacyAgentWorldPreferenceMigration.swift in Sources */,
 				F0BBF6678CA41D564B738F2F /* LibraryUITestFixtureView.swift in Sources */,
 				42BDCFD67627901A00A62137 /* LibraryWorkspaceView.swift in Sources */,
 				5627AA36AB80C56737D53F05 /* LocalRuntimeCoordinator.swift in Sources */,
@@ -3911,6 +3917,7 @@
 				BABD7AB768508AD8BF8E2F28 /* JiraBoard.swift in Sources */,
 				E235189B69031FDF65A86148 /* JiraBoardViews.swift in Sources */,
 				1838F8C9ABC24EF5DB47DC4C /* LandingFlowModel.swift in Sources */,
+				B6BA28F872A34E164F7C1D0E /* LegacyAgentWorldPreferenceMigration.swift in Sources */,
 				E4D4B0B1297EA23C92E33368 /* LibraryUITestFixtureView.swift in Sources */,
 				FC7EC14E51E90C93A79DF34E /* LibraryWorkspaceView.swift in Sources */,
 				B302C713CDCD5A21C3CF431C /* LocalRuntimeCoordinator.swift in Sources */,
@@ -4391,6 +4398,7 @@
 				8F75D4F4697D8B39B932097A /* JiraBoard.swift in Sources */,
 				CDD11586F1AA43E7DCFDE92E /* JiraBoardViews.swift in Sources */,
 				E50393715187C9F0E4CF8BC8 /* LandingFlowModel.swift in Sources */,
+				42DD8C3E42A8AF7F6DC8AC87 /* LegacyAgentWorldPreferenceMigration.swift in Sources */,
 				84DD34A30EDBA7B5FD2AEE65 /* LibraryUITestFixtureView.swift in Sources */,
 				A1DC494C657EEB472753897B /* LibraryWorkspaceView.swift in Sources */,
 				ECC3222B271817402B95EF0B /* LocalRuntimeCoordinator.swift in Sources */,
