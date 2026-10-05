@@ -337,8 +337,8 @@ jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
     # via jsonschema
-locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.2.1/locus_memory-0.2.1-py3-none-any.whl#sha256=66bf34c70ba9a6f213cd18cc3b2a14117fd97b26ebeda3102d3f9df7edb7e948 \
-    --hash=sha256:66bf34c70ba9a6f213cd18cc3b2a14117fd97b26ebeda3102d3f9df7edb7e948
+locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.3.0/locus_memory-0.3.0-py3-none-any.whl#sha256=aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6 \
+    --hash=sha256:aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6
     # via -r agent/requirements-runtime.in
 lxml==6.1.3 \
     --hash=sha256:032a0a97eed428bd143c75a11118238546424ceb2fa311cca5f073aa44658dc4 \

@@ -513,7 +513,10 @@ final class VoiceControlTests: XCTestCase {
         XCTAssertEqual(voice.state, .attention(.appleNetworkRecognition))
 
         voice.respondToAppleNetworkConsent(allowed: true)
-        await waitUntil { capture.started }
+        // Capture starts before the recognizer request has been configured.
+        // Await the completed transition whose recognition policy is asserted.
+        await waitUntil { voice.state == .listening }
+        XCTAssertTrue(capture.started)
         XCTAssertEqual(recognizer.lastRequiresOnDevice, false)
 
         voice.cancelRecording()

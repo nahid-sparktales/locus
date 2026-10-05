@@ -6,8 +6,8 @@ import copy
 import subprocess
 import threading
 import time
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .chat_service import ChatService
@@ -53,8 +53,8 @@ def run_evaluation_suite(
     The source workspace is only read while each baseline is captured. The
     evaluation owns a separate AgentCore/session and never exposes Apply.
     """
-    from .reusable_checks import ReusableCheckStore
     from .agent_profile_runtime import trusted_memory_agent
+    from .reusable_checks import ReusableCheckStore
     parent_agent_id, parent_configuration = trusted_memory_agent(parent.core)
     frozen_checks = ReusableCheckStore(parent.run_store).freeze(suite["workspace_root"], suite["workspace_root"], agent_id=parent_agent_id)
     store = EvaluationStore(parent.run_store)

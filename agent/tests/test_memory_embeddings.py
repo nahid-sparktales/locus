@@ -5,9 +5,13 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-
 from locus_memory.errors import ProviderError
-from ollama_code.memory_embeddings import LocalOllamaEmbeddings, build_memory_embedding_provider, local_origin
+
+from ollama_code.memory_embeddings import (
+    LocalOllamaEmbeddings,
+    build_memory_embedding_provider,
+    local_origin,
+)
 
 
 @pytest.fixture

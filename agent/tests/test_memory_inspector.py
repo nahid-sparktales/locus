@@ -105,6 +105,7 @@ def test_private_identity_never_exposes_inspection_or_promotion(host):
 
 def test_inspection_reloads_saved_target_policy(host, monkeypatch):
     from locus_memory.policies import MemoryPolicy
+
     from ollama_code.api import memory_inspector
     service, adapter, run = host
     target = "90420610-299f-4bb8-b878-057409b30d29"
@@ -122,6 +123,7 @@ def test_inspection_reloads_saved_target_policy(host, monkeypatch):
 
 def test_uuid_helper_keeps_owning_agent_policy_without_profile_lookup(host, monkeypatch):
     from locus_memory.policies import MemoryPolicy
+
     from ollama_code.api import memory_inspector
     service, adapter, run = host
     helper = "3da14bbc-86d5-413e-94cf-89294eae7f25"

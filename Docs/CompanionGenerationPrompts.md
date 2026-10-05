@@ -4,7 +4,7 @@
 
 Created October 5, 2026 with the built-in `image_gen` tool in edit mode and `transparent_background: true`. The sole edit target was the user-selected Pitou atlas, inspected before editing. No external provider API/CLI was used; no ChatGPT pet was created or published. The requested final identities are Clover (Asta × Fullmetal Alchemist), Shadow (Sung Jinwoo × Kaiju No. 8), and Pirate (Luffy × Dragon Ball Z).
 
-The tool returned native 1027 × 1531 RGBA PNGs despite the prompts requesting 1536 × 2288. Native originals remain at the source paths below. `Tools/PrepareCompanionAtlases.py` compiles the selected generated variants to the established **v1 1536 × 1872 layout: 8 columns, 9 rows, 192 × 208 cells, 57 actual state frames**, with per-row counts **6, 8, 8, 4, 5, 8, 6, 6, 6**. The 15 unused cells are exactly transparent. The generated direction/look rows are deliberately omitted, because the new variants do not advertise pointer tracking and a root-generated variant had cropped feet in its final look row. No missing frames are synthesized or duplicated. Pitou retains its exact original v2 artwork.
+The tool returned native 1027 × 1531 RGBA PNGs despite the prompts requesting 1536 × 2288. The source filenames below identify the selected originals. `Tools/PrepareCompanionAtlases.py` compiles the selected generated variants to the established **v1 1536 × 1872 layout: 8 columns, 9 rows, 192 × 208 cells, 57 actual state frames**, with per-row counts **6, 8, 8, 4, 5, 8, 6, 6, 6**. The 15 unused cells are exactly transparent. The generated direction/look rows are deliberately omitted, because the new variants do not advertise pointer tracking and a root-generated variant had cropped feet in its final look row. No missing frames are synthesized or duplicated. Pitou retains its exact original v2 artwork.
 
 Compilation performs deterministic connected-silhouette extraction to recover existing pixels crossing nominal generated cell boundaries, removes alpha ≤ 4 matte residue, keeps original colors and nearby antialias pixels, and applies one common scale/translation to all frames in each resource with a 15% safety inset. It does not redraw characters or normalize individual pose scale/baseline. The script validates occupancy, canvas clipping, dimensions, and transparent margins; source/output SHA-256 hashes are recorded in its JSON report.
 
@@ -13,7 +13,7 @@ Generated variants were requested as anime-inspired personal companion designs; 
 ### Clover — selected final prompt
 
 Project asset: `Locus/Resources/Companions/Clover.png`.
-Native source: `/Users/nahid/.codex/generated_images/01a10a18-8714-78e0-8e57-bc9a5e1f8602/exec-adfa2b1c-d327-47d1-9350-406c18be56ee.png`.
+Native source filename: `exec-adfa2b1c-d327-47d1-9350-406c18be56ee.png`.
 
 ```text
 Use case: precise-object-edit.
@@ -28,7 +28,7 @@ New hybrid character: Asta from Black Clover crossed with Fullmetal Alchemist. A
 ### Shadow — selected final prompt
 
 Project asset: `Locus/Resources/Companions/Shadow.png`.
-Native source: `/Users/nahid/.codex/generated_images/01a10a18-8714-78e0-8e57-bc9a5e1f8602/exec-dc27ff11-2a82-478a-b8a5-f0cd6eac8d61.png`.
+Native source filename: `exec-dc27ff11-2a82-478a-b8a5-f0cd6eac8d61.png`.
 
 ```text
 Use case: precise-object-edit.
@@ -43,7 +43,7 @@ New hybrid character: Sung Jinwoo from Solo Leveling crossed with Kaiju No8. A t
 ### Pirate — selected final prompt
 
 Project asset: `Locus/Resources/Companions/Pirate.png`.
-Native source: `/Users/nahid/.codex/generated_images/01a10a18-8714-78e0-8e57-bc9a5e1f8602/exec-05ca8569-5b1f-4171-a74e-675c78b91bc6.png`.
+Native source filename: `exec-05ca8569-5b1f-4171-a74e-675c78b91bc6.png`.
 
 ```text
 Use case: precise-object-edit.

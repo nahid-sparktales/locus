@@ -217,6 +217,7 @@ class KeychainLedgerMirror:
             return checkpoint
 
     def write(self, partition_id: str, generation: int, mac: str) -> None:
+        generation, mac = _checkpoint((generation, mac))
         with self._lock:
             if partition_id not in self._seen:
                 self.read(partition_id)
@@ -266,7 +267,9 @@ def _checkpoint(value) -> tuple[int, str]:
     if (not isinstance(value, (tuple, list)) or len(value) != 2 or type(value[0]) is not int
             or not 0 <= value[0] < 2**63 - 1 or not isinstance(value[1], str)
             or (value[0] == 0 and value[1] != "")
-            or (value[0] > 0 and (len(value[1]) != 64 or any(c not in "0123456789abcdef" for c in value[1])))):
+            # The package ledger uses its 20-byte blind token, encoded as 40
+            # lowercase hex characters. Enrollment/proof HMACs remain 64 hex.
+            or (value[0] > 0 and (len(value[1]) != 40 or any(c not in "0123456789abcdef" for c in value[1])))):
         raise IntegrityError("invalid memory deletion checkpoint")
     return value[0], value[1]
 

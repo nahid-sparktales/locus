@@ -86,7 +86,7 @@ fi
     --requirement "${requirements_lock}"
 PYTHONPATH="${workdir}/site-packages" PYTHONDONTWRITEBYTECODE=1 \
     "${workdir}/python/bin/python3" -s -c \
-    'from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; from locus_memory.models import ContextRequest; assert ContextRequest(token_allowance=1, max_items=1).max_items == 1'
+    'from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; from locus_memory.context.submissions import record; from locus_memory.history.transcript_cache import EncryptedTranscriptCache; from locus_memory.models import ContextRequest; assert ContextRequest(token_allowance=1, max_items=1).max_items == 1'
 /bin/rm -rf \
     "${workdir}/site-packages/bin" \
     "${workdir}/site-packages/claude_agent_sdk/_bundled"

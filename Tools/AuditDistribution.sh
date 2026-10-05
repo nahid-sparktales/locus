@@ -332,7 +332,7 @@ mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
 # Read each pinned version from the wheel's own metadata rather than by running
 # the bundled interpreter: an exec-based check depends on how the interpreter
 # happens to be signed, so it verifies the signature rather than the pin.
-for pin in websockets:17.0 locus_memory:0.2.1
+for pin in websockets:17.0 locus_memory:0.3.0
 do
     name="${pin%%:*}"
     want="${pin##*:}"

@@ -66,7 +66,7 @@ def check_runtime(runtime: Path, helper: Path) -> None:
                        "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                        "OLLAMA_CODE_HOME": str(Path(temporary) / "profile"), "LOCUS_CODEX_HOME": str(Path(temporary) / "accounts")}
         result = subprocess.run([str(runtime / "python/bin/python3"), "-s", "-c",
-                                 ("import ssl, sqlite3, ollama_code.runtime; import fastapi, uvicorn; "
+                                 ("import ssl, sqlite3, ollama_code.runtime, ollama_code.server; import fastapi, uvicorn; "
                                  "from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; "
                                  "from locus_memory.models import ContextRequest; "
                                  "assert ContextRequest(token_allowance=1, max_items=1).max_items == 1; print('ready')")],

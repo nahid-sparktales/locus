@@ -5,7 +5,7 @@ struct MemoryInspectorButton: View {
     @State private var showing = false
     var body: some View {
         Button { showing = true } label: { Label("Memory", systemImage: "brain") }
-            .buttonStyle(.borderless).help("Inspect memory submitted for this turn")
+            .buttonStyle(.locus()).help("Inspect memory submitted for this turn")
             .accessibilityIdentifier("memory.inspect.\(runID)")
             .sheet(isPresented: $showing) { MemorySubmissionInspector(runID: runID) }
     }
@@ -363,7 +363,7 @@ private struct MemorySubmissionInspector: View {
                                 Text("Turn \(submission.turn_id.prefix(8)) · Attempt \(submission.attempt_id.prefix(8))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                        }.buttonStyle(.borderless)
+                        }.buttonStyle(.locus())
                     }
                     if let detail {
                         Divider()

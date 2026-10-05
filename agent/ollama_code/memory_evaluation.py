@@ -16,9 +16,10 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .memory_embeddings import _NoRedirect, local_origin
 
@@ -125,7 +126,14 @@ def _synthetic_context(root: Path, text: str, query: str) -> tuple[str, dict[str
 
     from locus_memory import MemoryEngine
     from locus_memory.crypto import StaticKeyProvider
-    from locus_memory.models import AccessContext, Actor, ContextRequest, Operation, PartitionRef, RememberRequest
+    from locus_memory.models import (
+        AccessContext,
+        Actor,
+        ContextRequest,
+        Operation,
+        PartitionRef,
+        RememberRequest,
+    )
     from locus_memory.runtime import _SLICES
 
     keys = StaticKeyProvider({"campaign": secrets.token_bytes(32)})

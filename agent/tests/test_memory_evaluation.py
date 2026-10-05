@@ -4,7 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from ollama_code.memory_evaluation import CampaignBudget, CampaignBudgetExceeded, run_paired_memory_campaign
+from ollama_code.memory_evaluation import (
+    CampaignBudget,
+    CampaignBudgetExceeded,
+    run_paired_memory_campaign,
+)
 
 
 def test_unknown_price_never_admits_request():
@@ -67,6 +71,7 @@ def test_incomplete_campaign_has_no_false_quality_claim():
 
 def test_native_campaign_cannot_dispatch_without_output_cap():
     from types import SimpleNamespace
+
     from ollama_code.model_usage import tracked_native
     from ollama_code.usage_ledger import UsageLimitError
     with pytest.raises(UsageLimitError, match="cannot enforce"):
@@ -76,6 +81,7 @@ def test_native_campaign_cannot_dispatch_without_output_cap():
 
 def test_actual_tracked_boundary_refuses_unknown_billable_price(tmp_path):
     from types import SimpleNamespace
+
     from ollama_code.model_usage import tracked_chat
     from ollama_code.runstore import RunStore
     from ollama_code.usage_ledger import UsageLedger, UsageLimitError

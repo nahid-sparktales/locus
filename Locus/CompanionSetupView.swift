@@ -240,7 +240,7 @@ struct CompanionSetupView: View {
             .overlay(RoundedRectangle(cornerRadius: 14)
                 .stroke(selected ? colors.signalDeep : colors.line, lineWidth: selected ? 2 : 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.locus(.card))
         .accessibilityLabel(title)
         .accessibilityHint(hint)
         .help(hint)

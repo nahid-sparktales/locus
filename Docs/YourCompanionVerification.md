@@ -3,8 +3,8 @@
 This work extends the existing Getting Started sheet, saved `AgentProfile` owner,
 portrait storage, profile-bound conversations, activity catalogs and connection UI.
 It does not add a chat engine, scheduler, permissions store, memory store or Agent
-World dependency. Existing unrelated runtime and memory changes in the checkout
-were preserved.
+World dependency. The later v4 release request also includes the existing memory and runtime
+changes; their package and release validation is tracked separately.
 
 ## Delivered source
 
@@ -134,3 +134,28 @@ Pitou preserves the supplied sprite bytes. Generated variants retain their nine
 standard animation rows; unverified generated look-direction rows are excluded.
 The app does not implement a draggable desktop pet or cursor-following look poses,
 and does not claim undocumented ChatGPT timing or screen parity.
+
+## v4 release preflight
+
+The combined source was exercised with the complete `LocusTests` target on
+2026-10-05: 1,893 tests passed, one source-observation boundary test failed,
+and one transcript selection test exited on SIGTERM. The observation accesses
+were moved to the observed feature owner and the existing AppModel action
+boundary. The six companion suites, observation-boundary suite, and complete
+transcript relayout suite were then rerun: **85 passed, zero failures**, including
+both previously failing tests (`/tmp/locus-v4-verification/native-rerun.xcresult`).
+
+The release preflight also passes the design-system audit without changing its
+baseline, the transport-security audit, protocol manifest verification, shared
+iOS wire-type compilation, shell-script syntax checks, Agent World package
+verification, Python Ruff, and staged secret scanning. Historical source patches
+retain exact context whitespace and provenance hashes. The new memory guard is
+explicitly Developer ID signed and timestamped by the release packager before
+the enclosing app is sealed.
+
+The publication build uses version 4.0.0 (36), the existing standard `Locus`
+Release scheme, the full bundled runtime, and the existing notarization and
+signed Sparkle feed process. Compile-only builds with `LOCUS_BUNDLE_MODE=skip`
+are not installable release evidence. Packaging logs and release artifacts are
+kept outside the source tree in `/tmp/locus-v4-verification` and
+`/tmp/locus-v4-release`.

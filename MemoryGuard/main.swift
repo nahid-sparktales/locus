@@ -12,9 +12,10 @@ func checkpoint(_ value: Any?) throws -> Checkpoint? {
     guard let value, !(value is NSNull) else { return nil }
     guard let values = value as? [Any], values.count == 2,
           let number = values[0] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-          number.doubleValue == Double(number.intValue), number.intValue >= 0,
+          number.doubleValue == Double(number.intValue), number.intValue >= 0, number.intValue < Int.max,
           let mac = values[1] as? String, mac.count <= 128,
-          (number.intValue == 0 && mac.isEmpty) || (number.intValue > 0 && mac.count == 64 && mac.allSatisfy({ $0.isHexDigit }))
+          // Deletion ledger MACs are the package's 20-byte blind tokens.
+          (number.intValue == 0 && mac.isEmpty) || (number.intValue > 0 && mac.count == 40 && mac.allSatisfy({ "0123456789abcdef".contains($0) }))
     else { throw GuardError(message: "invalid_checkpoint") }
     return Checkpoint(generation: number.intValue, mac: mac)
 }

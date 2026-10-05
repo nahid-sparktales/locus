@@ -18,6 +18,9 @@ from ollama_code.tools import execute_tool
 def canonical_client(tmp_path, monkeypatch):
     from locus_memory.compat.legacy_vault import LegacyMemoryVault
 
+    # The route fixture migrates an isolated temporary profile, independently
+    # of native UI tests running against their own profiles on this Mac.
+    monkeypatch.setattr("ollama_code.memory_migration.assert_quiescent", lambda _root: None)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     LegacyMemoryVault(paths.APP_DIR / "memory" / "memory.sqlite3",

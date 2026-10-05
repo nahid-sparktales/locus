@@ -20,7 +20,7 @@ dependencies = [
     "uvicorn>=0.27",
     "websockets>=12.0",
     "cryptography>=50.0",
-    "locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.2.1/locus_memory-0.2.1-py3-none-any.whl#sha256=66bf34c70ba9a6f213cd18cc3b2a14117fd97b26ebeda3102d3f9df7edb7e948",
+    "locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.3.0/locus_memory-0.3.0-py3-none-any.whl#sha256=aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6",
     "mcp==2.0.0",
     "jsonschema==4.26.0",
     "httpx2>=2.12,<3",

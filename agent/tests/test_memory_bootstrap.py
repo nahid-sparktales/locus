@@ -87,8 +87,9 @@ def test_missing_key_for_initialized_profile_is_never_replaced():
 
 
 def test_missing_master_key_with_enrolled_guard_never_creates_identity(isolated_app_dir):
-    from ollama_code.memory import MemoryError, _master_key
     import pytest
+
+    from ollama_code.memory import MemoryError, _master_key
     guard = isolated_app_dir / 'memory-guard'
     guard.mkdir(parents=True)
     (guard / 'enrolled.json').write_text('{}')

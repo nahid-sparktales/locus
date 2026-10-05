@@ -9,7 +9,15 @@ from locus_memory.errors import OwnershipFenced
 
 from ollama_code.memory import MemoryError, MemoryVault
 from ollama_code.memory_migration import HostMemoryMigration, main
+from ollama_code.memory_migration import assert_quiescent as check_quiescent
 from ollama_code.memory_ownership import ownership_state, profile_lease
+
+
+@pytest.fixture(autouse=True)
+def isolated_migration_processes(monkeypatch):
+    # These tests own only temporary profiles. A concurrently running native
+    # UI fixture is unrelated; production process/file checks are tested below.
+    monkeypatch.setattr("ollama_code.memory_migration.assert_quiescent", lambda _root: None)
 
 
 def seed(root: Path):
@@ -65,6 +73,39 @@ def test_live_backend_lease_blocks_migration(tmp_path):
     with profile_lease(tmp_path), pytest.raises(MemoryError, match="in use"):
         with HostMemoryMigration(tmp_path):
             pytest.fail("migration must not run against an active backend")
+
+
+@pytest.mark.parametrize("command", [
+    "/Applications/Locus.app/Contents/MacOS/Locus",
+    "python -m ollama_code.server --port 9000",
+    "python -m ollama_code.runtime serve",
+    "/Applications/Locus.app/Contents/Helpers/LocusRuntime",
+])
+def test_quiescence_rejects_running_apps_and_legacy_backends(tmp_path, monkeypatch, command):
+    from types import SimpleNamespace
+
+    from locus_memory.errors import MigrationError
+
+    monkeypatch.setattr("ollama_code.memory_migration.subprocess.run", lambda *_args, **_kwargs:
+                        SimpleNamespace(stdout=f"999999 {command}\n", stderr="", returncode=0))
+    with pytest.raises(MigrationError, match="running"):
+        check_quiescent(tmp_path)
+
+
+@pytest.mark.parametrize("result", [(0, "999999\n", ""), (2, "", "inspection failed")])
+def test_quiescence_rejects_open_vaults_and_failed_inspection(tmp_path, monkeypatch, result):
+    from types import SimpleNamespace
+
+    from locus_memory.errors import MigrationError
+
+    seed(tmp_path)
+    def run(command, **_kwargs):
+        if command[0] == "/bin/ps":
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        return SimpleNamespace(returncode=result[0], stdout=result[1], stderr=result[2])
+    monkeypatch.setattr("ollama_code.memory_migration.subprocess.run", run)
+    with pytest.raises(MigrationError, match="another process|cannot confirm"):
+        check_quiescent(tmp_path)
 
 
 def test_failed_validation_never_transfers_ownership(tmp_path):

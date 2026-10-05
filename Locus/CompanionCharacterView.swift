@@ -60,7 +60,7 @@ struct CompanionCharacterView: View {
             .saturation(pose == .unavailable && appearance.kind != .bundledSprite ? 0.55 : 1)
             if let symbol = statusSymbol {
                 Image(systemName: symbol)
-                    .font(.system(size: max(9, size * 0.11), weight: .semibold))
+                    .font(.locus(size: max(9, size * 0.11), weight: .semibold))
                     .foregroundStyle(statusColor)
                     .padding(max(3, size * 0.025))
                     .background(.background, in: Circle())
@@ -107,17 +107,17 @@ struct CompanionCharacterView: View {
         do {
             if pose == .greeting || pose == .completed {
                 for _ in 0..<2 {
-                    withAnimation(.easeInOut(duration: 0.22)) { wave = 1; lift = -2 }
+                    withAnimation(LocusMotion.content) { wave = 1; lift = -2 }
                     try await Task.sleep(for: .milliseconds(240))
-                    withAnimation(.easeInOut(duration: 0.22)) { wave = 0; lift = 0 }
+                    withAnimation(LocusMotion.content) { wave = 0; lift = 0 }
                     try await Task.sleep(for: .milliseconds(240))
                 }
             }
             while !Task.isCancelled {
                 // A slow breath is decorative; only a real working pose gets a nod.
-                withAnimation(.easeInOut(duration: 1.8)) { lift = pose == .working ? -2 : -0.8 }
+                withAnimation(LocusMotion.companionBreath) { lift = pose == .working ? -2 : -0.8 }
                 try await Task.sleep(for: .seconds(2))
-                withAnimation(.easeInOut(duration: 1.8)) { lift = 0 }
+                withAnimation(LocusMotion.companionBreath) { lift = 0 }
                 try await Task.sleep(for: .seconds(2))
                 if appearance.animationCapability == .articulated {
                     blinking = true

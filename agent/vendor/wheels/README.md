@@ -1,12 +1,26 @@
-# Historical wheel provenance
+# Dependency and historical wheel provenance
 
 Current builds download the versioned wheel from the
-[Locus Memory release](https://github.com/nahid-sparktales/locus-memory/releases/tag/v0.2.1)
+[Locus Memory release](https://github.com/nahid-sparktales/locus-memory/releases/tag/v0.3.0)
 using the exact URL and SHA-256 in `agent/requirements-runtime.lock`.
 Development installs use the same URL with its hash in `agent/pyproject.toml`.
 Pip verifies the wheel before installation; desktop and remote builders bundle
 it into the finished runtime. App users need no package installation or network
 access for memory at launch. This directory is no longer a dependency source.
+
+The current 0.3.0 wheel SHA-256 is
+`aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6`.
+It was built from source commit `ec7e87d821af064c5cd7fc680357f58b3ecc9a22`,
+with CPython 3.14.6, setuptools 84.0.0, wheel 0.48.0 and
+`SOURCE_DATE_EPOCH=1791196800`. Repeated builds are byte-identical. The release
+includes `SHA256SUMS` and `release-provenance.json`; the anonymous public wheel
+download was checked against this hash before updating the runtime lock.
+
+The 0.3.0 API is required: 0.2.1 lacks the encrypted transcript-cache module used
+by the backend. Desktop preparation probes the new cache/submission APIs, and
+remote packaging imports the actual server with a disposable profile. The
+package's [validation record](https://github.com/nahid-sparktales/locus-memory/blob/v0.3.0/docs/release-0.3.0.md)
+records installed-wheel tests, supported interpreter checks and remaining limits.
 
 The retained patches document the initial extraction before release publication.
 The former `locus_memory-0.2.0-py3-none-any.whl` was built from `locus-memory` commit

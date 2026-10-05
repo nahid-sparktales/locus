@@ -81,7 +81,7 @@ struct CompanionCustomCharacterPicker: View {
                             Image(nsImage: image).resizable().scaledToFit()
                         } else {
                             VStack(spacing: 10) {
-                                Image(systemName: "photo").font(.system(size: 32))
+                                Image(systemName: "photo").font(.locus(size: 32))
                                 Text("Your preview appears here").font(.locus(size: 11))
                             }.foregroundStyle(colors.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
                         }

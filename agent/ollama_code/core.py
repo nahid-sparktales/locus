@@ -1926,7 +1926,7 @@ class AgentCore:
     # ------------------------------------------------------------------ info
 
     def approx_tokens(self) -> int:
-        """Rough token count of the live conversation.
+        """Rough token count of the live conversation and request-only references.
 
         Tool-call arguments are included: they are often the largest part of a
         message, and leaving them out made the context meter read low exactly
@@ -1968,7 +1968,10 @@ class AgentCore:
                 total += len(str(arguments))
         # Image tokens are added after the divide: they are already a token
         # count, not a character count.
-        return total // 4 + image_tokens
+        # Memory is request-only reference data, so it is absent from the
+        # persisted transcript but still consumes this request's context.
+        reference = self._memory_reference_input(native=self.chatgpt_parity_active(self._turn_allows_tools))
+        return total // 4 + image_tokens + len(reference) // 4
 
     def measured_context_tokens(self) -> int:
         """The conversation's share of the last measured request, or 0.
@@ -1990,7 +1993,7 @@ class AgentCore:
     def context_tokens(self) -> int:
         """What the conversation actually occupies, best available answer.
 
-        `approx_tokens` can only see `self.messages`. A managed ChatGPT turn
+        `approx_tokens` sees local messages and in-memory references. A managed ChatGPT turn
         keeps its working context in the helper thread, so the estimate reads
         near-empty for a turn that really sent tens of thousands of tokens —
         the meter said 1.4k while the run was billed 91k across seven calls.

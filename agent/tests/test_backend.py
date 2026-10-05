@@ -9355,6 +9355,23 @@ def test_context_breakdown_partitions_the_real_prompt_without_exporting_content(
     assert json.dumps(core.messages) == before
 
 
+def test_request_only_memory_counts_toward_context_without_persisting_or_reading_sources(tmp_path):
+    core = _core(tmp_path, [])
+    baseline = core.approx_tokens()
+    transcript = json.dumps(core.messages)
+    core.memory_context = "approved-private-reference" * 60
+    reference = core._memory_reference_input()
+    assert core.approx_tokens() == baseline + len(reference) // 4
+    breakdown = core.context_breakdown()
+    memory = next(row for row in breakdown["categories"] if row["id"] == "memory")
+    assert memory["tokens"] == len(reference) // 4
+    assert "approved-private-reference" not in json.dumps(breakdown)
+    assert json.dumps(core.messages) == transcript
+    assert any(message.get("content") == reference for message in core._request_messages())
+    core.memory_context = ""
+    assert core.approx_tokens() == baseline
+
+
 def test_context_breakdown_unknown_window_and_tools_disabled(tmp_path):
     core = _core(tmp_path, [])
     core.context_limit = 0
