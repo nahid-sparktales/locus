@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "3e6afd4e5708ed25d63ad50408a164a046c05308",
-  "cloneLocation": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/agent-worlds-clean-clone-u2acym95/agent-worlds",
+  "sourceCommit": "68a60d4492cae2414ba765202b71248d038e41e6",
+  "cloneLocation": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/agent-worlds-final-clean-4weg_z9d/agent-worlds",
   "cloneParentContents": [
     "agent-worlds"
   ],
@@ -10,23 +10,23 @@
   "npmCi": "passed",
   "typecheck": "passed",
   "tests": {
-    "passed": 220,
+    "passed": 222,
     "failed": 0,
     "skipped": 0
   },
   "sourceAssetsVerified": 114,
   "packageFiles": 113,
-  "installedBytes": 221540093,
-  "zipBytes": 221559093,
-  "artifactSHA256": "08185931c0170330997b120f2149fccf9ac767c1cdd3b184dfb21a6d36b689e7",
+  "installedBytes": 221540158,
+  "zipBytes": 221559158,
+  "artifactSHA256": "090c697ed4c4c16f7bb0a4c284fe1cfead62cb7e7b335862c6e5da483c5c3421",
   "repeatBuildEqual": true,
   "zipCRC": "passed",
   "actualBundleInputs": 1170,
   "forbiddenBundleInputs": [],
   "workingTreeAfterBuild": "clean",
   "installer": {
-    "artifact_sha256": "08185931c0170330997b120f2149fccf9ac767c1cdd3b184dfb21a6d36b689e7",
-    "plugin_digest": "517ac68cc830ec1fc40c1ee238ab7c86594330bb9e634b6fcac521cfa8d90bb4",
+    "artifact_sha256": "090c697ed4c4c16f7bb0a4c284fe1cfead62cb7e7b335862c6e5da483c5c3421",
+    "plugin_digest": "8510e0e03cb9dd89bcea571a58c4e465ad53383b429a8be8b4bf158d916b7175",
     "installation_id": "locus/agent-world",
     "version": "0.2.0",
     "protocol": 2,
@@ -36,5 +36,10 @@
     "native_integration": "not-tested"
   },
   "nativeAcceptance": "recorded separately by native integration owner",
-  "publication": "not published; asset redistribution rights unverified"
+  "publication": "not published; asset redistribution rights unverified",
+  "supersedes": {
+    "sourceCommit": "3e6afd4e5708ed25d63ad50408a164a046c05308",
+    "artifactSHA256": "08185931c0170330997b120f2149fccf9ac767c1cdd3b184dfb21a6d36b689e7",
+    "reason": "Final lifecycle fixes invalidate changed streams, isolate cancellation generations, and bound welcome without snapshot."
+  }
 }
