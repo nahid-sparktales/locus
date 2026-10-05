@@ -96,8 +96,9 @@ this is not signed-distribution verification.
 
 XCTest UI execution was attempted, but the runner could not enable macOS automation:
 `Timed out while enabling automation mode`; testmanagerd reported that authentication
-was required. **No XCTest UI test was executed.** Security/automation settings were
-not changed. The test sources compile with the native test target.
+was required. **No XCTest UI test executed in that local attempt.** Later cloud
+UI results are recorded below. Security/automation settings were not changed.
+The test sources compile with the native test target.
 
 Native visual inspection uses a separately identified in-memory fixture build,
 with `LOCUS_UI_TESTING`, `LOCUS_UI_TESTING_FIRST_LAUNCH`, and
