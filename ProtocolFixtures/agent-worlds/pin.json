@@ -1,0 +1,8 @@
+{
+  "protocol": 2,
+  "sdk": 1,
+  "runtimeVersion": "0.2.0",
+  "canonicalSource": "agent-worlds/packages/sdk/src/protocol.ts",
+  "sourceSHA256": "d0bffebaaecfcaa85ca293b6094982cf3e011d2ad2a7de3c889e30be6cce345b",
+  "fixturesSHA256": "b5cfa3cf12221b7839cd18af4cd202111c37c4f4aa17fb9dc5343da32742c071"
+}

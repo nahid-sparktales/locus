@@ -1,0 +1,1438 @@
+{
+  "contractVersion": 2,
+  "vectors": [
+    {
+      "id": "hello",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "welcome",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "welcome",
+        "requestID": "hello_1",
+        "protocol": 2,
+        "hostVersion": "4.0.0",
+        "capabilities": [
+          "agents.read",
+          "agents.interact",
+          "world.preferences"
+        ],
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1"
+      }
+    },
+    {
+      "id": "snapshot",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "open-agent",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "agents.open",
+        "arguments": {
+          "agentID": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "id": "hello-version-string",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": "2",
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-string",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": "2",
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-version-boolean",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": true,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-boolean",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": true,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-version-legacy",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 1,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-legacy",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 1,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-version-future",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 3,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-future",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 3,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-version-fractional",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2.1,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-fractional",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2.1,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-version-null",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": null,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "snapshot-version-null",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": null,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "hello-invalid-protocols-16",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          true
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-protocols-17",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          "2"
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-protocols-18",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2,
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-sdkVersion-19",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": true,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-sdkVersion-20",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": "1",
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-runtimeVersion-21",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "latest",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-requiredCapabilities-22",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read",
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-requiredCapabilities-23",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "tools.execute"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-optionalCapabilities-24",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.read"
+        ]
+      }
+    },
+    {
+      "id": "hello-invalid-requestID-25",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "../path",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "unsupported-protocol-schema-valid",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          99
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ]
+      }
+    },
+    {
+      "id": "unknown-key",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "hello",
+        "requestID": "hello_1",
+        "protocols": [
+          2
+        ],
+        "runtimeVersion": "0.2.0",
+        "sdkVersion": 1,
+        "requiredCapabilities": [
+          "agents.read"
+        ],
+        "optionalCapabilities": [
+          "agents.interact",
+          "world.preferences"
+        ],
+        "selector": "run:"
+      }
+    },
+    {
+      "id": "welcome-protocol-boolean",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "welcome",
+        "requestID": "hello_1",
+        "protocol": true,
+        "hostVersion": "4.0.0",
+        "capabilities": [
+          "agents.read",
+          "agents.interact",
+          "world.preferences"
+        ],
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1"
+      }
+    },
+    {
+      "id": "welcome-unknown-capability",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "welcome",
+        "requestID": "hello_1",
+        "protocol": 2,
+        "hostVersion": "4.0.0",
+        "capabilities": [
+          "tools.execute"
+        ],
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1"
+      }
+    },
+    {
+      "id": "request-path-id",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "agents.open",
+        "arguments": {
+          "agentID": "/etc/passwd"
+        }
+      }
+    },
+    {
+      "id": "request-selector",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "native.execute",
+        "arguments": {
+          "agentID": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "id": "request-extra-argument",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "agents.open",
+        "arguments": {
+          "agentID": "11111111-1111-4111-8111-111111111111",
+          "prompt": "send"
+        }
+      }
+    },
+    {
+      "id": "request-bad-scope",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "/projects/private",
+        "command": "agents.open",
+        "arguments": {
+          "agentID": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "id": "navigate-board",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "navigation.open",
+        "arguments": {
+          "surface": "board"
+        }
+      }
+    },
+    {
+      "id": "navigate-url",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "navigation.open",
+        "arguments": {
+          "surface": "https://example.com"
+        }
+      }
+    },
+    {
+      "id": "pref-set",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "preferences.set",
+        "arguments": {
+          "key": "appearance",
+          "value": "dark"
+        }
+      }
+    },
+    {
+      "id": "pref-path",
+      "direction": "client",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "request",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "command": "preferences.set",
+        "arguments": {
+          "key": "../secrets",
+          "value": true
+        }
+      }
+    },
+    {
+      "id": "cancel",
+      "direction": "client",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "cancel",
+        "requestID": "hello_1_1",
+        "sessionID": "session_1",
+        "scopeID": "scope_1"
+      }
+    },
+    {
+      "id": "response-ok",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "response",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "requestID": "hello_1_1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "id": "response-denied",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "response",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "requestID": "hello_1_1",
+        "ok": false,
+        "error": {
+          "code": "denied",
+          "message": "Capability denied"
+        }
+      }
+    },
+    {
+      "id": "rejected",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "rejected",
+        "requestID": "hello_1",
+        "error": {
+          "code": "incompatible",
+          "message": "Unsupported protocol"
+        }
+      }
+    },
+    {
+      "id": "visibility",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "visibility",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "visible": false
+      }
+    },
+    {
+      "id": "revoked",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "revoked",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "reason": "Workspace changed"
+      }
+    },
+    {
+      "id": "empty-roster",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "duplicate-agent",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "unknown-selected",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0,
+          "selectedAgentID": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "id": "private-profile-fields",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle",
+              "instructions": "secret"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "control-character-name",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "A\nB",
+              "role": "Researcher",
+              "status": "idle"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "extra-snapshot-field",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        },
+        "workspacePath": "/private"
+      }
+    },
+    {
+      "id": "negative-sequence",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": -1,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "boolean-sequence",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": true,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "event",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "event",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 1,
+        "event": {
+          "type": "projection.updated",
+          "state": {
+            "agents": [
+              {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "name": "Atlas",
+                "role": "Researcher",
+                "status": "idle"
+              },
+              {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "name": "Nova",
+                "role": "Implementer",
+                "status": "working"
+              }
+            ],
+            "projectName": "Example",
+            "preferences": {},
+            "attentionRequests": [],
+            "transfers": [],
+            "canCreateAgent": true,
+            "nativeChrome": true,
+            "focusRequest": 0,
+            "activityCenterRequest": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "attention-known-agent",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "agentID": "11111111-1111-4111-8111-111111111111",
+              "kind": "approval",
+              "title": "Approval requested"
+            }
+          ],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "attention-unknown-agent",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "agentID": "11111111-1111-4111-8111-111111111111",
+              "kind": "approval",
+              "title": "Approval requested"
+            }
+          ],
+          "transfers": [],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "transfer",
+      "direction": "host",
+      "valid": true,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "fromAgentID": "11111111-1111-4111-8111-111111111111",
+              "toAgentID": "22222222-2222-4222-8222-222222222222",
+              "kind": "handoff",
+              "title": "Handoff",
+              "occurredAt": 1700000000
+            }
+          ],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    },
+    {
+      "id": "transfer-same-agent",
+      "direction": "host",
+      "valid": false,
+      "message": {
+        "version": 2,
+        "type": "snapshot",
+        "sessionID": "session_1",
+        "scopeID": "scope_1",
+        "streamID": "stream_1",
+        "sequence": 0,
+        "state": {
+          "agents": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "name": "Atlas",
+              "role": "Researcher",
+              "status": "idle"
+            },
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "name": "Nova",
+              "role": "Implementer",
+              "status": "working"
+            }
+          ],
+          "projectName": "Example",
+          "preferences": {},
+          "attentionRequests": [],
+          "transfers": [
+            {
+              "id": "11111111-1111-4111-8111-111111111111",
+              "fromAgentID": "11111111-1111-4111-8111-111111111111",
+              "toAgentID": "11111111-1111-4111-8111-111111111111",
+              "kind": "handoff",
+              "title": "Handoff",
+              "occurredAt": 1700000000
+            }
+          ],
+          "canCreateAgent": true,
+          "nativeChrome": true,
+          "focusRequest": 0,
+          "activityCenterRequest": 0
+        }
+      }
+    }
+  ]
+}
