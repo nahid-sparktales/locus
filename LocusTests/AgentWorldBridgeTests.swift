@@ -232,9 +232,11 @@ final class AgentWorldBridgeTests: XCTestCase {
         XCTAssertEqual(fixture.world.focusRequest, focus, "Replayed request IDs must not execute selection twice")
     }
 
-    func testPendingNativeWorkSurvivesExplicitCloseExceptionAndHangAndRealRetry() async throws {
-        for failure in ["close", "exception", "hang"] { try await verifyPendingWorkSurvives(failure) }
-    }
+    func testPendingNativeWorkSurvivesExplicitCloseAndReopen() async throws { try await verifyPendingWorkSurvives("close") }
+
+    func testPendingNativeWorkSurvivesActualExceptionAndRealRetry() async throws { try await verifyPendingWorkSurvives("exception") }
+
+    func testPendingNativeWorkSurvivesActualEventLoopHangAndRealRetry() async throws { try await verifyPendingWorkSurvives("hang") }
 
     func testPendingNativeWorkSurvivesActualOwnedWebContentTerminationAndRealRetry() async throws {
         try await verifyPendingWorkSurvives("termination")
@@ -531,21 +533,24 @@ final class AgentWorldBridgeTests: XCTestCase {
         throw CocoaError(.coderReadCorrupt)
     }
 
-    private func mountedTransport(in fixture: Fixture, excluding old: WKWebView? = nil) async throws -> Transport {
+    private func mountedTransport(in fixture: Fixture, excluding old: WKWebView? = nil, phase: String) async throws -> Transport {
         func findWeb(_ view: NSView?) -> WKWebView? {
             guard let view else { return nil }
             if let web = view as? WKWebView, web !== old { return web }
             return view.subviews.lazy.compactMap(findWeb).first
         }
         for _ in 0..<200 {
-            if let web = NSApp.windows.first(where: { $0.title.hasPrefix(fixture.title) }).flatMap({ findWeb($0.contentView) }),
-               let coordinator = web.navigationDelegate as? PluginScreenHost.Coordinator, !coordinator.files.revoked {
-                try await waitForTransportPage(web)
-                return Transport(web: web, coordinator: coordinator)
+            // AppKit may retain a closed window while the test retains its old WKWebView for identity assertions.
+            for window in NSApp.windows where window.title.hasPrefix(fixture.title) {
+                if let web = findWeb(window.contentView),
+                   let coordinator = web.navigationDelegate as? PluginScreenHost.Coordinator, !coordinator.files.revoked {
+                    try await waitForTransportPage(web)
+                    return Transport(web: web, coordinator: coordinator)
+                }
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("The native window did not mount a fresh PluginScreenHost coordinator")
+        XCTFail("The native window did not mount a fresh PluginScreenHost coordinator: \(phase)")
         throw CocoaError(.coderReadCorrupt)
     }
 
@@ -572,7 +577,7 @@ final class AgentWorldBridgeTests: XCTestCase {
         fixture.configure(profiles: [profile], conversations: service)
         try writeTransportPage(in: fixture)
         fixture.world.open(pluginID: "fixture")
-        let mounted = try await mountedTransport(in: fixture)
+        let mounted = try await mountedTransport(in: fixture, phase: "\(failure): initial")
         let transport = try await makeIsolatedTransport(in: fixture)
         defer { transport.coordinator.revoke() }
         _ = try await handshake(transport)
@@ -634,7 +639,7 @@ final class AgentWorldBridgeTests: XCTestCase {
             fixture.world.retryWorldScreen()
             XCTAssertEqual(fixture.world.renderEpoch, epoch + 1, failure)
         }
-        let recovered = try await mountedTransport(in: fixture, excluding: mounted.web)
+        let recovered = try await mountedTransport(in: fixture, excluding: mounted.web, phase: "\(failure): recovery")
         defer { recovered.coordinator.revoke() }
         XCTAssertFalse(recovered.coordinator === mounted.coordinator, failure)
         XCTAssertFalse(recovered.coordinator === transport.coordinator, failure)
