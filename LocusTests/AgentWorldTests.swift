@@ -260,6 +260,12 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertThrowsError(try AgentAvatarImage.normalized(Data(count: AgentAvatarImage.maximumSourceBytes + 1)))
     }
 
+    func testNativeAppContainsNoPluginOwnedBackdrops() {
+        for name in ["CaptainDeck", "Quarters-drum", "Quarters-elbaf", "Quarters-marineford", "Quarters-wano", "Quarters-water-seven"] {
+            XCTAssertNil(NSImage(named: NSImage.Name(name)), "Plugin artwork must be loaded from the reviewed package, not the native app: \(name)")
+        }
+    }
+
     func testBundledAgentPortraitsLoadAndFitTheAvatarStore() throws {
         let portraits = AgentPortraitPreset.allCases
         XCTAssertEqual(portraits.filter { !$0.isOnePiece }.count, 10)
@@ -346,7 +352,9 @@ final class AgentWorldTests: XCTestCase {
         let file = root.appendingPathComponent("ui/presentations.json")
         var extra = presentationFixture(); extra["script"] = "untrusted"
         var traversal = presentationFixture(); traversal["presentations"] = ["main": ["title": "Main", "backgroundAsset": "../outside.png"]]
-        for document in [extra, traversal] {
+        var unknownLabel = presentationFixture(); unknownLabel["labels"] = ["script": "untrusted"]
+        var oversizedLabel = presentationFixture(); oversizedLabel["labels"] = ["welcomeTitle": String(repeating: "x", count: 161)]
+        for document in [extra, traversal, unknownLabel, oversizedLabel] {
             try JSONSerialization.data(withJSONObject: document).write(to: file)
             XCTAssertNil(PluginWorldPresentation.load(screen: source()))
         }
@@ -972,7 +980,9 @@ final class AgentWorldTests: XCTestCase {
                 "mapPalette": palette,
                 "appearances": [["id": "neutral", "title": "Neutral", "palette": palette], ["id": "warm", "title": "Warm", "palette": palette]],
                 "styles": [["id": "style_a", "name": "Style A", "previewAsset": "fixture.png"]],
-                "labels": ["workspace": "Project", "style": "Appearance", "contextShortcut": "Visits", "visit": "Visit"],
+                "labels": ["workspace": "Project", "style": "Appearance", "contextShortcut": "Visits", "visit": "Visit",
+                           "emptyTitle": "Start here", "welcomeLabel": "WELCOME", "welcomeTitle": "Your workspace",
+                           "emptyWorkspaceTitle": "No agents yet", "emptyDescription": "Create an agent to begin."],
                 "appearancePreferenceKey": "appearance", "stylePreferenceKey": "styles", "contextEnabledPreferenceKey": "context-enabled"]
     }
 
