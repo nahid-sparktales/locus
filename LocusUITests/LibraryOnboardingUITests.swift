@@ -39,16 +39,15 @@ final class LibraryOnboardingUITests: XCTestCase {
     func testFirstLaunchAutomaticallyOffersGettingStarted() {
         app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "1"
         app.launch()
-        let agents = element("onboarding.path.agents")
-        XCTAssertTrue(agents.waitForExistence(timeout: 15))
-        XCTAssertTrue(element("onboarding.path.documents").exists)
-        XCTAssertTrue(element("onboarding.path.coding").exists)
-        capture("First launch offers Getting Started automatically")
+        let welcome = element("companion.continue")
+        XCTAssertTrue(welcome.waitForExistence(timeout: 15))
+        XCTAssertFalse(element("onboarding.path.agents").exists)
+        capture("First launch offers companion in Getting Started")
         element("onboarding.skip").click()
         XCTAssertTrue(element("composer.input").waitForExistence(timeout: 5))
-        XCTAssertFalse(agents.exists)
+        XCTAssertFalse(welcome.exists)
         openSetup()
-        XCTAssertTrue(agents.waitForExistence(timeout: 5))
+        XCTAssertTrue(welcome.waitForExistence(timeout: 5))
     }
 
     func testGettingStartedOpensRecurringAgentSetupAndPreservesDraft() {

@@ -131,7 +131,7 @@ final class OnboardingModel: ObservableObject {
     }
 
     struct Progress: Codable, Equatable {
-        var version = 1
+        var version = 2
         var step: Step = .startingPoint
         var startingPoint: OnboardingStartingPoint = .documents
         var workspace: String?
@@ -145,6 +145,8 @@ final class OnboardingModel: ObservableObject {
         var firstResponseMilliseconds: Int?
         var outputTokensPerSecond: Double?
         var failure: String?
+        /// Optional when decoding the original Getting Started progress.
+        var companion: CompanionOnboardingProgress?
     }
 
     @Published var isPresented = false
@@ -169,6 +171,17 @@ final class OnboardingModel: ObservableObject {
     private var pendingOutput: OnboardingRun?
     private var pendingAgentSetup = false
     private var pendingLaunchPresentation = false
+    private var companionCommitter: (CompanionOnboardingDraft) throws -> UUID = { _ in
+        throw CocoaError(.featureUnsupported)
+    }
+    private var primaryCompanionProvider: () -> UUID? = { nil }
+
+    var companion: CompanionOnboardingProgress { progress.companion ?? .init() }
+    var showsCompanionSetup: Bool { companion.showsSetup && companion.status != .completed }
+    var companionNameError: String? {
+        do { _ = try CompanionValidationError.validatedName(companion.draft.name); return nil }
+        catch { return error.localizedDescription }
+    }
 
     var isRunning: Bool { progress.run != nil && !progress.firstTaskCompleted && progress.failure == nil }
     var steps: [Step] {
@@ -194,15 +207,29 @@ final class OnboardingModel: ObservableObject {
         refreshConnection = refresh
         starter = start
         observer = observe
+        progress = Progress()
+        let hasSavedProgress = defaults?.data(forKey: persistenceKey) != nil
         if let data = defaults?.data(forKey: persistenceKey),
-           let saved = try? JSONDecoder().decode(Progress.self, from: data), saved.version == 1 {
+           let saved = try? JSONDecoder().decode(Progress.self, from: data), (1...2).contains(saved.version) {
             progress = saved
+            // An existing Getting Started record is itself installation evidence.
+            // Adding a field in an upgrade must never produce a fresh-install offer.
+            if progress.companion == nil {
+                progress.companion = CompanionOnboardingProgress(status: .deferred, showsSetup: false)
+            }
         } else {
-            progress.dismissed = isExistingInstallation
+            let existing = isExistingInstallation || hasSavedProgress
+            progress.dismissed = existing
+            progress.companion = CompanionOnboardingProgress(
+                status: existing ? .deferred : .notOffered,
+                showsSetup: !existing
+            )
         }
+        progress.version = 2
         // The main window consumes this after mounting its sheet host.
         pendingLaunchPresentation = autoPresent && !isExistingInstallation && !progress.dismissed
             && !progress.firstTaskCompleted && progress.presentedOnLaunch != true
+            && companion.status == .notOffered
         self.readiness = readiness()
         if isRunning { monitor() }
     }
@@ -210,16 +237,25 @@ final class OnboardingModel: ObservableObject {
     func presentOnLaunchIfNeeded() {
         guard pendingLaunchPresentation else { return }
         pendingLaunchPresentation = false
+        // Multiple sheet hosts (or model instances sharing this edition's
+        // defaults) must claim the offer on the main actor before presenting.
+        if let data = defaults?.data(forKey: persistenceKey),
+           let saved = try? JSONDecoder().decode(Progress.self, from: data),
+           saved.presentedOnLaunch == true || saved.dismissed || saved.companion?.status != .notOffered {
+            progress = saved
+            return
+        }
         // Save immediately so quitting with setup still open does not make it
         // reappear on the next launch. Manual setup remains resumable from Help.
         progress.presentedOnLaunch = true
+        progress.companion?.status = .inProgress
         persist()
         present()
     }
 
     func present() {
         isPresented = true
-        error = progress.failure
+        error = showsCompanionSetup ? nil : progress.failure
         readiness = readinessProvider()
         if isRunning { monitor() }
     }
@@ -227,7 +263,124 @@ final class OnboardingModel: ObservableObject {
     func dismiss() {
         pendingLaunchPresentation = false
         progress.dismissed = true
+        if companion.status != .completed { progress.companion?.status = .deferred }
         isPresented = false
+        persist()
+    }
+
+    func configureCompanion(
+        commit: @escaping (CompanionOnboardingDraft) throws -> UUID,
+        primaryProfileID: @escaping () -> UUID?
+    ) {
+        companionCommitter = commit
+        primaryCompanionProvider = primaryProfileID
+        if let id = primaryProfileID() {
+            // Reconcile a crash after the profile store committed and before
+            // Getting Started recorded completion. Never create a second agent.
+            recordCompanionCompletion(id)
+        }
+    }
+
+    func beginCompanionSetup() {
+        guard companion.status != .completed || primaryCompanionProvider() == nil else { return }
+        if progress.companion == nil || companion.status == .completed {
+            progress.companion = .init()
+        }
+        progress.companion?.status = .inProgress
+        progress.companion?.showsSetup = true
+        persist()
+        present()
+    }
+
+    func showGettingStarted(step: Step? = nil) {
+        progress.companion?.showsSetup = false
+        if let step { progress.step = step }
+        persist()
+    }
+
+    func setCompanionName(_ name: String) {
+        guard companion.status != .completed else { return }
+        progress.companion?.draft.name = name
+        error = nil
+        persist()
+    }
+
+    func selectCompanionAppearance(_ appearance: CompanionAppearance, avatarData: Data? = nil) {
+        guard companion.status != .completed else { return }
+        progress.companion?.draft.appearance = appearance.validated
+        progress.companion?.draft.avatarData = avatarData
+        error = nil
+        persist()
+    }
+
+    func selectExistingCompanion(_ id: UUID?) {
+        guard companion.status != .completed else { return }
+        progress.companion?.draft.existingProfileID = id
+        error = nil
+        persist()
+    }
+
+    func companionNext() {
+        error = nil
+        switch companion.step {
+        case .welcome:
+            progress.companion?.step = companion.draft.existingProfileID == nil ? .appearance : .introduction
+        case .appearance:
+            progress.companion?.step = companion.draft.existingProfileID == nil ? .name : .introduction
+        case .name:
+            do {
+                let name = try CompanionValidationError.validatedName(companion.draft.name)
+                progress.companion?.draft.name = name
+                progress.companion?.step = .introduction
+            } catch { self.error = error.localizedDescription }
+        case .introduction: break
+        }
+        persist()
+    }
+
+    func companionBack() {
+        error = nil
+        switch companion.step {
+        case .welcome: break
+        case .appearance: progress.companion?.step = .welcome
+        case .name: progress.companion?.step = .appearance
+        case .introduction:
+            progress.companion?.step = companion.draft.existingProfileID == nil ? .name : .appearance
+        }
+        persist()
+    }
+
+    @discardableResult
+    func completeCompanion() -> UUID? {
+        if let id = primaryCompanionProvider() ?? companion.completedProfileID {
+            recordCompanionCompletion(id)
+            return id
+        }
+        do {
+            // Persist the reserved identity before invoking the canonical owner.
+            // Its commit is synchronous on MainActor, so double clicks serialize.
+            if companion.draft.existingProfileID == nil {
+                progress.companion?.draft.name = try CompanionValidationError.validatedName(companion.draft.name)
+            }
+            persist()
+            let id = try companionCommitter(companion.draft)
+            recordCompanionCompletion(id)
+            return id
+        } catch {
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+
+    private func recordCompanionCompletion(_ id: UUID) {
+        progress.companion?.completedProfileID = id
+        progress.companion?.status = .completed
+        progress.companion?.showsSetup = false
+        // Approved pixels now belong exclusively to the canonical portrait store.
+        progress.companion?.draft.avatarData = nil
+        progress.dismissed = true
+        pendingLaunchPresentation = false
+        error = nil
         persist()
     }
 

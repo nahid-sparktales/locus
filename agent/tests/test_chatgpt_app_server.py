@@ -667,6 +667,37 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     assert all("[Locus mode:" not in text for text in texts)
 
 
+def test_native_memory_is_opt_in_separate_data_and_policy_change_rebuilds(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": True}},
+                         memory_context="MEMORY-CANARY: use violet deployment", agent_id="reviewer")
+    core.run_turn("deployment")
+    first = runtime.start_kwargs[-1]
+    assert "MEMORY-CANARY" not in first["base_instructions"]
+    assert "MEMORY-CANARY" not in first["options"].developer_instructions
+    text_items = [item["text"] for item in runtime.turn_kwargs[-1]["input_items"] if item["type"] == "text"]
+    assert sum("MEMORY-CANARY" in text for text in text_items) == 1
+    names = {item["function"]["name"] for item in first["tools"]}
+    assert {"search_memory", "propose_memory"} <= names
+    assert all("MEMORY-CANARY" not in str(message) for message in core.messages)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": False}}, agent_id="reviewer")
+    core.run_turn("next question")
+    assert len(runtime.start_kwargs) == 2
+    assert "MEMORY-CANARY" not in str(runtime.turn_kwargs[-1])
+    assert "propose_memory" not in {item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]}
+
+
+def test_native_memory_tools_respect_policy_switches(tmp_path):
+    runtime = ParityFakeRuntime()
+    core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": True, "proposals_enabled": False,
+                                           "search_enabled": False}})
+    core.run_turn("hello")
+    names = {item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]}
+    assert not names & {"search_memory", "propose_memory"}
+
+
 def test_parity_tools_gain_image_tools_only_when_configured_and_keep_the_thread(tmp_path):
     """Configuring a provider changes the tool set once; the thread then stays put."""
     runtime = ParityFakeRuntime()

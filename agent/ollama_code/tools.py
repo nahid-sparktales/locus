@@ -105,6 +105,7 @@ class ToolContext:
     memory_proposals_enabled: bool = True
     memory_session_id: str = ""
     memory_run_id: str = ""
+    memory_helper_proposal: Callable[[str], dict[str, Any]] | None = None
     cross_chat_context_enabled: bool = True
     #: App-owned process broker. Work submitted here is detached from the
     #: current turn and therefore survives Stop.
@@ -1168,7 +1169,12 @@ def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     scopes = [str(scope) for scope in requested if str(scope) in ctx.memory_scopes]
     from .memory import MemoryError, MemoryVault, format_memory_results
 
+    if not scopes:
+        return format_memory_results([])
+
     try:
+        from locus_memory.models import Actor
+
         embedding_model = ""
         ollama_host = "http://127.0.0.1:11434"
         try:
@@ -1178,7 +1184,10 @@ def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
             ollama_host = str(knowledge.get("ollama_host") or ollama_host)
         except Exception:
             pass
-        results = MemoryVault().search(
+        results = MemoryVault(
+            workspace=ctx.memory_workspace or ctx.cwd, agent_id=ctx.memory_agent_id,
+            actor=Actor.AGENT, scopes=tuple(scopes),
+        ).search(
             query,
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
@@ -1193,9 +1202,23 @@ def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
 
 
 def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    from locus_memory.models import Actor
+
     from .memory import MemoryError, MemoryVault
 
-    vault = MemoryVault()
+    if args.get("source_attempt_id"):
+        if not ctx.memory_proposals_enabled or "workspace" not in ctx.memory_scopes or ctx.memory_helper_proposal is None:
+            return "Error: helper memory proposals are unavailable for this agent."
+        try:
+            result = ctx.memory_helper_proposal(str(args["source_attempt_id"]))
+            return f"Memory suggestion {result['memory_id']} awaits human approval in the Memory Inbox."
+        except Exception:
+            return "Error: the completed helper result is unavailable in this run."
+
+    vault = MemoryVault(
+        workspace=ctx.memory_workspace or ctx.cwd, agent_id=ctx.memory_agent_id,
+        actor=Actor.AGENT, scopes=ctx.memory_scopes,
+    )
     event_context = {
         "workspace": ctx.memory_workspace or ctx.cwd,
         "agent_id": ctx.memory_agent_id,
@@ -1280,28 +1303,20 @@ def _impl_capture_context_snapshot(args: dict[str, Any], ctx: ToolContext) -> st
     """Explicitly replace this session's encrypted workspace handoff."""
     if not ctx.cross_chat_context_enabled:
         return "Error: cross-chat context is disabled for this agent."
+    from locus_memory.context.continuity import snapshot_payload
+
     from .continuity import ContinuityError, ContinuityStore, workspace_changed_files
 
-    pending = str(args.get("pending") or "").strip()
-    if not pending:
-        pending = "; ".join(
-            str(item.get("content") or "")
-            for item in ctx.todos
-            if item.get("status") != "completed" and item.get("content")
-        )
     try:
         snapshot = ContinuityStore().save_snapshot(
             ctx.memory_workspace or ctx.cwd,
             ctx.memory_session_id,
-            {
-                "goal": args.get("goal"),
-                "outcome": args.get("outcome"),
-                "mode": args.get("mode") or "work",
-                "plan": ctx.plan_document,
-                "todos": ctx.todos,
-                "changed_files": workspace_changed_files(ctx.memory_workspace or ctx.cwd),
-                "pending": pending,
-            },
+            snapshot_payload(
+                goal=args.get("goal"), outcome=args.get("outcome"),
+                mode=args.get("mode") or "work", plan=ctx.plan_document,
+                todos=ctx.todos, pending=args.get("pending"),
+                changed_files=workspace_changed_files(ctx.memory_workspace or ctx.cwd),
+            ),
             pinned=bool(args.get("pinned")),
         )
     except ContinuityError as exc:
@@ -1450,6 +1465,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "propose_memory",
         "Suggest a durable memory for user approval. Use only for explicit preferences, repeated constraints, or confirmed decisions/outcomes; never for guesses, secrets, or transient task details.",
         {
+            "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Proposes its retained result into workspace memory for human review; supplied content cannot replace that evidence."},
             "title": {"type": "string"},
             "content": {"type": "string"},
             "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},

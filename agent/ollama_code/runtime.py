@@ -134,6 +134,7 @@ class RuntimeSupervisor:
             environment = dict(os.environ)
             environment.update(LOCUS_PARENT_PID=str(os.getpid()), LOCUS_AGENT_TOKEN=token,
                                LOCUS_RUNTIME_CHILD="1", LOCUS_DOCUMENT_COORDINATOR="0",
+                               LOCUS_RUNTIME_PROFILE_ROOT=str(self.root),
                                LOCUS_CODEX_BROKER_URL=f"ws://127.0.0.1:{self.port}/ws/internal/codex",
                                LOCUS_CODEX_BROKER_TOKEN=self.private.token())
             environment.pop("LOCUS_RUNTIME_HOME", None)
@@ -477,6 +478,7 @@ def main() -> None:
     except BlockingIOError:
         raise SystemExit("This runtime already has a supervisor") from None
     os.environ["LOCUS_RUNTIME_COORDINATOR"] = "1"
+    os.environ["LOCUS_RUNTIME_PROFILE_ROOT"] = str(root)
     os.environ.pop("LOCUS_PARENT_PID", None)
     app = server.create_app()
     app.state.auth_token = private.token()

@@ -1,5 +1,11 @@
 import Foundation
 
+/// Emitted only by the existing live run boundary, never from a history read.
+struct ActivityCompletionEvent: Equatable {
+    let runID: String
+    let occurredAt: Date
+}
+
 /// Owns the Activity Center: the runs list, presentation state, and the
 /// per-run seen/dismissed bookkeeping with its pruned persistence. AppModel
 /// wires it via configure(...) and bridges its publication; it never retains
@@ -61,6 +67,8 @@ final class ActivityCenterModel: ObservableObject {
     private var toastHandler: (String) -> Void = { _ in }
     private var liveAttentionProvider: () -> [AttentionItem] = { [] }
     private var observedCompletionRunIDs: Set<String> = []
+    private var companionCompletionRunIDs: Set<String> = []
+    @Published private(set) var liveCompletionEvents: [String: ActivityCompletionEvent] = [:]
     @Published private(set) var viewedCompletionRunIDs: Set<String> = []
 
     var activityNeedsAttentionCount: Int {
@@ -188,6 +196,7 @@ final class ActivityCenterModel: ObservableObject {
             activitySeenUpdates = saved
         }
         viewedCompletionRunIDs = Set(defaults.stringArray(forKey: "Locus.viewedCompletionRunIDs") ?? [])
+        companionCompletionRunIDs = Set(defaults.stringArray(forKey: "Locus.companionCompletionRunIDs.v1") ?? [])
         dismissedActivityRunIDs = Set(
             defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
         )
@@ -220,6 +229,11 @@ final class ActivityCenterModel: ObservableObject {
                 as: OrchestrationRunsResponse.self
             )
             activityRuns = response.runs
+            // Restored results establish a baseline, not a new celebration.
+            if !hasLoadedActivity {
+                companionCompletionRunIDs.formUnion(response.runs.filter { $0.state == "completed" }.map(\.id))
+            }
+            persistActivityPresentationState()
             runsDidRefresh(response.runs)
             hasLoadedActivity = true
             let attention: AttentionResponse = try await backend.get(
@@ -355,6 +369,14 @@ final class ActivityCenterModel: ObservableObject {
     /// prevents a replay from reclassifying a background result as viewed.
     func recordCompletion(runID: String, succeeded: Bool, wasRunning: Bool, isViewed: Bool) {
         guard !runID.isEmpty, succeeded, observedCompletionRunIDs.insert(runID).inserted else { return }
+        if companionCompletionRunIDs.insert(runID).inserted, wasRunning {
+            liveCompletionEvents[runID] = ActivityCompletionEvent(runID: runID, occurredAt: Date())
+            if liveCompletionEvents.count > 128 {
+                liveCompletionEvents = Dictionary(uniqueKeysWithValues: liveCompletionEvents.values
+                    .sorted { $0.occurredAt > $1.occurredAt }.prefix(128).map { ($0.runID, $0) })
+            }
+        }
+        persistActivityPresentationState()
         guard wasRunning, isViewed, !activityCenterPresented else { return }
         viewedCompletionRunIDs.insert(runID)
         persistActivityPresentationState()
@@ -383,6 +405,7 @@ final class ActivityCenterModel: ObservableObject {
 
     private func persistActivityPresentationState() {
         guard persistenceEnabled else { return }
+        defaults.set(Array(companionCompletionRunIDs.sorted().suffix(2_000)), forKey: "Locus.companionCompletionRunIDs.v1")
         defaults.set(Array(viewedCompletionRunIDs.prefix(1_000)), forKey: "Locus.viewedCompletionRunIDs")
         if activitySeenUpdates.count > 1_000 {
             activitySeenUpdates = Dictionary(

@@ -212,7 +212,7 @@ extension AppModel {
             accountStatus[account.id] = .connected(models: 1)
         }
         sessionInfo = SessionInfo(
-            model: "qwen3:8b",
+            model: ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] == "1" ? "" : "qwen3:8b",
             host: "http://localhost:11434",
             cwd: workspace,
             session: "\(workspace)/seed-current.jsonl",

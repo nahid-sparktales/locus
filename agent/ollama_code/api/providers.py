@@ -464,6 +464,8 @@ def set_image_provider(
 
 
 def register_routes(router: APIRouter) -> None:
+    from .portrait_preview import register_routes as register_portrait_routes
+    register_portrait_routes(router)
     router.add_api_route("/api/provider", get_provider, methods=["GET"])
     router.add_api_route("/api/images/provider", get_image_provider, methods=["GET"])
     router.add_api_route("/api/images/provider", set_image_provider, methods=["POST"])

@@ -68,7 +68,7 @@ private struct LocusPresentationAnchor: View {
                 model.presentConfigureAgent(draftText: "")
             }
         }) {
-            OnboardingView().appFeatureEnvironment(from: model)
+            OnboardingView(availableSize: presentationSize).appFeatureEnvironment(from: model)
         }
         .locusSheet(isPresented: owned($model.commandPalettePresented)) {
             CommandPaletteView()

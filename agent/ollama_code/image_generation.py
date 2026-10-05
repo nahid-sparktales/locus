@@ -751,6 +751,47 @@ class ImageGenerationService:
         with self._lock:
             return self._config.public() if self._config is not None else dict(UNCONFIGURED_STATE)
 
+    def portrait_preview(self, prompt: str, account_id: str, ctx: ToolContext) -> bytes:
+        """One explicitly requested preview; no workspace, transcript or tool writes.
+
+        The account id pins the user's disclosed recipient. A provider change
+        before dispatch is an error, never an implicit switch to another bill.
+        The existing image clients own cancellation, bounded transport and
+        response validation. No uncertain paid request is retried here.
+        """
+        with self._lock:
+            config = self._config
+        if config is None:
+            raise ImageToolError("Choose an image account in Settings first.")
+        if not account_id or config.account_id != account_id:
+            raise ImageToolError("The selected image account changed. Review the account and try again.")
+        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 2_000:
+            raise ImageToolError("Describe your character in 1–2,000 characters.")
+        if any(ord(ch) < 32 and ch not in "\n\t" for ch in prompt):
+            raise ImageToolError("The description contains unsupported control characters.")
+        request = (
+            "Create one original, centered, full-body miniature character for an assistant profile. "
+            "Use a readable silhouette, expressive face, soft 3D or 2.5D materials, and gentle shadows. "
+            "No text, logos, known characters, or busy background. Prefer a transparent background "
+            "if supported; otherwise use a quiet plain background. Character description:\n" + prompt.strip()
+        )
+        if ctx.stopped():
+            raise ImageProviderError("interrupted")
+        if config.provider == "chatgpt":
+            from .chatgpt_images import ChatGPTImageClient
+            if self._codex_for is None:
+                raise ImageProviderError("Image generation is unavailable in this runtime.")
+            client = ChatGPTImageClient(config, self._codex_for(config.codex_home_id))
+        else:
+            client = ImageProviderClient(config)
+        data = client.generate(request, "1024x1024", config.quality, ctx)
+        info = image_info(data, MAX_DECODED_BYTES)
+        if info is None or info.format != "png" or len(data) > 20 * 1024 * 1024:
+            raise ImageToolError("The provider returned an invalid or oversized PNG. Nothing was saved.")
+        if ctx.stopped():
+            raise ImageProviderError("interrupted")
+        return data
+
     def execute(self, name: str, args: dict[str, Any], ctx: ToolContext) -> str:
         if name not in IMAGE_TOOL_NAMES:
             return f"Error: unknown image tool '{name}'."

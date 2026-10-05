@@ -1,0 +1,120 @@
+diff --git a/src/locus_memory/migrations/cutover.py b/src/locus_memory/migrations/cutover.py
+index 0988d42..0824dcb 100644
+--- a/src/locus_memory/migrations/cutover.py
++++ b/src/locus_memory/migrations/cutover.py
+@@ -901,6 +901,21 @@ class Migrator:
+                     shape: tuple[str, str], existing: Any, counts: Counter[str]) -> None:
+         scope, target = shape
+         candidate = record.lifecycle == Lifecycle.CANDIDATE
++        # The host/importer records the two legacy provenance bindings as unavailable
++        # SourceRefs. Older host adapters stored them in extra.locus; a key present
++        # there (including an explicit None) takes precedence over its old source.
++        # Always write absent bindings as None: omission would make LegacyMemoryVault
++        # preserve a source the package removed, for example after forgetting it.
++        metadata = record.extra.get("locus")
++        metadata = metadata if isinstance(metadata, dict) else {}
++        source_bindings: dict[str, str | None] = {}
++        for field, kind in (("source_session_id", SourceKind.SESSION),
++                            ("source_run_id", SourceKind.TASK_ATTEMPT)):
++            reference = next((source.ref for source in record.sources
++                              if source.kind == kind and source.locator.get("legacy_field") == field), None)
++            if field in metadata:
++                reference = str(metadata[field]) if metadata[field] else None
++            source_bindings[field] = reference
+         value = {
+             "title": record.title, "content": record.content, "tags": list(record.tags),
+             "scope": scope, "status": "candidate" if candidate else "approved",
+@@ -910,12 +925,14 @@ class Migrator:
+             "valid_from": record.validity.valid_from, "valid_until": record.validity.valid_until,
+             "supersedes": list(record.links.supersedes),
+             "provenance": record.extra.get("legacy_provenance") or {},
++            **source_bindings,
+         }
+         expires_at = record.retention.expires_at if candidate else None
+         same = False
+         if existing is not None:
+             current = vault.open_row(existing)
+             same = (_comparable(current) == _comparable(value) and existing["target_hash"] == target
++                    and all(current.get(field) == reference for field, reference in source_bindings.items())
+                     and current["superseded_by"] == record.links.superseded_by
+                     and (current["expires_at"] == expires_at if candidate else True))
+         if same:
+diff --git a/tests/test_rollback_source_bindings.py b/tests/test_rollback_source_bindings.py
+new file mode 100644
+index 0000000..b5f7192
+--- /dev/null
++++ b/tests/test_rollback_source_bindings.py
+@@ -0,0 +1,73 @@
++"""Rollback preserves host provenance bindings, including explicit removal."""
++from __future__ import annotations
++
++import dataclasses
++
++import pytest
++
++from locus_memory.compat.legacy_vault import LegacyMemoryVault
++from locus_memory.migrations.cutover import Migrator
++from locus_memory.migrations.state import OwnershipControl
++from locus_memory.models import Actor, RememberRequest, SourceKind, SourceRef
++
++
++def test_rollback_keeps_new_record_source_bindings(engine, user_access, tmp_path):
++    key = b"b" * 32
++    legacy = LegacyMemoryVault(tmp_path / "legacy.sqlite3", key=key)
++    control = OwnershipControl(tmp_path / "control")
++    try:
++        migrator = Migrator(engine, control, user_access, legacy.path, key, work_dir=tmp_path / "migration")
++        migrator.prepare_shadow()
++        assert migrator.validate()["validated"]
++        assert migrator.cutover()["cutover"]
++        record = engine.remember(user_access, RememberRequest("Violet source binding")).record
++        ctx = engine.partition_context(user_access.partition)
++        bindings = (
++            SourceRef(SourceKind.SESSION, "session-new", actor=Actor.HOST,
++                      locator={"legacy_field": "source_session_id"}, available=False),
++            SourceRef(SourceKind.TASK_ATTEMPT, "run-new", actor=Actor.HOST,
++                      locator={"legacy_field": "source_run_id"}, available=False),
++        )
++        with ctx.partition.db.write() as conn:
++            ctx.services.core.write_internal(
++                conn, dataclasses.replace(record, revision=record.revision + 1, sources=record.sources + bindings),
++                change="host_sources", actor=Actor.USER, expected=record.revision,
++            )
++        assert migrator.rollback()["state"] == "legacy_authoritative"
++        restored = legacy.list()[0]
++        assert restored["source_session_id"] == "session-new"
++        assert restored["source_run_id"] == "run-new"
++    finally:
++        control.close()
++
++
++@pytest.mark.parametrize("metadata", [{"source_session_id": None, "source_run_id": None},
++                                       {"source_session_id": "session-updated", "source_run_id": "run-updated"},
++                                       None])
++def test_source_only_change_is_written_and_removed_sources_stay_absent(engine, user_access, tmp_path, metadata):
++    key = b"c" * 32
++    legacy = LegacyMemoryVault(tmp_path / "legacy.sqlite3", key=key)
++    original = legacy.save({"content": "Unchanged content", "scope": "personal", "source_session_id": "session-old",
++                            "source_run_id": "run-old"})
++    control = OwnershipControl(tmp_path / "control")
++    try:
++        migrator = Migrator(engine, control, user_access, legacy.path, key, work_dir=tmp_path / "migration")
++        migrator.prepare_shadow()
++        assert migrator.validate()["validated"]
++        assert migrator.cutover()["cutover"]
++        ctx = engine.partition_context(user_access.partition)
++        with ctx.partition.db.write() as conn:
++            record = ctx.records.get(conn, original["id"])
++            updates = {"extra": {**record.extra, "locus": metadata}} if metadata is not None else {
++                "sources": tuple(s for s in record.sources if not s.locator.get("legacy_field"))}
++            ctx.services.core.write_internal(
++                conn, dataclasses.replace(record, revision=record.revision + 1, **updates),
++                change="host_sources", actor=Actor.USER, expected=record.revision,
++            )
++        assert migrator.rollback()["state"] == "legacy_authoritative"
++        restored = legacy.list()[0]
++        assert restored["content"] == "Unchanged content"
++        assert restored["source_session_id"] == (metadata or {}).get("source_session_id")
++        assert restored["source_run_id"] == (metadata or {}).get("source_run_id")
++    finally:
++        control.close()

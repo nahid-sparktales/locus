@@ -88,6 +88,7 @@ write_provenance() {
 }
 
 write_provenance
+"${script_dir}/BuildMemoryGuard.sh"
 
 bundle_claude_helper() {
     [[ "${LOCUS_BUNDLE_CLAUDE}" == "skip" ]] && return 0

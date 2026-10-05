@@ -548,7 +548,7 @@ struct SavedAgentOverviewSnapshot {
             resultSessionID: resultSessionID, chats: chats)
     }
 
-    private static func route(profile: AgentProfile, accounts: [ProviderAccount], readyAccountIDs: Set<UUID>,
+    static func route(profile: AgentProfile, accounts: [ProviderAccount], readyAccountIDs: Set<UUID>,
         models: [UUID: [String]], statuses: [UUID: ProviderAccountStatus], localModels: [String]) -> Route {
         let model = profile.model
         if case .localOllama = profile.route {

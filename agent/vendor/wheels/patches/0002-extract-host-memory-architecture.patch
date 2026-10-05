@@ -1,0 +1,2916 @@
+diff --git a/NOTICE b/NOTICE
+index 6bd8137..e18d9c8 100644
+--- a/NOTICE
++++ b/NOTICE
+@@ -10,6 +10,11 @@ Inc.) to preserve the existing encrypted vault record format during the staged
+ extraction. The patches under handoff/locus/ contain excerpts of Locus source under
+ the same license and copyright.
+ 
++The canonical compatibility facade, recall runtime, migration integration,
++memory policies, selected-chat review, continuity composition and saved-chat
++search also include code extracted from the Locus integration under the same
++Apache-2.0 license and SparkTales Inc. copyright.
++
+ The bounded hot-memory plus searchable-history architecture is an original
+ implementation of a pattern described in public Hermes Agent documentation; no
+ Hermes code or prompt assets are included.
+diff --git a/README.md b/README.md
+index bcc5bb5..4f6e6a1 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,7 @@ dependency is `cryptography`. It runs no daemon, opens no port and needs no clou
+ 
+ ## Status
+ 
+-* **Version 0.1.0, local only.** Nothing has been published to a package index, released or
++* **Version 0.2.0, local only.** Nothing has been published to a package index, released or
+   pushed.
+ * **Package milestones are implemented and tested.** The standalone offline path (Gate A) is
+   tested on CPython 3.10.22 and 3.14.6, including a wheel installed into clean virtualenvs
+@@ -19,12 +19,14 @@ dependency is `cryptography`. It runs no daemon, opens no port and needs no clou
+   that commit was also installed with `pip --target` and imported by the bundled Locus runtime
+   (CPython 3.14.6, `cryptography` 50.0.0), where the quickstart also ran
+   ([docs/PROGRESS.md](docs/PROGRESS.md), sections 2.2 and 2.4).
+-* **Host integration is delivered only as patches.** The patches in
+-  [`handoff/locus/`](handoff/locus/README.md) are a Stage-1 facade and a Stage-2 adapter behind a
+-  switch that is off by default. They were tested only in disposable copies of Locus `b332e455`,
+-  most recently against package commit `f02541e` (test evidence in the handoff README, section 7).
+-  They have not been applied to a real Locus checkout, bundled through Locus's lock, or used to
+-  migrate real data.
++* **Locus integration is applied and cut over locally.** The handoff patches were applied,
++  hashed wheels are bundled, and the existing local profile uses package-authoritative
++  memory. Version 0.2.0 also owns the canonical compatibility API, recall lifecycle,
++  migration session, memory policy, selected-chat extraction and saved-chat search.
++  Locus supplies paths, keys, trusted identities, transport and model calls. See
++  [the extraction boundary](docs/host-extraction.md) for current code ownership and
++  the distinction between code extraction and data-format migration. The original
++  handoff patches remain historical artifacts.
+ * **Evaluation is synthetic only.** Two rollout criteria are not met
+   ([docs/evaluation.md](docs/evaluation.md)). The final run on commit `f02541e`
+   (`evals/results/2026-10-04-r5-seed20261004-final/`, evaluation.md section 12) met 11 of 13
+@@ -39,7 +41,7 @@ dependency is `cryptography`. It runs no daemon, opens no port and needs no clou
+ 
+ ```bash
+ python -m pip wheel --no-deps --no-build-isolation -w dist .   # needs setuptools>=77 installed
+-python -m pip install dist/locus_memory-0.1.0-py3-none-any.whl
++python -m pip install dist/locus_memory-0.2.0-py3-none-any.whl
+ # offline: add  --no-index --find-links <dir containing wheels for cryptography and its
+ #          dependencies (cffi, pycparser; typing-extensions on Python 3.10)>
+ ```
+diff --git a/docs/ownership-and-extraction.md b/docs/ownership-and-extraction.md
+index 0187c30..6adc73f 100644
+--- a/docs/ownership-and-extraction.md
++++ b/docs/ownership-and-extraction.md
+@@ -1,5 +1,12 @@
+ # Ownership and extraction plan
+ 
++> **Current implementation: 0.2.0 (2026-10-04).** The Locus cutover is complete locally,
++> and the remaining reusable host memory code has moved into this package.
++> [Host extraction in 0.2.0](host-extraction.md) is the current ownership map.
++> The audit and staged handoff status below are historical design evidence; their
++> statements about unmodified Locus, unapplied patches and legacy-only writes
++> describe the earlier `f02541e` stage, not the current integration.
++
+ This document records two things for each memory responsibility that exists in Locus today: who owns it now, and who should own it once `locus-memory` is extracted. It also says how to get from one to the other without breaking existing data or clients. The evidence for every claim is in [locus-compatibility.md](locus-compatibility.md); defect ids (`D1`, `D2`, ...) refer to §19 of that document.
+ 
+ Path conventions match the compatibility document. Python paths with no directory refer to `agent/ollama_code/` in Locus at `b332e4554e72956f949506207ffa034749360d79`. Swift paths start with `Locus/`. Line numbers may be off by a few lines.
+@@ -10,7 +17,7 @@ The temporary bridges, prerequisites and removal criteria in this document are *
+ 
+ ---
+ 
+-## Current extraction status (updated 2026-10-04, as of package commit `f02541e`)
++## Historical extraction status (package commit `f02541e`)
+ 
+ After this audit, four adversarial review rounds fixed 133 reproduced defects (see [PROGRESS.md](PROGRESS.md), section 2.4); the rows below reflect them. Rounds 2 and 3 (`a1706f3`, `219fd15`) also changed the 0002 patch.
+ 
+diff --git a/handoff/locus/README.md b/handoff/locus/README.md
+index 4b16153..109164b 100644
+--- a/handoff/locus/README.md
++++ b/handoff/locus/README.md
+@@ -1,5 +1,9 @@
+ # Locus handoff patches
+ 
++> These patches are now applied in Locus. Version 0.2.0 extracts the remaining
++> reusable host implementation; see [the current ownership map](../../docs/host-extraction.md).
++> The staged rollout descriptions below record the original handoff.
++
+ Patches that move Locus's memory implementation onto `locus-memory`, one stage at a
+ time. They are written against Locus `b332e4554e72956f949506207ffa034749360d79`
+ (`agent/` tree). Each patch was built and tested in a disposable copy of that tree.
+diff --git a/pyproject.toml b/pyproject.toml
+index dfd4164..371b3f1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "locus-memory"
+-version = "0.1.0"
++version = "0.2.0"
+ description = "Local-first, encrypted, scope-enforcing memory engine extracted from Locus."
+ readme = "README.md"
+ # Matches Locus's agent/pyproject.toml minimum; the bundled Locus runtime is CPython 3.14.
+diff --git a/src/locus_memory/__init__.py b/src/locus_memory/__init__.py
+index 5bee838..5fd1cbc 100644
+--- a/src/locus_memory/__init__.py
++++ b/src/locus_memory/__init__.py
+@@ -11,7 +11,7 @@ from .errors import *  # noqa: F401,F403 - typed public errors
+ from .host import CancellationToken, EngineConfig, HostCapabilities
+ from .models import *  # noqa: F401,F403 - public models
+ 
+-__version__ = "0.1.0"
++__version__ = "0.2.0"
+ 
+ __all__ = [
+     "MemoryEngine", "KeyProvider", "StaticKeyProvider", "FileKeyProvider",
+diff --git a/docs/host-extraction.md b/docs/host-extraction.md
+new file mode 100644
+index 0000000..4eda0dc
+--- /dev/null
++++ b/docs/host-extraction.md
+@@ -0,0 +1,63 @@
++# Host extraction in 0.2.0
++
++The reusable memory implementation lives in this repository. Locus supplies
++application capabilities and keeps its existing Python entry points as thin
++wrappers. No package module imports `ollama_code`, FastAPI, an app keychain, or a
++model client. Constructing a package object requires explicit host inputs.
++
++| Responsibility | Package implementation | Locus supplies |
++|---|---|---|
++| Canonical memory API, approval, revisions, feedback, forgetting, import/export | `compat.canonical_vault.CanonicalMemoryVault` | Engine root, key provider, partition, trusted caller identity and grants |
++| Legacy envelopes, continuity snapshots, skill observations, search and retention | `compat.legacy_vault` | Database path, host key and optional embedder |
++| Recall packets, shadow comparisons, archive lifecycle, revalidation and maintenance | `runtime` | Trusted contexts, rollout settings, core callbacks and scheduling |
++| Memory settings and automatic recall limits | `policies.MemoryPolicy` | Saved agent configuration and user consent |
++| Selected-chat candidates | `learning.selected_chat` | Authorized transcript, cleaned user messages and provenance |
++| Continuity payload composition | `context.continuity` | Current task state and workspace git inventory |
++| Saved-chat FTS indexing, tail synchronization, ranking and result snippets | `history.transcript_search.TranscriptIndex` | Explicit transcript inventory, metadata, display cleanup and restore limits |
++| Read-only ownership, writer fencing, shared/exclusive leases | `migrations.ownership` | Exact partition, engine root and lease path |
++| Offline inventory, snapshots, validation, cutover, rollback and recovery | `migrations.session.LegacyMigrationSession` and `migrations.cutover.Migrator` | Existing key provider, source mapping, exclusive lease and quiescence checks |
++
++The host still owns HTTP and tool routing, user review UI, session persistence,
++workflow/run scheduling, model calls, application paths, key custody and identity
++authorization. Those capabilities belong to the application. The host cannot
++substitute model-provided workspace or agent claims for trusted grants.
++
++## Data compatibility
++
++This release extracts code without changing the on-disk schemas or migrating
++data again. Existing package-authoritative profiles remain authoritative;
++missing ownership or keys still fail closed. The rollback path still preserves
++package-era corrections, deletions and session/run provenance.
++
++The `context_snapshots` and `skill_observations` implementation was already in
++the package; these records retain the legacy encrypted envelopes and family
++ownership. Converting snapshots to verified episodes or observations to governed
++procedures would change their meaning and requires a separate data migration.
++No old observations are treated as verified outcomes or approved procedures.
++
++Saved-chat search retains its existing derived SQLite FTS format and JSONL
++transcript inputs. It is separate from the opt-in encrypted history archive.
++Extraction does not enable transcript archival or change the host's consent.
++
++## Public integration
++
++Use `compat.canonical_vault.CanonicalMemoryVault` when preserving Locus-shaped
++memory records and API behavior, or `MemoryEngine` for native typed operations.
++The compatibility facade needs a `KeyProvider` and `PartitionRef`; it does not
++discover host keys. Its existing restrictions on new governed procedures and
++scope/kind changes remain explicit errors.
++
++For offline migration, construct `LegacyMigrationSession` with explicit source
++and destination paths, a legacy-key callback, mapping callback, exclusive lease
++factory and quiescence callback. Enter it as a context manager before invoking
++inventory, snapshot, validate, cutover or rollback. The lease covers the entire
++operation and releases on failures.
++
++For saved-chat search, construct `TranscriptIndex(path, source, limits)` using
++`TranscriptSource(list_paths, metadata, clean_user_text)` and `TranscriptLimits`.
++Only the files returned by that source are indexed. Removing a session from the
++source removes its search hits on the next synchronization.
++
++Package tests exercise the new modules independently of Locus. Existing host
++tests exercise the same UI/API/tool behavior through the extracted modules.
++Wheel tests verify all submodule imports without application or network stacks.
+diff --git a/src/locus_memory/compat/canonical_vault.py b/src/locus_memory/compat/canonical_vault.py
+new file mode 100644
+index 0000000..845cbb3
+--- /dev/null
++++ b/src/locus_memory/compat/canonical_vault.py
+@@ -0,0 +1,532 @@
++"""Legacy-shaped operations over the authoritative memory engine.
++
++Hosts supply paths, key custody, the security partition and caller identity.
++Compatibility policy, authorization, candidate handling, metadata revisions,
++import/export and lifecycle operations belong to the package. Nothing in this
++module imports a host application or discovers its profile.
++"""
++from __future__ import annotations
++
++import contextlib
++import dataclasses
++import functools
++import hashlib
++import json
++import re
++import time
++import uuid
++from pathlib import Path
++from typing import Any
++
++from locus_memory import MemoryEngine, policy, safety
++from locus_memory.compat.legacy_vault import (
++    LEGACY_MEMORY_VERSION,
++    LegacyVaultError,
++    legacy_target,
++)
++from locus_memory.crypto import KeyProvider
++from locus_memory.errors import MemoryEngineError, NotFound, SuppressedError, ValidationError
++from locus_memory.host import HostCapabilities
++from locus_memory.migrations.state import OwnershipControl
++from locus_memory.models import (
++    AccessContext,
++    Actor,
++    CandidateProposal,
++    Confidence,
++    Correction,
++    ForgetTarget,
++    Lifecycle,
++    MemoryKind,
++    MemoryRecord,
++    Operation,
++    PartitionRef,
++    Query,
++    RememberRequest,
++    Retention,
++    Scope,
++    ScopeGrants,
++    SourceKind,
++    SourceRef,
++    StatementBasis,
++    Validity,
++)
++from locus_memory.validation import check_id, check_mapping, check_text, check_timestamp
++
++_SCOPES = ("personal", "workspace", "agent")
++_LIVE = (Lifecycle.APPROVED, Lifecycle.CANDIDATE, Lifecycle.STALE, Lifecycle.SUPERSEDED)
++
++
++def _api(method):
++    @functools.wraps(method)
++    def wrapped(*args, **kwargs):
++        try:
++            return method(*args, **kwargs)
++        except MemoryEngineError as exc:
++            raise LegacyVaultError(str(exc)) from exc
++        except (TypeError, ValueError) as exc:
++            raise LegacyVaultError("memory input is invalid") from exc
++    return wrapped
++
++
++class CanonicalMemoryVault:
++    def __init__(self, root: Path | str, key_provider: KeyProvider, *,
++                 partition: PartitionRef, workspace: str = "", agent_id: str = "primary",
++                 actor: Actor = Actor.USER, scopes: tuple[str, ...] | list[str] | None = None,
++                 principal: str = "local-user", host_name: str = "memory-host") -> None:
++        self.path = Path(root)
++        self.partition = partition
++        self.workspace, self.agent_id = workspace, agent_id
++        self.principal, self.host_name = principal, host_name
++        self.actor = Actor(actor)
++        if self.actor not in (Actor.USER, Actor.AGENT):
++            raise LegacyVaultError("unsupported host memory actor")
++        self.scopes = tuple(_SCOPES if scopes is None else scopes)
++        self.control = OwnershipControl(self.path)
++        self.engine = MemoryEngine(self.path, key_provider,
++                                   host=HostCapabilities(ownership=self.control),
++                                   create_partitions=False)
++
++    def close(self) -> None:
++        for name in ("engine", "control"):
++            value = getattr(self, name, None)
++            if value is not None:
++                value.close()
++                setattr(self, name, None)
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *exc):
++        self.close()
++
++    def __del__(self):
++        with contextlib.suppress(Exception):
++            self.close()
++
++    def _access(self, workspace=None, agent_id=None, scopes=None) -> tuple[AccessContext, tuple[str, ...]]:
++        if self.actor == Actor.AGENT and (
++            (workspace is not None and workspace != self.workspace)
++            or (agent_id is not None and agent_id != self.agent_id)
++        ):
++            raise ValidationError("agent memory identity cannot be widened")
++        workspace = self.workspace if workspace is None else workspace
++        agent_id = self.agent_id if agent_id is None else agent_id
++        selected = tuple(s for s in (self.scopes if scopes is None else scopes)
++                         if s in self.scopes and s in _SCOPES)
++        projects, agents, targets = set(), set(), set()
++        if "workspace" in selected and workspace:
++            target = legacy_target("workspace", workspace=workspace)
++            targets.add(target)
++            projects.add("ws-" + target.split(":", 1)[1][:32])
++        if "agent" in selected and agent_id:
++            targets.add(legacy_target("agent", agent_id=agent_id))
++            agents.add(agent_id)
++        operations = ({Operation.READ, Operation.PROPOSE} if self.actor == Actor.AGENT else
++                      {Operation.READ, Operation.WRITE, Operation.PROPOSE, Operation.APPROVE,
++                       Operation.FORGET})
++        return AccessContext(
++            principal=self.principal, partition=self.partition, actor=self.actor,
++            grants=ScopeGrants(projects=frozenset(projects), agents=frozenset(agents),
++                               legacy_targets=frozenset(targets)),
++            operations=frozenset(operations), purpose=f"{self.host_name}-memory-api", issuer=self.host_name,
++        ), selected
++
++    @staticmethod
++    def _scope_name(record: MemoryRecord) -> str:
++        if record.scope.is_global:
++            return "personal"
++        target = record.scope.get("legacy_target")
++        if target and target.split(":", 1)[0] in {"workspace", "agent"}:
++            return target.split(":", 1)[0]
++        return "agent" if record.scope.get("agent") else "workspace"
++
++    def _get(self, access, selected, memory_id):
++        record = self.engine.get(access, memory_id)
++        if self._scope_name(record) not in selected:
++            raise NotFound("memory not found")
++        return record
++
++    def _shape(self, record: MemoryRecord) -> dict[str, Any]:
++        extra = record.extra
++        sources = {s.locator.get("legacy_field"): s.ref for s in record.sources}
++        return {
++            "id": record.id, "revision": record.revision,
++            "status": "candidate" if record.lifecycle == Lifecycle.CANDIDATE else "approved",
++            "scope": self._scope_name(record), "kind": record.kind.value,
++            "title": record.title, "content": record.content, "tags": list(record.tags),
++            "reason": record.reason, "confidence": record.confidence.value,
++            "valid_from": record.validity.valid_from, "valid_until": record.validity.valid_until,
++            "pinned": record.pinned, "stale": record.lifecycle in (Lifecycle.STALE, Lifecycle.SUPERSEDED),
++            "supersedes": list(record.links.supersedes), "superseded_by": record.links.superseded_by,
++            "created_at": record.created_at, "updated_at": record.updated_at,
++            "expires_at": record.retention.expires_at,
++            "last_confirmed_at": extra.get("last_confirmed_at"),
++            "source_session_id": sources.get("source_session_id"),
++            "source_run_id": sources.get("source_run_id"),
++            "provenance": extra.get("legacy_provenance", {}),
++            "feedback": extra.get("legacy_feedback", {}),
++            "embedding_model": "", "last_used_at": extra.get("legacy_last_used_at"),
++            "use_count": extra.get("legacy_use_count", 0),
++        }
++
++    @_api
++    def list(self, *, workspace=None, agent_id=None, status="", scopes=None):
++        access, selected = self._access(workspace, agent_id, scopes)
++        if not selected:
++            return []
++        lifecycles = ((Lifecycle.CANDIDATE,) if status == "candidate" else
++                      (Lifecycle.APPROVED, Lifecycle.STALE, Lifecycle.SUPERSEDED)
++                      if status == "approved" else _LIVE)
++        records, offset = [], 0
++        while True:
++            page = self.engine.list(access, lifecycles=lifecycles, limit=1000, offset=offset)
++            records.extend(r for r in page if self._scope_name(r) in selected)
++            if len(page) < 1000:
++                break
++            offset += len(page)
++        return [self._shape(r) for r in sorted(records, key=lambda r: (r.pinned, r.updated_at), reverse=True)]
++
++    @_api
++    def search(self, query: str, *, workspace=None, agent_id=None, scopes=None, limit=8,
++               embedding_model="", ollama_host="http://127.0.0.1:11434", **_):
++        access, selected = self._access(workspace, agent_id, scopes)
++        if not selected:
++            return []
++        # ScopeGrants permits global records; explicit host policy still excludes
++        # personal records. Fetch a bounded larger window before that final filter.
++        result = self.engine.search(access, Query(text=query, limit=200))
++        return [{**self._shape(hit.record), "score": hit.score,
++                 "retrieval_reason": ", ".join(hit.reasons) or "matched the request"}
++                for hit in result.hits if self._scope_name(hit.record) in selected][:max(1, min(limit, 20))]
++
++    def _target(self, name, workspace, agent_id):
++        if name == "personal":
++            return Scope.global_()
++        workspace = self.workspace if workspace is None else workspace
++        agent_id = self.agent_id if agent_id is None else agent_id
++        return Scope.of(legacy_target=legacy_target(name, workspace=workspace, agent_id=agent_id))
++
++    def _propose(self, access, request, value, memory_id):
++        """Persist the host-observed proposal without falsely attesting user evidence.
++
++        A tool invocation is itself provenance, not verification of its assertion.
++        Package content gates, suppression and actor permissions still apply; this
++        host-only seam never grants the agent WRITE or APPROVE.
++        """
++        ctx = self.engine.partition_context(self.partition)
++        core = ctx.services.core
++        basis, scan = core._check_proposal(access, request)
++        now = time.time()
++        with ctx.partition.db.write() as conn:
++            core._check_owner()
++            identifier = memory_id or uuid.uuid4().hex
++            check_id(identifier)
++            if ctx.records.get(conn, identifier) is not None or core._forgotten_id(conn, identifier):
++                raise ValidationError("memory id already exists or was forgotten")
++            record = MemoryRecord(
++                id=identifier, revision=1, kind=request.kind, lifecycle=Lifecycle.CANDIDATE,
++                scope=request.scope, title=request.title or request.content[:60], content=request.content,
++                tags=request.tags, basis=basis, confidence=request.confidence,
++                sources=request.sources, validity=request.validity,
++                retention=Retention("durable", now + 30 * 86400, False),
++                created_at=now, updated_at=now, event_time=now, ingested_at=now,
++                reason=request.rationale,
++                extra={"basis_attested_by": access.actor.value, "proposer": request.proposer,
++                       **({"flags": ["instruction_like"]} if scan.injection else {})},
++            )
++            record = self._metadata_record(record, value)
++            blocked = core._blocked(conn, record)
++            if blocked:
++                raise SuppressedError(f"candidate refused: {blocked}")
++            record = core.write_internal(conn, record, change="proposed", actor=access.actor, expected=None)
++            ctx.partition.event(conn, "proposal", "accepted")
++        return record
++
++    @staticmethod
++    def _metadata_record(record, value):
++        extra = dict(record.extra)
++        sources = list(record.sources)
++        for name, kind in (("source_session_id", SourceKind.SESSION), ("source_run_id", SourceKind.TASK_ATTEMPT)):
++            if name in value:
++                sources = [source for source in sources if source.locator.get("legacy_field") != name]
++                ref = str(value[name] or "")[:160]
++                if ref:
++                    sources.append(SourceRef(kind, ref, actor=Actor.HOST,
++                                             locator={"legacy_field": name}, available=False))
++        if "provenance" in value:
++            extra["legacy_provenance"] = check_mapping(value["provenance"] or {}, "provenance")
++        changes = {"extra": extra, "sources": tuple(sources)}
++        if "reason" in value:
++            changes["reason"] = check_text(str(value["reason"] or ""), "reason", max_chars=2000, allow_empty=True)
++        return dataclasses.replace(record, **changes)
++
++    @_api
++    def save(self, value: dict[str, Any], memory_id="", *, workspace=None, agent_id=None,
++             default_status="approved", _created_at=None, **_):
++        access, selected = self._access(workspace, agent_id)
++        if _created_at is not None:
++            _created_at = check_timestamp(_created_at, "created_at")
++        if not isinstance(value, dict):
++            raise ValidationError("memory input must be an object")
++        existing = None
++        if memory_id:
++            check_id(memory_id)
++            try:
++                existing = self._get(access, selected, memory_id)
++            except NotFound:
++                # Unauthorized records must not be replaceable by guessed ids.
++                ctx = self.engine.partition_context(self.partition)
++                with ctx.partition.db.read() as conn:
++                    if conn.execute("SELECT 1 FROM records WHERE id=?", (memory_id,)).fetchone():
++                        raise
++        requested_scope = str(value.get("scope") or
++                              (self._scope_name(existing) if existing else "workspace"))
++        if requested_scope not in selected:
++            raise ValidationError("that memory scope is disabled for this caller")
++        desired_status = str(value.get("status") or
++                             (self._shape(existing)["status"] if existing else default_status))
++        if desired_status not in {"approved", "candidate"}:
++            raise ValidationError("memory status or scope is invalid")
++        if self.actor == Actor.AGENT and (desired_status != "candidate" or memory_id):
++            raise ValidationError("agents may only propose new memory candidates")
++        kind = MemoryKind.parse(value.get("kind", existing.kind if existing else "fact"))
++        if kind not in {MemoryKind.PREFERENCE, MemoryKind.FACT, MemoryKind.DECISION,
++                        MemoryKind.RELATIONSHIP, MemoryKind.PROCEDURE}:
++            raise ValidationError("unsupported memory type")
++        raw_tags = value.get("tags") or []
++        if not isinstance(raw_tags, (str, list, tuple)):
++            raise ValidationError("memory tags must be a list")
++        tags = (raw_tags,) if isinstance(raw_tags, str) else tuple(raw_tags)
++        validity = Validity(value.get("valid_from", existing.validity.valid_from if existing else None),
++                            value.get("valid_until", existing.validity.valid_until if existing else None))
++        raw_confidence = value.get("confidence", existing.confidence.value if existing else 1.0)
++        confidence = Confidence(None if raw_confidence is None else float(raw_confidence), False, "host_supplied")
++        # Validate bounded metadata before the first durable content write.
++        provenance = check_mapping(value.get("provenance") or {}, "provenance")
++        for field, source_kind in (("source_session_id", SourceKind.SESSION), ("source_run_id", SourceKind.TASK_ATTEMPT)):
++            if value.get(field):
++                SourceRef(source_kind, str(value[field])[:160], actor=Actor.HOST, available=False)
++        reason = check_text(str(value.get("reason") or ""), "reason", max_chars=2000, allow_empty=True)
++        if safety.scan(json.dumps(provenance, sort_keys=True) + "\n" + reason).secrets:
++            raise ValidationError("credentials are not stored in memory metadata")
++        scope = self._target(requested_scope, workspace, agent_id)
++        if existing is not None:
++            if self._scope_name(existing) != requested_scope:
++                raise ValidationError("moving an existing memory between scopes is not supported")
++            scope = existing.scope
++            if kind != existing.kind:
++                raise ValidationError("changing an existing memory type is not supported")
++            if desired_status == "candidate" and existing.lifecycle != Lifecycle.CANDIDATE:
++                raise ValidationError("approved memories cannot become candidates")
++            # A pin/metadata edit is not a re-confirmation of stale content.
++            changes = {}
++            for name in ("content", "title", "tags"):
++                if name in value and (tuple(value[name]) if name == "tags" else value[name]) != getattr(existing, name):
++                    changes[name] = tags if name == "tags" else value[name]
++            if ("valid_from" in value or "valid_until" in value) and validity != existing.validity:
++                changes["validity"] = validity
++            if changes:
++                existing = self.engine.correct(
++                    access, memory_id, Correction(**changes, reason=str(value.get("reason") or ""),
++                                                  allow_sensitive=value.get("allow_sensitive") is True),
++                    expected_revision=existing.revision,
++                ).record
++            if desired_status == "approved" and existing.lifecycle == Lifecycle.CANDIDATE:
++                existing = self.engine.approve(access, memory_id, expected_revision=existing.revision).record
++            result = existing
++        else:
++            if kind == MemoryKind.PROCEDURE:
++                raise ValidationError("new procedures require the procedure review API")
++            text = str(value.get("content") or "").strip()
++            title = str(value.get("title") or "Memory").strip()[:160]
++            if desired_status == "candidate":
++                identifier = uuid.uuid4().hex
++                source = SourceRef(
++                    SourceKind.DOCUMENT, f"{self.host_name}-proposal-" + identifier, actor=self.actor,
++                    fingerprint=hashlib.sha256(text.encode()).hexdigest(),
++                    locator={"host": self.host_name, "kind": "tool_proposal" if self.actor == Actor.AGENT else "user_proposal"},
++                    observed_at=time.time(),
++                )
++                request = CandidateProposal(
++                    content=text, title=title, kind=kind, scope=scope, tags=tags, validity=validity,
++                    confidence=confidence, rationale=str(value.get("reason") or ""), sources=(source,),
++                    basis=StatementBasis.MODEL_INTERPRETATION if self.actor == Actor.AGENT else StatementBasis.USER_STATED,
++                    proposer=self.agent_id if self.actor == Actor.AGENT else f"{self.host_name}-user",
++                )
++                result = self._propose(access, request, value, memory_id)
++            else:
++                result = self.engine.remember(access, RememberRequest(
++                    content=text, title=title, kind=kind, scope=scope, tags=tags, validity=validity,
++                    confidence=confidence, reason=str(value.get("reason") or ""), memory_id=memory_id or None,
++                    retention=Retention(pinned=bool(value.get("pinned"))),
++                    allow_sensitive=value.get("allow_sensitive") is True,
++                )).record
++        if self.actor != Actor.AGENT:
++            ctx = self.engine.partition_context(self.partition)
++            with ctx.partition.db.write() as conn:
++                policy.require_author(access)
++                current = ctx.services.core.load_visible(conn, access, result.id)
++                ctx.services.core._check_expected(current, result.revision)
++                updated = self._metadata_record(current, value)
++                if existing is None and _created_at is not None:
++                    updated = dataclasses.replace(updated, created_at=_created_at)
++                updated = dataclasses.replace(
++                    updated,
++                    confidence=confidence if "confidence" in value else current.confidence,
++                    retention=dataclasses.replace(current.retention, pinned=bool(value["pinned"]))
++                    if "pinned" in value else current.retention,
++                )
++                if updated != current:
++                    result = ctx.services.core.write_internal(
++                        conn, dataclasses.replace(updated, revision=current.revision + 1, updated_at=time.time()),
++                        change=f"{self.host_name}_metadata", actor=access.actor, expected=current.revision,
++                    )
++        if value.get("stale") and result.lifecycle == Lifecycle.APPROVED:
++            return self.feedback(result.id, "incorrect", workspace=workspace, agent_id=agent_id)
++        shaped = self._shape(self.engine.get(access, result.id))
++        shaped["conflicts"] = self.conflicts_for(shaped, workspace=workspace, agent_id=agent_id)
++        return shaped
++
++    @_api
++    def approve(self, memory_id, *, workspace=None, agent_id=None, resolution="keep_both"):
++        if resolution not in {"keep_both", "replace"}:
++            raise ValidationError("memory conflict resolution must be keep_both or replace")
++        access, selected = self._access(workspace, agent_id)
++        current = self._get(access, selected, memory_id)
++        result = self.engine.approve(access, memory_id, expected_revision=current.revision).record
++        # Legacy conflict suggestions are textual hints. Replace is an explicit
++        # user action; each retirement still passes the engine's authorization.
++        if resolution == "replace":
++            for conflict in self.conflicts_for(self._shape(current), workspace=workspace, agent_id=agent_id):
++                other = self._get(access, selected, conflict["id"])
++                self.engine.supersede(access, other.id, result.id, expected_revision=other.revision)
++            result = self.engine.get(access, result.id)
++        shaped = self._shape(self.engine.get(access, result.id))
++        shaped["conflicts"] = self.conflicts_for(shaped, workspace=workspace, agent_id=agent_id)
++        return shaped
++
++    @_api
++    def delete(self, memory_id, *, workspace=None, agent_id=None):
++        access, selected = self._access(workspace, agent_id)
++        try:
++            self._get(access, selected, memory_id)
++        except NotFound:
++            return False
++        self.control.assert_writer(self.partition.partition_id, "memories", "package")
++        self.engine.forget(access, ForgetTarget("memory", memory_id))
++        return True
++
++    @_api
++    def delete_all(self, *, workspace=None, agent_id=None, scopes=None):
++        items = self.list(workspace=workspace, agent_id=agent_id, scopes=scopes)
++        return sum(self.delete(item["id"], workspace=workspace, agent_id=agent_id) for item in items)
++
++    @_api
++    def feedback(self, memory_id, outcome, *, workspace=None, agent_id=None):
++        if outcome not in {"helpful", "ignored", "incorrect"}:
++            raise ValidationError("memory feedback must be helpful, ignored, or incorrect")
++        access, selected = self._access(workspace, agent_id)
++        policy.require_author(access)
++        self._get(access, selected, memory_id)
++        ctx = self.engine.partition_context(self.partition)
++        with ctx.partition.db.write() as conn:
++            current = ctx.services.core.load_visible(conn, access, memory_id)
++            counts = dict(current.extra.get("legacy_feedback", {}))
++            counts[outcome] = counts.get(outcome, 0) + 1
++            lifecycle = (Lifecycle.STALE if outcome == "incorrect" and current.lifecycle == Lifecycle.APPROVED
++                         else current.lifecycle)
++            updated = dataclasses.replace(
++                current, revision=current.revision + 1, updated_at=time.time(), lifecycle=lifecycle,
++                extra={**current.extra, "legacy_feedback": counts},
++            )
++            ctx.services.core.write_internal(conn, updated, change=f"{self.host_name}_feedback", actor=access.actor,
++                                             expected=current.revision)
++            if lifecycle != current.lifecycle:
++                ctx.services.core._stale_derived(conn, current.id)
++            ctx.partition.event(conn, "feedback", outcome)
++        return self._shape(self.engine.get(access, updated.id))
++
++    def conflicts_for(self, memory, *, workspace=None, agent_id=None):
++        def tokens(item):
++            return set(re.findall(r"[a-z0-9_.-]{3,}", (str(item.get("title", "")) + " " + " ".join(item.get("tags", []))).lower()))
++        topic = tokens(memory)
++        if not topic:
++            return []
++        return [{k: item[k] for k in ("id", "title", "content", "kind", "confidence")}
++                for item in self.list(workspace=workspace, agent_id=agent_id, status="approved", scopes=[memory["scope"]])
++                if item["id"] != memory.get("id") and not item["stale"]
++                and item["content"].strip().lower() != str(memory.get("content", "")).strip().lower()
++                and len(topic & tokens(item)) / max(min(len(topic), len(tokens(item))), 1) >= 0.5][:12]
++
++    @_api
++    def record_event(self, stage, outcome, *, workspace=None, agent_id=None, session_id="", run_id="",
++                     reason_code="", memory_id=""):
++        # The engine records durable operation events. Host telemetry carries no
++        # memory content, source text or user/model-supplied reason strings.
++        allowed_stages = {"approval", "proposal", "recall", "rejection", "deletion", "feedback", "policy", "expiration"}
++        allowed_outcomes = {"accepted", "rejected", "matched", "empty", "recorded", "evaluated", "expired"}
++        if stage not in allowed_stages or outcome not in allowed_outcomes:
++            return
++        ctx = self.engine.partition_context(self.partition)
++        with ctx.partition.db.write() as conn:
++            self.control.assert_writer(self.partition.partition_id, "memories", "package")
++            ctx.partition.event(conn, stage, outcome)
++
++    def status(self, *, workspace=None, agent_id=None):
++        items = self.list(workspace=workspace, agent_id=agent_id)
++        return {"encrypted": True, "cipher": "AES-256-GCM", "semantic_encrypted": True,
++                "memory_version": LEGACY_MEMORY_VERSION, "candidate_ttl_days": 30,
++                "approved_count": sum(i["status"] == "approved" for i in items),
++                "candidate_count": sum(i["status"] == "candidate" for i in items),
++                "stale_count": sum(i["stale"] for i in items),
++                "expired_count": sum(i["valid_until"] is not None and i["valid_until"] < time.time() for i in items),
++                "conflict_count": sum(bool(self.conflicts_for(i, workspace=workspace, agent_id=agent_id)) for i in items)}
++
++    def diagnostics(self, *, workspace=None, agent_id=None):
++        # Existing partition events have no workspace attribution. Do not leak
++        # another scope's activity by presenting them as this workspace's history.
++        return {**self.status(workspace=workspace, agent_id=agent_id), "events": [], "counts": {},
++                "last_proposal": None, "last_approval": None, "history_available": False}
++
++    @_api
++    def maintain(self, *, workspace=None, agent_id=None):
++        access, _ = self._access(workspace, agent_id)
++        policy.require_author(access)
++        host = dataclasses.replace(access, actor=Actor.HOST, operations=frozenset({Operation.MAINTAIN}))
++        result = self.engine.maintain(host)
++        return {"ok": True, "expired_marked_stale": result.get("validity_marked_stale", 0),
++                "conflict_count": 0, "conflicts": {}, "engine": result}
++
++    def expire_candidates(self, *, workspace=None, agent_id=None):
++        return self.maintain(workspace=workspace, agent_id=agent_id)["engine"].get("candidates_expired", 0)
++
++    def export(self, *, workspace=None, agent_id=None):
++        return {"format": "locus-memory-export", "version": 2, "exported_at": time.time(),
++                "memories": self.list(workspace=workspace, agent_id=agent_id)}
++
++    @_api
++    def import_values(self, document, *, workspace=None, agent_id=None):
++        if document.get("format") != "locus-memory-export" or document.get("version") not in {1, 2}:
++            raise ValidationError("memory import format is not supported")
++        items = document.get("memories")
++        if not isinstance(items, list) or len(items) > 10000:
++            raise ValidationError("memory import is malformed or too large")
++        count = 0
++        for item in items:
++            if isinstance(item, dict):
++                self.save(item, str(item.get("id") or ""), workspace=workspace, agent_id=agent_id)
++                count += 1
++        return count
++
++    @_api
++    def import_legacy_note(self, note, *, workspace):
++        identifier = "legacy-" + hashlib.sha256(f"{Path(workspace).resolve()}|{note['id']}".encode()).hexdigest()[:40]
++        access, selected = self._access(workspace)
++        try:
++            self._get(access, selected, identifier)
++            return identifier, "already_migrated"
++        except NotFound:
++            pass
++        self.save({**note, "scope": "workspace", "status": "approved"}, identifier, workspace=workspace,
++                  _created_at=float(note.get("created_at") or time.time()))
++        return identifier, "migrated"
+diff --git a/src/locus_memory/context/continuity.py b/src/locus_memory/context/continuity.py
+new file mode 100644
+index 0000000..c64fe28
+--- /dev/null
++++ b/src/locus_memory/context/continuity.py
+@@ -0,0 +1,29 @@
++"""Compose a continuity snapshot from evidence explicitly collected by a host.
++
++No filesystem, model, session or run-store discovery occurs in this module.
++The encrypted store applies the persisted field bounds when saving the payload.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++
++def snapshot_payload(
++    *, goal: Any = "", outcome: Any = "", mode: Any = "work",
++    plan: dict[str, Any] | None = None, todos: list[dict[str, Any]] | None = None,
++    checkpoint: dict[str, Any] | None = None, changed_files: list[str] | None = None,
++    pending: Any = "",
++) -> dict[str, Any]:
++    active_todos = todos if todos is not None else []
++    pending_text = str(pending or "").strip()
++    if not pending_text:
++        pending_text = "; ".join(
++            str(item.get("content") or "") for item in active_todos
++            if isinstance(item, dict) and item.get("status") != "completed" and item.get("content")
++        )
++    return {
++        "goal": goal, "outcome": outcome, "mode": mode, "plan": plan,
++        "todos": active_todos, "checkpoint": checkpoint,
++        "changed_files": changed_files if changed_files is not None else [],
++        "pending": pending_text,
++    }
+diff --git a/src/locus_memory/history/transcript_search.py b/src/locus_memory/history/transcript_search.py
+new file mode 100644
+index 0000000..2e39e55
+--- /dev/null
++++ b/src/locus_memory/history/transcript_search.py
+@@ -0,0 +1,439 @@
++"""Full-text search across every saved conversation.
++
++One global SQLite FTS5 index over the session JSONL transcripts. The host transcript write
++path is deliberately untouched: a stat-diff ``sync`` before
++each search compares every session file's ``(mtime, size)`` to the index and
++re-parses only what changed. That single mechanism covers appends, trash,
++restore, delete, and sessions written by the CLI. Transcripts are append-only,
++so growth is tail-parsed from the last indexed byte; a file that shrank or was
++replaced is re-read from the start.
++
++The index is derived data. On any schema mismatch it is dropped and rebuilt
++lazily — there are no migrations here.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++import sqlite3
++import threading
++import time
++from collections.abc import Callable, Mapping, Sequence
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++
++
++@dataclass(frozen=True)
++class TranscriptSource:
++    """Only transcripts explicitly granted by the host are indexed.
++
++    Metadata and display cleanup remain host capabilities; the index never scans
++    an application directory or discovers sessions by itself.
++    """
++
++    list_paths: Callable[[], Sequence[Path]]
++    metadata: Callable[[], Mapping[str, Mapping[str, Any]]]
++    clean_user_text: Callable[[str], str]
++
++
++@dataclass(frozen=True)
++class TranscriptLimits:
++    max_session_bytes: int
++    max_line_bytes: int
++    max_messages: int
++
++
++SCHEMA_VERSION = 2
++MAX_MESSAGE_CHARS = 100_000
++MAX_QUERY_CHARS = 500
++MAX_HITS_PER_SESSION = 3
++#: Pending parse volume above which the first build moves off the request
++#: thread. Small histories (and the tests) index inline and deterministically.
++BACKGROUND_BUILD_BYTES = 8 * 1024 * 1024
++
++_INDEXED_ROLES = {"user", "assistant"}
++_SNIPPET_START = "\x01"
++_SNIPPET_END = "\x02"
++
++
++class TranscriptSearchError(RuntimeError):
++    """Raised when the transcript index cannot serve a search."""
++
++
++class TranscriptIndex:
++    """Global FTS index over saved session transcripts."""
++
++    def __init__(self, path: Path, source: TranscriptSource, limits: TranscriptLimits, *,
++                 background_build_bytes: int = BACKGROUND_BUILD_BYTES) -> None:
++        self.path = Path(path)
++        self.source, self.limits = source, limits
++        self.background_build_bytes = background_build_bytes
++        self._lock = threading.RLock()
++        self._build_thread: threading.Thread | None = None
++        self._abort_build = False
++        self._granted_paths: dict[str, Path] = {}
++        self._initialize()
++
++    # ---------------------------------------------------------------- schema
++
++    def _connect(self) -> sqlite3.Connection:
++        connection = sqlite3.connect(self.path, timeout=5)
++        connection.row_factory = sqlite3.Row
++        connection.execute("PRAGMA busy_timeout=5000")
++        return connection
++
++    def _initialize(self) -> None:
++        self.path.parent.mkdir(parents=True, exist_ok=True)
++        with self._lock, self._connect() as connection:
++            connection.execute("PRAGMA journal_mode=WAL")
++            version = 0
++            try:
++                row = connection.execute(
++                    "SELECT schema_version FROM settings WHERE singleton=1"
++                ).fetchone()
++                version = int(row[0]) if row else 0
++            except sqlite3.DatabaseError:
++                version = 0
++            if version != SCHEMA_VERSION:
++                connection.executescript(
++                    """
++                    DROP TABLE IF EXISTS settings;
++                    DROP TABLE IF EXISTS sessions;
++                    DROP TABLE IF EXISTS messages_fts;
++                    """
++                )
++            connection.executescript(
++                f"""
++                CREATE TABLE IF NOT EXISTS settings (
++                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
++                    schema_version INTEGER NOT NULL DEFAULT {SCHEMA_VERSION},
++                    built_at REAL
++                );
++                INSERT OR IGNORE INTO settings(singleton, schema_version)
++                    VALUES(1, {SCHEMA_VERSION});
++                CREATE TABLE IF NOT EXISTS sessions (
++                    session_id TEXT PRIMARY KEY,
++                    mtime REAL NOT NULL,
++                    size INTEGER NOT NULL,
++                    indexed_bytes INTEGER NOT NULL,
++                    message_count INTEGER NOT NULL,
++                    indexed_at REAL NOT NULL
++                );
++                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
++                    content, session_id UNINDEXED, message_index UNINDEXED,
++                    role UNINDEXED, phase UNINDEXED, item_id UNINDEXED,
++                    reasoning_sections UNINDEXED, tokenize='unicode61'
++                );
++                """
++            )
++        try:
++            self.path.chmod(0o600)
++        except OSError:
++            pass
++
++    # ----------------------------------------------------------------- sync
++
++    def sync(self) -> dict[str, int]:
++        """Bring the index up to date with the sessions directory.
++
++        Returns ``{"updated": n, "removed": n, "pending": n}``. ``pending`` is
++        nonzero only while a large first build continues on the background
++        thread; callers surface it as ``indexing``.
++        """
++        with self._lock:
++            on_disk: dict[str, Path] = {
++                path.stem: path for path in self.source.list_paths()
++            }
++            self._granted_paths = on_disk
++            with self._connect() as connection:
++                known = {
++                    str(row["session_id"]): row
++                    for row in connection.execute("SELECT * FROM sessions").fetchall()
++                }
++            # Removals always run, even mid-build: a trashed session must stop
++            # matching on the very next search, not when the build finishes.
++            removed = 0
++            for session_id in known:
++                if session_id not in on_disk:
++                    self._forget(session_id)
++                    removed += 1
++            if self._build_thread is not None and self._build_thread.is_alive():
++                return {"updated": 0, "removed": removed, "pending": 1}
++            stale: list[tuple[str, Path, sqlite3.Row | None]] = []
++            pending_bytes = 0
++            for session_id, path in on_disk.items():
++                try:
++                    stat = path.stat()
++                except OSError:
++                    continue
++                if stat.st_size > self.limits.max_session_bytes:
++                    continue
++                row = known.get(session_id)
++                if row is not None and row["mtime"] == stat.st_mtime \
++                        and row["size"] == stat.st_size:
++                    continue
++                stale.append((session_id, path, row))
++                already = int(row["indexed_bytes"]) if row is not None else 0
++                pending_bytes += max(stat.st_size - min(already, stat.st_size), 0)
++            if not stale:
++                return {"updated": 0, "removed": removed, "pending": 0}
++            self._abort_build = False
++            if pending_bytes > self.background_build_bytes:
++                worker = threading.Thread(
++                    target=self._index_many,
++                    args=(stale,),
++                    name="transcript-index-build",
++                    daemon=True,
++                )
++                self._build_thread = worker
++                worker.start()
++                return {"updated": 0, "removed": removed, "pending": len(stale)}
++            self._index_many(stale)
++            return {"updated": len(stale), "removed": removed, "pending": 0}
++
++    @property
++    def is_indexing(self) -> bool:
++        thread = self._build_thread
++        return thread is not None and thread.is_alive()
++
++    def _index_many(self, stale: list[tuple[str, Path, sqlite3.Row | None]]) -> None:
++        for session_id, path, row in stale:
++            # Per-file lock so a concurrent delete_all interleaves atomically;
++            # its abort flag stops the rest of a build whose inputs it wiped.
++            with self._lock:
++                if self._abort_build:
++                    return
++                # A search may revoke a source while this background build is
++                # queued. Its original list is never an enduring grant.
++                if self._granted_paths.get(session_id) != path:
++                    continue
++                try:
++                    self._index_file(session_id, path, row)
++                except (OSError, sqlite3.DatabaseError):
++                    continue
++
++    def _forget(self, session_id: str) -> None:
++        with self._connect() as connection:
++            connection.execute(
++                "DELETE FROM messages_fts WHERE session_id=?", (session_id,)
++            )
++            connection.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
++
++    def _index_file(
++        self, session_id: str, path: Path, row: sqlite3.Row | None
++    ) -> None:
++        """Parse ``path`` from its last indexed byte and index new messages.
++
++        ``message_index`` must count exactly the records ``SessionStore.load``
++        keeps — every ``type == "message"`` record with a dict payload — so a
++        hit addresses the same position the session-detail endpoint returns.
++        """
++        try:
++            stat = path.stat()
++        except OSError:
++            return
++        start_byte = 0
++        message_index = 0
++        if row is not None:
++            if stat.st_size > int(row["size"]):
++                start_byte = int(row["indexed_bytes"])
++                message_index = int(row["message_count"])
++            else:
++                # Shrunk or rewritten at the same size: re-read from zero.
++                # sync already excluded unchanged (mtime, size) pairs.
++                self._forget(session_id)
++        rows: list[tuple[str, str, int, str, str, str, str]] = []
++        consumed = start_byte
++        with path.open("rb") as handle:
++            handle.seek(start_byte)
++            while True:
++                raw = handle.readline()
++                if not raw:
++                    break
++                if not raw.endswith(b"\n"):
++                    # A torn tail is mid-write; it re-parses on the next sync.
++                    break
++                consumed += len(raw)
++                if len(raw) > self.limits.max_line_bytes or not raw.strip():
++                    continue
++                try:
++                    record = _loads(raw)
++                except ValueError:
++                    continue
++                if not isinstance(record, dict):
++                    continue
++                message = record.get("message")
++                if record.get("type") != "message" or not isinstance(message, dict):
++                    continue
++                position = message_index
++                message_index += 1
++                if message_index > self.limits.max_messages:
++                    break
++                role = str(message.get("role") or "")
++                if role not in _INDEXED_ROLES:
++                    continue
++                content = message.get("content")
++                content = content if isinstance(content, str) else ""
++                sections = [
++                    str(section)
++                    for section in message.get("_display_reasoning_sections") or []
++                    if str(section).strip()
++                ]
++                if not content.strip() and sections:
++                    content = "\n\n".join(sections)
++                if not content.strip():
++                    continue
++                if role == "user":
++                    content = self.source.clean_user_text(content)
++                    if not content:
++                        continue
++                rows.append((
++                    content[:MAX_MESSAGE_CHARS], session_id, position, role,
++                    str(message.get("_phase") or ""),
++                    str(message.get("_item_id") or ""),
++                    json.dumps(sections, ensure_ascii=False) if sections else "",
++                ))
++        with self._connect() as connection:
++            for content, sid, position, role, phase, item_id, sections in rows:
++                connection.execute(
++                    "INSERT INTO messages_fts(content, session_id, message_index, role,"
++                    " phase, item_id, reasoning_sections) VALUES(?, ?, ?, ?, ?, ?, ?)",
++                    (content, sid, position, role, phase, item_id, sections),
++                )
++            connection.execute(
++                """INSERT INTO sessions(
++                       session_id, mtime, size, indexed_bytes, message_count, indexed_at
++                   ) VALUES(?, ?, ?, ?, ?, ?)
++                   ON CONFLICT(session_id) DO UPDATE SET
++                       mtime=excluded.mtime, size=excluded.size,
++                       indexed_bytes=excluded.indexed_bytes,
++                       message_count=excluded.message_count,
++                       indexed_at=excluded.indexed_at""",
++                (session_id, stat.st_mtime, stat.st_size, consumed,
++                 message_index, time.time()),
++            )
++            connection.execute(
++                "UPDATE settings SET built_at=? WHERE singleton=1", (time.time(),)
++            )
++
++    # --------------------------------------------------------------- search
++
++    def search(self, query: str, limit: int = 20) -> dict[str, Any]:
++        started = time.monotonic()
++        query = query.strip()[:MAX_QUERY_CHARS]
++        if not query:
++            raise TranscriptSearchError("transcript search requires a query")
++        limit = min(max(int(limit), 1), 50)
++        status = self.sync()
++        terms = [
++            term for term in re.findall(r"[\w.-]+", query, flags=re.UNICODE)
++            if len(term) > 1
++        ]
++        fts_query = " OR ".join(
++            f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms[:16]
++        )
++        results: list[dict[str, Any]] = []
++        if fts_query:
++            meta = self.source.metadata()
++            per_session: dict[str, int] = {}
++            with self._lock, self._connect() as connection:
++                # Metadata callbacks and a queued build can run after sync.
++                # Take fresh grants at the read boundary and revoke pending
++                # work as well as excluding any cached hits from those sources.
++                self._granted_paths = {
++                    path.stem: path for path in self.source.list_paths()
++                }
++                granted_sessions = set(self._granted_paths)
++                rows = connection.execute(
++                    f"""SELECT session_id, message_index, role, phase, item_id,
++                               reasoning_sections, bm25(messages_fts) AS rank,
++                               snippet(messages_fts, 0, '{_SNIPPET_START}',
++                                       '{_SNIPPET_END}', '…', 24) AS snippet
++                        FROM messages_fts WHERE messages_fts MATCH ?
++                        ORDER BY rank LIMIT ?""",
++                    (fts_query, limit * 6),
++                ).fetchall()
++                stats = {
++                    str(row["session_id"]): row
++                    for row in connection.execute("SELECT * FROM sessions").fetchall()
++                }
++            for position, row in enumerate(rows):
++                session_id = str(row["session_id"])
++                if session_id not in granted_sessions:
++                    continue
++                if per_session.get(session_id, 0) >= MAX_HITS_PER_SESSION:
++                    continue
++                stat_row = stats.get(session_id)
++                if stat_row is None:
++                    continue
++                per_session[session_id] = per_session.get(session_id, 0) + 1
++                snippet, highlights = _split_snippet(str(row["snippet"] or ""))
++                entry = meta.get(session_id, {})
++                reasoning_sections: list[str] = []
++                try:
++                    decoded_sections = json.loads(str(row["reasoning_sections"] or "[]"))
++                    if isinstance(decoded_sections, list):
++                        reasoning_sections = [str(value) for value in decoded_sections]
++                except json.JSONDecodeError:
++                    pass
++                result = {
++                    "session_id": session_id,
++                    "title": entry.get("title"),
++                    "pinned": bool(entry.get("pinned", False)),
++                    "mtime": float(stat_row["mtime"]),
++                    "message_index": int(row["message_index"]),
++                    "role": str(row["role"] or ""),
++                    "snippet": snippet,
++                    "highlights": highlights,
++                    "score": 1.0 / (position + 1),
++                }
++                if row["phase"]:
++                    result["phase"] = str(row["phase"])
++                if row["item_id"]:
++                    result["item_id"] = str(row["item_id"])
++                if reasoning_sections:
++                    result["reasoning_sections"] = reasoning_sections
++                results.append(result)
++                if len(results) >= limit:
++                    break
++        return {
++            "query": query,
++            "indexing": status["pending"] > 0 or self.is_indexing,
++            "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
++            "results": results,
++        }
++
++    def delete_all(self) -> None:
++        with self._lock:
++            # A background build started before the wipe must not re-insert
++            # text for sessions the user just cleared.
++            self._abort_build = True
++            with self._connect() as connection:
++                connection.execute("DELETE FROM messages_fts")
++                connection.execute("DELETE FROM sessions")
++
++
++def _loads(raw: bytes) -> Any:
++    return json.loads(raw.decode("utf-8", errors="replace"))
++
++
++def _split_snippet(marked: str) -> tuple[str, list[list[int]]]:
++    """Convert sentinel-marked snippet text into plain text + highlight ranges."""
++    plain: list[str] = []
++    highlights: list[list[int]] = []
++    length = 0
++    open_at: int | None = None
++    for char in marked:
++        if char == _SNIPPET_START:
++            open_at = length
++            continue
++        if char == _SNIPPET_END:
++            if open_at is not None and length > open_at:
++                highlights.append([open_at, length - open_at])
++            open_at = None
++            continue
++        plain.append(char)
++        length += 1
++    return "".join(plain), highlights
+diff --git a/src/locus_memory/learning/selected_chat.py b/src/locus_memory/learning/selected_chat.py
+new file mode 100644
+index 0000000..29af229
+--- /dev/null
++++ b/src/locus_memory/learning/selected_chat.py
+@@ -0,0 +1,82 @@
++"""Review host-selected conversation evidence into unapproved memory candidates.
++
++The host must remove prompt decoration, attachments and injected context before
++calling this module. Only user messages are considered. This deterministic review
++does not invoke a model, read sessions, grant scopes, or approve its suggestions.
++"""
++from __future__ import annotations
++
++import re
++from collections.abc import Iterable, Mapping
++from typing import Any, Protocol
++
++from ..errors import MemoryEngineError
++
++_CUES = re.compile(
++    r"\b(?:remember|always|never|prefer|preference|decided|decision|"
++    r"do not|don't|must|should use|confirmed|that worked|fixed|resolved)\b", re.IGNORECASE,
++)
++_SECRET = re.compile(r"(?i)(?:api[_-]?key|authorization|password|secret|bearer\s+[A-Za-z0-9])")
++
++
++class ReviewVault(Protocol):
++    """Legacy-shaped public API shared by the compatibility and canonical stores."""
++
++    def list(self, *, workspace: str, agent_id: str) -> list[dict[str, Any]]: ...
++
++    def save(self, value: dict[str, Any], *, workspace: str, agent_id: str,
++             default_status: str) -> dict[str, Any]: ...
++
++    def record_event(self, stage: str, outcome: str, **context: Any) -> Any: ...
++
++
++def _normalized(value: Any) -> str:
++    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
++
++
++def review_selected_chat(
++    vault: ReviewVault, messages: Iterable[Mapping[str, Any]], *, workspace: str,
++    agent_id: str, session_id: str, run_id: str,
++) -> list[dict[str, Any]]:
++    """Save up to twenty review-only suggestions, preserving their source bindings.
++
++    Validation failures isolate a single suggestion. Deduplication includes saved
++    candidates and approved memories and is updated only after a successful save.
++    Diagnostics contain identifiers and outcomes, never conversation content.
++    """
++    candidates: list[dict[str, Any]] = []
++    existing_content = {
++        _normalized(item.get("content")) for item in vault.list(workspace=workspace, agent_id=agent_id)
++    }
++    event_context = {
++        "workspace": workspace, "agent_id": agent_id, "session_id": session_id, "run_id": run_id,
++    }
++    for message in messages:
++        if message.get("role") != "user":
++            continue
++        text = str(message.get("content") or "").strip()
++        if not text or len(text) > 4_000 or not _CUES.search(text) or _SECRET.search(text):
++            continue
++        content = re.sub(r"\s+", " ", text)[:2_000]
++        normalized = content.casefold()
++        if normalized in existing_content:
++            vault.record_event("proposal", "deduplicated", reason_code="existing_memory", **event_context)
++            continue
++        try:
++            candidate = vault.save(
++                {
++                    "title": "From selected chat", "content": content,
++                    "reason": "Explicit durable wording found during selected-chat review.",
++                    "scope": "workspace", "status": "candidate", "kind": "preference", "confidence": 0.8,
++                    "source_session_id": session_id, "source_run_id": run_id,
++                },
++                workspace=workspace, agent_id=agent_id, default_status="candidate",
++            )
++        except MemoryEngineError:
++            continue
++        vault.record_event("proposal", "accepted", memory_id=candidate["id"], **event_context)
++        candidates.append(candidate)
++        existing_content.add(normalized)
++        if len(candidates) >= 20:
++            break
++    return candidates
+diff --git a/src/locus_memory/migrations/ownership.py b/src/locus_memory/migrations/ownership.py
+new file mode 100644
+index 0000000..0dbd926
+--- /dev/null
++++ b/src/locus_memory/migrations/ownership.py
+@@ -0,0 +1,70 @@
++"""Read-only ownership lookup and process exclusion at host-supplied paths.
++
++Ownership, rather than a recall rollout flag, selects the canonical vault.
++Reading an unmigrated root does not create an engine store. The host selects
++both the engine root and a stable lease path shared by all of its writers.
++"""
++from __future__ import annotations
++
++import contextlib
++import fcntl
++import os
++import sqlite3
++from collections.abc import Iterator
++from pathlib import Path
++
++from locus_memory.compat.legacy_vault import LegacyVaultError
++from locus_memory.errors import OwnershipFenced
++from locus_memory.migrations.state import STATES, WRITERS
++from locus_memory.models import PartitionRef
++
++
++def ownership_state(root: Path | str, partition: PartitionRef) -> str:
++    database = Path(root) / "control.sqlite3"
++    if not database.exists():
++        if any(database.parent.glob("p*/*.sqlite3")):
++            raise LegacyVaultError("memory ownership is missing for an existing engine; refusing legacy fallback")
++        return "legacy_authoritative"
++    try:
++        with contextlib.closing(sqlite3.connect(
++            database.resolve().as_uri() + "?mode=ro", uri=True, timeout=10,
++        )) as connection:
++            row = connection.execute(
++                "SELECT state FROM ownership WHERE partition_id=? AND family='memories'",
++                (partition.partition_id,),
++            ).fetchone()
++        state = row[0] if row else "legacy_authoritative"
++        if state not in STATES:
++            raise ValueError("unknown memory ownership state")
++        return state
++    except (sqlite3.Error, OSError, ValueError) as exc:
++        raise LegacyVaultError("memory ownership is unavailable; refusing legacy fallback") from exc
++
++
++def assert_legacy_writer(root: Path | str, partition: PartitionRef) -> None:
++    state = ownership_state(root, partition)
++    if "legacy" not in WRITERS[state]:
++        raise OwnershipFenced(f"legacy memory writes are fenced while ownership is {state}")
++
++
++@contextlib.contextmanager
++def profile_lease(lock_path: Path | str, *, exclusive: bool = False) -> Iterator[None]:
++    """Backends hold shared leases; offline cutover requires an exclusive lease.
++
++    Never wait for an active backend in the migrator: the operator must stop it
++    and its turns first. Keep the file in place so all processes lock one inode.
++    """
++    lock_path = Path(lock_path)
++    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
++    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
++    try:
++        try:
++            fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
++        except BlockingIOError as exc:
++            raise LegacyVaultError(
++                "memory profile is in use; stop its backends before migration and retry after migration"
++            ) from exc
++        yield
++    finally:
++        fcntl.flock(descriptor, fcntl.LOCK_UN)
++        os.close(descriptor)
+diff --git a/src/locus_memory/migrations/session.py b/src/locus_memory/migrations/session.py
+new file mode 100644
+index 0000000..f0f4e55
+--- /dev/null
++++ b/src/locus_memory/migrations/session.py
+@@ -0,0 +1,106 @@
++"""Offline migration lifecycle with host-supplied keys and quiescence.
++
++The host supplies exact paths, identity, source mapping and an exclusive lease.
++No application discovery, key-file lookup or process control occurs here.
++"""
++from __future__ import annotations
++
++import contextlib
++from collections.abc import Callable
++from pathlib import Path
++from typing import Any
++
++from .. import MemoryEngine
++from ..crypto import KeyProvider
++from ..errors import MigrationError
++from ..host import EngineConfig, HostCapabilities
++from ..models import AccessContext, Actor, Operation, PartitionRef, ScopeGrants
++from . import legacy
++from .cutover import Migrator
++from .state import OwnershipControl
++
++
++class LegacyMigrationSession:
++    """One offline operation held under the host's exclusive profile lease."""
++
++    def __init__(self, root: Path, database: Path, keys: KeyProvider, *,
++                 partition: PartitionRef, legacy_key: Callable[[], bytes],
++                 mapping: Callable[[], legacy.LegacyMapping],
++                 lease: Callable[[], contextlib.AbstractContextManager],
++                 assert_quiescent: Callable[[], None],
++                 principal: str = "memory-migration") -> None:
++        self.root, self.database = Path(root), Path(database)
++        self.keys, self.partition = keys, partition
++        self.legacy_key, self._mapping = legacy_key, mapping
++        self._lease, self.assert_quiescent = lease, assert_quiescent
++        self.principal = principal
++        self._stack = contextlib.ExitStack()
++
++    def __enter__(self):
++        if not self.database.is_file():
++            raise MigrationError("the existing memory vault was not found")
++        try:
++            self._stack.enter_context(self._lease())
++            self.assert_quiescent()
++            self.mapping = self._mapping()
++            # Resolve the legacy key before creating any destination files.
++            self.legacy_key()
++            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
++            self.root.chmod(0o700)
++            self.control = OwnershipControl(self.root)
++            self._stack.callback(self.control.close)
++            self.engine = MemoryEngine(
++                self.root, self.keys, host=HostCapabilities(ownership=self.control),
++                config=EngineConfig(serving_mode="enabled", canonical_backend="legacy"),
++            )
++            self._stack.callback(self.engine.close)
++            self.access = AccessContext(
++                principal=self.principal, partition=self.partition, actor=Actor.HOST,
++                operations=frozenset({Operation.ADMIN, Operation.READ}),
++                grants=ScopeGrants(projects=frozenset(self.mapping.workspaces.values())),
++                purpose="offline migration",
++            )
++            self.migrator = Migrator(
++                self.engine, self.control, self.access, self.database, self.legacy_key(),
++                self.mapping, work_dir=self.root / "migration",
++            )
++            return self
++        except BaseException:
++            self._stack.close()
++            raise
++
++    def __exit__(self, *args):
++        return self._stack.__exit__(*args)
++
++    def inventory(self) -> dict[str, Any]:
++        return legacy.inventory(self.database, self.legacy_key(), self.mapping)
++
++    def snapshot(self) -> dict[str, Any]:
++        report = self.inventory()
++        if report["decrypt_failures"] or report["map_failures"]:
++            raise MigrationError("inventory has unreadable or unmappable records; cutover refused")
++        return self.migrator.prepare_shadow()
++
++    def validate(self, queries: list[str] | None = None) -> dict[str, Any]:
++        return self.migrator.validate(queries=queries)
++
++    def cutover(self, queries: list[str] | None = None) -> dict[str, Any]:
++        @contextlib.contextmanager
++        def quiesce():
++            self.assert_quiescent()
++            yield
++        if self.migrator.state().state == "cutover_in_progress":
++            return self.migrator.resume(quiesce=quiesce)
++        return self.migrator.cutover(quiesce=quiesce, queries=queries)
++
++    def rollback(self) -> dict[str, Any]:
++        self.assert_quiescent()
++        ctx = self.engine.partition_context(self.partition)
++        with ctx.partition.db.read() as connection:
++            _, damaged = self.migrator._package_records(ctx, connection)
++        if damaged:
++            raise MigrationError("rollback refused: package records could not be authenticated")
++        if self.migrator.state().state == "rollback_in_progress":
++            return self.migrator.resume()
++        # Deliberately no partial rollback: recovery copies require a separate decision.
++        return self.migrator.rollback()
+diff --git a/src/locus_memory/policies.py b/src/locus_memory/policies.py
+new file mode 100644
+index 0000000..9faa64d
+--- /dev/null
++++ b/src/locus_memory/policies.py
+@@ -0,0 +1,73 @@
++"""Portable automatic-memory policy used by hosts and their saved agent settings.
++
++The host still decides when a turn permits memory and supplies trusted scopes.
++This policy owns the shared defaults, input limits and chat-only scope boundary.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any
++
++VALID_MEMORY_SCOPES = frozenset({"personal", "workspace", "agent"})
++
++
++def _bounded_int(value: Any, default: int, upper: int) -> int:
++    try:
++        number = int(value)
++    except (TypeError, ValueError, OverflowError):
++        number = default
++    return min(max(number, 0), upper)
++
++
++@dataclass(frozen=True)
++class MemoryPolicy:
++    recall_enabled: bool = True
++    proposals_enabled: bool = True
++    search_enabled: bool = True
++    scopes: tuple[str, ...] = ("personal", "workspace", "agent")
++    max_automatic_memories: int = 8
++    max_automatic_tokens: int = 1_200
++    cross_chat_context_enabled: bool = True
++    max_automatic_context_snapshots: int = 2
++    max_automatic_context_tokens: int = 1_200
++
++    @classmethod
++    def parse(cls, value: Any) -> MemoryPolicy:
++        raw = value if isinstance(value, dict) else {}
++        supplied_scopes = raw.get("scopes")
++        if not isinstance(supplied_scopes, list):
++            supplied_scopes = ["personal", "workspace", "agent"]
++        scopes = tuple(dict.fromkeys(
++            str(item).lower() for item in supplied_scopes
++            if str(item).lower() in VALID_MEMORY_SCOPES
++        ))
++        return cls(
++            recall_enabled=bool(raw.get("recall_enabled", True)),
++            proposals_enabled=bool(raw.get("proposals_enabled", True)),
++            search_enabled=bool(raw.get("search_enabled", True)),
++            scopes=scopes,
++            max_automatic_memories=_bounded_int(raw.get("max_automatic_memories"), 8, 20),
++            max_automatic_tokens=_bounded_int(raw.get("max_automatic_tokens"), 1_200, 4_000),
++            cross_chat_context_enabled=bool(raw.get("cross_chat_context_enabled", True)),
++            max_automatic_context_snapshots=_bounded_int(
++                raw.get("max_automatic_context_snapshots"), 2, 10,
++            ),
++            max_automatic_context_tokens=_bounded_int(
++                raw.get("max_automatic_context_tokens"), 1_200, 4_000,
++            ),
++        )
++
++    def recall_scopes(self, *, just_chat: bool = False) -> tuple[str, ...]:
++        return tuple(scope for scope in self.scopes if not (just_chat and scope == "workspace"))
++
++    @property
++    def automatic_recall_enabled(self) -> bool:
++        return bool(self.recall_enabled and self.max_automatic_memories and self.max_automatic_tokens)
++
++    def automatic_continuity_enabled(self, *, just_chat: bool = False) -> bool:
++        return bool(not just_chat and self.cross_chat_context_enabled
++                    and self.max_automatic_context_snapshots and self.max_automatic_context_tokens)
++
++    def bound_legacy_context(self, text: str) -> str:
++        """Preserve the legacy four-character estimate until its recall path is retired."""
++        return text[:max(0, self.max_automatic_tokens) * 4]
+diff --git a/src/locus_memory/runtime.py b/src/locus_memory/runtime.py
+new file mode 100644
+index 0000000..5cc79fd
+--- /dev/null
++++ b/src/locus_memory/runtime.py
+@@ -0,0 +1,529 @@
++"""Host-independent recall, shadow rollout, archival and maintenance orchestration.
++
++Hosts supply roots, keys, trusted access contexts, scheduling and opaque prompt slots.
++This module never discovers an application, loads credentials, inspects a host core,
++or rewrites a host prompt. Legacy synchronization is optional and uses an explicit
++source database and key callback. All state belongs to this runtime instance.
++"""
++from __future__ import annotations
++
++import dataclasses
++import hashlib
++import logging
++import re
++import sqlite3
++import threading
++import time
++import uuid
++from collections.abc import Callable
++from pathlib import Path
++from typing import Any, NamedTuple
++
++from . import MemoryEngine
++from .context import CONTEXT_WRAPPER_CLOSE, CONTEXT_WRAPPER_OPEN, contains_context_block
++from .crypto import KeyProvider
++from .errors import MemoryEngineError, MigrationError
++from .host import EngineConfig, HostCapabilities
++from .migrations.legacy import LegacyImporter, LegacyMapping
++from .migrations.state import OwnershipControl
++from .models import (
++    AccessContext,
++    ContextPacket,
++    ContextRequest,
++    IngestionEvent,
++    MemoryKind,
++    PartitionRef,
++    Scope,
++    SliceSpec,
++)
++
++logger = logging.getLogger(__name__)
++MODES = ("disabled", "shadow", "enabled")
++SHADOW_STATES = frozenset({"legacy_authoritative", "shadow_prepared", "validated"})
++PACKAGE_STATES = frozenset({"package_authoritative", "legacy_retired"})
++MAX_CONTEXT_CHARS = 24_000
++LEGACY_RESULTS_HEADER = "Approved memory results (local user-controlled context):"
++MAINTENANCE_INTERVAL_S = 6 * 3600
++RECALL_DEADLINE_MS = 5_000
++_UNHASHED_COLUMNS = frozenset({"ciphertext", "use_count", "last_used_at"})
++_ENGINE_ERRORS = (MemoryEngineError, sqlite3.Error, OSError)
++_REF_UNSAFE = re.compile(r"[^A-Za-z0-9_.:@/+=-]")
++
++_K = MemoryKind
++_SCOPED_DIMS = ("project", "repository", "worktree", "team", "agent", "legacy_target")
++#: The package's default slices, plus the legacy kinds and the ``legacy_target``
++#: dimension that imported Locus records can carry.
++_SLICES = (
++    SliceSpec("user_preferences", 500, (_K.PREFERENCE,), (), False),
++    SliceSpec("profile_facts", 800, (_K.FACT, _K.CONSTRAINT, _K.RELATIONSHIP, _K.DECISION), (), False),
++    SliceSpec("workspace", 1200, (_K.DECISION, _K.CONSTRAINT, _K.FACT, _K.PREFERENCE, _K.RELATIONSHIP,
++                                  _K.REPOSITORY_OBSERVATION, _K.SUMMARY),
++              ("project", "repository", "worktree", "team", "legacy_target"), True),
++    SliceSpec("agent", 400, (), ("agent", "legacy_target"), True),
++    SliceSpec("episodes", 600, (_K.EPISODE,), None, True),
++    SliceSpec("procedures", 600, (_K.PROCEDURE,), None, True),
++)
++class LegacyRecall(NamedTuple):
++    """What the Stage-1 recall produced: the injected text and the recalled ids."""
++
++    text: str
++    ids: tuple[str, ...] = ()
++
++
++def project_id(workspace_hash: str) -> str:
++    """Package project id for a workspace: ``'ws-' + sha256(resolved path)[:32]``."""
++    return "ws-" + workspace_hash[:32]
++
++
++def _outside_packets(text: str) -> str:
++    """``text`` without its engine packets (wrapper open through close; a packet the host
++    truncated runs to the end). What remains is what the host itself put around them."""
++    parts: list[str] = []
++    rest = text
++    while CONTEXT_WRAPPER_OPEN in rest:
++        before, _, after = rest.partition(CONTEXT_WRAPPER_OPEN)
++        parts.append(before)
++        _, closed, rest = after.partition(CONTEXT_WRAPPER_CLOSE)
++        if not closed:
++            rest = ""
++    parts.append(rest)
++    return "".join(parts)
++
++
++def assert_single_memory_layer(text: str) -> None:
++    """The engine packet replaces the legacy layer; both together is a defect.
++
++    Structural only: stored memory text is never evidence of a second layer. A record whose
++    title or content quotes the legacy results header (e.g. a copied ``search_memory`` tool
++    output) is rendered inside the packet; the stored text cannot forge the wrapper itself
++    (the package neutralizes ``<memory-context`` in it). So a legacy layer counts only outside
++    every packet, and two packets count anywhere.
++    """
++    if text.count(CONTEXT_WRAPPER_OPEN) > 1 or (
++            contains_context_block(text) and LEGACY_RESULTS_HEADER in _outside_packets(text)):
++        raise AssertionError("memory was injected twice (engine packet and legacy layer)")
++
++
++def _run_inline(task: Callable[[], None]) -> None:
++    task()
++
++
++def _ref(value: str) -> str:
++    cleaned = _REF_UNSAFE.sub("_", str(value or ""))[:256].replace("..", "__")
++    return cleaned or uuid.uuid4().hex
++
++
++def _slices(personal: bool) -> tuple[SliceSpec, ...]:
++    """Without the personal scope, profile-global (unscoped) records are not requested."""
++    if personal:
++        return _SLICES
++    return tuple(
++        spec if spec.scope_dims else dataclasses.replace(spec, scope_dims=_SCOPED_DIMS)
++        for spec in _SLICES if spec.scope_dims != ()
++    )
++
++
++class _LegacyState(NamedTuple):
++    digest: str
++    #: Workspace target hashes present in the legacy rows (for the import mapping).
++    workspaces: frozenset[str]
++
++
++def _legacy_state(database: Path) -> _LegacyState | None:
++    """Content-free change fingerprint of the legacy rows, plus their workspace hashes.
++
++    Only a gate that skips the import when nothing changed; what a change means is the
++    importer's business. Read-only; decrypts nothing. ``None`` when there is no vault
++    (or no table).
++    """
++    if not database.is_file():
++        return None
++    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=10)
++    try:
++        names = [row[1] for row in connection.execute("PRAGMA table_info(memories)")
++                 if row[1] not in _UNHASHED_COLUMNS]
++        if not names:
++            return None
++        columns = ", ".join('"' + name.replace('"', '""') + '"' for name in names)
++        rows = connection.execute(f"SELECT {columns} FROM memories ORDER BY id").fetchall()
++    finally:
++        connection.close()
++    digest = hashlib.sha256()
++    workspaces: set[str] = set()
++    for row in rows:
++        values = dict(zip(names, row, strict=True))
++        digest.update(repr(sorted(values.items())).encode())
++        prefix, _, value = str(values.get("target_hash") or "").partition(":")
++        if prefix == "workspace" and value:
++            workspaces.add(value)
++    return _LegacyState(digest.hexdigest(), frozenset(workspaces))
++
++
++class RecallRuntime:
++    """One explicit partition's memory orchestration, independent of any host UI.
++
++    ``initial_state`` is the host's read-only ownership observation while holding its
++    profile lease; only a supplied package ownership state overrides rollout mode.
++    ``ownership`` is opened only on first engine use. Supplying no
++    ``legacy_database`` selects package-only serving; otherwise ``legacy_access`` and
++    ``legacy_key`` are required when the legacy source is authoritative.
++    """
++
++    def __init__(
++        self, *, root: Path | str, partition: PartitionRef, key_provider: KeyProvider,
++        mode: str = "disabled", initial_state: str | None = None,
++        archive: bool = False, legacy_database: Path | None = None,
++        legacy_key: Callable[[], bytes] | None = None,
++        legacy_access: AccessContext | None = None,
++        maintenance_access: AccessContext,
++        schedule: Callable[[Callable[[], None]], None] | None = None,
++        clock: Callable[[], float] = time.time,
++        maintenance_interval_s: float = MAINTENANCE_INTERVAL_S,
++        layer_validator: Callable[[str], None] = assert_single_memory_layer,
++        log: logging.Logger | None = None,
++    ) -> None:
++        if mode not in MODES:
++            raise ValueError(f"memory engine mode must be one of {', '.join(MODES)}")
++        for access in (legacy_access, maintenance_access):
++            if access is not None and access.partition != partition:
++                raise ValueError("runtime access must match its partition")
++        self.root = Path(root)
++        self.partition = partition
++        self.legacy_db = Path(legacy_database) if legacy_database is not None else None
++        self._legacy_key = legacy_key
++        self._legacy_access = legacy_access
++        self._maintenance_context = maintenance_access
++        self._keys = key_provider
++        self.mode = "enabled" if initial_state in PACKAGE_STATES else mode
++        self._canonical_backend = (
++            "package" if initial_state in PACKAGE_STATES or self.legacy_db is None else "legacy"
++        )
++        self.archive = bool(archive) and self.mode != "disabled"
++        self.schedule = schedule or _run_inline
++        self.clock = clock
++        self.maintenance_interval_s = float(maintenance_interval_s)
++        self._layer_validator = layer_validator
++        self._log = log or logger
++        self.last_shadow: dict[str, Any] | None = None
++        self._lock = threading.RLock()
++        self._engine: MemoryEngine | None = None
++        self._control: OwnershipControl | None = None
++        self._closed = False
++        self._synced: str | None = None
++        self._pending: dict[int, tuple[object, AccessContext, ContextPacket]] = {}
++        self._sequence: dict[str, int] = {}
++        self._maintained_at: float | None = None
++        self._maintaining = False
++
++    @property
++    def engine(self) -> MemoryEngine:
++        """Open lazily; a disabled runtime creates no store."""
++        with self._lock:
++            if self.mode == "disabled":
++                raise MemoryEngineError("the memory engine is disabled")
++            if self._closed:
++                raise MemoryEngineError("the memory runtime is closed")
++            if self._engine is None:
++                self.root.mkdir(parents=True, exist_ok=True)
++                try:
++                    self.root.chmod(0o700)
++                except OSError:
++                    pass
++                # A package-only runtime needs no migration ownership database.
++                self._control = OwnershipControl(self.root) if self.legacy_db is not None else None
++                try:
++                    self._engine = MemoryEngine(
++                        self.root, self._keys,
++                        host=HostCapabilities(ownership=self._control, clock=self.clock),
++                        config=EngineConfig(serving_mode=self.mode, canonical_backend=self._canonical_backend),
++                    )
++                except BaseException:
++                    if self._control is not None:
++                        self._control.close()
++                        self._control = None
++                    raise
++            return self._engine
++
++    def ownership_state(self) -> dict[str, Any]:
++        _ = self.engine
++        if self._control is None:
++            return {"state": "package_authoritative"}
++        return self._control.get(self.partition.partition_id, "memories").to_dict()
++
++    def close(self) -> None:
++        with self._lock:
++            engine, control = self._engine, self._control
++            self._engine = self._control = None
++            self._closed = True
++            self._pending.clear()
++        try:
++            if engine is not None:
++                engine.close()
++        finally:
++            if control is not None:
++                control.close()
++
++    def _sync(self) -> bool:
++        """Bring the derived copy up to date with the canonical legacy vault.
++
++        The package's ``LegacyImporter`` decides everything about each record (deltas,
++        lifecycle, re-scoping, deletion propagation). The adapter supplies only the host
++        mapping, a pure function of the legacy rows so it never flips between turns:
++        each workspace hash maps to its project id; agent targets stay ``legacy_target``
++        because a hash does not reveal the agent id. False when there is no canonical
++        vault (nothing to serve). Raises when the importer reports a legacy change it
++        could not apply; the next call retries.
++        """
++        with self._lock:
++            ownership = self.ownership_state()
++            if ownership["state"] not in SHADOW_STATES:
++                # Neither side may serve while ownership is moving.
++                return ownership["state"] in PACKAGE_STATES
++            if self.legacy_db is None:
++                return True
++            state = _legacy_state(self.legacy_db)
++            if state is None:
++                self._synced = None
++                return False
++            if state.digest == self._synced:
++                return True
++            mapping = LegacyMapping(workspaces={ws: project_id(ws) for ws in state.workspaces})
++            access = self._legacy_access
++            if access is None or self._legacy_key is None:
++                raise MigrationError("legacy synchronization requires an explicit access context and key")
++            engine = self.engine
++            started = time.perf_counter()
++            report = LegacyImporter(engine, access, self.legacy_db, self._legacy_key(), mapping).run()
++            deletions = report.get("deletion_propagation") or {}
++            engine.metrics.observe_ms("adapter.sync", (time.perf_counter() - started) * 1000)
++            engine.metrics.incr("adapter.sync.imported", int(report.get("imported", 0)) + int(report.get("updated", 0)))
++            engine.metrics.incr("adapter.sync.deleted", int(deletions.get("propagated", 0)))
++            unapplied = int(report.get("decrypt_failures", 0)) + int(deletions.get("failed", 0))
++            if unapplied:
++                engine.metrics.incr("adapter.sync.incomplete")
++                raise MigrationError(f"{unapplied} legacy change(s) could not be applied to the derived copy")
++            self._synced = state.digest
++            return True
++
++    def packet(self, access: AccessContext, query: str, *, max_tokens: int,
++               max_items: int, include_personal: bool = True) -> tuple[AccessContext, ContextPacket] | None:
++        """Compile a bounded packet from a trusted host-provided access context."""
++        if access.partition != self.partition:
++            raise ValueError("recall access must match the runtime partition")
++        if max_tokens <= 0 or max_items <= 0 or not self._sync():
++            return None
++        request = ContextRequest(
++            token_allowance=int(max_tokens), max_items=int(max_items),
++            query=str(query or "").replace("\x00", " ").strip()[:2_000],
++            slices=_slices(include_personal), deadline_ms=RECALL_DEADLINE_MS,
++        )
++        return access, self.engine.build_context(access, request)
++
++    def _failed(self, stage: str, exc: BaseException) -> None:
++        self._log.warning("memory engine %s failed: %s", stage, getattr(exc, "code", type(exc).__name__))
++        if self._engine is not None:
++            self._engine.metrics.incr(f"adapter.{stage}.failed")
++
++    def _single_layer(self, stage: str, text: str) -> bool:
++        """Check the single-layer invariant without ever failing the turn: a violation is
++        logged (without content) and counted, and the caller serves no engine memory."""
++        try:
++            self._layer_validator(text)
++            return True
++        except AssertionError:
++            self._log.error("memory engine %s: memory layer invariant violated; no engine memory injected", stage)
++            if self._engine is not None:
++                self._engine.metrics.incr("adapter.layer_violation")
++            return False
++
++    def recall(self, slot: object, *, build_packet: Callable[[], tuple[AccessContext, ContextPacket] | None],
++               legacy: Callable[[], LegacyRecall]) -> str:
++        """Serve exactly one memory layer and retain its packet under an opaque slot."""
++        if self.mode == "disabled":
++            return legacy().text
++        if self.mode == "shadow":
++            started = time.perf_counter()
++            result = legacy()
++            self._shadow(build_packet, result, (time.perf_counter() - started) * 1000)
++            return result.text
++        try:
++            built = build_packet()
++        except _ENGINE_ERRORS as exc:
++            self._failed("recall", exc)
++            built = None
++        with self._lock:
++            self._pending.pop(id(slot), None)
++            if built is None or not built[1].items:
++                return ""  # an empty packet injects no layer (D41)
++            access, packet = built
++            if not self._single_layer("recall", packet.text):
++                return ""  # fail closed: no engine memory, the turn goes on
++            self._pending[id(slot)] = (slot, access, packet)
++        return packet.text
++
++    def revalidate(self, slot: object, current: str, *, active: bool = True,
++                   max_chars: int = MAX_CONTEXT_CHARS) -> str | None:
++        """Return replacement text just before use, or None when the host text stays valid."""
++        if self.mode != "enabled":
++            return
++        with self._lock:
++            pending = self._pending.get(id(slot))
++        if pending is None or pending[0] is not slot:
++            return
++        _, access, packet = pending
++        if current != packet.text[:max_chars]:
++            # The caller injected something else; nothing of ours is in use. Should it carry two
++            # layers anyway, drop it rather than send it (or fail the turn).
++            if not self._single_layer("revalidate", current):
++                return ""
++            return
++        fresh: ContextPacket | None = None
++        if active:
++            try:
++                if self._sync():
++                    # The package recompiles the same request when anything it relied on changed.
++                    fresh = self.engine.revalidate_context(access, packet)
++            except _ENGINE_ERRORS as exc:
++                self._failed("revalidate", exc)
++        if fresh is packet:
++            return
++        text = (fresh.text if fresh is not None and fresh.items else "")[:max_chars]
++        if not self._single_layer("revalidate", text):
++            text = ""
++        with self._lock:
++            if fresh is not None:
++                self._pending[id(slot)] = (slot, access, fresh)
++            else:
++                self._pending.pop(id(slot), None)
++        if self._engine is not None:
++            self._engine.metrics.incr("adapter.revalidate.changed")
++
++        return text
++
++    def _shadow(self, build_packet: Callable[[], tuple[AccessContext, ContextPacket] | None],
++                result: LegacyRecall, legacy_ms: float) -> None:
++        """Compare without touching the prompt. Records counts and timings, never content."""
++        self.last_shadow = None
++        started = time.perf_counter()
++        try:
++            built = build_packet()
++        except _ENGINE_ERRORS as exc:
++            self._failed("shadow", exc)
++            return
++        if built is None:
++            return
++        packet = built[1]
++        engine_ms = (time.perf_counter() - started) * 1000
++        legacy_ids = {item for item in result.ids if item}
++        engine_ids = {item.record_id for item in packet.items}
++        comparison = {
++            "legacy_items": len(legacy_ids), "engine_items": len(engine_ids),
++            "overlap": len(legacy_ids & engine_ids),
++            "legacy_tokens": len(result.text) // 4, "legacy_token_kind": "estimated",
++            "engine_tokens": packet.token_count, "engine_token_kind": packet.token_count_kind.value,
++            "engine_status": packet.status.value,
++            "legacy_ms": round(legacy_ms, 3), "engine_ms": round(engine_ms, 3),
++        }
++        metrics = self.engine.metrics
++        metrics.incr("adapter.shadow.compared")
++        if legacy_ids == engine_ids:
++            metrics.incr("adapter.shadow.same_ids")
++        metrics.observe_ms("adapter.shadow.legacy_recall", legacy_ms)
++        metrics.observe_ms("adapter.shadow.engine_context", engine_ms)
++        metrics.gauge("adapter.shadow.overlap", comparison["overlap"])
++        metrics.gauge("adapter.shadow.engine_tokens", packet.token_count, packet.token_count_kind.value)
++        self.last_shadow = comparison
++        self._log.info(
++            "memory engine shadow: legacy_items=%d engine_items=%d overlap=%d legacy_tokens~%d "
++            "engine_tokens=%d(%s) legacy_ms=%.1f engine_ms=%.1f",
++            comparison["legacy_items"], comparison["engine_items"], comparison["overlap"],
++            comparison["legacy_tokens"], comparison["engine_tokens"], comparison["engine_token_kind"],
++            legacy_ms, engine_ms,
++        )
++
++    def release_context(self, slot: object) -> None:
++        """Drop the packet belonging to a completed temporary prompt."""
++        with self._lock:
++            self._pending.pop(id(slot), None)
++
++    def archive_text(self, access: AccessContext, *, session_ref: str, role: str,
++                     text: str, event_id: str = "", source: str = "host",
++                     scope: Scope | None = None) -> None:
++        """Archive eligible committed text; hosts exclude synthetic messages before calling.
++
++        Hidden reasoning and recalled memory are excluded by package policy. The host
++        supplies consent, trusted provenance and any prompt-decoration stripping.
++        With multiple project grants the event needs an explicit scope; grants alone
++        do not identify which project produced a message.
++        """
++        if not self.archive or self.mode == "disabled" or role not in ("user", "assistant"):
++            return
++        if access.partition != self.partition:
++            raise ValueError("archive access must match the runtime partition")
++        if scope is None:
++            if len(access.grants.projects) > 1:
++                raise ValueError("archive scope is required when more than one project is granted")
++            scope = Scope.of(project=next(iter(access.grants.projects), None))
++        text = text.strip()
++        lowered = text.lower()
++        if not text or "<think" in lowered:
++            return
++        injected = contains_context_block(text) or LEGACY_RESULTS_HEADER in text or "## approved memory" in lowered
++        session = _ref(session_ref)
++        try:
++            self.engine.ingest_event(access, IngestionEvent(
++                event_id=_ref(event_id), session_ref=session,
++                sequence=self._next_sequence(session), role=role, text=text[:200_000],
++                occurred_at=self.clock(), scope=scope,
++                source=source, is_memory_injection=injected,
++            ))
++        except _ENGINE_ERRORS as exc:
++            self._failed("archive", exc)
++
++    def _next_sequence(self, session: str) -> int:
++        with self._lock:
++            value = max(self._sequence.get(session, -1) + 1, time.time_ns() // 1_000)
++            self._sequence[session] = value
++            return value
++
++    def session_boundary(self, slot: object, *, active: bool = True) -> None:
++        """Release the slot and schedule bounded maintenance (at most once per interval).
++
++        The host must discard any prompt text copied from this slot.
++        """
++        with self._lock:
++            self._pending.pop(id(slot), None)
++            if not active or self._engine is None or self._maintaining:
++                return
++            now = self.clock()
++            if self._maintained_at is not None and now - self._maintained_at < self.maintenance_interval_s:
++                return
++            self._maintaining = True
++            self._maintained_at = now
++        self.schedule(self._maintain)
++
++    def _maintain(self) -> None:
++        try:
++            engine = self.engine
++            with engine.metrics.timer("adapter.maintain"):
++                engine.maintain(self._maintenance_context)
++        except _ENGINE_ERRORS as exc:
++            self._failed("maintain", exc)
++        finally:
++            with self._lock:
++                self._maintaining = False
++
++    def scope_change(self, slot: object, reason: str, *, active: bool = True) -> None:
++        """Drop pending packets and invalidate caches after workspace or consent changes.
++
++        The host must discard any prompt text copied from this slot.
++        """
++        with self._lock:
++            self._pending.pop(id(slot), None)
++            opened = self._engine is not None
++        if not opened or not active:
++            return
++        try:
++            self.engine.invalidate(self._maintenance_context, str(reason)[:200])
++        except _ENGINE_ERRORS as exc:
++            self._failed("invalidate", exc)
+diff --git a/tests/test_canonical_vault.py b/tests/test_canonical_vault.py
+new file mode 100644
+index 0000000..1af7f0b
+--- /dev/null
++++ b/tests/test_canonical_vault.py
+@@ -0,0 +1,210 @@
++"""Standalone compatibility contracts across real ownership transitions."""
++from __future__ import annotations
++
++import pytest
++
++from locus_memory import MemoryEngine, StaticKeyProvider
++from locus_memory.compat.canonical_vault import CanonicalMemoryVault
++from locus_memory.compat.legacy_vault import LegacyMemoryVault, LegacyVaultError
++from locus_memory.host import HostCapabilities
++from locus_memory.migrations.cutover import Migrator
++from locus_memory.migrations.state import OwnershipControl
++from locus_memory.models import AccessContext, Actor, Lifecycle, Operation, PartitionRef
++
++
++@pytest.fixture
++def canonical(tmp_path):
++    app = tmp_path / "app"
++    memory = app / "memory"
++    memory.mkdir(parents=True)
++    legacy = LegacyMemoryVault(memory / "memory.sqlite3", key=b"c" * 32)
++    root = app / "memory-engine"
++    control = OwnershipControl(root)
++    keys = StaticKeyProvider({"test-key": b"c" * 32})
++    engine = MemoryEngine(root, keys, host=HostCapabilities(ownership=control))
++    partition = PartitionRef("locus", "default")
++    access = AccessContext("migration", partition, Actor.HOST,
++                           operations=frozenset({Operation.ADMIN}))
++    migrator = Migrator(engine, control, access, legacy.path, b"c" * 32, work_dir=root / "migration")
++    assert migrator.prepare_shadow()["state"] == "shadow_prepared"
++    assert migrator.validate()["validated"]
++    assert migrator.cutover()["cutover"]
++    made = []
++
++    def make(**kwargs):
++        vault = CanonicalMemoryVault(root, keys, partition=partition,
++                                     workspace=str(tmp_path / "project"), **kwargs)
++        made.append(vault)
++        return vault
++
++    yield make, migrator, legacy
++    for vault in made:
++        vault.close()
++    engine.close()
++    control.close()
++
++
++def test_user_roundtrip_and_rollback_preserve_all_scopes(canonical):
++    make, migrator, legacy = canonical
++    user = make()
++    records = [user.save({"title": scope, "content": f"The {scope} color is violet.", "scope": scope})
++               for scope in ("workspace", "personal", "agent")]
++    assert len(user.list()) == 3
++    assert {r["id"] for r in user.search("violet")} == {r["id"] for r in records}
++    assert user.status()["approved_count"] == 3
++    exported = user.export()
++    assert exported["format"] == "locus-memory-export"
++    assert exported["version"] == 2
++    assert migrator.plan_rollback()["safe"]
++    assert migrator.rollback()["state"] == "legacy_authoritative"
++    restored = legacy.list(workspace=user.workspace, agent_id="primary")
++    assert {r["id"] for r in restored} == {r["id"] for r in records}
++    assert {r["scope"] for r in restored} == {"workspace", "personal", "agent"}
++    with pytest.raises(LegacyVaultError, match="fenced"):
++        user.save({"content": "Not writable after rollback", "scope": "personal"})
++
++
++def test_agent_proposes_but_cannot_approve_edit_delete_or_widen_scopes(canonical):
++    make, _, _ = canonical
++    user = make()
++    agent = make(actor=Actor.AGENT, scopes=("workspace",))
++    hidden = user.save({"content": "Private personal color is turquoise", "scope": "personal"})
++    assert agent.list(scopes=["personal"]) == []
++    assert agent.search("turquoise", scopes=[]) == []
++    with pytest.raises(LegacyVaultError):
++        agent.save({"content": "Approved by model", "scope": "workspace"})
++    with pytest.raises(LegacyVaultError):
++        agent.save({"content": "Personal scope", "scope": "personal", "status": "candidate"})
++    item = agent.save({"title": "Proposal", "content": "The build command is make check.",
++                       "scope": "workspace", "status": "candidate"})
++    assert item["status"] == "candidate"
++    assert user.search("make check") == []
++    with pytest.raises(LegacyVaultError):
++        agent.approve(item["id"])
++    with pytest.raises(LegacyVaultError):
++        agent.save({**item, "content": "Changed by model"}, item["id"])
++    with pytest.raises(LegacyVaultError):
++        agent.delete(item["id"])
++    assert agent.delete(hidden["id"]) is False
++    assert user.approve(item["id"])["status"] == "approved"
++    assert user.search("make check")[0]["id"] == item["id"]
++
++
++def test_target_isolation_and_empty_scopes(canonical):
++    make, _, _ = canonical
++    first = make()
++    second = make(agent_id="second")
++    record = second.save({"content": "Second agent uses cinnamon", "scope": "agent"})
++    assert first.delete(record["id"]) is False
++    with pytest.raises(LegacyVaultError, match="not found"):
++        first.feedback(record["id"], "incorrect")
++    with pytest.raises(LegacyVaultError, match="not found"):
++        first.save({**record, "content": "Overwrite a guessed id"}, record["id"])
++    assert first.list(scopes=[]) == []
++    assert second.list()[0]["content"] == "Second agent uses cinnamon"
++
++
++def test_incorrect_feedback_invalidates_context_and_pin_preserves_stale(canonical):
++    make, _, _ = canonical
++    vault = make()
++    record = vault.save({"title": "Deployment", "content": "Deploy with violet deploy.", "scope": "workspace"})
++    vault.feedback(record["id"], "incorrect")
++    assert vault.search("violet deploy") == []
++    stale = vault.list()[0]
++    assert stale["stale"]
++    pinned = vault.save({**stale, "pinned": True}, stale["id"])
++    assert pinned["stale"] and pinned["pinned"]
++    assert vault.search("violet deploy") == []
++    assert vault.approve(record["id"])["stale"] is False
++    assert vault.search("violet deploy")
++
++
++def test_delete_suppression_and_plaintext_note_migration(canonical):
++    make, migrator, _ = canonical
++    vault = make()
++    note = {"id": "old-note", "title": "Test note", "content": "The test runner is violet.", "created_at": 1700000000}
++    identifier, outcome = vault.import_legacy_note(note, workspace=vault.workspace)
++    assert outcome == "migrated"
++    assert vault.list()[0]["created_at"] == note["created_at"]
++    vault.save({"scope": "workspace", "content": "The updated test runner is jade."}, identifier)
++    assert vault.import_legacy_note(note, workspace=vault.workspace) == (identifier, "already_migrated")
++    assert vault.list()[0]["content"] == "The updated test runner is jade."
++    assert vault.delete(identifier)
++    with pytest.raises(LegacyVaultError, match="forgotten"):
++        vault.import_legacy_note(note, workspace=vault.workspace)
++    assert migrator.plan_rollback()["safe"]
++
++
++def test_candidate_metadata_does_not_approve_and_forget_keeps_rollback_safe(canonical):
++    make, migrator, _ = canonical
++    user = make()
++    candidate = user.save({"content": "Review violet tooling", "scope": "workspace", "status": "candidate"})
++    changed = user.save({**candidate, "pinned": True}, candidate["id"])
++    assert changed["status"] == "candidate"
++    access, _ = user._access()
++    assert user.engine.get(access, changed["id"]).lifecycle == Lifecycle.CANDIDATE
++    user.delete(changed["id"])
++    assert migrator.plan_rollback()["safe"]
++    assert not user.list()
++
++
++def test_partial_updates_preserve_candidate_scope_kind_and_validity(canonical):
++    make, _, _ = canonical
++    vault = make()
++    record = vault.save({"content": "Violet is a preferred theme.", "scope": "personal", "kind": "preference",
++                         "status": "candidate", "valid_from": 1700000000})
++    changed = vault.save({"title": "Color preference"}, record["id"])
++    assert (changed["scope"], changed["kind"], changed["status"], changed["valid_from"]) == (
++        "personal", "preference", "candidate", 1700000000,
++    )
++
++
++@pytest.mark.parametrize("bad", [{"kind": "nonsense"}, {"confidence": "no"}, {"tags": 42}])
++def test_invalid_input_is_legacy_error_without_write(canonical, bad):
++    make, _, _ = canonical
++    vault = make()
++    with pytest.raises(LegacyVaultError):
++        vault.save({"content": "Violet tooling", "scope": "personal", **bad})
++    assert vault.list() == []
++
++
++def test_agent_cannot_change_constructor_identity_or_create_procedure(canonical):
++    make, _, _ = canonical
++    agent = make(actor=Actor.AGENT, scopes=("workspace", "agent"))
++    with pytest.raises(LegacyVaultError, match="identity"):
++        agent.search("violet", workspace="/other/project")
++    with pytest.raises(LegacyVaultError, match="identity"):
++        agent.list(agent_id="someone-else")
++    with pytest.raises(LegacyVaultError, match="procedure"):
++        agent.save({"content": "Violet build steps", "scope": "workspace", "kind": "procedure", "status": "candidate"})
++    assert agent.list() == []
++
++
++def test_source_bindings_are_engine_sources_and_preserved_on_edit(canonical):
++    make, _, _ = canonical
++    vault = make()
++    record = vault.save({"content": "Violet notes.", "scope": "workspace", "source_session_id": "session-one",
++                         "source_run_id": "run-one"})
++    assert record["source_session_id"] == "session-one"
++    assert record["source_run_id"] == "run-one"
++    edited = vault.save({"title": "A new title"}, record["id"])
++    assert edited["source_session_id"] == "session-one"
++    access, _ = vault._access()
++    stored = vault.engine.get(access, record["id"])
++    assert any(s.kind.value == "session" and s.ref == "session-one" for s in stored.sources)
++    assert "locus" not in stored.extra
++
++
++def test_caller_identity_is_injected_without_application_dependency(canonical):
++    make, _, _ = canonical
++    vault = make(principal="workflow-user", host_name="workflow-runner")
++    access, _ = vault._access()
++    assert (access.principal, access.issuer, access.purpose) == (
++        "workflow-user", "workflow-runner", "workflow-runner-memory-api",
++    )
++    proposal = vault.save({"content": "Use violet for workflow reports.", "scope": "personal",
++                           "status": "candidate"})
++    stored = vault.engine.get(access, proposal["id"])
++    assert stored.extra["proposer"] == "workflow-runner-user"
++    assert stored.sources[0].ref.startswith("workflow-runner-proposal-")
++    assert stored.sources[0].locator["host"] == "workflow-runner"
+diff --git a/tests/test_host_memory_policy.py b/tests/test_host_memory_policy.py
+new file mode 100644
+index 0000000..fae8e72
+--- /dev/null
++++ b/tests/test_host_memory_policy.py
+@@ -0,0 +1,102 @@
++from __future__ import annotations
++
++import dataclasses
++import json
++
++import pytest
++
++from locus_memory.compat.legacy_vault import LegacyMemoryVault
++from locus_memory.context.continuity import snapshot_payload
++from locus_memory.learning.selected_chat import review_selected_chat
++from locus_memory.policies import MemoryPolicy
++
++
++def test_policy_parsing_preserves_empty_grants_and_bounds_untrusted_settings():
++    policy = MemoryPolicy.parse({
++        "scopes": ["workspace", "PERSONAL", "invalid", "workspace"],
++        "max_automatic_memories": 999, "max_automatic_tokens": -1,
++        "max_automatic_context_snapshots": float("inf"),
++        "max_automatic_context_tokens": "bad",
++    })
++    assert policy.scopes == ("workspace", "personal")
++    assert policy.max_automatic_memories == 20
++    assert policy.max_automatic_tokens == 0
++    assert policy.max_automatic_context_snapshots == 2
++    assert policy.max_automatic_context_tokens == 1_200
++    assert not policy.automatic_recall_enabled
++    assert policy.bound_legacy_context("hidden") == ""
++    assert MemoryPolicy.parse({"scopes": []}).recall_scopes() == ()
++    assert MemoryPolicy.parse(None) == MemoryPolicy()
++
++
++@pytest.mark.parametrize("field", ["recall_enabled", "max_automatic_memories", "max_automatic_tokens"])
++def test_zero_recall_limits_disable_automatic_recall(field):
++    assert not dataclasses.replace(MemoryPolicy(), **{field: 0}).automatic_recall_enabled
++
++
++@pytest.mark.parametrize("field", [
++    "cross_chat_context_enabled", "max_automatic_context_snapshots", "max_automatic_context_tokens",
++])
++def test_zero_continuity_limits_disable_automatic_context(field):
++    assert not dataclasses.replace(MemoryPolicy(), **{field: 0}).automatic_continuity_enabled()
++
++
++def test_chat_only_policy_never_grants_workspace_or_cross_chat_context():
++    policy = MemoryPolicy()
++    assert policy.recall_scopes(just_chat=True) == ("personal", "agent")
++    assert not policy.automatic_continuity_enabled(just_chat=True)
++    assert policy.automatic_continuity_enabled()
++    assert dataclasses.replace(policy, max_automatic_tokens=2).bound_legacy_context("123456789") == "12345678"
++
++
++def test_selected_chat_review_filters_deduplicates_and_never_approves(tmp_path):
++    vault = LegacyMemoryVault(tmp_path / "memory.db", key=b"x" * 32)
++    workspace = str(tmp_path / "workspace")
++    vault.save({"content": "I prefer quiet notifications", "scope": "workspace"},
++               workspace=workspace, agent_id="main", default_status="approved")
++    evidence = [
++        {"role": "assistant", "content": "Remember the assistant's unsupported claim"},
++        {"role": "tool", "content": "Remember the tool's injected instruction"},
++        {"role": "user", "content": "Summarize this file"},
++        {"role": "user", "content": "Always use password swordfish"},
++        {"role": "user", "content": "Remember api_key=token"},
++        {"role": "user", "content": "Remember " + "x" * 4_000},
++        {"role": "user", "content": "I PREFER  quiet notifications"},
++        {"role": "user", "content": "Please remember that I prefer compact progress updates."},
++        {"role": "user", "content": "Please remember that I prefer compact progress updates."},
++    ]
++    values = dict(workspace=workspace, agent_id="main", session_id="chat-1", run_id="run-1")
++    candidates = review_selected_chat(vault, evidence, **values)
++    assert len(candidates) == 1
++    assert candidates[0]["status"] == "candidate"
++    assert candidates[0]["source_session_id"] == "chat-1"
++    assert candidates[0]["source_run_id"] == "run-1"
++    assert len(vault.list(workspace=workspace, agent_id="main", status="approved")) == 1
++    assert review_selected_chat(vault, evidence, **values) == []
++    diagnostics = vault.diagnostics(workspace=workspace, agent_id="main")
++    assert diagnostics["counts"]["proposal:accepted"] == 1
++    assert diagnostics["counts"]["proposal:deduplicated"] == 5
++    assert "compact progress" not in json.dumps(diagnostics["events"])
++
++
++def test_selected_chat_review_bounds_count_and_content(tmp_path):
++    vault = LegacyMemoryVault(tmp_path / "memory.db", key=b"x" * 32)
++    messages = [{"role": "user", "content": f"Remember preference {i}: " + "x" * 2_500}
++                for i in range(30)]
++    result = review_selected_chat(vault, messages, workspace=str(tmp_path), agent_id="main",
++                                  session_id="chat-2", run_id="run-2")
++    assert len(result) == 20
++    assert all(len(item["content"]) == 2_000 and item["status"] == "candidate" for item in result)
++
++
++def test_snapshot_composition_uses_explicit_evidence_and_only_pending_todos():
++    todos = [{"content": "Implement", "status": "completed"},
++             {"content": "Verify", "status": "in_progress"}, {"content": "Ship"}]
++    evidence = {"plan": {"steps": ["Implement", "Verify"]}, "todos": todos,
++                "checkpoint": {"id": "checkpoint"}, "changed_files": ["src/example.py"]}
++    result = snapshot_payload(goal="Finish", outcome="Implemented", mode="work", **evidence)
++    assert result["pending"] == "Verify; Ship"
++    assert result["checkpoint"] == evidence["checkpoint"]
++    assert result["changed_files"] == evidence["changed_files"]
++    assert snapshot_payload(todos=todos, pending=" Explicit handoff ")["pending"] == "Explicit handoff"
++    assert snapshot_payload()["pending"] == ""
+diff --git a/tests/test_migration_session.py b/tests/test_migration_session.py
+new file mode 100644
+index 0000000..d0e1e00
+--- /dev/null
++++ b/tests/test_migration_session.py
+@@ -0,0 +1,70 @@
++"""Offline lifecycle works without importing or discovering any host app."""
++from contextlib import contextmanager
++
++import pytest
++
++from locus_memory.compat.legacy_vault import LegacyMemoryVault
++from locus_memory.crypto import StaticKeyProvider
++from locus_memory.errors import MigrationError
++from locus_memory.migrations.legacy import LegacyMapping
++from locus_memory.migrations.session import LegacyMigrationSession
++from locus_memory.models import PartitionRef
++
++
++def test_session_holds_host_lease_through_cutover_and_rollback(tmp_path):
++    database = tmp_path / "legacy.sqlite3"
++    key = b"k" * 32
++    vault = LegacyMemoryVault(database, key=key)
++    saved = vault.save({"scope": "personal", "content": "Prefer concise replies"})
++    active = []
++
++    @contextmanager
++    def lease():
++        active.append(True)
++        try:
++            yield
++        finally:
++            active.pop()
++
++    def quiescent():
++        assert active == [True]
++
++    session = LegacyMigrationSession(
++        tmp_path / "engine", database, StaticKeyProvider({"test": key}),
++        partition=PartitionRef("test", "default"), legacy_key=lambda: key,
++        mapping=LegacyMapping, lease=lease, assert_quiescent=quiescent,
++    )
++    with session as migration:
++        assert migration.inventory()["rows"] == 1
++        assert migration.snapshot()["state"] == "shadow_prepared"
++        assert migration.validate()["validated"]
++        assert migration.cutover()["cutover"]
++        assert migration.engine.get(migration.access, saved["id"]).content == saved["content"]
++        assert migration.rollback()["state"] == "legacy_authoritative"
++    assert not active
++
++
++def test_session_quiescence_failure_releases_lease_without_destination(tmp_path):
++    database = tmp_path / "legacy.sqlite3"
++    LegacyMemoryVault(database, key=b"k" * 32)
++    active = []
++
++    @contextmanager
++    def lease():
++        active.append(True)
++        try:
++            yield
++        finally:
++            active.pop()
++
++    def quiescent():
++        raise MigrationError("host is busy")
++
++    with pytest.raises(MigrationError, match="host is busy"), LegacyMigrationSession(
++        tmp_path / "engine", database, StaticKeyProvider({"test": b"k" * 32}),
++        partition=PartitionRef("test", "default"), legacy_key=lambda: b"k" * 32,
++        mapping=LegacyMapping, lease=lease, assert_quiescent=quiescent,
++    ):
++        pytest.fail("must not acquire a migration session")
++    assert not active
++    assert not (tmp_path / "engine").exists()
+diff --git a/tests/test_ownership_lookup.py b/tests/test_ownership_lookup.py
+new file mode 100644
+index 0000000..6548112
+--- /dev/null
++++ b/tests/test_ownership_lookup.py
+@@ -0,0 +1,69 @@
++"""Read-only selection and process exclusion do not require a host application."""
++from __future__ import annotations
++
++import sqlite3
++
++import pytest
++
++from locus_memory.compat.legacy_vault import LegacyVaultError
++from locus_memory.errors import OwnershipFenced
++from locus_memory.migrations.ownership import assert_legacy_writer, ownership_state, profile_lease
++from locus_memory.migrations.state import OwnershipControl
++from locus_memory.models import PartitionRef
++
++PARTITION = PartitionRef("test-host", "profile-one")
++
++
++def test_unmigrated_lookup_creates_no_profile_files(tmp_path):
++    root = tmp_path / "uncreated"
++    assert ownership_state(root, PARTITION) == "legacy_authoritative"
++    assert_legacy_writer(root, PARTITION)
++    assert not root.exists()
++
++
++def test_lookup_uses_explicit_partition_and_fences_legacy(tmp_path):
++    control = OwnershipControl(tmp_path)
++    for generation, state in enumerate(("shadow_prepared", "validated", "cutover_in_progress",
++                                        "package_authoritative")):
++        control.transition(PARTITION.partition_id, "memories", state,
++                           expected_generation=generation, reason="test")
++    control.close()
++    assert ownership_state(tmp_path, PARTITION) == "package_authoritative"
++    assert ownership_state(tmp_path, PartitionRef("test-host", "other")) == "legacy_authoritative"
++    with pytest.raises(OwnershipFenced, match="fenced"):
++        assert_legacy_writer(tmp_path, PARTITION)
++
++
++def test_missing_or_corrupt_control_refuses_stale_fallback(tmp_path):
++    partition = tmp_path / PARTITION.partition_id
++    partition.mkdir()
++    (partition / "memory.sqlite3").touch()
++    with pytest.raises(LegacyVaultError, match="missing"):
++        ownership_state(tmp_path, PARTITION)
++    (tmp_path / "control.sqlite3").write_bytes(b"corrupt database")
++    with pytest.raises(LegacyVaultError, match="unavailable"):
++        ownership_state(tmp_path, PARTITION)
++
++
++def test_unknown_state_refuses_stale_fallback(tmp_path):
++    control = OwnershipControl(tmp_path)
++    control.close()
++    with sqlite3.connect(tmp_path / "control.sqlite3") as connection:
++        connection.execute("INSERT INTO ownership VALUES(?, 'memories', 'invalid', 1, 0, '{}')",
++                           (PARTITION.partition_id,))
++    with pytest.raises(LegacyVaultError, match="unavailable"):
++        ownership_state(tmp_path, PARTITION)
++
++
++def test_shared_leases_exclude_migration_and_release_after_error(tmp_path):
++    lock = tmp_path / "profile" / "writers.lock"
++    with profile_lease(lock), profile_lease(lock):
++        with pytest.raises(LegacyVaultError, match="in use"), profile_lease(lock, exclusive=True):
++            pytest.fail("exclusive migration lease must not be acquired")
++    with profile_lease(lock, exclusive=True):
++        with pytest.raises(LegacyVaultError, match="in use"), profile_lease(lock):
++            pytest.fail("backend lease must not be acquired during migration")
++    with pytest.raises(RuntimeError), profile_lease(lock, exclusive=True):
++        raise RuntimeError("operator stopped migration")
++    with profile_lease(lock, exclusive=True):
++        assert lock.exists()
+diff --git a/tests/test_runtime.py b/tests/test_runtime.py
+new file mode 100644
+index 0000000..b5c62e4
+--- /dev/null
++++ b/tests/test_runtime.py
+@@ -0,0 +1,204 @@
++"""Reusable recall lifecycle without a Locus installation, core, environment or keychain."""
++from __future__ import annotations
++
++import logging
++
++import pytest
++
++from conftest import access_for, scan_for_plaintext
++from locus_memory.compat.legacy_vault import LegacyMemoryVault
++from locus_memory.context import CONTEXT_WRAPPER_OPEN
++from locus_memory.errors import MemoryEngineError
++from locus_memory.models import (
++    Actor,
++    Correction,
++    ForgetTarget,
++    MemoryKind,
++    Operation,
++    RememberRequest,
++    Scope,
++)
++from locus_memory.runtime import LEGACY_RESULTS_HEADER, LegacyRecall, RecallRuntime
++
++
++@pytest.fixture
++def runtimes(tmp_path, keys, clock, user_access):
++    opened = []
++
++    def create(**kwargs):
++        options = {
++            "root": tmp_path / f"runtime-{len(opened)}", "partition": user_access.partition,
++            "key_provider": keys, "mode": "enabled", "clock": clock,
++            "maintenance_access": access_for(actor=Actor.HOST, operations={Operation.MAINTAIN}),
++        }
++        options.update(kwargs)
++        runtime = RecallRuntime(**options)
++        opened.append(runtime)
++        return runtime
++
++    yield create
++    for runtime in opened:
++        runtime.close()
++
++
++def remember(runtime, access, text="Prefer concise replies", scope=None):
++    return runtime.engine.remember(access, RememberRequest(
++        content=text, kind=MemoryKind.PREFERENCE, scope=scope or Scope(),
++    )).record
++
++
++def recall(runtime, access, slot, *, include_personal=True):
++    return runtime.recall(slot, legacy=lambda: LegacyRecall("legacy text"), build_packet=lambda: runtime.packet(
++        access, "preference", max_tokens=2000, max_items=8, include_personal=include_personal,
++    ))
++
++
++def test_disabled_runtime_does_not_open_roots_or_request_keys(runtimes):
++    runtime = runtimes(mode="disabled")
++    slot = object()
++    assert runtime.recall(slot, legacy=lambda: LegacyRecall("legacy only"),
++                          build_packet=lambda: pytest.fail("disabled recall compiled a packet")) == "legacy only"
++    runtime.session_boundary(slot)
++    runtime.scope_change(slot, "changed")
++    assert not runtime.root.exists()
++    with pytest.raises(MemoryEngineError, match="disabled"):
++        _ = runtime.engine
++
++
++def test_package_ownership_ignores_stale_disabled_flag(runtimes, user_access):
++    runtime = runtimes(mode="disabled", initial_state="package_authoritative")
++    assert runtime.mode == "enabled"
++    remember(runtime, user_access)
++    assert "Prefer concise replies" in recall(runtime, user_access, object())
++    assert not (runtime.root / "control.sqlite3").exists()
++
++
++def test_opaque_slots_revalidate_corrections_and_forgetting_independently(runtimes, user_access):
++    runtime = runtimes()
++    record = remember(runtime, user_access)
++    first, second = object(), object()  # no host-specific attributes exist
++    one = recall(runtime, user_access, first)
++    two = recall(runtime, user_access, second)
++    assert one == two and one.count(CONTEXT_WRAPPER_OPEN) == 1
++    runtime.engine.correct(user_access, record.id, Correction(content="Prefer detailed replies"), expected_revision=record.revision)
++    fresh = runtime.revalidate(first, one)
++    assert "Prefer detailed replies" in fresh and "Prefer concise replies" not in fresh
++    assert runtime.revalidate(object(), one) is None
++    assert runtime.revalidate(first, fresh) is None
++    runtime.release_context(second)
++    assert runtime.revalidate(second, two) is None
++    runtime.engine.forget(user_access, ForgetTarget("memory", record.id))
++    assert runtime.revalidate(first, fresh) == ""
++
++
++def test_personal_scope_can_be_omitted_without_losing_scoped_preferences(runtimes, user_access):
++    runtime = runtimes()
++    remember(runtime, user_access, "Personal preference should not be injected")
++    remember(runtime, user_access, "Project preference for tabs", Scope.of(project="proj-a"))
++    result = recall(runtime, user_access, object(), include_personal=False)
++    assert "Personal preference" not in result
++    assert "Project preference for tabs" in result
++
++
++def test_shadow_returns_legacy_text_and_content_free_metrics(runtimes, user_access, caplog):
++    runtime = runtimes(mode="shadow")
++    secret = "canary-never-in-runtime-log"
++    record = remember(runtime, user_access, secret)
++    caplog.set_level(logging.INFO, logger="locus_memory.runtime")
++    result = runtime.recall(object(), legacy=lambda: LegacyRecall("unchanged legacy prompt", (record.id,)),
++                            build_packet=lambda: runtime.packet(user_access, "", max_tokens=2000, max_items=8))
++    assert result == "unchanged legacy prompt"
++    assert runtime.last_shadow["overlap"] == 1
++    assert "memory engine shadow:" in caplog.text and secret not in caplog.text
++    assert scan_for_plaintext(runtime.root, secret) == []
++    assert runtime._pending == {}
++
++    def fail():
++        raise MemoryEngineError("simulated error")
++
++    assert runtime.recall(object(), legacy=lambda: LegacyRecall("still legacy"), build_packet=fail) == "still legacy"
++    assert runtime.last_shadow is None  # no success from a previous comparison survives
++
++
++def test_archive_excludes_reasoning_and_memory_injection(runtimes, user_access):
++    runtime = runtimes(archive=True)
++    ingestion = access_for(actor=Actor.HOST, projects=("proj-a",), operations={Operation.INGEST})
++    samples = [
++        "Canary archive this committed message",
++        "<think>Canary secret hidden reasoning</think>",
++        f"{LEGACY_RESULTS_HEADER}\nCanary recalled facts",
++        f"{CONTEXT_WRAPPER_OPEN}\nCanary engine injection\n</memory-context>",
++    ]
++    for index, text in enumerate(samples):
++        runtime.archive_text(ingestion, session_ref="session-a", role="user", text=text, event_id=f"event-{index}")
++    texts = [hit.message.text for hit in runtime.engine.search_history(user_access, "Canary").hits]
++    assert texts == [samples[0]]
++    assert scan_for_plaintext(runtime.root, "Canary") == []
++
++
++def test_archive_requires_opt_in_and_correct_partition(runtimes, user_access):
++    runtime = runtimes()
++    runtime.archive_text(user_access, session_ref="s1", role="user", text="do not open engine")
++    assert runtime._engine is None
++    enabled = runtimes(archive=True)
++    with pytest.raises(ValueError, match="partition"):
++        enabled.archive_text(access_for(profile="other"), session_ref="s1", role="user", text="wrong profile")
++    assert enabled._engine is None
++
++
++def test_maintenance_is_host_scheduled_and_bounded(runtimes, user_access, clock):
++    scheduled = []
++    runtime = runtimes(schedule=scheduled.append, maintenance_interval_s=60)
++    slot = object()
++    runtime.session_boundary(slot)
++    assert scheduled == [] and runtime._engine is None
++    remember(runtime, user_access)
++    recall(runtime, user_access, slot)
++    runtime.session_boundary(slot)
++    assert len(scheduled) == 1 and runtime._pending == {}
++    runtime.session_boundary(slot)
++    assert len(scheduled) == 1
++    scheduled.pop()()
++    runtime.session_boundary(slot)
++    assert scheduled == []
++    clock.advance(61)
++    runtime.session_boundary(slot)
++    assert len(scheduled) == 1
++
++
++def test_legacy_sync_revalidates_deletion_without_host_imports(runtimes, tmp_path, user_access):
++    source = tmp_path / "legacy.sqlite3"
++    key = b"L" * 32
++    vault = LegacyMemoryVault(source, key=key)
++    row = vault.save({"scope": "personal", "kind": "preference", "content": "Prefer compact answers"})
++    runtime = runtimes(
++        initial_state="legacy_authoritative", legacy_database=source, legacy_key=lambda: key,
++        legacy_access=access_for(actor=Actor.HOST, operations={Operation.ADMIN}),
++    )
++    slot = object()
++    text = recall(runtime, user_access, slot)
++    assert "Prefer compact answers" in text
++    vault.delete(row["id"])
++    assert runtime.revalidate(slot, text) == ""
++
++
++def test_memory_layer_violation_drops_packet_without_failing_turn(runtimes, user_access):
++    def reject(_text):
++        raise AssertionError("double layer")
++
++    runtime = runtimes(layer_validator=reject)
++    remember(runtime, user_access)
++    assert recall(runtime, user_access, object()) == ""
++    assert runtime.engine.metrics.snapshot()["counters"]["adapter.layer_violation"]["value"] == 1
++
++
++def test_archive_with_multiple_project_grants_requires_explicit_scope(runtimes):
++    runtime = runtimes(archive=True)
++    access = access_for(actor=Actor.HOST, projects=("proj-a", "proj-b"), operations={Operation.INGEST})
++    with pytest.raises(ValueError, match="scope is required"):
++        runtime.archive_text(access, session_ref="s1", role="user", text="project-specific message")
++    assert runtime._engine is None
++    runtime.archive_text(access, session_ref="s1", role="user", text="project-specific message",
++                         scope=Scope.of(project="proj-b"))
++    assert runtime.engine.search_history(access_for(projects=("proj-a",)), "project-specific").hits == ()
++    assert len(runtime.engine.search_history(access_for(projects=("proj-b",)), "project-specific").hits) == 1
+diff --git a/tests/test_transcript_search.py b/tests/test_transcript_search.py
+new file mode 100644
+index 0000000..76fdfc4
+--- /dev/null
++++ b/tests/test_transcript_search.py
+@@ -0,0 +1,123 @@
++"""Package search accepts only host-supplied transcript capabilities."""
++import json
++import os
++import threading
++
++from locus_memory.history.transcript_search import (
++    TranscriptIndex,
++    TranscriptLimits,
++    TranscriptSource,
++)
++
++
++def line(role, content):
++    return json.dumps({"type": "message", "message": {"role": role, "content": content}}) + "\n"
++
++
++def test_search_tail_sync_positions_and_host_removal(tmp_path):
++    path = tmp_path / "session.jsonl"
++    path.write_text(line("tool", "private tool payload") + line("user", "PREFIX: nebula preference"))
++    paths = [path]
++    index = TranscriptIndex(
++        tmp_path / "search.sqlite3",
++        TranscriptSource(lambda: paths, lambda: {"session": {"title": "Host title"}},
++                         lambda value: value.removeprefix("PREFIX: ")),
++        TranscriptLimits(1_000_000, 100_000, 100),
++    )
++    first = index.search("nebula")["results"][0]
++    assert first["message_index"] == 1
++    assert first["title"] == "Host title"
++    assert "PREFIX" not in first["snippet"]
++    assert not index.search("private")["results"]
++    with path.open("a") as stream:
++        stream.write(line("assistant", "comet checklist"))
++    assert index.search("comet")["results"][0]["message_index"] == 2
++    paths.clear()
++    assert not index.search("nebula")["results"]
++
++
++def test_torn_transcript_tail_is_deferred_and_host_limits_apply(tmp_path):
++    path = tmp_path / "session.jsonl"
++    path.write_text(line("user", "first meteor") + line("assistant", "second comet")[:-1])
++    index = TranscriptIndex(
++        tmp_path / "search.sqlite3",
++        TranscriptSource(lambda: [path], dict, lambda text: text),
++        TranscriptLimits(1_000_000, 100_000, 2),
++    )
++    assert index.search("meteor")["results"]
++    assert not index.search("comet")["results"]
++    with path.open("a") as stream:
++        stream.write("\n" + line("user", "third galaxy"))
++    assert index.search("comet")["results"]
++    assert not index.search("galaxy")["results"]
++
++
++def test_background_build_cannot_reintroduce_revoked_source(tmp_path):
++    path = tmp_path / "session.jsonl"
++    path.write_text(line("user", "violet private message"))
++    paths = [path]
++    release = threading.Event()
++
++    def metadata():
++        release.set()
++        index._build_thread.join(timeout=5)
++        assert not index._build_thread.is_alive()
++        return {}
++
++    index = TranscriptIndex(
++        tmp_path / "search.sqlite3",
++        TranscriptSource(lambda: list(paths), metadata, str),
++        TranscriptLimits(1_000_000, 100_000, 100), background_build_bytes=0,
++    )
++    original = index._index_many
++
++    def delayed(stale):
++        if release.wait(timeout=5):
++            original(stale)
++
++    index._index_many = delayed
++    try:
++        assert index.sync()["pending"] == 1
++        paths.clear()
++        assert not index.search("violet")["results"]
++        with index._connect() as connection:
++            assert connection.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0] == 0
++    finally:
++        release.set()
++        if index._build_thread:
++            index._build_thread.join(timeout=5)
++
++
++def test_grants_revoked_during_metadata_lookup_do_not_return_cached_hits(tmp_path):
++    path = tmp_path / "session.jsonl"
++    path.write_text(line("user", "violet private message"))
++    paths = [path]
++
++    def metadata():
++        paths.clear()
++        return {}
++
++    index = TranscriptIndex(
++        tmp_path / "search.sqlite3",
++        TranscriptSource(lambda: list(paths), metadata, str),
++        TranscriptLimits(1_000_000, 100_000, 100),
++    )
++    assert not index.search("violet")["results"]
++
++
++def test_same_size_transcript_rewrite_replaces_cached_text(tmp_path):
++    path = tmp_path / "session.jsonl"
++    before, after = line("user", "violet question"), line("user", "purple question")
++    assert len(before) == len(after)
++    path.write_text(before)
++    index = TranscriptIndex(
++        tmp_path / "search.sqlite3",
++        TranscriptSource(lambda: [path], dict, str),
++        TranscriptLimits(1_000_000, 100_000, 100),
++    )
++    assert index.search("violet")["results"]
++    stat = path.stat()
++    path.write_text(after)
++    os.utime(path, (stat.st_atime, stat.st_mtime + 2))
++    assert index.search("purple")["results"]
++    assert not index.search("violet")["results"]

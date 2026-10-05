@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from locus_memory.policies import MemoryPolicy
+
 #: "build" is the retired GSD mode, kept so stored agent configs still parse.
 VALID_MODES = {"ask", "work", "plan", "grill", "build"}
 VALID_TONES = {"balanced", "direct", "warm", "analytical"}
 VALID_VERBOSITY = {"concise", "balanced", "detailed"}
-VALID_MEMORY_SCOPES = {"personal", "workspace", "agent"}
 
 #: How a turn is presented once the work is done. Locked, and deliberately
 #: static: the ChatGPT-native path fingerprints the developer layer it goes
@@ -49,19 +50,6 @@ class ResponseStyle:
     verbosity: str = "balanced"
     use_markdown: bool = True
     cite_evidence: bool = True
-
-
-@dataclass(frozen=True)
-class MemoryPolicy:
-    recall_enabled: bool = True
-    proposals_enabled: bool = True
-    search_enabled: bool = True
-    scopes: tuple[str, ...] = ("personal", "workspace", "agent")
-    max_automatic_memories: int = 8
-    max_automatic_tokens: int = 1_200
-    cross_chat_context_enabled: bool = True
-    max_automatic_context_snapshots: int = 2
-    max_automatic_context_tokens: int = 1_200
 
 
 @dataclass(frozen=True)
@@ -126,15 +114,6 @@ class AgentConfiguration:
 
         capability_raw = raw.get("capability_policy")
         capability_raw = capability_raw if isinstance(capability_raw, dict) else {}
-        memory_raw = raw.get("memory_policy")
-        memory_raw = memory_raw if isinstance(memory_raw, dict) else {}
-        supplied_scopes = memory_raw.get("scopes")
-        if not isinstance(supplied_scopes, list):
-            supplied_scopes = ["personal", "workspace", "agent"]
-        scopes = tuple(dict.fromkeys(
-            str(item).lower() for item in supplied_scopes
-            if str(item).lower() in VALID_MEMORY_SCOPES
-        ))
         runtime_raw = raw.get("runtime_policy")
         runtime_raw = runtime_raw if isinstance(runtime_raw, dict) else {}
 
@@ -173,27 +152,7 @@ class AgentConfiguration:
                 key: bool(capability_raw.get(key, True))
                 for key in CapabilityPolicy.__dataclass_fields__
             }),
-            memory_policy=MemoryPolicy(
-                recall_enabled=bool(memory_raw.get("recall_enabled", True)),
-                proposals_enabled=bool(memory_raw.get("proposals_enabled", True)),
-                search_enabled=bool(memory_raw.get("search_enabled", True)),
-                scopes=scopes,
-                max_automatic_memories=_bounded_int(
-                    memory_raw.get("max_automatic_memories"), 8, 0, 20
-                ),
-                max_automatic_tokens=_bounded_int(
-                    memory_raw.get("max_automatic_tokens"), 1_200, 0, 4_000
-                ),
-                cross_chat_context_enabled=bool(
-                    memory_raw.get("cross_chat_context_enabled", True)
-                ),
-                max_automatic_context_snapshots=_bounded_int(
-                    memory_raw.get("max_automatic_context_snapshots"), 2, 0, 10
-                ),
-                max_automatic_context_tokens=_bounded_int(
-                    memory_raw.get("max_automatic_context_tokens"), 1_200, 0, 4_000
-                ),
-            ),
+            memory_policy=MemoryPolicy.parse(raw.get("memory_policy")),
             runtime_policy=RuntimePolicy(
                 max_tool_iterations=optional_int("max_tool_iterations", 1, 100),
                 timeout_seconds=optional_int("timeout_seconds", 30, 3_600),

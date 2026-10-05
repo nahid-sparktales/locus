@@ -1,5 +1,440 @@
 import SwiftUI
 
+struct MemoryInspectorButton: View {
+    let runID: String
+    @State private var showing = false
+    var body: some View {
+        Button { showing = true } label: { Label("Memory", systemImage: "brain") }
+            .buttonStyle(.borderless).help("Inspect memory submitted for this turn")
+            .accessibilityIdentifier("memory.inspect.\(runID)")
+            .sheet(isPresented: $showing) { MemorySubmissionInspector(runID: runID) }
+    }
+}
+
+struct MemoryLearningButton: View {
+    @State private var showing = false
+    var body: some View {
+        Button("Review learning for the current chat agent") { showing = true }
+            .sheet(isPresented: $showing) { MemoryLearningPanel() }
+    }
+}
+
+struct MemorySemanticSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var selectedModel = ""
+    @State private var host = "http://127.0.0.1:11434"
+    @State private var installed: [String] = []
+    @State private var message = ""
+    @State private var busy = false
+    private struct Settings: Decodable {
+        let model: String
+        let host: String
+        let models: [String]
+        let error: String?
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Optional local semantic memory search").font(.headline)
+            Text("Keyword search is the default. Select an already installed Ollama embedding model; Locus never downloads a model automatically. Unavailable semantic search falls back to keywords.")
+                .font(.caption).foregroundStyle(.secondary)
+            TextField("Local Ollama address", text: $host).textFieldStyle(.roundedBorder)
+            Picker("Embedding model", selection: $selectedModel) {
+                Text("Disabled · keyword search").tag("")
+                ForEach(installed, id: \.self) { Text($0).tag($0) }
+                if !selectedModel.isEmpty && !installed.contains(selectedModel) {
+                    Text(selectedModel + " (unavailable)").tag(selectedModel)
+                }
+            }
+            HStack {
+                Button("Refresh installed models") { Task { await load(useSaved: false) } }
+                Button("Save memory search settings") { Task { await save() } }
+                    .disabled(!selectedModel.isEmpty && !installed.contains(selectedModel))
+                if busy { ProgressView().controlSize(.small) }
+            }.disabled(busy || model.isBusy)
+            if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+        }.task { await load(useSaved: true) }
+    }
+    private func load(useSaved: Bool) async {
+        busy = true
+        defer { busy = false }
+        do {
+            let result = try await model.conversationBackend.get("/api/memory/semantic-settings",
+                query: useSaved ? [] : [URLQueryItem(name: "host", value: host)], as: Settings.self)
+            guard !Task.isCancelled else { return }
+            installed = result.models
+            if useSaved { selectedModel = result.model; host = result.host }
+            message = result.error ?? ""
+        } catch { message = error.localizedDescription }
+    }
+    private func save() async {
+        busy = true
+        defer { busy = false }
+        do {
+            let _: [String: JSONValue] = try await model.conversationBackend.post("/api/memory/semantic-settings",
+                body: ["model": selectedModel, "host": host], as: [String: JSONValue].self)
+            message = selectedModel.isEmpty ? "Memory uses keyword retrieval." : "Local semantic retrieval selected. Keyword fallback remains available."
+        } catch { message = error.localizedDescription }
+    }
+}
+
+private struct MemoryLearningPanel: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var episodes: [Episode] = []
+    @State private var procedures: [Procedure] = []
+    @State private var suiteReviews: [SuiteReview] = []
+    @State private var selectedEpisodes: Set<String> = []
+    @State private var name = ""
+    @State private var purpose = ""
+    @State private var applicability = ""
+    @State private var steps = ""
+    @State private var negativeCases = ""
+    @State private var visibility = "agent"
+    @State private var selectedProcedure = ""
+    @State private var suiteID = ""
+    @State private var negativeIDs: Set<String> = []
+    @State private var reviewed = false
+    @State private var busy = false
+    @State private var message = ""
+    @State private var transport: BackendService?
+
+    private struct Episode: Decodable, Identifiable {
+        let episode_id: String
+        let objective: String
+        let outcome: String
+        let outcome_basis: String
+        var id: String { episode_id }
+    }
+    private struct Draft: Decodable {
+        let name: String
+        let purpose: String
+        let applicability: String
+        let steps: [String]
+        let negative_cases: [String]
+    }
+    private struct Procedure: Decodable, Identifiable {
+        let procedure_id: String
+        let version: Int
+        let state: String
+        let draft: Draft
+        let independent_evidence: Int
+        let safety_findings: [String]
+        var id: String { procedure_id }
+    }
+    private struct Episodes: Decodable { let episodes: [Episode] }
+    private struct Procedures: Decodable { let procedures: [Procedure] }
+    private struct SuiteReview: Decodable { let suite: EvaluationSuite; let fingerprint: String }
+    private struct Suites: Decodable { let suites: [SuiteReview] }
+    private var suites: [EvaluationSuite] { suiteReviews.map(\.suite) }
+    private var procedure: Procedure? { procedures.first { $0.id == selectedProcedure } }
+    private var selectedSuite: EvaluationSuite? { suites.first { $0.id == suiteID } }
+    private var selectedSuiteReview: SuiteReview? { suiteReviews.first { $0.suite.id == suiteID } }
+    private var backend: BackendService { transport ?? model.conversationBackend }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { Text("Verified learning").font(.title2); Spacer(); Button("Refresh") { Task { await load() } }; Button("Done") { dismiss() } }
+            Text("Evidence for the current chat agent. An assistant's claim of success is never a passing check. Approved procedures are not installed or executed automatically.")
+                .font(.callout).foregroundStyle(.secondary)
+            if !message.isEmpty { Text(message).font(.callout).foregroundStyle(.secondary) }
+            if busy { ProgressView() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    episodeList
+                    DisclosureGroup("Nominate a reusable procedure") { nominationForm }
+                    Divider()
+                    procedureReview
+                }.padding(.vertical, 6)
+            }
+        }.padding(22).frame(minWidth: 650, minHeight: 620).task { await load() }
+    }
+    private var episodeList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Task episodes").font(.headline)
+            if episodes.isEmpty { Text("No retained episodes for this agent.").foregroundStyle(.secondary) }
+            ForEach(episodes) { episode in
+                Toggle(isOn: Binding(get: { selectedEpisodes.contains(episode.id) }, set: {
+                    if $0 { selectedEpisodes.insert(episode.id) } else { selectedEpisodes.remove(episode.id) }
+                })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(episode.objective).lineLimit(3)
+                        Text(episode.outcome.replacingOccurrences(of: "_", with: " ") + " · " + episode.outcome_basis)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.disabled(episode.outcome != "verified_success")
+            }
+        }
+    }
+    private var nominationForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Select at least two independent verified episodes above.").font(.caption)
+            TextField("Procedure name", text: $name)
+            TextField("Purpose", text: $purpose)
+            TextField("When this procedure applies", text: $applicability)
+            TextField("Steps, one per line", text: $steps, axis: .vertical).lineLimit(3...8)
+            TextField("Negative cases, one per line", text: $negativeCases, axis: .vertical).lineLimit(2...6)
+            Picker("Visibility", selection: $visibility) { Text("This agent").tag("agent"); Text("Workspace").tag("workspace") }
+            Button("Nominate for review") { Task { await nominate() } }
+                .disabled(busy || selectedEpisodes.count < 2 || [name, purpose, applicability, steps, negativeCases].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }))
+        }.textFieldStyle(.roundedBorder).padding(.top, 8)
+    }
+    private var procedureReview: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Procedure review").font(.headline)
+            Picker("Candidate", selection: $selectedProcedure) {
+                Text("Select a procedure").tag("")
+                ForEach(procedures) { Text($0.draft.name + " · " + $0.state).tag($0.id) }
+            }.onChange(of: selectedProcedure) { _, _ in reviewed = false; negativeIDs = [] }
+                .onChange(of: procedure?.version) { _, _ in reviewed = false }
+            if let procedure {
+                Text("Version \(procedure.version) · \(procedure.independent_evidence) independent episodes").font(.caption)
+                Text(procedure.draft.purpose)
+                Text("Applies when: " + procedure.draft.applicability)
+                ForEach(Array(procedure.draft.steps.enumerated()), id: \.offset) { index, step in Text("\(index + 1). \(step)") }
+                ForEach(procedure.draft.negative_cases, id: \.self) { Text("Must not apply: " + $0).font(.callout) }
+                ForEach(procedure.safety_findings, id: \.self) { Text($0).foregroundStyle(.orange) }
+                evaluationControls(procedure)
+                HStack {
+                    Button("Approve this evaluated version") { Task { await action("approve", procedure, body: ["approved": true]) } }
+                        .disabled(busy || procedure.state != "evaluated")
+                    Button("Reject candidate") { Task { await action("reject", procedure, body: ["reason": "Rejected during human review"]) } }
+                        .disabled(busy || procedure.state == "rejected")
+                }
+            }
+        }
+    }
+    private func evaluationControls(_ procedure: Procedure) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Existing evaluation suite", selection: $suiteID) {
+                Text("Select a suite").tag("")
+                ForEach(suites) { Text($0.name).tag($0.id) }
+            }.onChange(of: suiteID) { _, _ in negativeIDs = []; reviewed = false }
+                .onChange(of: selectedSuite) { _, _ in reviewed = false }
+            if let suite = selectedSuite {
+                Text(suite.description).font(.caption)
+                Text("Select the suite's negative cases:").font(.caption)
+                ForEach(suite.cases) { entry in
+                    Toggle(entry.name, isOn: Binding(get: { negativeIDs.contains(entry.id) }, set: {
+                        if $0 { negativeIDs.insert(entry.id) } else { negativeIDs.remove(entry.id) }
+                    }))
+                    DisclosureGroup("Review case and checks") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.prompt).font(.caption)
+                            Text("\(entry.target) · \(entry.mode) · \(entry.timeoutSeconds) seconds").font(.caption).foregroundStyle(.secondary)
+                            if let fixture = entry.baselineFixture {
+                                Text("Workspace snapshot: " + fixture.baselineTree).font(.caption.monospaced()).textSelection(.enabled)
+                            } else { Text("A fixed workspace snapshot is required.").font(.caption).foregroundStyle(.orange) }
+                            ForEach(entry.assertions) { check in
+                                Text(check.kind + (check.required ? " · required" : " · optional")).font(.caption.bold())
+                                if !check.path.isEmpty { Text(check.path).font(.caption.monospaced()) }
+                                if !check.command.isEmpty { Text(check.command).font(.caption.monospaced()).textSelection(.enabled) }
+                                if let value = check.value { Text(String(describing: value)).font(.caption.monospaced()) }
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                }
+                Toggle("I reviewed this procedure version and the selected suite before execution", isOn: $reviewed)
+            }
+            Button("Approve suite and evaluate in disposable worktrees") { Task { await evaluate(procedure) } }
+                .disabled(busy || !reviewed || selectedSuiteReview?.fingerprint.isEmpty != false || negativeIDs.isEmpty || procedure.state != "candidate")
+        }
+    }
+    private func lines(_ text: String) -> [String] { text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+    private func load() async {
+        busy = true
+        defer { busy = false }
+        do {
+            if transport == nil { transport = model.conversationBackend }
+            async let e = backend.get("/api/memory/episodes", as: Episodes.self)
+            async let p = backend.get("/api/memory/procedures", as: Procedures.self)
+            episodes = try await e.episodes; procedures = try await p.procedures
+            suiteReviews = try await backend.get("/api/memory/procedure-evaluation-suites", as: Suites.self).suites
+        } catch { message = error.localizedDescription }
+    }
+    private func nominate() async {
+        busy = true
+        do {
+            let _: [String: JSONValue] = try await backend.post("/api/memory/procedures/nominate", body: [
+                "name": name, "purpose": purpose, "applicability": applicability, "steps": lines(steps),
+                "negative_cases": lines(negativeCases), "evidence_episode_ids": Array(selectedEpisodes).sorted(),
+                "visibility": visibility], as: [String: JSONValue].self)
+            message = "Procedure nominated. Review and evaluate it before approval."
+            await load()
+        } catch { message = error.localizedDescription }
+        busy = false
+    }
+    private func action(_ verb: String, _ procedure: Procedure, body: [String: Any]) async {
+        busy = true
+        do {
+            var payload = body; payload["expected_version"] = procedure.version
+            let _: [String: JSONValue] = try await backend.post("/api/memory/procedures/\(procedure.id)/\(verb)", body: payload, as: [String: JSONValue].self)
+            message = verb == "approve" ? "Procedure approved; it has not been installed or executed." : "Procedure updated."
+            await load()
+        } catch { message = error.localizedDescription }
+        busy = false
+    }
+    private func evaluate(_ procedure: Procedure) async {
+        guard reviewed, let snapshot = selectedSuiteReview else {
+            message = "Refresh and review the selected suite before execution."
+            return
+        }
+        busy = true
+        do {
+            let _: [String: JSONValue] = try await backend.post("/api/memory/procedures/\(procedure.id)/evaluation-approval", body: [
+                "approved": true, "expected_version": procedure.version, "suite_id": snapshot.suite.id,
+                "expected_suite_fingerprint": snapshot.fingerprint,
+                "negative_case_ids": Array(negativeIDs).sorted()], as: [String: JSONValue].self)
+            let _: [String: JSONValue] = try await backend.post("/api/memory/procedures/\(procedure.id)/evaluate",
+                body: ["expected_version": procedure.version], as: [String: JSONValue].self)
+            message = "Evaluation queued. Refresh after it finishes to review the outcome."
+            reviewed = false
+        } catch { message = error.localizedDescription }
+        busy = false
+    }
+}
+
+private struct MemorySubmissionInspector: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let runID: String
+    @State private var submissions: [Submission] = []
+    @State private var helpers: [Helper] = []
+    @State private var detail: Explanation?
+    @State private var error = ""
+    @State private var loading = true
+
+    private struct Submission: Decodable, Identifiable {
+        let submission_id: String
+        let agent_id: String
+        let attempt_id: String
+        let turn_id: String
+        let state: String
+        let reason: String
+        let revalidated: Bool?
+        var id: String { submission_id }
+        var label: String { state == "submitted" ? "Submitted to model" : state.capitalized }
+    }
+    private struct Helper: Decodable, Identifiable {
+        let attempt_id: String
+        let agent_id: String
+        var id: String { attempt_id }
+    }
+    private struct Listing: Decodable { let submissions: [Submission]; let helpers: [Helper] }
+    private struct Item: Decodable, Identifiable {
+        let record_id: String
+        let scope: [String: String]
+        let reasons: [String]?
+        let reason: String?
+        let compiled_revision: Int?
+        let current_revision: Int?
+        let changed_since: Bool?
+        let current_title: String?
+        let current_content: String?
+        let tokens: Int?
+        var id: String { record_id }
+        var scopeLabel: String { scope.isEmpty ? "Personal" : scope.keys.sorted().map { "\($0): \(scope[$0] ?? "")" }.joined(separator: ", ") }
+    }
+    private struct Context: Decodable {
+        struct Changes: Decodable { let added: [String]; let removed: [String]; let revised: [String]; let unavailable_before: Int }
+        let items: [Item]
+        let omissions: [Item]
+        let token_count: Int?
+        let token_allowance: Int
+        let unavailable_items: Int
+        let partial_reasons: [String]
+        let revalidation_changes: Changes?
+    }
+    private struct Explanation: Decodable { let submission: Submission; let context: Context? }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { Text("Memory for this turn").font(.title2); Spacer(); Button("Done") { dismiss() } }
+            Text("Submitted to model records delivery, not proof of use. Current content is shown only while you still have access.")
+                .font(.callout).foregroundStyle(.secondary)
+            if loading { ProgressView() }
+            if !error.isEmpty { Text(error).foregroundStyle(.secondary) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if !loading && submissions.isEmpty { Text("No retained memory submissions for this run.") }
+                    ForEach(submissions) { submission in
+                        Button { Task { await inspect(submission) } } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(submission.agent_id) · \(submission.label)")
+                                Text("Turn \(submission.turn_id.prefix(8)) · Attempt \(submission.attempt_id.prefix(8))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.buttonStyle(.borderless)
+                    }
+                    if let detail {
+                        Divider()
+                        Text("\(detail.submission.agent_id) · \(detail.submission.label)").font(.headline)
+                        if detail.submission.revalidated == true {
+                            Text("The selection changed during final revalidation before the model call.").font(.caption)
+                        }
+                        if let context = detail.context {
+                            if let changes = context.revalidation_changes {
+                                Text("Revalidation: \(changes.added.count) added · \(changes.removed.count) removed · \(changes.revised.count) revised · \(changes.unavailable_before) previous records unavailable")
+                                    .font(.caption)
+                            }
+                            Text("\(context.token_count.map(String.init) ?? "Unavailable") / \(context.token_allowance) tokens")
+                            Text("Selected records").font(.headline)
+                            ForEach(context.items) { item in itemView(item) }
+                            if !context.omissions.isEmpty {
+                                Text("Excluded records").font(.headline)
+                                ForEach(context.omissions) { item in itemView(item) }
+                            }
+                            if context.unavailable_items > 0 { Text("\(context.unavailable_items) records are deleted or no longer accessible.") }
+                            ForEach(context.partial_reasons, id: \.self) { Text($0).font(.caption) }
+                        } else { Text(detail.submission.reason.replacingOccurrences(of: "_", with: " ")) }
+                    }
+                    if !helpers.isEmpty {
+                        Divider()
+                        Text("Helper discoveries").font(.headline)
+                        Text("Suggestions enter the Memory Inbox and require human approval before recall.").font(.caption)
+                        ForEach(helpers) { helper in
+                            Button("Suggest workspace memory · \(helper.agent_id)") { Task { await propose(helper) } }
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+            }
+        }.padding(22).frame(minWidth: 600, minHeight: 520).task(id: runID) { await load() }
+    }
+
+    private func itemView(_ item: Item) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(item.current_title ?? item.record_id).font(.subheadline.bold())
+            Text(item.scopeLabel).font(.caption).foregroundStyle(.secondary)
+            Text((item.reasons ?? [item.reason ?? "not evaluated"]).joined(separator: ", ").replacingOccurrences(of: "_", with: " "))
+                .font(.caption)
+            if item.changed_since == true { Text("Changed since submission: revision \(item.compiled_revision ?? 0) → \(item.current_revision ?? 0)").font(.caption) }
+            if let content = item.current_content { Text(content).font(.callout) }
+        }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+    private func load() async {
+        do {
+            let result = try await model.orchestrationBackend(for: runID).get("/api/memory/submissions",
+                query: [URLQueryItem(name: "run_id", value: runID)], as: Listing.self)
+            guard !Task.isCancelled else { return }
+            submissions = result.submissions; helpers = result.helpers
+        } catch { self.error = error.localizedDescription }
+        loading = false
+    }
+    private func inspect(_ submission: Submission) async {
+        detail = nil; error = ""
+        do {
+            detail = try await model.orchestrationBackend(for: runID).get("/api/memory/submissions/\(submission.id)",
+                query: [URLQueryItem(name: "run_id", value: runID), URLQueryItem(name: "include_content", value: "true")], as: Explanation.self)
+        } catch { self.error = error.localizedDescription }
+    }
+    private func propose(_ helper: Helper) async {
+        do {
+            let _: SimpleActionResponse = try await model.orchestrationBackend(for: runID).post("/api/memory/helper-proposals",
+                body: ["run_id": runID, "attempt_id": helper.attempt_id], as: SimpleActionResponse.self)
+            error = "Suggestion added to the Memory Inbox for review."
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
 /// Exact event/task/run detail. Opening this inspector does not change the
 /// transcript; Open chat is a separate, explicit action.
 struct AgentInspectorDetailView: View {
@@ -247,6 +682,8 @@ struct AgentInspectorDetailView: View {
             heading(AgentInspectorCopy.runTitle(run),
                     subtitle: definition?.name ?? "Agent run", rawState: run.state)
             runTiming(run)
+            MemoryInspectorButton(runID: run.id)
+            MemoryLearningButton()
             if ["waiting_permission", "waiting_approval", "waiting_dispatch_approval", "waiting_computer"].contains(run.state) {
                 section("Needs your attention") {
                     Text("Review the request before this work can continue.")

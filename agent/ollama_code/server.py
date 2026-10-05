@@ -27,6 +27,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import uvicorn
@@ -37,6 +38,7 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import JSONResponse
+from locus_memory.context.continuity import snapshot_payload
 
 from . import __version__, proxy
 from .agent_config import AgentConfiguration
@@ -64,6 +66,7 @@ from .http_limits import RequestBodyLimitMiddleware
 from .knowledge import KnowledgeError, KnowledgeStore
 from .knowledge_runtime import knowledge_store as _domain_knowledge_store
 from .memory import MemoryError, format_memory_results
+from .memory_adapter import LegacyRecall, ensure_memory_adapter
 from .memory_runtime import memory_vault as _domain_memory_vault
 from .ollama import OllamaError
 from .orchestration import (
@@ -233,6 +236,11 @@ async def lifespan(app: FastAPI):
             if bridge:
                 await asyncio.to_thread(bridge.close)
             svc.close_codex()
+            from .session_runtime import close_transcript_index
+            close_transcript_index()
+            adapter = getattr(svc, "memory_adapter", None)
+            if adapter is not None:
+                adapter.close()
             svc.core.close()
 
 
@@ -314,12 +322,33 @@ def _automatic_memory_context(
     just_chat: bool,
     agent_id: str = "primary",
 ) -> str:
+    """Automatic recall for service, parallel-writer and helper cores."""
+    if getattr(core, "identity_mode", False):
+        return ""
+    def legacy() -> LegacyRecall:
+        return _legacy_memory_recall(core, query, configuration, just_chat=just_chat, agent_id=agent_id)
+
+    adapter = ensure_memory_adapter(core)
+    return adapter.recall(
+        core, query, configuration.memory_policy,
+        just_chat=just_chat, agent_id=agent_id, legacy=legacy,
+    )
+
+
+def _legacy_memory_recall(
+    core: AgentCore,
+    query: str,
+    configuration: AgentConfiguration,
+    *,
+    just_chat: bool,
+    agent_id: str,
+) -> LegacyRecall:
     policy = configuration.memory_policy
-    if not policy.recall_enabled or not policy.max_automatic_memories:
-        return ""
-    scopes = [scope for scope in policy.scopes if not (just_chat and scope == "workspace")]
+    if not policy.automatic_recall_enabled:
+        return LegacyRecall("")
+    scopes = policy.recall_scopes(just_chat=just_chat)
     if not scopes:
-        return ""
+        return LegacyRecall("")
     workspace = core.workspace_root or core.cwd
     try:
         knowledge = _knowledge_store(workspace).settings()
@@ -333,9 +362,46 @@ def _automatic_memory_context(
             ollama_host=str(knowledge.get("ollama_host") or "http://127.0.0.1:11434"),
         )
     except (MemoryError, KnowledgeError):
-        return ""
+        return LegacyRecall("")
     context = format_memory_results(results)
-    return context[:policy.max_automatic_tokens * 4]
+    return LegacyRecall(
+        policy.bound_legacy_context(context),
+        tuple(str(item.get("id") or "") for item in results),
+    )
+
+
+def _revalidate_memory_context(core: AgentCore) -> None:
+    """Right before the model call, drop recalled memory that changed since recall."""
+    adapter = getattr(core, "memory_adapter", None)
+    if adapter is not None:
+        adapter.revalidate_before_use(core)
+
+
+def _team_memory_context(core: AgentCore, query: str, profile: AgentProfile,
+                         *, submission: list | None = None) -> str:
+    """Recall at dispatch time, using a separate packet slot for each team call."""
+    if getattr(core, "identity_mode", False):
+        return ""
+    adapter = ensure_memory_adapter(core)
+    context = SimpleNamespace(
+        workspace_root=core.workspace_root, cwd=core.cwd, identity_mode=False,
+        memory_adapter=adapter, memory_context="", reset_system_message=lambda: None,
+        session=core.session, tool_ctx=core.tool_ctx,
+        memory_evaluation_disabled=getattr(core, "memory_evaluation_disabled", False),
+    )
+    try:
+        context.memory_context = _automatic_memory_context(
+            context, query, profile.behavior, just_chat=False, agent_id=profile.id,
+        )
+        _revalidate_memory_context(context)
+        if submission is not None:
+            submission.append(adapter.begin_submission(context))
+        return "\n\n".join(section for section in (
+            context.memory_context,
+            _automatic_continuity_context(core, query, profile.behavior, just_chat=False),
+        ) if section)[:24_000]
+    finally:
+        adapter.release_context(context)
 
 
 def _automatic_continuity_context(
@@ -345,13 +411,11 @@ def _automatic_continuity_context(
     *,
     just_chat: bool,
 ) -> str:
+    adapter = getattr(core, "memory_adapter", None)
+    if adapter is not None and not adapter.continuity_allowed(core):
+        return ""
     policy = configuration.memory_policy
-    if (
-        just_chat
-        or not policy.cross_chat_context_enabled
-        or not policy.max_automatic_context_snapshots
-        or not policy.max_automatic_context_tokens
-    ):
+    if not policy.automatic_continuity_enabled(just_chat=just_chat):
         return ""
     workspace = core.workspace_root or core.cwd
     try:
@@ -381,27 +445,21 @@ def _capture_continuity_snapshot(
     if not policy.cross_chat_context_enabled:
         return
     core = svc.core
+    adapter = getattr(core, "memory_adapter", None)
+    if adapter is not None and not adapter.continuity_allowed(core):
+        return
     active_todos = todos if todos is not None else core.tool_ctx.todos
-    pending = "; ".join(
-        str(item.get("content") or "")
-        for item in active_todos
-        if item.get("status") != "completed" and item.get("content")
-    )
     checkpoint = svc.run_store.latest_checkpoint(run_id)
     try:
         ContinuityStore().save_snapshot(
             core.workspace_root or core.cwd,
             core.session.session_id,
-            {
-                "goal": goal,
-                "outcome": _latest_assistant_output(core),
-                "mode": mode,
-                "plan": plan if plan is not None else core.tool_ctx.plan_document,
-                "todos": active_todos,
-                "checkpoint": checkpoint,
-                "changed_files": workspace_changed_files(core.workspace_root or core.cwd),
-                "pending": pending,
-            },
+            snapshot_payload(
+                goal=goal, outcome=_latest_assistant_output(core), mode=mode,
+                plan=plan if plan is not None else core.tool_ctx.plan_document,
+                todos=active_todos, checkpoint=checkpoint,
+                changed_files=workspace_changed_files(core.workspace_root or core.cwd),
+            ),
         )
     except (ContinuityError, MemoryError, OSError):
         # Continuity is helpful but never allowed to fail an otherwise complete turn.
@@ -493,6 +551,8 @@ def _run_user_turn(
     run_manifest = {
         **existing_manifest,
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
+        "memory_agent_id": agent_profile.id if agent_profile is not None else "primary",
+        "memory_policy": AgentConfiguration.parse(agent_config).memory_policy.__dict__,
         **({"identity_mode": True} if private_identity else {}),
     }
     approved_plan = approved_plan or existing_manifest.get("_approved_task_plan")
@@ -552,6 +612,8 @@ def _run_user_turn(
     svc.core.tool_registry.set_workflow_result_only(workflow_result_only)
     svc.core.tool_ctx.memory_session_id = svc.core.session.session_id
     svc.core.tool_ctx.memory_run_id = run_id
+    from .api.memory_inspector import propose_helper_result
+    svc.core.tool_ctx.memory_helper_proposal = lambda attempt_id: propose_helper_result(svc, run_id, attempt_id, agent=True)
     run = svc.run_store.run(run_id) or {}
     svc.emit({
         "type": "run_started", "run_id": run_id, "run_kind": "solo",
@@ -568,8 +630,10 @@ def _run_user_turn(
         and bool(svc.core.config.get("chatgpt_native_mode", True))
         and getattr(svc.core.codex_manager, "supports_parity", False)
     )
-    memory_context = "" if parity_turn or private_identity else _automatic_memory_context(
+    # A saved-agent turn recalls as that agent, not as "primary" (D40).
+    memory_context = "" if (parity_turn and not configuration.memory_policy.native_codex_enabled) or private_identity else _automatic_memory_context(
         svc.core, text, configuration, just_chat=just_chat,
+        **({"agent_id": agent_profile.id} if agent_profile is not None else {}),
     )
     continuity_context = "" if parity_turn or private_identity else _automatic_continuity_context(
         svc.core, text, configuration, just_chat=just_chat,
@@ -708,6 +772,7 @@ def _run_user_turn(
             profile_timer.daemon = True
             profile_timer.start()
         try:
+            _revalidate_memory_context(svc.core)
             svc.core.run_turn(
                 text,
                 svc.decide,
@@ -727,7 +792,8 @@ def _run_user_turn(
                 store = TaskStateStore(svc.run_store)
                 task_id = "work:" + svc.core.task_journal.task_id
                 store.ensure(task_id, request=saved_plan.get("summary", text), revision=approved_plan["revision"],
-                             workspace=svc.core.workspace_root, execution=svc.core.cwd, plan=saved_plan)
+                             workspace=svc.core.workspace_root, execution=svc.core.cwd, plan=saved_plan,
+                             agent_id=svc.core.agent_id)
                 checked = TaskVerifier(store, task_id, svc.core, run_id).verify(saved_plan.get("acceptance_checks", []), svc.decide)
                 svc.core.task_journal.approved_plan(approved_plan, svc.core.cwd, validate_sources=False)
             except TaskStateError as exc:
@@ -888,32 +954,12 @@ def _run_team_turn(
             svc.run_store.record_plan_approval(run_id, reference)
         from .reusable_check_runtime import bind_run_checks
         bind_run_checks(svc, run_id, text)
-        # Each team member gets independently scoped, policy-bounded recall.
-        # The generated context is injected only into this in-memory turn copy;
-        # it is neither accepted from the client nor persisted in the run manifest.
+        # Memory is refreshed after the scheduler admits each actual model call.
+        # Never accept a supplied or previously persisted context in the manifest.
         for raw_profile in manifest.get("profiles") or []:
             if not isinstance(raw_profile, dict):
                 continue
-            profile = parsed_profiles.get(str(raw_profile.get("id") or ""))
-            if profile is None:
-                continue
-            raw_profile["_memory_context"] = "\n\n".join(
-                section for section in (
-                    _automatic_memory_context(
-                        core,
-                        text,
-                        profile.behavior,
-                        just_chat=False,
-                        agent_id=profile.id,
-                    ),
-                    _automatic_continuity_context(
-                        core,
-                        text,
-                        profile.behavior,
-                        just_chat=False,
-                    ),
-                ) if section
-            )
+            raw_profile["_memory_context"] = ""
 
         stage = "preparing the dispatch plan"
         if attachments:
@@ -929,6 +975,15 @@ def _run_team_turn(
             run_store=svc.run_store,
             approve_dispatch=svc.request_dispatch_approval,
         )
+        orchestrator.memory_context_provider = lambda profile: _team_memory_context(core, text, profile)
+        def team_memory_submission(profile):
+            handles: list = []
+            memory = _team_memory_context(core, text, profile, submission=handles)
+            adapter = ensure_memory_adapter(core)
+            return memory, lambda state="submitted": adapter.finish_submission(handles[0] if handles else None, state=state)
+        orchestrator.memory_submission_provider = team_memory_submission
+        from .memory_learning import capture_team_terminal
+        orchestrator.memory_episode_recorder = lambda result, state: capture_team_terminal(svc, result, state)
         from .model_usage import context_for
         orchestrator.usage_context = context_for(core)
         orchestrator.goal_runtime = getattr(svc, "goal_runtime", None)
@@ -1640,6 +1695,8 @@ def _parallel_writer_core(
     from .model_usage import context_for
     core.usage_owner_task_id = context_for(svc.core)["task_id"]
     core.usage_store = svc.run_store
+    core.memory_evaluation_disabled = getattr(svc.core, "memory_evaluation_disabled", False)
+    core.memory_comparison_arm = getattr(svc.core, "memory_comparison_arm", None)
     core.mcp.context_provider = lambda: {
         "run_id": prepared.run_id,
         "job_id": job.id,
@@ -1920,7 +1977,7 @@ def _repair_team_reviews(svc, orchestrator, prepared, manifest, reviews):
             states = TaskStateStore(svc.run_store)
             task_id = "work:" + core.task_journal.task_id
             states.ensure(task_id, request=plan.get("summary", prepared.original_request), revision=reference["revision"],
-                          workspace=core.workspace_root, execution=core.cwd, plan=plan)
+                          workspace=core.workspace_root, execution=core.cwd, plan=plan, agent_id=core.agent_id)
             checked = TaskVerifier(states, task_id, core, prepared.run_id).verify(plan.get("acceptance_checks", []), svc.decide)
             if checked["verification_status"] == "needs_review":
                 raise TeamWriterBudgetPause("checks", "review_required", checked["verification_reason"])
@@ -2087,6 +2144,7 @@ def _run_team_writer(
                     role_contract=core.agent_role_contract,
                     agent_id=writer.id,
                 )
+            _revalidate_memory_context(core)
             core.run_turn(
                 prompt,
                 svc.decide,

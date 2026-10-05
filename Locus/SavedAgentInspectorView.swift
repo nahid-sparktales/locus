@@ -7,10 +7,25 @@ import UniformTypeIdentifiers
 enum AgentAvatarImage {
     static let maximumStoredBytes = 256 * 1024
     static let maximumSourceBytes = 20 * 1024 * 1024
+    static let maximumSourceDimension = 16_384
+    static let maximumDecodedPixels = 40_000_000
+    static let allowedImportTypes: [UTType] = [.png, .jpeg, .heic, .heif, .tiff, .gif, .bmp, .webP]
+
+    static func supportsDimensions(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0 && width <= maximumSourceDimension
+            && height <= maximumSourceDimension && width <= maximumDecodedPixels / height
+    }
 
     static func normalized(_ data: Data) throws -> Data {
         guard data.count <= maximumSourceBytes else { throw AvatarError.tooLarge }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let sourceType = CGImageSourceGetType(source) as String?,
+              allowedImportTypes.contains(where: { $0.identifier == sourceType }),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let sourceWidth = properties[kCGImagePropertyPixelWidth] as? Int,
+              let sourceHeight = properties[kCGImagePropertyPixelHeight] as? Int,
+              supportsDimensions(width: sourceWidth, height: sourceHeight) else { throw AvatarError.invalidDimensionsOrType }
+        guard
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
@@ -20,34 +35,35 @@ enum AgentAvatarImage {
               let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: 256, height: 256,
                   bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw AvatarError.invalidImage }
-        context.setFillColor(CGColor(gray: 0.12, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw AvatarError.invalidImage }
+        context.clear(CGRect(x: 0, y: 0, width: 256, height: 256))
         context.interpolationQuality = .high
         let scale = 256 / CGFloat(min(image.width, image.height))
         let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
         context.draw(image, in: CGRect(x: (256 - width) / 2, y: (256 - height) / 2, width: width, height: height))
         let output = NSMutableData()
         guard let thumbnail = context.makeImage(),
-              let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)
+              let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil)
         else { throw AvatarError.invalidImage }
-        CGImageDestinationAddImage(destination, thumbnail, [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary)
+        CGImageDestinationAddImage(destination, thumbnail, nil)
         guard CGImageDestinationFinalize(destination), output.length <= maximumStoredBytes else { throw AvatarError.invalidImage }
         return output as Data
     }
 
     enum AvatarError: LocalizedError {
-        case tooLarge, invalidImage
+        case tooLarge, invalidImage, invalidDimensionsOrType
         var errorDescription: String? {
             switch self {
             case .tooLarge: "Choose an image smaller than 20 MB."
             case .invalidImage: "This image couldn’t be opened. Try a JPEG, PNG, or HEIC picture."
+            case .invalidDimensionsOrType: "Choose a raster picture up to 16,384 pixels per side and 40 megapixels. SVG and HTML aren’t supported."
             }
         }
     }
 }
 
 struct AgentAvatarView: View {
+    @Environment(\.companionActivityPresentation) private var companionActivity
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
     @Environment(\.locusViewColors) private var viewColors
@@ -57,23 +73,44 @@ struct AgentAvatarView: View {
     let profileID: UUID
     let name: String
     var size: CGFloat = 40
+    var pose: CompanionCharacterPose = .idle
 
     var body: some View {
         let accent = viewColors.warning
         Group {
-            if let data = agentTeams.agentAvatarData[profileID], let image = NSImage(data: data) {
+            if let appearance = agentTeams.agentAppearances[profileID] {
+                if appearance.kind == .portrait {
+                    character(appearance).clipShape(RoundedRectangle(cornerRadius: size * 0.27))
+                } else {
+                    character(appearance)
+                }
+            } else if let data = agentTeams.agentAvatarData[profileID], let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.27))
             } else {
                 Text(String(name.prefix(1)).uppercased())
                     .font(.locus(size: size * 0.44, weight: .semibold))
                     .foregroundStyle(ocean ? accent : viewColors.accentAction)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background((ocean ? accent : viewColors.accentAction).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.27))
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.27))
         .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func character(_ appearance: CompanionAppearance) -> some View {
+        if let companionActivity {
+            CompanionActivityCharacterView(source: companionActivity, profileID: profileID,
+                appearance: appearance, size: size, animationsEnabled: agentTeams.companionAnimationsEnabled,
+                customImageData: agentTeams.agentAvatarData[profileID])
+        } else {
+            CompanionCharacterView(appearance: appearance, size: size, pose: pose,
+                animationsEnabled: agentTeams.companionAnimationsEnabled,
+                customImageData: agentTeams.agentAvatarData[profileID])
+        }
     }
 }
 
@@ -491,7 +528,9 @@ private struct SavedAgentOverviewContent: View {
         .foregroundStyle(ink)
         .accessibilityIdentifier("savedAgent.overview")
         .locusSheet(isPresented: $choosingPicture) {
-            AgentPicturePicker(profile: profile, currentData: agentTeams.agentAvatarData[profile.id])
+            AgentPicturePicker(profile: profile, currentData: agentTeams.agentAvatarData[profile.id],
+                currentAppearance: agentTeams.agentAppearances[profile.id],
+                animationsEnabled: agentTeams.companionAnimationsEnabled)
                 .id(profile.id)
         }
         .task(id: profile.id) {
@@ -536,7 +575,8 @@ private struct SavedAgentOverviewContent: View {
     // MARK: Identity
 
     private func header(_ snapshot: SavedAgentOverviewSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
+        let companionActivity = model.companionActivitySummary(profileID: profile.id)
+        return VStack(alignment: .leading, spacing: 22) {
             HStack(alignment: .center, spacing: 18) {
                 Button { choosingPicture = true } label: {
                     AgentAvatarView(profileID: profile.id, name: profile.name, size: 64)
@@ -563,6 +603,10 @@ private struct SavedAgentOverviewContent: View {
                     Text(headerSubtitle).font(.locus(size: 13)).foregroundStyle(secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("savedAgent.subtitle")
+                    if !companionActivity.activityText.isEmpty {
+                        Text(companionActivity.activityText).font(.locus(size: 11)).foregroundStyle(secondary)
+                            .accessibilityIdentifier("savedAgent.companionActivity")
+                    }
                 }
                 Spacer(minLength: 8)
                 Button { Task { await refresh(manual: true) } } label: {
@@ -572,6 +616,24 @@ private struct SavedAgentOverviewContent: View {
                 .buttonStyle(.locus(.icon)).disabled(manualRefreshing)
                 .help("Refresh this agent’s status").accessibilityLabel("Refresh agent status")
                 .accessibilityIdentifier("savedAgent.refresh")
+            }
+            if agentTeams.primaryCompanionID == profile.id && !companionActivity.availability.isAvailable {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(companionActivity.availability.modelConnected
+                         ? "Your companion is ready. \(companionActivity.availability.detail)"
+                         : "Your companion is ready. Connect a model to start chatting.")
+                        .font(.locus(size: 13)).fixedSize(horizontal: false, vertical: true)
+                    if companionActivity.availability.modelConnected {
+                        Button("Review connection") { recoveryPresented = true }
+                            .buttonStyle(.locus(.primary))
+                    } else {
+                        Button("Connect a model") { model.presentSavedAgentEditor(profile) }
+                            .buttonStyle(.locus(.primary))
+                            .accessibilityIdentifier("savedAgent.connectCompanionModel")
+                    }
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(viewColors.surfaceCard, in: RoundedRectangle(cornerRadius: 12))
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 20) {

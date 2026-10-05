@@ -24,6 +24,12 @@ expects exactly this layout (`.venv/bin/python` plus the `ollama_code` package).
 LocusX requires its bundled, edition-specific runtime; it reports a rebuild
 error if that runtime is missing instead of launching the standard source tree.
 
+The dependency declaration downloads the pinned Locus Memory release wheel
+automatically and verifies its SHA-256. Desktop and remote release builders use
+the same wheel through the hashed runtime lock, then bundle it before signing or
+packaging. Installing Locus needs no Python setup, separate memory repository, or
+first-launch dependency download.
+
 ## Locus and LocusX builds
 
 The source checkout defaults to **Locus without a wallet**. The app build

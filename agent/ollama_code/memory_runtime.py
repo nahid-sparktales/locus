@@ -1,29 +1,21 @@
 """Shared encrypted-memory ownership used by knowledge and continuity APIs."""
 
-import hashlib
-from pathlib import Path
-
 from .chat_service import ChatService
 from .knowledge import KnowledgeError, KnowledgeStore
 from .memory import MemoryError, MemoryVault
 
 
-def memory_vault(workspace: str = "") -> MemoryVault:
+def memory_vault(workspace: str = "", *, agent_id: str = "primary") -> MemoryVault:
     """Open the encrypted vault and migrate legacy plaintext workspace notes."""
-    vault = MemoryVault()
+    vault = MemoryVault(workspace=workspace, agent_id=agent_id)
     target = workspace.strip()
     if target:
         try:
             legacy = KnowledgeStore(target)
             for memory in legacy.list_memories():
-                identifier = "legacy-" + hashlib.sha256(
-                    f"{Path(target).resolve()}|{memory['id']}".encode()
-                ).hexdigest()[:40]
-                vault.save(
-                    {**memory, "scope": "workspace", "status": "approved"},
-                    identifier,
-                    workspace=target,
-                )
+                # Crash-safe: a retry never overwrites a record edited after the
+                # first migration, and the note's created_at is preserved.
+                vault.import_legacy_note(memory, workspace=target)
                 legacy.delete_memory(memory["id"])
         except (KnowledgeError, MemoryError, OSError):
             # A failed migration leaves the legacy record intact and visible

@@ -27,8 +27,18 @@ def transcript_index() -> TranscriptIndex:
             _TRANSCRIPT_INDEX is None
             or _TRANSCRIPT_INDEX.path != transcript_search_mod.DEFAULT_PATH
         ):
+            if _TRANSCRIPT_INDEX is not None:
+                _TRANSCRIPT_INDEX.close()
             _TRANSCRIPT_INDEX = TranscriptIndex()
         return _TRANSCRIPT_INDEX
 
 
 __all__ = ["session_has_active_run", "transcript_index"]
+
+
+def close_transcript_index() -> None:
+    global _TRANSCRIPT_INDEX
+    with _TRANSCRIPT_INDEX_LOCK:
+        if _TRANSCRIPT_INDEX is not None:
+            _TRANSCRIPT_INDEX.close()
+            _TRANSCRIPT_INDEX = None

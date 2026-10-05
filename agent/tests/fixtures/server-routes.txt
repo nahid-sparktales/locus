@@ -7,6 +7,8 @@ POST /api/capsules/{capsule_id}/validate
 GET /api/provider
 GET /api/images/provider
 POST /api/images/provider
+POST /api/images/portrait
+POST /api/images/portrait/cancel
 GET /api/attention
 POST /api/attention/clear-unavailable
 POST /api/attention/{run_id}/clear
@@ -289,3 +291,16 @@ GET /api/claude/usage
 POST /api/claude/login/start
 POST /api/claude/login/cancel
 POST /api/claude/logout
+GET /api/memory/submissions
+GET /api/memory/submissions/{submission_id}
+POST /api/memory/helper-proposals
+GET /api/memory/episodes
+GET /api/memory/procedures
+GET /api/memory/procedure-evaluation-suites
+POST /api/memory/procedures/nominate
+POST /api/memory/procedures/{procedure_id}/evaluation-approval
+POST /api/memory/procedures/{procedure_id}/evaluate
+POST /api/memory/procedures/{procedure_id}/approve
+POST /api/memory/procedures/{procedure_id}/reject
+GET /api/memory/semantic-settings
+POST /api/memory/semantic-settings

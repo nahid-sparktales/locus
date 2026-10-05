@@ -6,6 +6,7 @@ fastapi==0.141.1
 uvicorn==0.52.0
 websockets==17.0
 cryptography==50.0.0
+locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.2.1/locus_memory-0.2.1-py3-none-any.whl#sha256=66bf34c70ba9a6f213cd18cc3b2a14117fd97b26ebeda3102d3f9df7edb7e948
 mcp==2.0.0
 jsonschema==4.26.0
 # Keep the MCP HTTP transport on the patched TLS, redirect, and decompression release.

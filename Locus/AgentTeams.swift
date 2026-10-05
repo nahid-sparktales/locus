@@ -148,6 +148,7 @@ struct AgentMemoryPolicy: Codable, Hashable {
     var recallEnabled = true
     var proposalsEnabled = true
     var searchEnabled = true
+    var nativeCodexEnabled = false
     var scopes: [AgentMemoryScope] = [.personal, .workspace, .agent]
     var maxAutomaticMemories = 8
     var maxAutomaticTokens = 1_200
@@ -160,6 +161,7 @@ struct AgentMemoryPolicy: Codable, Hashable {
         case recallEnabled = "recall_enabled"
         case proposalsEnabled = "proposals_enabled"
         case searchEnabled = "search_enabled"
+        case nativeCodexEnabled = "native_codex_enabled"
         case maxAutomaticMemories = "max_automatic_memories"
         case maxAutomaticTokens = "max_automatic_tokens"
         case crossChatContextEnabled = "cross_chat_context_enabled"
@@ -174,6 +176,7 @@ struct AgentMemoryPolicy: Codable, Hashable {
         recallEnabled = try container.decodeIfPresent(Bool.self, forKey: .recallEnabled) ?? true
         proposalsEnabled = try container.decodeIfPresent(Bool.self, forKey: .proposalsEnabled) ?? true
         searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? true
+        nativeCodexEnabled = try container.decodeIfPresent(Bool.self, forKey: .nativeCodexEnabled) ?? false
         scopes = try container.decodeIfPresent([AgentMemoryScope].self, forKey: .scopes)
             ?? [.personal, .workspace, .agent]
         maxAutomaticMemories = try container.decodeIfPresent(
@@ -2189,6 +2192,15 @@ struct MemoryConflict: Identifiable, Codable, Hashable {
     let confidence: Double?
 }
 
+struct MemoryRestoreProtectionStatus: Codable, Hashable {
+    let available: Bool
+    let enrolled: Bool
+    let state: String
+    let reason: String?
+    let message: String?
+    let generation: Int?
+}
+
 struct MemoryVaultStatus: Codable, Hashable {
     let encrypted: Bool
     let cipher: String
@@ -2200,6 +2212,9 @@ struct MemoryVaultStatus: Codable, Hashable {
     let conflictCount: Int?
     let semanticEncrypted: Bool?
     let memoryVersion: Int?
+    let memoryAvailable: Bool?
+    let countsAvailable: Bool?
+    let restoreProtection: MemoryRestoreProtectionStatus?
 
     enum CodingKeys: String, CodingKey {
         case encrypted, cipher
@@ -2211,6 +2226,9 @@ struct MemoryVaultStatus: Codable, Hashable {
         case conflictCount = "conflict_count"
         case semanticEncrypted = "semantic_encrypted"
         case memoryVersion = "memory_version"
+        case memoryAvailable = "memory_available"
+        case countsAvailable = "counts_available"
+        case restoreProtection = "restore_protection"
     }
 }
 

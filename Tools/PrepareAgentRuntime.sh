@@ -75,14 +75,18 @@ if [[ ! -x "${workdir}/python/bin/python3" ]]; then
     exit 1
 fi
 
-# Install only the agent's locked third-party dependencies. The app bundles
-# the live first-party source tree separately.
+# Install the locked dependencies, including the hash-pinned Locus Memory
+# release wheel. Downloads happen while building; the signed app runs offline
+# with these bundled packages and never installs them at launch.
 /bin/mkdir -p "${workdir}/site-packages"
 "${workdir}/python/bin/python3" -m pip install --quiet \
     --require-hashes \
     --only-binary=:all: \
     --target "${workdir}/site-packages" \
     --requirement "${requirements_lock}"
+PYTHONPATH="${workdir}/site-packages" PYTHONDONTWRITEBYTECODE=1 \
+    "${workdir}/python/bin/python3" -s -c \
+    'from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; from locus_memory.models import ContextRequest; assert ContextRequest(token_allowance=1, max_items=1).max_items == 1'
 /bin/rm -rf \
     "${workdir}/site-packages/bin" \
     "${workdir}/site-packages/claude_agent_sdk/_bundled"

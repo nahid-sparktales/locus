@@ -5,11 +5,13 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import sqlite3
 import sys
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -159,6 +161,33 @@ def test_pins_cover_every_supported_target_without_floating_versions():
             assert component["url"].startswith("https://github.com/")
             assert "/latest/" not in component["url"]
             assert (pins["python_release"] if name == "python" else "rust-v" + pins["codex_version"]) in component["url"]
+
+
+def test_memory_release_is_acquired_automatically_with_the_same_hash_everywhere():
+    """A normal dev install and either runtime build must acquire the same wheel."""
+    agent = Path(__file__).resolve().parents[1]
+    project = (agent / "pyproject.toml").read_text()
+    development = re.search(r'^\s*"(locus-memory @ [^\"]+)",\s*$', project, re.MULTILINE)
+    assert development, "ordinary pip install must resolve memory without a manual wheel setup"
+    requirement = development.group(1)
+    assert requirement in (agent / "requirements-runtime.in").read_text().splitlines()
+    lock = (agent / "requirements-runtime.lock").read_text().replace("\\\n", " ")
+    locked = next(line for line in lock.splitlines() if line.startswith("locus-memory "))
+    assert locked.startswith(requirement + " ")
+
+    url = urlsplit(requirement.split(" @ ", 1)[1])
+    assert url.scheme == "https" and url.netloc == "github.com" and not url.query
+    release = re.fullmatch(
+        r"/nahid-sparktales/locus-memory/releases/download/v(\d+\.\d+\.\d+)/"
+        r"locus_memory-\1-py3-none-any\.whl", url.path,
+    )
+    assert release, "use a versioned release wheel, never a branch or latest URL"
+    assert re.fullmatch(r"sha256=[0-9a-f]{64}", url.fragment)
+    checksum = url.fragment.removeprefix("sha256=")
+    assert f"--hash=sha256:{checksum}" in locked
+    assert len(set(checksum)) > 1, "the pin must not be a placeholder"
+    audit = (agent.parent / "Tools/AuditDistribution.sh").read_text()
+    assert f"locus_memory:{release.group(1)}" in audit
 
 
 def test_download_does_not_trust_a_corrupted_cache(tmp_path, monkeypatch):

@@ -1374,6 +1374,9 @@ private struct AgentBehaviorEditor: View {
                 Toggle("Automatically recall relevant approved memory", isOn: $draft.memoryPolicy.recallEnabled)
                 Toggle("Allow conservative Memory Inbox suggestions", isOn: $draft.memoryPolicy.proposalsEnabled)
                 Toggle("Allow explicit memory search", isOn: $draft.memoryPolicy.searchEnabled)
+                Toggle("Use Locus memory in native Codex turns", isOn: $draft.memoryPolicy.nativeCodexEnabled)
+                Text("Memory is sent as reference data. Disabling it rebuilds managed context; information already sent to a provider cannot be retracted.")
+                    .font(.caption).foregroundStyle(.secondary)
                 ForEach(AgentMemoryScope.allCases) { scope in
                     Toggle(scope.title, isOn: memoryScopeBinding(scope))
                 }
@@ -1630,6 +1633,7 @@ struct AgentProfileEditor: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
     @EnvironmentObject private var providerAccounts: ProviderAccountsModel
     @Environment(\.dismiss) private var dismiss
@@ -2407,10 +2411,17 @@ struct AgentProfileEditor: View {
     }
 
     private var nameValidationMessage: String? {
+        if agentTeams.primaryCompanionID == draft.id {
+            do { _ = try CompanionValidationError.validatedName(draft.name); return nil }
+            catch { return error.localizedDescription }
+        }
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty { return "Give this agent a name." }
         if name.count > 64 { return "Keep the name to 64 characters or fewer." }
-        if existingProfiles.contains(where: { $0.id != draft.id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+        if existingProfiles.contains(where: {
+            $0.id != draft.id && $0.id != agentTeams.primaryCompanionID
+                && $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) {
             return "An agent with this name already exists."
         }
         return nil
@@ -2422,6 +2433,12 @@ struct AgentProfileEditor: View {
     }
 
     private var modelValidationMessage: String? {
+        // An offline companion remains editable before connecting a model.
+        // Work still uses agentProfileProvider's normal readiness checks.
+        if !isNew, agentTeams.primaryCompanionID == draft.id,
+           draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let original = existingProfiles.first(where: { $0.id == draft.id }),
+           original.model.isEmpty, original.route == draft.route { return nil }
         if providerUnavailable { return "Choose an available provider to continue." }
         if draft.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Choose a model to continue." }
         if modelSelectionUnavailable { return "This model is unavailable. Choose one from the provider’s model list." }
@@ -2437,7 +2454,8 @@ struct AgentProfileEditor: View {
             policy.resources = Array(Set(csv(mcpResources)).union(mcpResourceURIsWithCommas)).sorted()
             policy.prompts = csv(mcpPrompts)
         }
-        draft.mcpPolicy = policy
+        // Saving identity alone must not manufacture an access policy.
+        if draft.mcpPolicy != nil || policy != MCPAgentPolicy() { draft.mcpPolicy = policy }
         var behavior = draft.resolvedBehavior
         behavior.displayName = draft.name
         behavior.customInstructions = draft.instructions
@@ -3116,9 +3134,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                 if let vault = knowledge.memoryVaultStatus {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(vault.encrypted ? "Private on this Mac" : "Encryption needs attention")
+                            Text(vault.memoryAvailable == false ? "Memory needs recovery" : vault.encrypted ? "Private on this Mac" : "Encryption needs attention")
                                 .fontWeight(.semibold)
-                            Text("\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
+                            Text(vault.countsAvailable == false ? "Memory counts are unavailable until protection is restored." : "\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
                                 .font(.caption)
                                 .foregroundStyle(viewColors.textTertiary)
                         }
@@ -3270,6 +3288,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                 .accessibilityIdentifier("memory.advancedSettings")
             }
 
+            Section("Verified learning") { MemoryLearningButton() }
+            Section("Memory retrieval") { MemorySemanticSettings() }
+
             if advancedExpanded {
                 advancedKnowledgeSections
             }
@@ -3377,6 +3398,17 @@ struct WorkspaceKnowledgeSettingsView: View {
                 Text("\(vault.cipher) · memory text and optional vectors are encrypted together on this Mac.")
                     .font(.caption)
                     .foregroundStyle(viewColors.textTertiary)
+                if let protection = vault.restoreProtection {
+                    Label(protection.state == "protected" ? "Deletion checkpoints protected in Keychain" : protection.state == "recovery_required" ? "Restore protection needs recovery" : "Restore protection unavailable", systemImage: protection.state == "protected" ? "checkmark.shield" : "exclamationmark.shield")
+                        .font(.caption)
+                    if let message = protection.message {
+                        Text(message).font(.caption).foregroundStyle(viewColors.textTertiary)
+                    }
+                    if protection.state == "recovery_required" {
+                        Text("Unlock the login Keychain or quit Locus and use the offline recovery tool with an authenticated checkpoint backup. Previously forgotten information may need to be removed again after recovery.")
+                            .font(.caption).foregroundStyle(viewColors.textTertiary)
+                    }
+                }
             }
             Button("Delete Workspace Index and Memory…", role: .destructive) {
                 confirmDeleteAll = true

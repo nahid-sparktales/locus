@@ -87,7 +87,8 @@ def test_standard_package_contains_no_private_implementation_or_protocol(staged_
         content = path.read_text()
         assert not any(marker in content for marker in forbidden), path
     assert (package / "memory.py").is_file()
-    assert "AESGCM" in (package / "memory.py").read_text()
+    # Record crypto moved to the locus-memory package; the facade must delegate to it.
+    assert "locus_memory.compat.legacy_vault" in (package / "memory.py").read_text()
 
 
 def test_packaged_locus_rejects_wallet_control_and_guessed_tools(staged_backends, tmp_path):
@@ -217,6 +218,8 @@ from ollama_code.codex_app_server import codex_home_from_environment
 from ollama_code.config import CONFIG_PATH, load_config, save_config
 from ollama_code.extensions import ExtensionManager
 from ollama_code.memory import MemoryVault
+from ollama_code.memory_canonical import CanonicalMemoryVault
+from ollama_code.memory_ownership import ownership_state
 from ollama_code.paths import APP_DIR
 from ollama_code.sessions import SessionStore
 
@@ -226,6 +229,8 @@ save_config({"model": PRODUCT_NAME})
 session = SessionStore(cwd=str(root), model=PRODUCT_NAME)
 session.append({"type": "message", "role": "user", "content": PRODUCT_NAME})
 memory = MemoryVault()
+assert isinstance(memory, CanonicalMemoryVault)
+assert ownership_state(APP_DIR, PRODUCT_NAME) == "package_authoritative"
 memory.save({"content": PRODUCT_NAME, "scope": "personal"})
 extensions = ExtensionManager(str(root))
 extensions.set_skill_enabled("brainstorming", False)

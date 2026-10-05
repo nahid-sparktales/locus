@@ -89,6 +89,13 @@ fi
     echo "error: bundled agent runtime is missing" >&2
     exit 1
 }
+memory_guard="${app}/Contents/Helpers/LocusMemoryGuard"
+[[ -x "${memory_guard}" ]] || { echo "error: memory guard helper is missing" >&2; exit 1; }
+/usr/bin/codesign --verify --strict "${memory_guard}" || exit 1
+/usr/bin/codesign -d -r- "${memory_guard}" 2>&1 | /usr/bin/grep -q 'identifier "io.sparktales.locus.memory-guard"' || {
+    echo "error: memory guard helper identity is invalid" >&2; exit 1
+}
+
 document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
 [[ -x "${document_helper}" ]] || {
     echo "error: bundled local document extractor is missing" >&2
@@ -325,7 +332,7 @@ mcp_catalog="${runtime}/source/ollama_code/catalogs/mcp-presets-v1.json"
 # Read each pinned version from the wheel's own metadata rather than by running
 # the bundled interpreter: an exec-based check depends on how the interpreter
 # happens to be signed, so it verifies the signature rather than the pin.
-for pin in websockets:17.0
+for pin in websockets:17.0 locus_memory:0.2.1
 do
     name="${pin%%:*}"
     want="${pin##*:}"

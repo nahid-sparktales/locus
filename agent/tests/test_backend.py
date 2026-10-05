@@ -6568,8 +6568,10 @@ def test_memory_diagnostics_and_selected_chat_reprocessing_are_content_free(clie
     body = diagnostics.json()
     assert body["candidate_count"] == 1 and body["approved_count"] == 0
     assert body["propose_memory_available"] is True
-    assert body["counts"]["proposal:accepted"] == 1
-    assert body["counts"]["proposal:deduplicated"] == 2
+    # Fresh profiles use canonical memory. Its partition event stream has no
+    # workspace attribution, so scoped diagnostics explicitly omit that history.
+    assert body["history_available"] is False
+    assert body["counts"] == {} and body["events"] == []
     encoded_events = json.dumps(body["events"])
     assert "compact progress" not in encoded_events
     assert str(tmp_path) not in encoded_events

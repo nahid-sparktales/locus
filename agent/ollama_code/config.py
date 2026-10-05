@@ -13,6 +13,9 @@ MAX_CONFIG_BYTES = 1024 * 1024
 DEFAULTS: dict[str, Any] = {
     "model": "",
     "host": "http://localhost:11434",
+    # Optional memory enrichment; only explicitly selected, already installed local models.
+    "memory_embedding_model": "",
+    "memory_embedding_host": "http://127.0.0.1:11434",
     "max_iterations": 40,
     # "ollama" talks to a local Ollama; "remote" talks to any
     # OpenAI-compatible endpoint (a Hugging Face Inference Endpoint, vLLM or
