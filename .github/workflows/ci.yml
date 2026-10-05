@@ -21,6 +21,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  agent-worlds-contract:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Verify reviewed fixture pin
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, pathlib
+          root = pathlib.Path('ProtocolFixtures/agent-worlds')
+          pin = json.loads((root / 'PIN.json').read_text())
+          assert pin['protocol'] == 2 and pin['sdk'] == 1
+          assert hashlib.sha256((root / 'wire-v2.json').read_bytes()).hexdigest() == pin['fixturesSHA256']
+          PYCODE
+      - name: Swift wire and session boundary
+        run: |
+          swiftc -parse-as-library Locus/AgentWorldBridgeContract.swift Tools/TestAgentWorldBridge.swift -o "$RUNNER_TEMP/agent-worlds-contract"
+          "$RUNNER_TEMP/agent-worlds-contract" ProtocolFixtures/agent-worlds/wire-v2.json
+
   agent-world:
     runs-on: macos-15
     steps:
