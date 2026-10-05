@@ -33,6 +33,11 @@ struct AgentWorldMapChat: View {
 
     private var header: some View {
         HStack(spacing: 6) {
+            // AppKit extracts a Menu label's image at its original size. Keep
+            // the native avatar beside the menu so its SwiftUI bounds apply.
+            if let profile = world.selectedProfile {
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: 26)
+            }
             Menu {
                 ForEach(residents, id: \.id) { item in
                     Button { world.chooseResident(item.id) } label: {
@@ -42,9 +47,6 @@ struct AgentWorldMapChat: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    if let profile = world.selectedProfile {
-                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 26)
-                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(world.selectedProfile?.name ?? "Agent").font(.locus(size: 12, weight: .semibold)).lineLimit(1)
                         if let resident {
