@@ -27,105 +27,6 @@ enum PluginScreenFiles {
     }
 }
 
-enum PluginScreenMessage: Equatable {
-    case ready
-    case selectAgent(String)
-    case clearSelection
-    case preferences(String)
-    case residentStyle(String)
-    case sailingArea(String)
-    case openAttention(String)
-    case openTransfer(String)
-    case openSharedChat
-    case openActivityCenter
-    case openAgentControls(String?)
-    case openIslandQuarters(AgentWorldQuartersIsland)
-    case islandQuartersEnabled(Bool)
-    case createAgent
-    case residentPlacements([AgentWorldResidentPlacement])
-    case setShipStyle(agentID: String, style: String?)
-
-    static func decode(_ body: Any, screen: ExtensionPluginScreen) -> PluginScreenMessage? {
-        guard screen.isSupported, screen.version == 1, let value = body as? [String: Any],
-              let version = value["version"] as? NSNumber,
-              CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 1,
-              let type = value["type"] as? String else { return nil }
-        let keys = Set(value.keys)
-        switch type {
-        case "ready":
-            guard keys == ["version", "type"] else { return nil }
-            return .ready
-        case "selectAgent":
-            guard keys == ["version", "type", "agentID"], screen.capabilities.contains("agents.interact"),
-                  let id = value["agentID"] as? String, let uuid = UUID(uuidString: id) else { return nil }
-            return .selectAgent(uuid.uuidString)
-        case "clearSelection":
-            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
-            return .clearSelection
-        case "openAttention", "openTransfer":
-            let field = type == "openAttention" ? "requestID" : "transferID"
-            guard keys == ["version", "type", field], screen.capabilities.contains("agents.interact"),
-                  let id = value[field] as? String, let uuid = UUID(uuidString: id) else { return nil }
-            return type == "openAttention" ? .openAttention(uuid.uuidString) : .openTransfer(uuid.uuidString)
-        case "openActivityCenter":
-            guard keys == ["version", "type"], screen.capabilities.contains("agents.read") else { return nil }
-            return .openActivityCenter
-        case "openSharedChat":
-            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
-            return .openSharedChat
-        case "createAgent":
-            guard keys == ["version", "type"], screen.capabilities.contains("agents.interact") else { return nil }
-            return .createAgent
-        case "openAgentControls":
-            guard screen.capabilities.contains("agents.interact") else { return nil }
-            if keys == ["version", "type"] { return .openAgentControls(nil) }
-            guard keys == ["version", "type", "agentID"], let id = value["agentID"] as? String,
-                  let uuid = UUID(uuidString: id) else { return nil }
-            return .openAgentControls(uuid.uuidString)
-        case "openIslandQuarters":
-            guard keys == ["version", "type", "islandID"], screen.capabilities.contains("agents.interact"),
-                  let id = value["islandID"] as? String, let island = AgentWorldQuartersIsland(rawValue: id) else { return nil }
-            return .openIslandQuarters(island)
-        case "setShipStyle":
-            guard keys == ["version", "type", "agentID", "shipStyle"], screen.capabilities.contains("world.preferences"),
-                  let rawID = value["agentID"] as? String, let id = UUID(uuidString: rawID)?.uuidString else { return nil }
-            if value["shipStyle"] is NSNull { return .setShipStyle(agentID: id, style: nil) }
-            guard let style = value["shipStyle"] as? String, AgentWorldShipStyle.isSupported(style) else { return nil }
-            return .setShipStyle(agentID: id, style: style)
-        case "residentPlacements":
-            guard keys == ["version", "type", "placements"], screen.capabilities.contains("agents.read"),
-                  let rows = value["placements"] as? [[String: Any]], rows.count <= 500 else { return nil }
-            var seen = Set<String>()
-            var placements: [AgentWorldResidentPlacement] = []
-            for row in rows {
-                guard Set(row.keys) == ["agentID", "ship", "home"],
-                      let rawID = row["agentID"] as? String, let id = UUID(uuidString: rawID)?.uuidString,
-                      seen.insert(id).inserted,
-                      let ship = row["ship"] as? String, let home = row["home"] as? String,
-                      [ship, home].allSatisfy({ text in
-                          !text.isEmpty && text.count <= 100
-                              && !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-                      }) else { return nil }
-                placements.append(.init(agentID: id, ship: ship, home: home))
-            }
-            return .residentPlacements(placements)
-        case "preferences":
-            guard keys == ["version", "type", "preferences"], screen.capabilities.contains("world.preferences"),
-                  let preferences = value["preferences"] as? [String: Any] else { return nil }
-            if Set(preferences.keys) == ["theme"], let theme = preferences["theme"] as? String,
-               AgentWorldModel.isSafeThemeID(theme) { return .preferences(theme) }
-            if Set(preferences.keys) == ["residentStyle"], let style = preferences["residentStyle"] as? String,
-               AgentWorldModel.isSafeResidentStyle(style) { return .residentStyle(style) }
-            if Set(preferences.keys) == ["sailingArea"], let area = preferences["sailingArea"] as? String,
-               AgentWorldModel.isSafeSailingArea(area) { return .sailingArea(area) }
-            if Set(preferences.keys) == ["islandQuartersEnabled"], let enabled = preferences["islandQuartersEnabled"] as? NSNumber,
-               CFGetTypeID(enabled) == CFBooleanGetTypeID() { return .islandQuartersEnabled(enabled.boolValue) }
-            return nil
-        default: return nil
-        }
-    }
-}
-
 final class PluginScreenSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "locus-screen"
     static let host = "plugin"
@@ -202,10 +103,8 @@ struct PluginScreenHost: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.setURLSchemeHandler(context.coordinator.files, forURLScheme: PluginScreenSchemeHandler.scheme)
         config.userContentController.add(context.coordinator, name: "locusScreen")
-        if screen.screen.version == 2 {
-            config.userContentController.addUserScript(WKUserScript(source: Coordinator.failureMonitorScript,
-                injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        }
+        config.userContentController.addUserScript(WKUserScript(source: Coordinator.failureMonitorScript,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
@@ -239,7 +138,6 @@ struct PluginScreenHost: NSViewRepresentable {
         weak var web: WKWebView?
         let screen: AgentWorldModel.AvailableScreen
         let files: PluginScreenSchemeHandler
-        private var ready = false
         private var lastSnapshot: Data?
         let bridge: AgentWorldBridgeSession
         private var receivedV2Snapshot = false
@@ -307,7 +205,7 @@ struct PluginScreenHost: NSViewRepresentable {
                 sendWire(message)
             }
             bridge.revoke()
-            files.revoked = true; ready = false
+            files.revoked = true
             web?.stopLoading()
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "locusScreen")
             web?.navigationDelegate = nil; web?.uiDelegate = nil
@@ -316,34 +214,9 @@ struct PluginScreenHost: NSViewRepresentable {
             guard !files.revoked, model?.activeScreen == screen, message.frameInfo.isMainFrame,
                   message.frameInfo.request.url?.scheme == PluginScreenSchemeHandler.scheme,
                   message.frameInfo.request.url?.host == PluginScreenSchemeHandler.host else { return }
-            if screen.screen.version == 2 { receiveV2(message.body); return }
-            guard let action = PluginScreenMessage.decode(message.body, screen: screen.screen) else { return }
-            switch action {
-            case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
-            case .selectAgent(let id): model?.chooseResident(id)
-            case .clearSelection: model?.clearWorldSelection()
-            case .preferences(let theme): model?.setTheme(theme)
-            case .residentStyle(let style): model?.setResidentStyle(style)
-            case .sailingArea(let area): model?.setSailingArea(area)
-            case .openAttention(let id): model?.openAttention(id)
-            case .openTransfer(let id): model?.openTransfer(id)
-            case .openSharedChat: model?.openSharedChat()
-            case .openActivityCenter: model?.requestActivityCenter()
-            case .openAgentControls(let id): model?.openAgentControls(id)
-            case .openIslandQuarters(let island): model?.openIslandQuarters(island)
-            case .islandQuartersEnabled(let enabled): model?.setIslandQuartersEnabled(enabled)
-            case .createAgent: model?.createAgent()
-            case .residentPlacements(let placements): model?.receiveResidentPlacements(placements)
-            case .setShipStyle(let id, let style): model?.setShipStyle(agentID: id, style: style)
-            }
+            receiveV2(message.body)
         }
-        func sendSnapshot() {
-            if screen.screen.version == 2 { sendV2Projection(); return }
-            guard let model, model.activeScreen == screen,
-                  let data = try? JSONSerialization.data(withJSONObject: model.snapshot, options: [.sortedKeys]), data != lastSnapshot else { return }
-            guard ready else { return }
-            lastSnapshot = data; send(model.snapshot)
-        }
+        func sendSnapshot() { sendV2Projection() }
         private func currentBridgeIdentity() -> AgentWorldBridgeSession.Identity? {
             guard let model, !files.revoked else { return nil }
             guard model.activeScreen == screen, model.workspace == bridge.identity.workspace else { return nil }
@@ -366,7 +239,7 @@ struct PluginScreenHost: NSViewRepresentable {
             if current != bridge.identity { revoke(); return }
             if case .hello = client, response["type"] as? String == "welcome" {
                 loadDeadline?.cancel(); loadDeadline = nil
-                ready = true; lastSnapshot = nil; receivedV2Snapshot = false; sendV2Projection(force: true)
+                lastSnapshot = nil; receivedV2Snapshot = false; sendV2Projection(force: true)
                 startHealthChecks()
             } else if case .request(let request) = client, response["ok"] as? Bool == true {
                 sendV2Projection(force: request.command == "host.snapshot")
@@ -422,7 +295,7 @@ struct PluginScreenHost: NSViewRepresentable {
                     guard let primary = row["primary"] as? String, let secondary = row["secondary"] as? String else {
                         throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "Display labels are required.")
                     }
-                    return AgentWorldResidentPlacement(agentID: try agent(row["agentID"]), ship: primary, home: secondary)
+                    return AgentWorldResidentPlacement(agentID: try agent(row["agentID"]), primary: primary, secondary: secondary)
                 }
                 model.receiveResidentPlacements(placements)
             default: throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "The command is not supported.")
@@ -448,17 +321,11 @@ struct PluginScreenHost: NSViewRepresentable {
                 healthTask?.cancel(); healthTask = nil
                 healthDeadline?.cancel(); healthDeadline = nil; healthProbeID = nil
             } else { startHealthChecks() }
-            if screen.screen.version == 2 {
-                guard bridge.connected else { return }
-                var message = bridge.scope("visibility"); message["visible"] = visible; sendWire(message)
-            } else { send(["version": 1, "type": "visibility", "visible": visible]) }
+            guard bridge.connected else { return }
+            var message = bridge.scope("visibility"); message["visible"] = visible; sendWire(message)
         }
         private func sendWire(_ value: [String: Any]) {
             guard !files.revoked, model?.activeScreen == screen, AgentWorldBridgeContract.validHostMessage(value) else { return }
-            web?.callAsyncJavaScript("window.locusAgentWorld?.receive(message)", arguments: ["message": value], in: nil, in: .page, completionHandler: nil)
-        }
-        func send(_ value: [String: Any]) {
-            guard ready, !files.revoked, model?.activeScreen == screen else { return }
             web?.callAsyncJavaScript("window.locusAgentWorld?.receive(message)", arguments: ["message": value], in: nil, in: .page, completionHandler: nil)
         }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

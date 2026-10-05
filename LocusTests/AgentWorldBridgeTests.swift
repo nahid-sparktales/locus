@@ -22,7 +22,7 @@ final class AgentWorldBridgeTests: XCTestCase {
         let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent Worlds", entrypoint: "ui/index.html", version: 2,
                                            capabilities: ["agents.read", "agents.interact", "world.preferences"])
         XCTAssertTrue(screen.isSupported)
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "createAgent"], screen: screen))
+        XCTAssertNil(AgentWorldBridgeContract.decode(["version": 1, "type": "createAgent"]))
         XCTAssertFalse(ExtensionPluginScreen(id: "social-studio", title: "Social", entrypoint: "ui/index.html", version: 2,
                                             capabilities: ["social.workspace"]).isSupported)
     }
@@ -63,7 +63,7 @@ final class AgentWorldBridgeTests: XCTestCase {
         fixture.defaults.set("pandas", forKey: "Locus.AgentWorld.residentStyle.v1.fixture:agent-world")
         fixture.configure(profiles: [profile])
         fixture.world.open(pluginID: "fixture")
-        XCTAssertEqual(fixture.world.worldPreferences["theme"] as? String, "local-line")
+        XCTAssertEqual(fixture.world.worldPreferences["theme"] as? String, "fixture-world")
         XCTAssertNil(fixture.world.worldPreferences["resident-style"])
         try fixture.world.updateWorldPreference(key: "camera", value: ["zoom": 1.0])
         XCTAssertThrowsError(try fixture.world.updateWorldPreference(key: "large", value: String(repeating: "x", count: 33_000)))
@@ -105,7 +105,7 @@ final class AgentWorldBridgeTests: XCTestCase {
         fixture.defaults.set(oldV2, forKey: oldV2Key)
         fixture.configure(profiles: [profile])
         fixture.world.open(pluginID: "fixture")
-        XCTAssertEqual(Set((fixture.world.worldPreferences["ship-styles"] as? [String: String] ?? [:]).keys), [profile.id.uuidString])
+        XCTAssertEqual(Set((fixture.world.worldPreferences["styles"] as? [String: String] ?? [:]).keys), [profile.id.uuidString])
         XCTAssertNil(fixture.world.worldPreferences["unscoped"])
         try fixture.world.updateWorldPreference(key: "camera", value: "workspace-a")
         for window in NSApp.windows where window.title.hasPrefix(fixture.title) { window.close() }
@@ -394,6 +394,16 @@ final class AgentWorldBridgeTests: XCTestCase {
             if ownsRoot {
                 try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
                 try Data("<html><head></head><body>fixture</body></html>".utf8).write(to: root.appendingPathComponent("ui/index.html"))
+                let image = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+                try image.write(to: root.appendingPathComponent("ui/fixture.png"))
+                let descriptor: [String: Any] = [
+                    "schemaVersion": 1, "worldID": "fixture-world", "name": "Fixture", "defaultPresentationID": "main",
+                    "presentations": ["main": ["title": "Main", "backgroundAsset": "fixture.png"]],
+                    "mapPalette": ["colors": [:]], "appearances": [],
+                    "styles": [["id": "ship_going_merry", "name": "Imported style", "previewAsset": "fixture.png"]],
+                    "labels": [:], "appearancePreferenceKey": "appearance", "stylePreferenceKey": "styles", "contextEnabledPreferenceKey": "contexts-enabled",
+                ]
+                try JSONSerialization.data(withJSONObject: descriptor).write(to: root.appendingPathComponent("ui/presentations.json"))
             }
         }
         func configure(profiles: [AgentProfile], conversations: SavedAgentConversationService? = nil) {

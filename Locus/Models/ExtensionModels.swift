@@ -110,7 +110,7 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
     }
 
     var isSupported: Bool {
-        [1, 2].contains(version) && !id.isEmpty && !title.isEmpty
+        (isSocialStudio ? version == 1 : version == 2) && !id.isEmpty && !title.isEmpty
             && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences", "social.workspace"])
             && (!capabilities.contains("social.workspace") || (version == 1 && id == "social-studio" && capabilities == ["social.workspace"]))
             && PluginScreenFiles.isSafeRelativePath(entrypoint)

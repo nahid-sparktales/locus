@@ -95,8 +95,9 @@ enum AgentWorldBridgeContract {
                 && (args["agentID"] == nil || isID(args["agentID"]))
         case "presentation.open": return exact(args, ["presentationID"]) && matches(args["presentationID"], "\\A[a-z0-9][a-z0-9-]{0,63}\\z")
         case "preferences.set":
+            guard let preference = args["value"] else { return false }
             return exact(args, ["key", "value"]) && matches(args["key"], "\\A[a-z][a-z0-9.-]{0,79}\\z")
-                && boundedJSON(args["value"]!, maximum: 32_768)
+                && boundedJSON(preference, maximum: 32_768)
         case "placements.set":
             guard exact(args, ["placements"]), let rows = args["placements"] as? [[String: Any]], rows.count <= 500 else { return false }
             var ids = Set<String>()

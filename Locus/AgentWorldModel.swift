@@ -12,60 +12,11 @@ struct AgentWorldResident: Identifiable, Equatable, Encodable {
     var detail: String?
 }
 
-struct AgentWorldThemeOption: Identifiable, Decodable, Equatable {
-    let id: String
-    let name: String
-
-    static let builtIn: [AgentWorldThemeOption] = [
-        .init(id: "outpost", name: "Orbital Locus Outpost"),
-        .init(id: "grand-line", name: "The Local Line"),
-    ]
-}
-
-enum AgentWorldQuartersAppearance: String, CaseIterable, Identifiable {
-    case wood, ocean
-    var id: String { rawValue }
-    var title: String { self == .wood ? "Wood · default" : "Ocean blue" }
-}
-
-/// A visit only overrides the current quarters; it never replaces the saved appearance.
-enum AgentWorldQuartersIsland: String, CaseIterable, Identifiable {
-    case elbaf, marineford, waterSeven = "water-seven", wano, drum
-    var id: String { rawValue }
-    var title: String {
-        switch self { case .elbaf: "Elbaf"; case .marineford: "Marineford"; case .waterSeven: "Water 7"; case .wano: "Wano"; case .drum: "Drum Island" }
-    }
-    var backgroundAsset: String { "Quarters-" + rawValue }
-}
-
-struct AgentWorldShipStyle: Identifiable, Equatable {
-    let id: String
-    let name: String
-    static let all: [AgentWorldShipStyle] = [
-        .init(id: "ship_thousand_sunny", name: "Thousand Funny"),
-        .init(id: "ship_going_merry", name: "Going Sherry"),
-        .init(id: "ship_baratie", name: "BaratAI"),
-        .init(id: "ship_navy_h03", name: "Navy Q4"),
-        .init(id: "ship_polar_tang", name: "Polar Tensor"),
-        .init(id: "ship_spade_pirates", name: "Spade Prompters’ Ship"),
-        .init(id: "ship_red_force", name: "Thread Force"),
-        .init(id: "ship_moby_dick", name: "Moby Disk"),
-        .init(id: "ship_perfume_yuda", name: "Perfume CUDA"),
-        .init(id: "ship_oro_jackson", name: "Oro JSON"),
-        .init(id: "ship_queen_mama_chanter", name: "Queen Llama Chanter"),
-        .init(id: "ship_dragons_ship", name: "Dragon’s Chip"),
-        .init(id: "ship_mihawk_coffin", name: "Mihawk’s Coffin Boat"),
-        .init(id: "ship_garp_battleship", name: "Garp’s Battleship"),
-        .init(id: "ship_marine_patrol", name: "Marine Patrol Ship"),
-    ]
-    static func isSupported(_ id: String) -> Bool { all.contains { $0.id == id } }
-}
-
-/// Display-only names supplied by the renderer after it assigns ships and ports.
+/// Display-only placement descriptions supplied by the installed renderer.
 struct AgentWorldResidentPlacement: Equatable {
     let agentID: String
-    let ship: String
-    let home: String
+    let primary: String
+    let secondary: String
 }
 
 /// Optional plugin window and display projection. Canonical conversation identity
@@ -76,34 +27,10 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     weak var appModel: AppModel?
     @Published var conversationPresented = false
     @Published var quartersPresented = false {
-        didSet { if !quartersPresented { quartersIsland = nil; selectedPresentationID = nil } }
+        didSet { if !quartersPresented { selectedPresentationID = nil } }
     }
-    @Published private(set) var quartersIsland: AgentWorldQuartersIsland?
     @Published var selectedPresentationID: String?
     var pluginPresentation: PluginWorldPresentation? { PluginWorldPresentation.load(screen: activeScreen) }
-    @Published private(set) var islandQuartersEnabled = true
-    var activeQuartersIsland: AgentWorldQuartersIsland? { quartersPresented && theme == "grand-line" ? quartersIsland : nil }
-
-    func setIslandQuartersEnabled(_ enabled: Bool) {
-        guard activeScreen?.screen.capabilities.contains("world.preferences") == true else { return }
-        islandQuartersEnabled = enabled
-        if !enabled { quartersIsland = nil }
-        defaults?.set(enabled, forKey: "Locus.AgentWorld.islandQuartersEnabled.v1")
-    }
-
-    func openIslandQuarters(_ island: AgentWorldQuartersIsland) {
-        guard canInteract, islandQuartersEnabled, theme == "grand-line" else { return }
-        quartersIsland = island
-        quartersPresented = true
-    }
-    @Published private(set) var quartersAppearance: AgentWorldQuartersAppearance = .wood
-    var usesWoodQuarters: Bool { quartersPresented && theme == "grand-line" && quartersAppearance == .wood }
-
-    func setQuartersAppearance(_ value: AgentWorldQuartersAppearance) {
-        quartersIsland = nil
-        quartersAppearance = value
-        defaults?.set(value.rawValue, forKey: "Locus.AgentWorld.quartersAppearance.v1")
-    }
     @Published var sharedChatPresented = false
     @Published private(set) var profilePresented = false
     @Published private(set) var preparingConversation = false
@@ -124,15 +51,10 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var pendingCount = 0
     @Published var draft = ""
     @Published var error: String?
-    @Published private(set) var theme = "outpost"
-    @Published private(set) var availableThemes = AgentWorldThemeOption.builtIn
     @Published private(set) var residentPlacements: [String: AgentWorldResidentPlacement] = [:]
     @Published private(set) var activityCenterRequest = 0
     @Published private(set) var focusRequest = 0
     @Published var workspaceToolsRequest = 0
-    @Published private(set) var shipStyles: [String: String] = [:]
-    @Published private(set) var residentStyle = "mixed"
-    @Published private(set) var sailingArea = "whole"
     @Published var graphicsError: String?
     @Published private(set) var renderEpoch = 0
     private var rendererRetryCount = 0
@@ -174,7 +96,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var window: NSWindow?
     private let socialStudioWindows = SocialStudioWindowController()
     private let pluginPanelWindows = PluginPanelWindowController()
-    private var refreshTask: Task<Void, Never>?
     private var projectionRefreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
     private var selectionToken = UUID()
@@ -200,9 +121,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         profilesProvider = profiles; workspaceProvider = workspace; availabilityProvider = availability
         stateProvider = state; loadConversation = load; activityProvider = activity
         self.defaults = defaults
-        quartersAppearance = defaults?.string(forKey: "Locus.AgentWorld.quartersAppearance.v1")
-            .flatMap(AgentWorldQuartersAppearance.init(rawValue:)) ?? .wood
-        islandQuartersEnabled = defaults?.object(forKey: "Locus.AgentWorld.islandQuartersEnabled.v1") as? Bool ?? true
         if let conversations { self.conversations = conversations }
         else { self.conversations.configure(defaults: defaults, state: state, create: create, dispatch: dispatch) }
         self.conversations.queueFailed = { [weak self] workspace, profileID, text, message in
@@ -345,21 +263,8 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         workspace = windowWorkspace; activeScreen = choice; selection = nil; blocks = []; error = nil
         selectedSessionOverride = nil; conversationPresented = false; quartersPresented = false; sharedChatPresented = false; selectedTransfer = nil
         profilePresented = false; preparingConversation = false; selectionToken = UUID()
-        availableThemes = Self.loadThemeCatalog(for: choice)
-        theme = defaults?.string(forKey: "Locus.AgentWorld.theme.v1." + choice.id).flatMap { saved in
-            availableThemes.contains(where: { $0.id == saved }) ? saved : nil
-        } ?? availableThemes.first?.id ?? "outpost"
         residentPlacements = [:]; activityCenterRequest = 0
-        let savedStyles = defaults?.dictionary(forKey: "Locus.AgentWorld.shipStyles.v1." + choice.id) as? [String: String] ?? [:]
-        shipStyles = Dictionary(savedStyles.compactMap { rawID, style -> (String, String)? in
-            guard let id = UUID(uuidString: rawID)?.uuidString, AgentWorldShipStyle.isSupported(style) else { return nil }
-            return (id, style)
-        }, uniquingKeysWith: { first, _ in first })
-        residentStyle = defaults?.string(forKey: "Locus.AgentWorld.residentStyle.v1." + choice.id).flatMap { Self.isSafeResidentStyle($0) ? $0 : nil } ?? "mixed"
-        sailingArea = defaults?.string(forKey: "Locus.AgentWorld.sailingArea.v1." + choice.id).flatMap { Self.isSafeSailingArea($0) ? $0 : nil } ?? "whole"
-        if choice.screen.version == 2 { loadWorldPreferences(for: choice) }
-        else { worldPreferences = [:] }
-        if choice.screen.version == 2 { theme = "grand-line" } // Native chrome compatibility until generic presentation migration.
+        loadWorldPreferences(for: choice)
         graphicsError = nil; rendererRetryCount = 0; renderEpoch += 1; draft = ""
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -367,25 +272,16 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         window.minSize = NSSize(width: 900, height: 620)
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.appearance = theme == "grand-line" ? NSAppearance(named: .darkAqua) : nil
+        window.appearance = pluginPresentation == nil ? nil : NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: AgentWorldView(model: self))
         self.window = window
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         refresh()
-        // Legacy screens retain their original adapter. Version 2 is event driven.
-        if choice.screen.version == 1 {
-            refreshTask = Task { [weak self] in
-                while !Task.isCancelled {
-                    self?.refresh()
-                    try? await Task.sleep(for: .milliseconds(500))
-                }
-            }
-        }
+
     }
 
     func windowWillClose(_ notification: Notification) {
         visibilityChanged?(false); visibilityChanged = nil
-        refreshTask?.cancel(); refreshTask = nil
         projectionRefreshTask?.cancel(); projectionRefreshTask = nil
         selectionTask?.cancel(); activationTask?.cancel()
         selectionToken = UUID(); activationToken = UUID(); preparingConversation = false; activatingConversation = false
@@ -584,7 +480,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         if missing, let sessionID {
             conversations.clearMissingBinding(sessionID: sessionID, workspace: workspace, profileID: profileID)
             if selectedSessionOverride == sessionID { selectedSessionOverride = nil }
-            error = "This chat is no longer available. Start a new chat for \(selectedProfile?.name ?? "this resident"), or choose an existing chat from their \(theme == "grand-line" ? "Vivre card" : "agent details")."
+            error = "This chat is no longer available. Start a new chat for \(selectedProfile?.name ?? "this resident"), or choose an existing chat from their agent details."
         } else { error = failure.localizedDescription }
         refresh()
     }
@@ -672,7 +568,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func openAgentControls(_ agentID: String? = nil) {
         guard canInteract else { return }
-        quartersIsland = nil; selectedPresentationID = nil
+        selectedPresentationID = nil
         if let id = agentID ?? selection { openAgentProfile(id) }
         quartersPresented = true
     }
@@ -710,56 +606,14 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
               appModel?.savedAgentProfileID(for: sessionID) != profile.id else { return nil }
         return "Shared task · \(profile.name)"
     }
-    nonisolated static func isSafeThemeID(_ value: String) -> Bool {
-        value.range(of: "^[a-z0-9][a-z0-9-]{0,63}$", options: .regularExpression) != nil
-    }
-    nonisolated static func isSafeResidentStyle(_ value: String) -> Bool {
-        value == "mixed" || value == "pandas" || value == "explorers"
-    }
-    nonisolated static func isSafeSailingArea(_ value: String) -> Bool {
-        ["whole", "left", "right"].contains(value)
-    }
-    func setSailingArea(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeSailingArea(value), sailingArea != value else { return }
-        sailingArea = value
-        residentPlacements = [:]
-        defaults?.set(value, forKey: "Locus.AgentWorld.sailingArea.v1." + activeScreen.id)
-    }
-    func setResidentStyle(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeResidentStyle(value) else { return }
-        residentStyle = value
-        defaults?.set(value, forKey: "Locus.AgentWorld.residentStyle.v1." + activeScreen.id)
-    }
-    func setTheme(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeThemeID(value) else { return }
-        guard availableThemes.contains(where: { $0.id == value }) else { return }
-        quartersIsland = nil
-        theme = value
-        residentPlacements = [:]
-        window?.appearance = value == "grand-line" ? NSAppearance(named: .darkAqua) : nil
-        defaults?.set(value, forKey: "Locus.AgentWorld.theme.v1." + activeScreen.id)
-    }
-
     func requestActivityCenter() {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
         appModel?.activity.openActivityCenter()
         activityCenterRequest += 1
     }
 
-    func setShipStyle(agentID: String, style: String?) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"),
-              let id = UUID(uuidString: agentID)?.uuidString,
-              profilesProvider().contains(where: { $0.id.uuidString == id }),
-              style.map(AgentWorldShipStyle.isSupported) ?? true else { return }
-        guard shipStyles[id] != style else { return }
-        shipStyles[id] = style
-        residentPlacements[id] = nil
-        defaults?.set(shipStyles, forKey: "Locus.AgentWorld.shipStyles.v1." + activeScreen.id)
-    }
-
     func receiveResidentPlacements(_ placements: [AgentWorldResidentPlacement]) {
-        guard activeScreen?.screen.version == 2 || theme == "grand-line",
-              activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
+        guard activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
         let known = Set(residents.map(\.id))
         guard placements.count <= 500, placements.allSatisfy({ known.contains($0.agentID) }),
               Set(placements.map(\.agentID)).count == placements.count else { return }
@@ -767,40 +621,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         if residentPlacements != updated { residentPlacements = updated }
     }
 
-    static func loadThemeCatalog(for screen: AvailableScreen) -> [AgentWorldThemeOption] {
-        struct Catalog: Decodable { let version: Int; let themes: [AgentWorldThemeOption] }
-        let directory = (screen.screen.entrypoint as NSString).deletingLastPathComponent
-        let path = directory.isEmpty ? "themes/catalog.json" : directory + "/themes/catalog.json"
-        guard let file = try? PluginScreenFiles.file(root: URL(fileURLWithPath: screen.root), path: path),
-              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 32_768,
-              let data = try? Data(contentsOf: file),
-              let catalog = try? JSONDecoder().decode(Catalog.self, from: data),
-              catalog.version == 1, !catalog.themes.isEmpty, catalog.themes.count <= 50,
-              Set(catalog.themes.map(\.id)).count == catalog.themes.count,
-              catalog.themes.allSatisfy({ option in
-                  isSafeThemeID(option.id) && !option.name.isEmpty && option.name.count <= 100
-                      && !option.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-              }) else { return AgentWorldThemeOption.builtIn }
-        return catalog.themes
-    }
 
-    var snapshot: [String: Any] {
-        guard activeScreen?.screen.capabilities.contains("agents.read") == true else {
-            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": "", "canCreateAgent": false, "islandQuartersEnabled": islandQuartersEnabled]
-        }
-        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "sailingArea": sailingArea, "projectName": projectName, "canCreateAgent": canCreateAgent,
-                                    "islandQuartersEnabled": islandQuartersEnabled, "nativeChrome": true, "activityCenterRequest": activityCenterRequest, "focusRequest": focusRequest,
-                                    "shipStyles": shipStyles.filter { id, _ in residents.contains { $0.id == id } },
-                                  "agents": residents.map { resident -> [String: Any] in
-            // Route failures can contain provider names; the world needs only
-            // the activity label. Detailed errors stay in the native panel.
-            ["id": resident.id, "name": resident.name, "role": resident.role, "status": resident.status]
-        }]
-        if let selection { value["selectedAgentID"] = selection }
-        value["attentionRequests"] = attentionRequests.map(\.snapshot)
-        value["transfers"] = transfers.map(\.snapshot)
-        return value
-    }
 }
 
 extension AgentWorldModel {
@@ -873,7 +694,7 @@ extension AgentWorldModel {
                   let value = try? JSONDecoder().decode(ExtensionPluginScreen.self, from: data), value.isSupported else { return nil }
             return value
         }
-        let screen = declaredScreen ?? ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 1,
+        let screen = declaredScreen ?? ExtensionPluginScreen(id: "agent-world", title: "Agent Worlds", entrypoint: "ui/index.html", version: 2,
                                            capabilities: ["agents.read", "agents.interact", "world.preferences"])
         var plugin = ExtensionPlugin(id: "agent-world", name: "agent-world", displayName: "Agent World", description: nil,
                                      version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
@@ -910,12 +731,9 @@ extension AgentWorldModel {
             worldPreferences = [:]
             return
         }
-        let authorizedProfiles = Set(profilesProvider().map { $0.id.uuidString })
-        worldPreferences = ["theme": "local-line", "sailing-area": sailingArea,
-                            "ship-styles": shipStyles.filter { authorizedProfiles.contains($0.key) }, "island-quarters-enabled": islandQuartersEnabled,
-                            "quarters-appearance": quartersAppearance.rawValue]
-        // Outpost resident appearance has no Local Line meaning; retain it only
-        // in the original visual defaults instead of applying it to the new world.
+        worldPreferences = LegacyAgentWorldPreferenceMigration.values(
+            defaults: defaults, screenID: screen.id, presentation: pluginPresentation,
+            authorizedAgentIDs: Set(profilesProvider().prefix(500).map { $0.id.uuidString }))
         if let data = try? JSONSerialization.data(withJSONObject: worldPreferences, options: [.sortedKeys]) {
             defaults?.set(data, forKey: key)
         }
