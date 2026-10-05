@@ -151,3 +151,63 @@ selection require explicit authorization. When authorized, add
 this still does not verify signed SMAppService registration. Run only with
 separate profiles/accounts/workspaces, retain the report/checksum, and require
 successful cleanup. Preserve journals after interrupted updates.
+
+## Native compilation and test-runner results
+
+The isolated `xcodebuild test` invocation above compiled the application and
+`LocusTests`, linked the test bundle, and completed ad-hoc signing with the
+backend bundle deliberately skipped. It then failed **before executing any
+test cases** because LaunchServices could not launch `LocusTests`
+(`IDELaunchErrorDomain`, code 20). Retrying with `test-without-building` against
+the same derived-data directory produced the same launch failure.
+
+The separate build-only gate subsequently **passed** (`TEST BUILD SUCCEEDED`,
+exit 0):
+
+```sh
+LOCUS_BUNDLE_MODE=skip xcodebuild build-for-testing \
+  -project Locus.xcodeproj -scheme Locus -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath /tmp/locus-runtime-extraction-native-tests \
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+  LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+```
+
+No Swift runtime protocol fixture is claimed passed, and this is not a clean
+packaged application gate or a signed SMAppService gate.
+
+`LocusX` also **passed** a separate unsigned build-for-testing gate with backend
+bundling skipped. The first ad-hoc invocation stopped because the wallet signer
+service's production entitlements require a development certificate. Retrying
+with signing disabled verified compilation/linking without changing any
+entitlement files or launching the application:
+
+```sh
+LOCUS_BUNDLE_MODE=skip xcodebuild build-for-testing \
+  -project Locus.xcodeproj -scheme LocusX -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath /tmp/locus-runtime-extraction-nativex-tests \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+  LOCUS_DIRECT_ENTITLEMENTS=Config/LocusDirectAdHoc.entitlements
+```
+
+Result: `TEST BUILD SUCCEEDED`, exit 0. No LocusX test execution or signed wallet
+service behavior is claimed from this compile gate.
+
+Evidence retained outside the source tree:
+
+```text
+/tmp/locus-runtime-extraction-native-tests.log
+/tmp/locus-runtime-extraction-native-retry.log
+/tmp/locus-runtime-extraction-native-build.log
+/tmp/locus-runtime-extraction-nativex-build.log
+/tmp/locus-runtime-extraction-nativex-unsigned-build.log
+/tmp/locus-runtime-extraction-native-tests/Logs/Test/Test-Locus-2026.10.05_15-16-21--0400.xcresult
+/tmp/locus-runtime-extraction-native-tests/Logs/Test/Test-Locus-2026.10.05_15-19-27--0400.xcresult
+```
+
+To finish this gate, use a macOS session in which Xcode's test runner can launch
+the isolated app and rerun the command above. A separate Developer ID signing
+environment and explicit registration authorization are still required for
+the signed helper gate. The task did not modify or stop the production runtime
+to try to repair the test runner.
