@@ -96,7 +96,7 @@ def failed_startup_package(package: Path, output: Path) -> str:
 
 
 def scenario(base: str, token: str, provider_port: int, workspace: Path) -> dict:
-    from ollama_code.runtime_snapshots import archive, preview
+    from locus_runtime.snapshots import archive, preview
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def call(method, path, body=None):

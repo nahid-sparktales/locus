@@ -1,4 +1,5 @@
 """The composed product must discover its trusted host without a sibling repo."""
+import ast
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -122,3 +123,14 @@ def test_product_dependency_and_ci_use_committed_wheel():
     assert f"locus-runtime=={release['version']} " in pinned
     assert f"--hash=sha256:{release['sha256']}" in pinned
     assert "--find-links agent/vendor/wheels" in (root / ".github/workflows/ci.yml").read_text()
+
+
+def test_smoke_runner_requires_only_the_installed_runtime_package():
+    path = Path(__file__).resolve().parents[2] / "Tools/SmokeRemoteRuntime.py"
+    imports = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.ImportFrom):
+            imports.append(node.module or "")
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+    assert not any(name == "ollama_code" or name.startswith("ollama_code.") for name in imports)
