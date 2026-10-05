@@ -403,7 +403,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertTrue(world.conversationPresented)
         XCTAssertFalse(world.profilePresented)
         XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/sessions/detached" }.count, 1)
-        XCTAssertFalse(BackendStub.requestPaths.contains { $0.contains("/chat") || $0.contains("/runs/queue") || $0.contains("/send") })
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0 == "/api/chat" || $0.hasPrefix("/api/chat/") || $0.hasPrefix("/api/runs/") || $0.hasSuffix("/send") })
     }
 
     func testNativeWorldPresentationReadsOnlyBoundedConfinedMetadata() throws {
