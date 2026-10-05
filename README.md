@@ -189,7 +189,7 @@ Run the Python suite from the repository root with Python 3.10 or later
 
 ```sh
 python3 -m venv agent/.venv
-agent/.venv/bin/pip install -e './agent[dev]'
+agent/.venv/bin/pip install --find-links agent/vendor/wheels -e './agent[dev]'
 agent/.venv/bin/python -m pytest -q
 ```
 

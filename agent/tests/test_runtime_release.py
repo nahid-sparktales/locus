@@ -33,6 +33,7 @@ def tool(name):
     return module
 
 
+tool("RuntimePackage")
 packager = tool("PackageRemoteRuntime")
 builder = tool("PrepareRemoteRuntime")
 
@@ -63,7 +64,10 @@ def test_package_provider_recognizes_tool_results_before_request_only_memory(new
 @pytest.fixture
 def layout(tmp_path, monkeypatch):
     root = tmp_path / "runtime"
-    for name, data in {"python/bin/python3.14": b"python", "source/ollama_code/runtime.py": b"source", "site-packages/example.py": b"dependency"}.items():
+    for name, data in {"python/bin/python3.14": b"python", "source/ollama_code/runtime.py": b"source",
+                       "source/ollama_code/runtime_host.py": b"host adapter",
+                       "site-packages/locus_runtime/__init__.py": b"runtime package",
+                       "site-packages/example.py": b"dependency"}.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)

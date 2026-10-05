@@ -49,7 +49,8 @@ Each package's complete license text is retained in its installed
 | idna | 3.18 | BSD-3-Clause |
 | jsonschema | 4.26.0 | MIT |
 | jsonschema-specifications | 2025.9.1 | MIT |
-| locus-memory | 0.2.1 | Apache-2.0 |
+| locus-memory | 0.3.0 | Apache-2.0 |
+| locus-runtime | 0.1.0 | Apache-2.0 |
 | lxml | 6.1.3 | BSD-3-Clause and bundled permissive library licenses |
 | mcp | 2.0.0 | MIT |
 | mcp-types | 2.0.0 | MIT |

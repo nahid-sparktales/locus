@@ -6,11 +6,14 @@ on:
     paths:
       - '.github/workflows/runtime-packages.yml'
       - 'Tools/*RemoteRuntime*'
+      - 'Tools/RuntimePackage.py'
+      - 'agent/vendor/wheels/**'
       - 'agent/requirements-runtime.lock'
       - 'agent/requirements-runtime.in'
       - 'agent/pyproject.toml'
       - 'agent/ollama_code/**'
       - 'agent/tests/test_runtime_release.py'
+      - 'agent/tests/test_runtime_package_integration.py'
       - 'Locus/Resources/ThirdPartyLicenses/**'
       - 'Locus/Resources/ThirdPartyNotices.md'
 
@@ -38,6 +41,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install the reviewed installer for the isolated smoke runner
+        run: |
+          python Tools/RuntimePackage.py verify --agent agent
+          python -m pip install --no-deps agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl
       - name: Prepare the disposable Linux user service manager
         if: runner.os == 'Linux'
         shell: bash

@@ -340,6 +340,9 @@ jsonschema-specifications==2025.9.1 \
 locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.3.0/locus_memory-0.3.0-py3-none-any.whl#sha256=aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6 \
     --hash=sha256:aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6
     # via -r agent/requirements-runtime.in
+locus-runtime==0.1.0 \
+    --hash=sha256:8c7cdbc0d623f9c1cde600c2dd49af8460f3b558bd26d4576f794a759b292c36
+    # via -r agent/requirements-runtime.in
 lxml==6.1.3 \
     --hash=sha256:032a0a97eed428bd143c75a11118238546424ceb2fa311cca5f073aa44658dc4 \
     --hash=sha256:05f5bce9af14fd1506997594bd81cee6d9c6b58ea80a39c058327aa6371ed9e9 \
@@ -737,6 +740,7 @@ requests==2.34.2 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
     # via
     #   -r agent/requirements-runtime.in
+    #   locus-runtime
     #   opentelemetry-exporter-otlp-proto-http
 rpds-py==2026.6.3 \
     --hash=sha256:0be972be84cfcaf46c8c6edf690ca0f154ac17babf1f6a955a51579b34ad2dc5 \
@@ -1024,4 +1028,6 @@ websockets==17.0 \
     --hash=sha256:fbfb30a6123a2851cb4a4cacc468dabf8d9f335f63f6cd8dd1a23be7c315979e \
     --hash=sha256:fc5b304b0100aabb46613e6c911fcbb959e5542fd94c89a1e5df704bf703c6ec \
     --hash=sha256:fdea04f18e814a15ef115356392624f8a694f29bb6b8ed65828a6d53eeb96654
-    # via -r agent/requirements-runtime.in
+    # via
+    #   -r agent/requirements-runtime.in
+    #   locus-runtime

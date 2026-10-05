@@ -15,7 +15,6 @@ import os
 import platform
 import socket
 import subprocess
-import sys
 import tarfile
 import tempfile
 import threading
@@ -26,11 +25,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from locus_runtime import installer
 from PackageRemoteRuntime import digest, host_target
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "agent"))
-from ollama_code import runtime_install as installer
 
 
 class FixtureProvider(BaseHTTPRequestHandler):

@@ -1,0 +1,17 @@
+{
+  "artifact": "locus_runtime-0.1.0-py3-none-any.whl",
+  "build": {
+    "build": "1.5.0",
+    "python": "3.14.6",
+    "setuptools": "83.0.0",
+    "wheel": "0.47.0"
+  },
+  "distribution": "locus-runtime",
+  "publication": "unpublished local extraction candidate",
+  "sha256": "8c7cdbc0d623f9c1cde600c2dd49af8460f3b558bd26d4576f794a759b292c36",
+  "source_date_epoch": 1791228931,
+  "source_remote": null,
+  "source_repository": "locus-runtime (local Git repository)",
+  "source_revision": "db1955b106d747ff715885ff6d68c834e2d3129d",
+  "version": "0.1.0"
+}
