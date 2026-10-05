@@ -1,0 +1,263 @@
+{
+  "source_boundary": "passed",
+  "local_catalog": "passed",
+  "old_build_pipeline": "absent",
+  "built_loose_resources": 50,
+  "compiled_asset_catalog": "assetutil scan passed: no removed backdrop names",
+  "appResources": "/tmp/locus-agent-worlds-final-ui-fixture/AgentWorldsNativeFinal.app/Contents/Resources",
+  "compiledAssetNames": [
+    "AccentColor",
+    "AgentPortrait-atlas",
+    "AgentPortrait-bloom",
+    "AgentPortrait-chopper",
+    "AgentPortrait-kitsune",
+    "AgentPortrait-law",
+    "AgentPortrait-luffy",
+    "AgentPortrait-moss",
+    "AgentPortrait-nami",
+    "AgentPortrait-nova",
+    "AgentPortrait-orbit",
+    "AgentPortrait-pixel",
+    "AgentPortrait-sage",
+    "AgentPortrait-sol",
+    "AgentPortrait-tide",
+    "AgentPortrait-zoro",
+    "AppIcon",
+    "Brand-anthropic",
+    "Brand-claude",
+    "Brand-context7",
+    "Brand-github",
+    "Brand-gmail",
+    "Brand-google",
+    "Brand-googleCalendar",
+    "Brand-huggingFace",
+    "Brand-jira",
+    "Brand-kimi",
+    "Brand-lmStudio",
+    "Brand-metaMask",
+    "Brand-ollama",
+    "Brand-openAI",
+    "Brand-phantom",
+    "Brand-sentry",
+    "Brand-slush",
+    "Brand-supabase",
+    "Brand-telegram",
+    "Brand-vLLM",
+    "MenuBarIcon",
+    "Plugin-agent-world",
+    "Plugin-langgraph-workflow",
+    "Plugin-social-studio",
+    "ZZZZPackedAsset-1.0.0-gamut0",
+    "ZZZZPackedAsset-1.0.0-gamut1",
+    "ZZZZPackedAsset-1.0.1-gamut0",
+    "ZZZZPackedAsset-2.0.0-gamut0",
+    "ZZZZPackedAsset-2.0.0-gamut1",
+    "ZZZZPackedAsset-2.0.1-gamut0",
+    "locus.robot"
+  ],
+  "compiledRemovedBackdrops": [],
+  "retainedSharedPortraitImageSets": 15,
+  "files": [
+    {
+      "path": "AppIcon.icns",
+      "bytes": 32772
+    },
+    {
+      "path": "Assets.car",
+      "bytes": 31101336
+    },
+    {
+      "path": "Clover.png",
+      "bytes": 2086575
+    },
+    {
+      "path": "Gon.png",
+      "bytes": 1308396
+    },
+    {
+      "path": "Ninja.png",
+      "bytes": 1938660
+    },
+    {
+      "path": "Pirate.png",
+      "bytes": 1761228
+    },
+    {
+      "path": "Pitou.png",
+      "bytes": 3789456
+    },
+    {
+      "path": "PrivacyInfo.xcprivacy",
+      "bytes": 843
+    },
+    {
+      "path": "Scout.png",
+      "bytes": 3061322
+    },
+    {
+      "path": "Shadow.png",
+      "bytes": 1837341
+    },
+    {
+      "path": "SimulatorBridgeProvenance.txt",
+      "bytes": 650
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/Info.plist",
+      "bytes": 1131
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/Resources/default.metallib",
+      "bytes": 27204
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/_CodeSignature/CodeDirectory",
+      "bytes": 206
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/_CodeSignature/CodeRequirements",
+      "bytes": 12
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/_CodeSignature/CodeResources",
+      "bytes": 2454
+    },
+    {
+      "path": "SwiftTerm_SwiftTerm.bundle/Contents/_CodeSignature/CodeSignature",
+      "bytes": 0
+    },
+    {
+      "path": "ThirdPartyLicenses/Sparkle-2.9.6/LICENSE",
+      "bytes": 6153
+    },
+    {
+      "path": "ThirdPartyLicenses/SwiftCMark-0.8.0/COPYING",
+      "bytes": 7567
+    },
+    {
+      "path": "ThirdPartyLicenses/SwiftMarkdown-0.8.0/LICENSE",
+      "bytes": 11753
+    },
+    {
+      "path": "ThirdPartyLicenses/SwiftTerm-1.18.0/LICENSE",
+      "bytes": 1336
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-agentic-awesome-skills/LICENSE",
+      "bytes": 1073
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-anthropic/LICENSE",
+      "bytes": 10174
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-caveman/LICENSE",
+      "bytes": 1433
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-diagram-design/LICENSE",
+      "bytes": 1071
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-graphify/LICENSE",
+      "bytes": 11358
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-gsd/LICENSE",
+      "bytes": 1075
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-i-have-adhd/LICENSE",
+      "bytes": 1069
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-last30days/LICENSE",
+      "bytes": 1070
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-matt-pocock/LICENSE",
+      "bytes": 1068
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-ponytail/LICENSE",
+      "bytes": 1071
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-scientific-agent-skills/LICENSE",
+      "bytes": 1068
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-superpowers/LICENSE",
+      "bytes": 1070
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-understand-anything/LICENSE",
+      "bytes": 1111
+    },
+    {
+      "path": "ThirdPartyLicenses/builtin-skills-vercel/LICENSE",
+      "bytes": 1064
+    },
+    {
+      "path": "ThirdPartyLicenses/ios-mcp-server-bd5aca7/LICENSE",
+      "bytes": 1073
+    },
+    {
+      "path": "ThirdPartyLicenses/pysocks-1.7.1/LICENSE",
+      "bytes": 1401
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE",
+      "bytes": 16725
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.bzip2.txt",
+      "bytes": 1743
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.cpython.txt",
+      "bytes": 36164
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.expat.txt",
+      "bytes": 1144
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.libffi.txt",
+      "bytes": 1132
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.liblzma.txt",
+      "bytes": 660
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.mpdecimal.txt",
+      "bytes": 1284
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.openssl-3.txt",
+      "bytes": 10175
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.sqlite.txt",
+      "bytes": 1481
+    },
+    {
+      "path": "ThirdPartyLicenses/python-build-standalone-20260728/LICENSE.zlib.txt",
+      "bytes": 995
+    },
+    {
+      "path": "ThirdPartyLicenses/socksio-1.0.0/LICENSE",
+      "bytes": 1076
+    },
+    {
+      "path": "ThirdPartyNotices.md",
+      "bytes": 10461
+    },
+    {
+      "path": "catalog.json",
+      "bytes": 385786
+    }
+  ],
+  "compiledAssetUniqueNameCount": 48
+}

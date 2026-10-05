@@ -43,5 +43,8 @@
     "reason": "Final bounded plugin labels move native world-specific wording into declarative metadata. Renderer/core behavior remains verified by earlier browser and native captures."
   },
   "previousPluginSource": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-outpost-restoration-mie2eox1/plugins/agent-world",
-  "previousPluginRecoveryArchiveSHA256": "d6694fb2258e5de2e85d8b0d4cf0a2865680d4dc9af9169c5554cc3bcb9297a3"
+  "previousPluginRecoveryArchiveSHA256": "d6694fb2258e5de2e85d8b0d4cf0a2865680d4dc9af9169c5554cc3bcb9297a3",
+  "deliveredRepository": "/Users/nahid/Documents/agent-worlds",
+  "deliveredArtifact": "/Users/nahid/Documents/agent-worlds/release/agent-worlds-0.2.0.zip",
+  "deliveredCommitAndHashVerified": true
 }

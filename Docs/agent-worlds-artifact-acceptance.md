@@ -14,7 +14,7 @@ SHA-256 4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8
 installed tree digest 71588bfd345d2ed1090385b393111f54cf6bf355d9ff00f7f0c494714c183c81
 ```
 
-The exact clean-clone outputs were copied to the independent checkout's ignored `release/` directory: ZIP, `.sha256` and the full per-file `asset-manifest.json`. No source or generated artifacts are fetched from Locus during this process.
+The exact clean-clone outputs were copied to the independent checkout's ignored `release/` directory: ZIP, `.sha256` and the full per-file `asset-manifest.json`. The completed repository was subsequently moved intact to `/Users/nahid/Documents/agent-worlds` so it survives managed-worktree archival. Its source commit and ZIP hash were rechecked at that location. The delivered ZIP is `/Users/nahid/Documents/agent-worlds/release/agent-worlds-0.2.0.zip`. Historical clean-clone evidence retains its original temporary paths. No source or generated artifacts are fetched from Locus during this process.
 
 `Tools/VerifyAgentWorldsArtifact.py` accepted this pinned ZIP through the normal parser and ExtensionManager using isolated temporary application state. It preserved identity `locus/agent-world` and passed v1-to-v2 upgrade, rejection of the stale reviewed digest, workspace enablement preservation, rollback, reinstall, disable and uninstall. The original v1 plugin was read only from the verified external recovery-archive restoration after its old Locus source directory had been removed. Malformed archive bounds/path/symlink/duplicate/manifest checks have focused automated tests. The native application installation and visual acceptance result are recorded separately; this installer rehearsal alone does not prove native UI compatibility.
 
