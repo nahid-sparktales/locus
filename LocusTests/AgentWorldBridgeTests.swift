@@ -187,6 +187,8 @@ final class AgentWorldBridgeTests: XCTestCase {
             // Bind otherwise well-formed requests to this real connection, retaining malformed scope values.
             if AgentWorldBridgeContract.isToken(message["sessionID"]) { message["sessionID"] = transport.coordinator.bridge.sessionID }
             if AgentWorldBridgeContract.isToken(message["scopeID"]) { message["scopeID"] = transport.coordinator.bridge.scopeID }
+            let previousReplies = hasReplyID ? [] : (try await transport.web.evaluateJavaScript("window.received") as? [[String: Any]] ?? [])
+                .filter { ["response", "rejected"].contains($0["type"] as? String ?? "") }
             try await post(message, to: transport.web)
             if hasReplyID {
                 let reply = try await receive(requestID: "wire_\(index)", from: transport.web)
@@ -200,7 +202,11 @@ final class AgentWorldBridgeTests: XCTestCase {
                 try await post(request("host.snapshot", id: barrierID, transport: transport), to: transport.web)
                 _ = try await receive(requestID: barrierID, from: transport.web)
                 let received = try await transport.web.evaluateJavaScript("window.received") as? [[String: Any]] ?? []
-                XCTAssertFalse(received.contains { $0["requestID"] as? String == message["requestID"] as? String }, name)
+                let replies = received.filter { ["response", "rejected"].contains($0["type"] as? String ?? "") }
+                XCTAssertEqual(replies.count, previousReplies.count + 1, "Only the barrier receives a reply: \(name)")
+                if let unsafeID = message["requestID"] as? String {
+                    XCTAssertFalse(replies.contains { $0["requestID"] as? String == unsafeID }, name)
+                }
             }
             XCTAssertNil(fixture.world.selection, name)
             XCTAssertNil(fixture.world.newAgentDraft, name)
