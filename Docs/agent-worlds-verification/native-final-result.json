@@ -26,5 +26,18 @@
   "realWebContentTermination": "executed on an exact isolated test PID and passed",
   "nativeFIFORecovery": "close, exception, event-loop hang, termination, and fresh retry passed",
   "sharedMalformedWKTransportCases": 24,
-  "finalVisualSmoke": "full-color textures, contexts, portrait retention, corrected compact portrait, agent-switch menu passed"
+  "finalVisualSmoke": "full-color textures, contexts, portrait retention, corrected compact portrait, agent-switch menu passed",
+  "xcresultSummary": {
+    "title": "Test - Locus",
+    "result": "Passed",
+    "totalTestCount": 1989,
+    "passedTests": 1989,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "expectedFailures": 0,
+    "testFailures": [],
+    "startTime": 1791237691.896,
+    "finishTime": 1791238052.959,
+    "environmentDescription": "Locus \u00b7 Built with macOS 26.4.1"
+  }
 }
