@@ -105,3 +105,23 @@ Rollback is restoration of the captured commit/artifact plus legacy plugin ident
 ### Recorded native baseline result
 
 The focused command completed with exit **65** before running any test method. Swift/app/test compilation and signing completed, but Xcode could not launch `LocusTests`: `IDELaunchErrorDomain Code 20`, `IDELaunchServicesLauncher`, "The LaunchServices launcher has returned an error." This is a baseline environment/launch failure, not a green test suite or evidence of a test assertion failure. `xcresulttool get test-results summary` records zero passed tests and one runner-launch failure. Result bundle: `/tmp/locus-agent-worlds-native-baseline/Logs/Test/Test-Locus-2026.10.05_16-27-56--0400.xcresult`. Compile logs contain no Swift `error:`. Native UI parity remains unverified and blocks destructive cutover.
+
+### Recovered native test baseline (same compiled bundle)
+
+The repository's earlier native audits documented the same LaunchServices collision alongside an already running Locus app (`Docs/AgentExperienceAudit-2026-09-14.md:169`). That app was left running. Direct Xcode `xctest` successfully executed the exact compiled XCTest bundle. The first direct run had six resource assertions in two tests because `Bundle.main` was Xcode's executable and had no app Assets.car. A disposable runner app containing the **unchanged** Xcode xctest binary and a copy of the built Locus Resources corrected that resource-host mismatch; no application sources, test bundle, dylib, or assertions were changed.
+
+Final baseline: **116 tests, zero failures**, exit **0**. Includes the real WKWebView local asset fetch/XHR test and native in-memory controls. It remains distinct from interactive native UI visual parity. Log: `/tmp/locus-agent-worlds-native-baseline-direct-resources.log`.
+
+Wrapper: `/tmp/locus-agent-worlds-xctest-runner.app`, containing `Contents/MacOS/xctest` copied from `/Applications/Xcode.app/Contents/Developer/usr/bin/xctest`, `Contents/Resources` copied from the compiled `Locus.app/Contents/Resources`, and Info.plist with CFBundleExecutable=xctest, CFBundlePackageType=APPL, CFBundleIdentifier=io.sparktales.agent-worlds-xctest-baseline. Reproduce after native compilation:
+
+```sh
+env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  DYLD_LIBRARY_PATH=/tmp/locus-agent-worlds-native-baseline/Build/Products/Debug/Locus.app/Contents/MacOS:/Applications/Xcode.app/Contents/Developer/usr/lib:/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib \
+  DYLD_FRAMEWORK_PATH=/tmp/locus-agent-worlds-native-baseline/Build/Products/Debug/Locus.app/Contents/Frameworks:/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks \
+  /tmp/locus-agent-worlds-xctest-runner.app/Contents/MacOS/xctest \
+  -XCTest 'LocusTests.AgentWorldTests,LocusTests.AgentWorldSignalsTests,LocusTests.AgentCrewChatTests,LocusTests.SavedAgentTests,LocusTests.PluginPanelTests' \
+  /tmp/locus-agent-worlds-native-baseline/Build/Products/Debug/Locus.app/Contents/PlugIns/LocusTests.xctest \
+  > /tmp/locus-agent-worlds-native-baseline-direct-resources.log 2>&1
+```
+
+The sanitized environment also avoids xctest dumping unrelated process configuration if a runner argument is malformed.
