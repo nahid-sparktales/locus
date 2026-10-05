@@ -1,6 +1,6 @@
 # Verified Outpost recovery snapshot
 
-Source commit: `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb` (initially clean). Audit gate committed separately before implementation. No original tracked renderer or artwork has been deleted by this recovery step.
+Source commit: `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb` (initially clean). Audit gate committed separately before implementation. The recovery step preceded deletion. Superseded active inputs were subsequently removed in cutover commit `f53fc4e5` after the recorded native and package gates passed.
 
 Archive: `/Users/nahid/.codex/archives/agent-worlds/2026-10-05/locus-outpost-4cce6ebf/locus-outpost-source.tar.gz`
 
@@ -22,4 +22,4 @@ tar -xzf /Users/nahid/.codex/archives/agent-worlds/2026-10-05/locus-outpost-4cce
 
 Compare the archive hash with the recorded value, then verify each restored file against `manifest.json` before use. With the original Locus Python runtime dependencies and Pillow installed, `python Tools/VerifyAgentWorldPackage.py` revalidates the package offline. No generation request or private-generation-directory access is necessary.
 
-Keep the archive outside active source/build inputs and release artifacts. It must survive acceptance and must not be deleted automatically. The existing in-tree implementation stays intact until the separately recorded extraction acceptance gates pass.
+Keep the archive outside active source/build inputs and release artifacts. It must survive acceptance and must not be deleted automatically. The archive remains preserved after the successful cutover; no recovery copy was deleted.

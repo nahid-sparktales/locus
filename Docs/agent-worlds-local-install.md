@@ -76,4 +76,4 @@ A separate real-artifact rehearsal installed the existing legacy **0.1.1** plugi
 - Artifact SHA-256: `08185931c0170330997b120f2149fccf9ac767c1cdd3b184dfb21a6d36b689e7`
 - Locus content digest: `517ac68cc830ec1fc40c1ee238ab7c86594330bb9e634b6fcac521cfa8d90bb4`
 
-These identify the rehearsed build, not any future rebuild. No real user installation was changed. The CLI tests do not establish native rendering/UI parity, publication, signature validity or artwork redistribution rights; those have separate acceptance evidence.
+These identify the earlier rehearsed build. The final source `ec94166` was independently rehearsed after cutover with ZIP SHA-256 `4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8` and content digest `71588bfd345d2ed1090385b393111f54cf6bf355d9ff00f7f0c494714c183c81`; its verified legacy upgrade/rollback, reinstall, disable and uninstall results are in [artifact acceptance](agent-worlds-artifact-acceptance.md). No real user installation was changed. The CLI tests do not establish native rendering/UI parity, publication, signature validity or artwork redistribution rights; those have separate acceptance evidence.

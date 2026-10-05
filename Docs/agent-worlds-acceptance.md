@@ -1,69 +1,69 @@
 # Agent Worlds acceptance ledger
 
-Status: **in progress, destructive Locus cutover not accepted**. This ledger distinguishes executed logic/security/installer checks from actual native visual acceptance. A passing row at one layer is not evidence for another layer.
+Status: **local extraction and thin-host cutover complete; final native, Python, isolated build/package and native visual checks passed**. The full native run executed 1,989 tests with zero failures or skips. Required world scenarios have the distinct automated, actual WK and native UI evidence recorded below; a unit pass is not represented as a native UI or OS fault experiment. Publication remains blocked on artwork rights.
 
-Baseline: Locus `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb`, clean detached checkout. Audit `d7f05e63` was committed before implementation. Candidate source: independent `agent-worlds` `68a60d4492cae2414ba765202b71248d038e41e6`; local artifact0.2.0 uses SDK1, wire2 and preference schema2. No remote or publication exists.
+Baseline: Locus `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb`, clean detached checkout. Audit `d7f05e63` preceded implementation. Native gate checkpoint `0e7e7b4b` passed before deletion. Generic native chrome is `af5cc2c7`; source/assets removal is `f53fc4e5`. Independent candidate source `ec94166` uses release/World 0.2.0, SDK 1, wire 2 and preferences 2. Remote publication has not occurred.
 
-## Executed aggregate checks
+## Executed checks
 
-- Original renderer: typecheck/build and144 tests passed. Candidate retains128 applicable baseline tests, adds8 World-wrapper tests;16 Outpost-only tests are archived with their implementation.
-- Independent clean clone: `npm ci --ignore-scripts --no-audit --no-fund`, `npm run check`, repeated fresh `npm run package`, ZIP CRC and full inventory verification passed. Candidate222 tests, zero failed/skipped. Node25.5.0/npm11.8.0, macOS arm64. See [artifact evidence](agent-worlds-artifact-acceptance.md).
-- Swift shared contract:57 canonical fixture vectors and17 session/version/idempotency checks passed (74 total). Actual WK hello→welcome→scoped snapshot and resource fetch/XHR tests passed; private provider/model text is absent from DTOs.
-- Native baseline116 tests passed; additive canonical-service/generic-metadata checkpoint126 tests passed. Later failure/queue/artifact tests and full suite results are recorded separately when complete.
-- Python full suite before the local installer addition:3130 tests and31 subtests passed in435.37s. Local installer suite13 tests passed, affected existing extension suite93 passed. Current final full run is pending.
-- Browser asset loading, empty/500-agent rosters, capabilities, scope reset/reconnect, native intention logging and paused-clock commands passed. Original and extracted screenshots are retained. Their viewport/clock differences are documented; they are not pixel-golden tests.
+- Original renderer: 144 tests, typecheck and build passed. The candidate retains 128 applicable baseline tests, adds 8 World-wrapper tests, and preserves 16 Outpost-only tests in the recovery archive.
+- Final source candidate: `npm run check` passed with 222 tests, zero failures/skips, typecheck, build and package. The clean-clone repeat and final ZIP evidence are recorded in [artifact acceptance](agent-worlds-artifact-acceptance.md).
+- Swift shared contract: 57 canonical fixture vectors plus 17 session/version/idempotency checks passed, 74 total. Native XCTest validates the pinned fixtures, and 24 malformed/incompatible client vectors additionally cross the actual WK transport with a valid selection/replay control.
+- Native original baseline 116 and additive checkpoint 126 passed. The first full command-line wrapper exercised 1982 tests with 2 skips and 72 assertion failures, all confined to five runner-sensitive classes. A corrected genuine Xcode app host passed all 12 initial browser/Info/AX checks and 99 tests including all formerly failing AX classes and the strict visible packaged renderer. No assertions were weakened. [Native evidence and reproduction](agent-worlds-native-acceptance.md).
+- Python pre-cutover full suite: 3142 tests and 31 subtests passed in 605.94s. A subsequent additional CLI case was included in the focused 13/13 installer pass. Post-cutover full Python suite: 3138 tests and 31 subtests passed in 564.46s; source/resource-boundary and extension-focused suite: 125 passed. Eight archived generator-only cases were removed and three host-boundary cases added; no unrelated backend test was removed.
+- Final complete native `LocusTests` target: **1,989 tests passed, zero failures/skips/expected failures**, 345.776 test seconds (346.420 suite wall seconds), using production checkpoint `86077f43` and final ZIP `4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8`. This includes all 16 bridge tests, 36 AgentWorld tests and the formerly intermittent companion mouse-event case. Result: `/tmp/locus-agent-worlds-final-green/host.8fetZB/tests.xcresult`; log: `/tmp/locus-agent-worlds-final-green/tests.log`.
+- Actual native UI inspection passed map/selection/styles, Captain’s Quarters and Wano artwork/palette, native chat and tools, board/calendar, hide/show state preservation, camera zoom/reset, and Activity Center routing. The final post-cutover inspection additionally passed native portrait cancellation/application and persistence through world reset/reopen; a compact-header portrait sizing issue was fixed and visually rechecked. [Native captures](agent-worlds-native-visual-verification.md).
+- Browser checks passed 44 model loads, empty/500-agent rosters, search/selection, capability denial, workspace invalidation/reconnect, explicit native-intention logging, paused-clock updates and reset. [Browser evidence](agent-worlds-browser-verification.md) records viewport/clock limitations; these are not pixel-golden comparisons.
 
 ## Required scenarios
 
-`PASS` identifies executed automated or observed evidence named in the row. `PARTIAL` identifies required remaining native/end-to-end evidence. `BLOCKED` identifies an unmet extraction gate. Native failure results will be appended rather than inferred from mocks.
-
-| ID | Evidence and actual disposition |
+| ID | Executed evidence |
 | --- | --- |
-| T01 | PASS: shared protocol/client tests; native `testActualWebKitV2HandshakePublishesOnlyTheScopedProjection` negotiates before data. |
-| T02 | PASS:57 shared vectors, strict NSNumber boolean rejection, screen1/2 and Social Studio separation, runtime0.2.x/SDK1/session checks. |
-| T03 | PASS at contract/browser layers: full/read-only/missing-optional/missing-required cases, forged denied calls rejected by native session and mock host; browser disabled controls have reasons. |
-| T04 | PASS at projection/browser layers: empty roster stays empty, authoritative IDs retained. Actual packaged WK display assertions exist; visible native scene gate pending. |
-| T05 | PASS: projection/mock add, harbor stable-addition and real renderer roster browser inspection; no canonical creation from rendering. |
-| T06 | PASS: empty/removal projection, harbor reservations, identity caches, scope/lifecycle disposal tests. Native reset/removal service tests preserve unrelated data. |
-| T07 | PASS: stable assignments, reorder/rename/status tests, browser search/selection, current labels and selected profile identity. |
-| T08 | PASS: residentMotion/grandLine/harbor/islandWorkSignals tests derive work visuals solely from supplied status; command surface contains no execution API. |
-| T09 | PASS: completion release/reconcile and snapshot transfer-history seeding prevent repeated work/effects. |
-| T10 | PASS at logic/display layers: failed/waiting status tests, bounded display schema, native attention navigation; full visible native recovery interaction pending. |
-| T11 | PASS: client resnapshot after gap, authoritative replacement, stale scope rejection, deduplicated courier/encounter effects; browser reconnect tour. |
-| T12 | PASS: fifteen calibrated styles, identity-stable roster additions/reordering, full roster caches,500-agent browser roster. |
-| T13 | PASS: deterministic residentMotion, route/full-hull clearance, sailing-area and shipAlignment tests preserve movement. |
-| T14 | PASS: islandBerths/harborAssignments broadside docking, busy occupancy and native-status immutability tests. |
-| T15 | PASS: distinct reservations, reorder/wait survival, completion/removal release and work/attention interruption tests. |
-| T16 | PASS: projection/client lifecycle tests cover early events, gaps, duplicates, stale scope, unknown stream invalidation, replaced cancellation and disposed callbacks. |
-| T17 | PASS at native contract/service layers: installed digest/workspace/grant identity checked on every invocation, foreign entity rejection, scoped bindings and workspace invalidation; cosmetic A/B isolation test added. |
-| T18 | PASS at native contract/service layers: revoke/uninstall prevents old calls, attention opens the existing native flow; visual proof of full approval UI remains pending. No auto-approval command exists. |
-| T19 | PARTIAL: commands route to existing native create/chat/activity/board/calendar surfaces; profile, portrait and board regression tests retained. Complete native interactive tour pending; rendering cannot submit a task. |
-| T20 | PASS: timeout/cancel clears pending requests without replay; same request identity caches one native intent, changed payload reuse fails. |
-| T21 | PARTIAL: canonical native surfaces retained, generic backdrop/palette descriptor validated and installed images decoded; packaged visible quarters/island/chat/tool parity pending. |
-| T22 | PASS at native service/regression layer: three world-absent service tests plus saved-agent/Crew Chat/provider/permission/queue/calendar/board/plugin-panel suites. Full current native suite pending. |
-| T23 | PARTIAL: queued native work survives disable/digest/workspace revoke tests; injected renderer failures keep canonical binding. Actual visible running-work UI survival remains to be recorded; no live provider calls were made. |
-| T24 | PASS at namespace/service layer: reset only empties scoped cosmetic storage; profile/chat bindings and legacy defaults retained, mock roster unchanged. Current native workspace-isolation regression pending run. |
-| T25 | PASS at initial native migration layer: legacy Outpost/Local Line map safely, native bindings untouched; new tests cover corruption, idempotence and A/B scope. Legacy bytes retained for downgrade. |
-| T26 | PASS at installer/security layer: checksum, missing/invalid manifest/entrypoint, corrupt state, stale trust, half-state-write and incompatible version failures preserve active record. Native startup/visible unavailable gate pending. |
-| T27 | PARTIAL: handshake timeout and bounded retry implemented; actual WK missing-file, uncaught script exception and infinite-loop watchdog tests added, process-termination callback tested. Full final run and visible native responsiveness evidence pending; callback is not an OS process kill. |
-| T28 | PASS: strict payload/vector/byte limits; real resource fetch/XHR and traversal/symlink tests; installed archive confinement and manifest quotas. Existing main-frame messaging/navigation/local-resource policy retained. |
-| T29 | PASS: repeated non-nautical World cycles, Local Line abort/dispose late initialization, resource pool cleanup and browser reconnect cycles. Native packaged disposal assertion exists; visible run pending. |
-| T30 | PASS: production artifact without bridge shows unavailable/Retry and zero fake agents; no mock import in actual production graph/archive; lost sessions clear projection. |
-| T31 | PASS: fresh `git clone --no-local` at68a60d4, no Locus sibling, dependencies/build/test/package succeeded. |
-| T32 | PASS for standalone candidate:114 source assets pinned,113 shipped files,1170 actual graph inputs, no Outpost/dev/tests/archive/external imports. Locus active duplicate cleanup remains gated. |
-| T33 | PASS: executable architecture checks enforce SDK/Core dependency direction and reject renderer/native/browser/nautical imports and constants. |
-| T34 | PASS: test-only CounterWorld executes same lifecycle and snapshots without Babylon, ships, islands or production registration. |
-| T35 | PARTIAL: zero/500 roster browser, paging/camera/label/reduced-motion logic tests passed. OS reduced-motion/browser media emulation and equivalent native visual/response measurements not yet verified. |
-| T36 | PASS: Swift and TS validate the same57 reviewed vectors; actual WK transport roundtrip verifies scoped data and no provider details. |
-| T37 | PARTIAL: packaged WK loads under actual scheme/CSP, manifest presentation/style images decode; visible native scene acceptance is blocked by disposable runner reporting document.hidden. A separate actual app launch is being investigated. |
-| T38 | PASS at real installer/namespace layers: install/upgrade/stale-review rejection/rollback/reinstall/disable/uninstall preserve identity/scope;13 local CLI boundary tests incl failed commit/tampered rollback/dev snapshot. |
-| T39 | BLOCKED: ordinary native service tests work without an installed world, but old renderer/package/backdrops still exist in Locus active source. Delete only after native cutover gates pass and rerun build/resource inspection. |
-| T40 | PASS:1239-file external recovery archive fully restored, every hash matched source commit, restored legacy package verification passed. No future Outpost world implemented or packaged. |
+| T01 | PASS: shared client/session tests and actual secured WK hello→welcome→scoped snapshot; no data before negotiation. |
+| T02 | PASS:57 shared vectors, strict boolean/numeric/version checks, runtime 0.2.x/SDK 1, explicit legacy-web rejection and separate native Social Studio protocol. |
+| T03 | PASS: full/read-only/missing-optional/missing-required cases in contract/mock/native authorization; denied forged calls fail, browser controls explain unavailable capabilities. |
+| T04 | PASS: empty/authoritative projection tests and packaged WK six-agent scene with stable IDs, labels/statuses and no synthetic fallback. |
+| T05 | PASS: mock/projection additions, stable harbor allocation and actual browser roster update; rendering never invokes canonical creation. |
+| T06 | PASS: removal clears projection/selection/harbor reservations and renderer resources; native removal/reset leaves unrelated data intact. |
+| T07 | PASS: rename/reorder/status and stable identity/placement tests, actual browser/native roster selection and search. |
+| T08 | PASS: residentMotion/grandLine/harbor/islandWorkSignals derive work visuals only from supplied state; no task execution API exists in the renderer. |
+| T09 | PASS: completion reconciles/releases reservations; snapshot transfer-history seeding prevents replayed effects or work. |
+| T10 | PASS: failed/waiting visual state and safe bounded display text; attention/navigation commands route to existing native recovery surfaces. |
+| T11 | PASS: gap invalidation and fresh snapshot, stale-scope rejection, deduplicated transfer effects; browser disconnect/reconnect exercises the real renderer. |
+| T12 | PASS: fifteen calibrated styles, stable assignments across additions/reordering, full-roster identity caches and 500-agent browser roster. |
+| T13 | PASS: deterministic movement, full-hull route clearance, sailing-area and alignment tests preserve bow-first sailing. |
+| T14 | PASS: broadside docking, occupied berths, bounded movement and native status immutability tests. |
+| T15 | PASS: reservation conflict avoidance, queue/reorder survival, completion/removal release and attention/work interruptions. |
+| T16 | PASS: early events, gaps, duplicates, stale scope, unknown stream invalidation, generation replacement, canceled subscriptions and disposed callbacks. |
+| T17 | PASS: every invocation checks installed digest/root/workspace/grants; foreign entities and stale sessions fail; A/B cosmetic storage isolation and native chat ownership tests. |
+| T18 | PASS: disable/uninstall revokes session access; `attention.open` routes to native confirmation. No bridge command grants approval. Native permission regressions remain in the suite. |
+| T19 | PASS: native create draft, chat creation/open, a positive world-board-to-canonical-chat handoff with an editable unsent draft, activity/calendar/board navigation and avatar persistence regressions; real native UI tour confirms host-owned surfaces. Synthetic fixture prevents provider dispatch. |
+| T20 | PASS: timeout/cancel clears pending requests without replay; duplicate request identity returns one native outcome, changed payload reuse fails. |
+| T21 | PASS: actual native quarters/context artwork, profile/chat/tools, Crew Chat routing, board/calendar and Activity Center; installed metadata decorates native UI and cannot supply forms. |
+| T22 | PASS at canonical regression layer: world-absent conversation service plus saved-agent/Crew Chat/provider/permission/queue/calendar/board/panel tests. These classes passed again in the final full 1,989-test run with zero failures or skips. |
+| T23 | PASS: delayed native dispatch completes both queued prompts after disable, digest replacement and workspace revocation; chat/profile binding survives. Independent tests also hold accepted FIFO work through explicit close, actual JS exception, infinite event-loop hang and isolated WebContent SIGKILL, then recover a fresh session/snapshot and complete exactly once. No live provider call was made. |
+| T24 | PASS: reset empties only the active workspace's cosmetic namespace; canonical bindings, legacy settings and another workspace's visual settings remain unchanged. |
+| T25 | PASS: narrow metadata-filtered legacy migration, authorized profile IDs, idempotence, corrupt namespace isolation, retained legacy bytes and reset preventing reimport. |
+| T26 | PASS: missing/bad checksum/manifest/entrypoint, stale trust, corruption, incompatible versions and injected state-write failure preserve the active install record; native missing-file failure exposes recovery. |
+| T27 | PASS: actual WK load failure, uncaught external JS exception, infinite JS loop watchdog and isolated exact-PID WebContent termination. The OS process-kill test passed with accepted native work still pending, then a new native coordinator/session/snapshot and exactly-once completion. The close, exception and hang cases independently passed the same mounted-coordinator retry/reopen and exactly-once pending-work checks. All 16 bridge tests passed. |
+| T28 | PASS: strict envelope/schema/byte limits, actual local fetch/XHR, traversal/encoded/symlink rejection, main-frame checks and restricted navigation/network policy, bounded archive extraction. |
+| T29 | PASS: repeated non-nautical lifecycle, Local Line initialization abort/disposal, visual pool/listener cleanup, browser reconnect cycles and actual packaged WK disposal. |
+| T30 | PASS: production without bridge displays unavailable/Retry and zero invented agents; actual compiled graph/archive exclude mocks; invalid sessions clear projection. |
+| T31 | PASS: final ec94166 no-sibling clone installs, typechecks, passes 222 tests and packages twice identically. No credentials, models or Locus dependency are used. |
+| T32 | PASS: explicit clean-stage allowlist, 114 pinned source assets, 113 shipped files, 1170 actual graph inputs; no Outpost/dev/tests/archive/absolute external imports. Active Locus duplicates removed. Final ZIP hash and content digest verified from the no-sibling clone and again at the durable delivery path. |
+| T33 | PASS: executable SDK/Core dependency checks reject renderer/native/browser/nautical dependencies and constants. |
+| T34 | PASS: test-only CounterWorld uses the same lifecycle/snapshots without Babylon, ships, islands or production registration. |
+| T35 | PASS at deterministic behavior and interaction layers: zero/500 roster, paging/camera/selection/label tests, reduced-motion visual-pool/crew/glow/follow tests, browser roster and native camera interactions. OS media emulation and numerical graphics profiling were not performed. |
+| T36 | PASS: TypeScript and Swift accept/reject identical 57 pinned vectors. Actual WK transports 24 malformed/incompatible client cases plus valid selection and replay controls, with unchanged native state after denial; real handshake/scoped state excludes provider/model details. |
+| T37 | PASS at native checkpoint: actual packaged scene renders under custom scheme/CSP; all models and every presentation/style image load and visible labels are asserted. The final post-cutover artifact passed the strict visible packaged WK test; final full-app close-up textures, Wano/native palettes, portrait-picker cancellation/application, and portrait/chat preservation after reset/reopen passed. The detected compact-header portrait sizing defect was fixed in `86077f43` and verified again with agent switching. |
+| T38 | PASS: real installer install/upgrade/stale-review rejection/rollback/reinstall/disable/uninstall preserves stable identity and scope;13 CLI boundary tests cover failed commit, tampered caches and immutable marked development snapshots. |
+| T39 | Source boundary PASS: renderer/package/backdrops/generation inputs/catalog entry removed; CI guards their absence. Fresh native compilation, 50 loose-resource inspection, compiled-asset negative tests and assetutil inspection passed; all six retired backdrop names are absent. Shared native portrait gallery is deliberately retained. |
+| T40 | PASS:1239-file recovery archive restored, every file hash matched the baseline-derived manifest, restored original two-world package verifier passed. Future Outpost package is neither implemented nor shipped. |
 
-## Gate and performance limits
+## Limits and publication
 
-The independent repository is implemented and tested. Locus still carries transitional v1/native world constants and the original bundled source/assets. This is intentional preservation while a required native gate is unresolved; it is not a completed thin-host extraction. No script is permitted to erase those inputs merely because unit tests pass.
+Legacy installed package 261,824,234 bytes versus final candidate 221,540,432 installed bytes. Size comparisons measure files, not runtime memory. Browser CUA did not expose CPU/GPU/frame-time profiling or OS reduced-motion emulation; none is claimed. Live provider execution, signed distribution, remote CI and the separate `LocusUITests` target were NOT RUN. Native GUI inspection used isolated CUA fixtures; the full native aggregate is the `LocusTests` target. A guarded test-only WebKit process identifier identifies exactly one isolated process for SIGKILL; no process-name sweep or user application is targeted. Native failure injection uses real WK loading/JavaScript with isolated canonical fixtures; it does not claim immunity to OS/GPU/whole-machine failure.
 
-Measured legacy package261824234bytes versus candidate221540158installedbytes; candidate ZIP221559158bytes. The baseline contained40256337bytes of Outpost and210975332bytes of Local Line. Source and build inventories measure sizes, not runtime memory. No equivalent CPU/frame-time/GPU/memory comparison was available through browser CUA; none is fabricated. Native visibility/graphics limitations are reported separately from asset decoding.
+The initial raw-XCTest wrapper failure remains documented. The final complete app-host run after deletion passed all 1,989 tests with no skips. An absent artifact is an explicit test skip, never native acceptance. The first proper post-cutover aggregate run executed 1983 tests with one unsupported empty-state symbol failure and one companion activation skip. The symbol was corrected in `3c519cb3`; the symbol catalog and previously skipped companion case passed the focused rerun. The final aggregate also passed the symbol and companion cases. Earlier failed/skipped attempts remain recorded distinctly from that final result.
 
-Outpost recovery SHA256 `d6694fb2258e5de2e85d8b0d4cf0a2865680d4dc9af9169c5554cc3bcb9297a3`, archive333170467bytes outside both repos. See [restore instructions](agent-worlds-recovery.md). Asset rights in the candidate NOTICE remain unresolved for publication. Remote creation, push, tag, signing and release publication were not performed. CI definitions are supplied; remote CI runs have not occurred.
+Recovery archive SHA256 `d6694fb2258e5de2e85d8b0d4cf0a2865680d4dc9af9169c5554cc3bcb9297a3`, 333,170,467 bytes, remains outside both repositories. [Restore instructions](agent-worlds-recovery.md). Derivative artwork rights in the independent NOTICE remain unresolved and block publication. No remote, push, tag, public release, real user plugin installation or paid asset generation occurred. CI definitions are supplied; remote runs are not claimed.
