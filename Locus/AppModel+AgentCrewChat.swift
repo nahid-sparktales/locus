@@ -108,7 +108,7 @@ extension AppModel {
             if let loading = activeTranscriptLoad?.task { await loading.value }
             try Task.checkCancellation()
             guard stillCurrent(), currentSessionID == sessionID, canAcceptTranscriptInput else {
-                throw SavedAgentConversationError.unavailable("The conversation changed or could not finish loading. Reopen this captain’s quarters.")
+                throw SavedAgentConversationError.unavailable("The conversation changed or could not finish loading. Reopen this agent conversation.")
             }
         }
         // Resume owns a cancellable asynchronous transcript load. The World
