@@ -39,6 +39,10 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             messages = body.get("messages", [])
+            conversation = [message for message in messages if not (
+                message.get("role") == "user"
+                and str(message.get("content", "")).startswith("Locus reference data for this request.")
+                and str(message.get("content", "")).endswith("</locus-memory-reference>"))]
             if any(
                 "Turn the explicitly selected correction" in str(message.get("content", ""))
                 for message in messages
@@ -51,7 +55,7 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
                     },
                     "stop",
                 )
-            elif messages and messages[-1].get("role") == "tool":
+            elif conversation and conversation[-1].get("role") == "tool":
                 delta, finish = {"content": "Created result.txt containing ready."}, "stop"
             else:
                 delta = {
@@ -197,7 +201,7 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
                     "kind": "interval",
                     "every": 1,
                     "unit": "hours",
-                    "anchor": time.time() + 10,  # Leave time for isolated worker setup.
+                    "anchor": time.time() + 3600,  # Arm after isolated worker setup below.
                 },
             },
         }
@@ -211,6 +215,9 @@ def test_closed_controller_schedule_and_correction_check(tmp_path):
                 "configuration": configuration,
             },
         )
+        call("PATCH", "/api/schedules/" + deployed["schedule_id"], json={
+            "rule": {"kind": "interval", "every": 1, "unit": "hours", "anchor": time.time() + 15},
+        })
         call("POST", "/api/runtime/detach", json={})
         client.close()
         time.sleep(6)

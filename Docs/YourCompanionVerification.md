@@ -159,3 +159,39 @@ signed Sparkle feed process. Compile-only builds with `LOCUS_BUNDLE_MODE=skip`
 are not installable release evidence. Packaging logs and release artifacts are
 kept outside the source tree in `/tmp/locus-v4-verification` and
 `/tmp/locus-v4-release`.
+
+Cloud verification on macOS 15 subsequently passed the complete native target:
+**1,895 tests, zero failures**. Both editions passed all four companion UI cases
+(eight executions) and all eleven Library/Getting Started cases (22 executions)
+in [CI run 37266983346](https://github.com/nahid-sparktales/locus/actions/runs/37266983346).
+The full UI matrix was cancelled when the next revision was pushed; these are
+completed individual-case results, not a claim that the entire UI matrix passed.
+Two neighboring sidebar tests required scrolling rows into their compact viewport
+before asserting or opening a context menu; their existing visibility assertions
+remain in place.
+
+The later full local native run passed 1,894 tests with one timing-sensitive voice
+test failure. Its assertion ran after microphone capture started but before the
+recognizer was configured. The test now awaits the listening state, preserving
+its consent and on-device-policy assertions. All **18 voice tests passed** after
+that correction (`voice-final.xcresult`). No voice implementation was changed.
+
+The public Locus Memory 0.3.0 wheel is pinned by URL and SHA-256. Its exact-wheel
+host memory/runtime selection passed **218 tests**; the final pin and runtime
+packaging selection passed **24 tests**. The dependency audit found no known
+vulnerabilities in the 51 resolved dependencies; the non-PyPI memory package
+was skipped by that advisory service and validated separately.
+
+The full backend regression run completed with **3,076 tests and 31 subtests
+passing**, and three fixture failures. The wallet supervisor fixtures now wait
+for bounded child readiness before starting their cleanup deadline; all **23
+supervisor tests passed**, including deliberately slow startup cases. The real
+process runtime fixture now schedules after worker setup and its simulated model
+separates request-only memory data from conversational tool responses. The
+runtime acceptance case passed, followed by **26 runtime packaging/fixture tests**.
+Production deadlines, signal escalation, and runtime execution policies were not
+relaxed. Logs are under `/tmp/locus-v4-verification`.
+
+Release compilation retains `Release` optimization (`-O`) with incremental Swift
+compilation, 24 batches, and `xcodebuild -jobs 2` to bound compiler memory use on
+the development Mac. The final installable build enables the standalone runtime.

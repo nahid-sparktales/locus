@@ -40,6 +40,32 @@ def invoke(tmp_path, script, **kwargs):
     )
 
 
+def wait_for_ready_spawn(ready, monkeypatch):
+    """Make cleanup fixtures independent of interpreter startup under CI load."""
+    original_popen = process.subprocess.Popen
+
+    def start_ready(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        if not kwargs.get("start_new_session"):
+            return child
+        try:
+            wait_for_synthetic_file(ready, child, timeout=15)
+        except BaseException:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=5)
+            raise
+        return child
+
+    monkeypatch.setattr(process.subprocess, "Popen", start_ready)
+
+
+def invoke_after_signal_handler(tmp_path, setup, monkeypatch):
+    ready = tmp_path / "signal-handler.ready"
+    script = setup + f"; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(60)"
+    wait_for_ready_spawn(ready, monkeypatch)
+    return invoke(tmp_path, script, timeout=0.5)
+
+
 def test_phase_bounds_do_not_replace_fuzzer_requested_duration():
     assert process.phase_deadline("replay", 86400) == 300
     assert process.phase_deadline("fuzz", 60) == 360
@@ -82,9 +108,10 @@ def test_regular_failure_is_not_reinterpreted(tmp_path, owned_lock):
     assert not (tmp_path / "timeout.json").exists()
 
 
-def test_zero_exit_during_timeout_cleanup_remains_failed(tmp_path, owned_lock):
-    script = "import signal,time,sys; signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); time.sleep(60)"
-    result = invoke(tmp_path, script, timeout=0.5)
+@pytest.mark.parametrize("startup_delay", [0, 0.75])
+def test_zero_exit_during_timeout_cleanup_remains_failed(tmp_path, owned_lock, monkeypatch, startup_delay):
+    setup = f"import signal,time,sys; time.sleep({startup_delay}); signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))"
+    result = invoke_after_signal_handler(tmp_path, setup, monkeypatch)
     receipt = json.loads((tmp_path / "timeout.json").read_text())
     assert result.timed_out and result.returncode == 124
     assert receipt["observedReturnCode"] == 0
@@ -97,11 +124,12 @@ def test_zero_exit_during_timeout_cleanup_remains_failed(tmp_path, owned_lock):
         evidence.immutable_json(tmp_path / "timeout.json", {})
 
 
-def test_unresponsive_owned_child_gets_bounded_kill(tmp_path, owned_lock, monkeypatch):
+@pytest.mark.parametrize("startup_delay", [0, 0.75])
+def test_unresponsive_owned_child_gets_bounded_kill(tmp_path, owned_lock, monkeypatch, startup_delay):
     monkeypatch.setattr(process, "TERMINATE_SECONDS", 0.1)
     monkeypatch.setattr(process, "KILL_SECONDS", 1)
-    script = "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
-    result = invoke(tmp_path, script, timeout=0.5)
+    setup = f"import signal,time; time.sleep({startup_delay}); signal.signal(signal.SIGTERM, signal.SIG_IGN)"
+    result = invoke_after_signal_handler(tmp_path, setup, monkeypatch)
     receipt = json.loads((tmp_path / "timeout.json").read_text())
     assert result.returncode == 124
     assert receipt["observedReturnCode"] == -signal.SIGKILL
@@ -248,6 +276,9 @@ def test_file_output_descendant_is_killed_even_after_parent_exits(
         Path({str(identities)!r}).write_text(json.dumps({{'parent': os.getpid(), 'child': child.pid}}))
         time.sleep(30)
     """)
+    # Both parent and descendant signal handlers must be installed before the
+    # short cleanup exercise begins; the heartbeat proves the descendant is ready.
+    wait_for_ready_spawn(heartbeat, monkeypatch)
     try:
         with (tmp_path / "output.log").open("w") as output:
             result = process.run_bounded(

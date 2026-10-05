@@ -45,12 +45,18 @@ class FixtureProvider(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         messages = body.get("messages", [])
+        # The real transport appends request-only memory/continuity reference
+        # data after the conversation. It is not another conversational turn.
+        conversation = [message for message in messages if not (
+            message.get("role") == "user"
+            and str(message.get("content", "")).startswith("Locus reference data for this request.")
+            and str(message.get("content", "")).endswith("</locus-memory-reference>"))]
         if any("Turn the explicitly selected correction" in str(m.get("content", "")) for m in messages):
             delta = {"content": json.dumps({"check": {"id": "ready", "kind": "file_contains", "path": "result.txt",
                                                      "value": "ready", "requirement": "The result contains ready"},
                                            "verification_limits": "Exact text only."})}
             finish = "stop"
-        elif messages and messages[-1].get("role") == "tool":
+        elif conversation and conversation[-1].get("role") == "tool":
             delta, finish = {"content": "Created result.txt containing ready."}, "stop"
         else:
             delta = {"tool_calls": [{"index": 0, "id": "fixture-write", "type": "function",
@@ -125,9 +131,13 @@ def scenario(base: str, token: str, provider_port: int, workspace: Path) -> dict
                      "schedule": {"name": "Package validation", "prompt": "Create result.txt containing ready.",
                                   "mode": "work", "runner": "solo", "provider": "remote", "provider_account_id": "fixture",
                                   "model": "fixture", "timezone": "UTC",
-                                  "rule": {"kind": "interval", "every": 1, "unit": "hours", "anchor": time.time() + 15}}}
+                                  "rule": {"kind": "interval", "every": 1, "unit": "hours", "anchor": time.time() + 3600}}}
     deployed = call("POST", "/api/runtime/snapshots/import", {"deployment_id": "package-smoke", "snapshot": review,
                                                             "archive": base64.b64encode(archive(review)).decode(), "configuration": configuration})
+    # Worker setup can exceed a short initial anchor on a busy builder. Arm the
+    # real schedule only after the authenticated deployment is fully configured.
+    call("PATCH", "/api/schedules/" + deployed["schedule_id"],
+         {"rule": {"kind": "interval", "every": 1, "unit": "hours", "anchor": time.time() + 15}})
     call("POST", "/api/runtime/detach", {})
 
     def result(count):
