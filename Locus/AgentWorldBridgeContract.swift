@@ -237,7 +237,8 @@ final class AgentWorldBridgeSession {
                 execute: (AgentWorldBridgeContract.Request) throws -> [String: Any]) -> [String: Any] {
         if case .hello(let hello) = client {
             guard !revoked, current == identity else { return failure(hello.requestID, code: "stale_session", message: "This plugin connection is no longer current.", scoped: false) }
-            guard hello.protocols.contains(2), hello.sdkVersion == 1 else { return failure(hello.requestID, code: "incompatible", message: "This world requires a different host contract.", scoped: false) }
+            guard hello.protocols.contains(2), hello.sdkVersion == 1,
+                  hello.runtimeVersion.range(of: "\\A0\\.2\\.[0-9]+\\z", options: .regularExpression) != nil else { return failure(hello.requestID, code: "incompatible", message: "This world requires a different host contract.", scoped: false) }
             guard hello.required.isSubset(of: identity.capabilities) else { return failure(hello.requestID, code: "denied", message: "A required world capability is unavailable.", scoped: false) }
             if helloID == hello.requestID, let welcome { return welcome }
             sessionID = UUID().uuidString; scopeID = UUID().uuidString; streamID = UUID().uuidString; sequence = 0

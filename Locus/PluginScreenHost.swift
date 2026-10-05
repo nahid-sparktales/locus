@@ -202,11 +202,16 @@ struct PluginScreenHost: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.setURLSchemeHandler(context.coordinator.files, forURLScheme: PluginScreenSchemeHandler.scheme)
         config.userContentController.add(context.coordinator, name: "locusScreen")
+        if screen.screen.version == 2 {
+            config.userContentController.addUserScript(WKUserScript(source: Coordinator.failureMonitorScript,
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         web.setValue(false, forKey: "drawsBackground")
         context.coordinator.web = web
+        context.coordinator.startLifecycleMonitoring()
         model.visibilityChanged = { [weak coordinator = context.coordinator] visible in
             coordinator?.sendVisibility(visible)
         }
@@ -214,7 +219,7 @@ struct PluginScreenHost: NSViewRepresentable {
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LocusPluginScreenLocalOnlyV1", encodedContentRuleList: rules) { [weak coordinator = context.coordinator] rules, error in
             Task { @MainActor in
                 guard let coordinator, !coordinator.files.revoked else { return }
-                guard let rules, error == nil else { coordinator.model?.graphicsError = "The local screen could not be secured. Use the resident list to continue."; return }
+                guard let rules, error == nil else { coordinator.failRenderer("The local screen could not be secured. Use the resident list to continue."); return }
                 web.configuration.userContentController.add(rules)
                 guard let url = URL(string: "locus-screen://plugin/" + screen.screen.entrypoint) else { return }
                 web.load(URLRequest(url: url))
@@ -238,6 +243,55 @@ struct PluginScreenHost: NSViewRepresentable {
         private var lastSnapshot: Data?
         let bridge: AgentWorldBridgeSession
         private var receivedV2Snapshot = false
+        private var loadDeadline: Task<Void, Never>?
+        private var healthTask: Task<Void, Never>?
+        private var healthDeadline: Task<Void, Never>?
+        private var healthProbeID: UUID?
+        private var isVisible = true
+        static let failureMonitorScript = """
+        window.__locusScreenFailure = false;
+        window.addEventListener('error', event => { if (event instanceof ErrorEvent) window.__locusScreenFailure = true; });
+        window.addEventListener('unhandledrejection', () => { window.__locusScreenFailure = true; });
+        """
+        func startLifecycleMonitoring(handshakeTimeout: Duration = .seconds(30)) {
+            guard screen.screen.version == 2, !files.revoked else { return }
+            loadDeadline?.cancel()
+            loadDeadline = Task { [weak self] in
+                try? await Task.sleep(for: handshakeTimeout)
+                guard let self, !Task.isCancelled, !self.bridge.connected else { return }
+                self.failRenderer("The world did not connect in time. Retry the world or continue from the resident list.")
+            }
+        }
+        private func startHealthChecks() {
+            guard screen.screen.version == 2, bridge.connected, isVisible, !files.revoked, healthTask == nil else { return }
+            healthTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    self?.checkRendererHealth()
+                    try? await Task.sleep(for: .seconds(15))
+                }
+            }
+        }
+        /// This checks the JS event loop only; canonical data is not polled.
+        func checkRendererHealth(timeout: Duration = .seconds(3)) {
+            guard screen.screen.version == 2, !files.revoked, isVisible, healthProbeID == nil, let web else { return }
+            let probe = UUID(); healthProbeID = probe
+            healthDeadline = Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, !Task.isCancelled, self.healthProbeID == probe else { return }
+                self.failRenderer("The world stopped responding. Retry the world or continue from the resident list.")
+            }
+            web.callAsyncJavaScript("return window.__locusScreenFailure !== true", arguments: [:], in: nil, in: .page) { [weak self] result in
+                guard let self, self.healthProbeID == probe, !self.files.revoked else { return }
+                self.healthDeadline?.cancel(); self.healthDeadline = nil; self.healthProbeID = nil
+                if case .success(let value) = result, value as? Bool == true { return }
+                self.failRenderer("The world encountered a graphics error. Retry the world or continue from the resident list.")
+            }
+        }
+        func failRenderer(_ message: String) {
+            guard !files.revoked else { return }
+            if model?.activeScreen == screen { model?.graphicsError = message }
+            revoke()
+        }
         init(model: AgentWorldModel, screen: AgentWorldModel.AvailableScreen) {
             self.model = model; self.screen = screen
             bridge = AgentWorldBridgeSession(identity: .init(pluginID: screen.pluginID, digest: screen.digest, root: screen.root,
@@ -245,6 +299,9 @@ struct PluginScreenHost: NSViewRepresentable {
             files = PluginScreenSchemeHandler(root: URL(fileURLWithPath: screen.root))
         }
         func revoke() {
+            loadDeadline?.cancel(); loadDeadline = nil
+            healthTask?.cancel(); healthTask = nil
+            healthDeadline?.cancel(); healthDeadline = nil; healthProbeID = nil
             if bridge.connected {
                 var message = bridge.scope("revoked"); message["reason"] = "The installed plugin connection was closed."
                 sendWire(message)
@@ -307,8 +364,10 @@ struct PluginScreenHost: NSViewRepresentable {
             let response = bridge.handle(client, current: current, hostVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", execute: executeV2)
             sendWire(response)
             if current != bridge.identity { revoke(); return }
-            if case .hello = client, bridge.connected {
+            if case .hello = client, response["type"] as? String == "welcome" {
+                loadDeadline?.cancel(); loadDeadline = nil
                 ready = true; lastSnapshot = nil; receivedV2Snapshot = false; sendV2Projection(force: true)
+                startHealthChecks()
             } else if case .request(let request) = client, response["ok"] as? Bool == true {
                 sendV2Projection(force: request.command == "host.snapshot")
             }
@@ -378,12 +437,17 @@ struct PluginScreenHost: NSViewRepresentable {
                   let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]), force || data != lastSnapshot else { return }
             let message = bridge.projection(state, initial: !receivedV2Snapshot || force)
             guard AgentWorldBridgeContract.validHostMessage(message) else {
-                model.graphicsError = "The world display data exceeded its supported limits."
+                failRenderer("The world display data exceeded its supported limits.")
                 return
             }
             receivedV2Snapshot = true; lastSnapshot = data; sendWire(message)
         }
         func sendVisibility(_ visible: Bool) {
+            isVisible = visible
+            if !visible {
+                healthTask?.cancel(); healthTask = nil
+                healthDeadline?.cancel(); healthDeadline = nil; healthProbeID = nil
+            } else { startHealthChecks() }
             if screen.screen.version == 2 {
                 guard bridge.connected else { return }
                 var message = bridge.scope("visibility"); message["visible"] = visible; sendWire(message)
@@ -406,10 +470,10 @@ struct PluginScreenHost: NSViewRepresentable {
             decisionHandler(allowed ? .allow : .cancel)
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            model?.graphicsError = "The world could not load. Use the resident list to continue."
+            failRenderer("The world could not load. Retry the world or continue from the resident list.")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            model?.graphicsError = "The graphics process stopped. Close and reopen Agent World, or continue from the resident list."
+            failRenderer("The graphics process stopped. Retry the world or continue from the resident list.")
         }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) { decisionHandler(.deny) }

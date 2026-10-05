@@ -6,18 +6,18 @@ struct TestAgentWorldBridge {
     static func main() throws {
         let path = CommandLine.arguments.dropFirst().first ?? "ProtocolFixtures/agent-worlds/wire-v2.json"
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        let vectors = fixture["vectors"] as! [[String: Any]]
+        guard let fixture = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vectors = fixture["vectors"] as? [[String: Any]] else { throw CocoaError(.fileReadCorruptFile) }
         var checks = 0
         func check(_ condition: Bool, _ label: String) {
             precondition(condition, label)
             checks += 1
         }
         for vector in vectors {
-            let valid = vector["direction"] as! String == "client"
-                ? AgentWorldBridgeContract.decode(vector["message"]!) != nil
-                : AgentWorldBridgeContract.validHostMessage(vector["message"]!)
-            check(valid == vector["valid"] as! Bool, vector["id"] as! String)
+            guard let direction = vector["direction"] as? String, let message = vector["message"],
+                  let expected = vector["valid"] as? Bool, let id = vector["id"] as? String else { throw CocoaError(.fileReadCorruptFile) }
+            let valid = direction == "client" ? AgentWorldBridgeContract.decode(message) != nil : AgentWorldBridgeContract.validHostMessage(message)
+            check(valid == expected, id)
         }
         let identity = AgentWorldBridgeSession.Identity(pluginID: "installed-world", digest: "digest", root: "/approved/plugin", workspace: "/approved/project", capabilities: AgentWorldBridgeContract.capabilities)
         let session = AgentWorldBridgeSession(identity: identity)
@@ -25,6 +25,10 @@ struct TestAgentWorldBridge {
                                                   required: ["agents.read"], optional: ["agents.interact", "world.preferences"])
         var executed = 0
         let execute: (AgentWorldBridgeContract.Request) throws -> [String: Any] = { _ in executed += 1; return [:] }
+        for version in ["0.1.9", "0.3.0", "1.2.0", "00.2.0"] {
+            let incompatible = session.handle(.hello(.init(requestID: "incompatible", protocols: [2], runtimeVersion: version, sdkVersion: 1, required: ["agents.read"], optional: [])), current: identity, hostVersion: "1", execute: execute)
+            check((incompatible["error"] as? [String: Any])?["code"] as? String == "incompatible" && !session.connected, "runtime range rejects " + version)
+        }
         let welcome = session.handle(.hello(hello), current: identity, hostVersion: "1.0.0", execute: execute)
         check(AgentWorldBridgeContract.validHostMessage(welcome) && session.connected, "welcome shape")
         check(executed == 0, "handshake has no mutation")

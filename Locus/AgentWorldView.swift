@@ -450,11 +450,17 @@ private struct AgentWorldSurface: View {
     private var worldCanvas: some View {
         ZStack {
             palette.paper
-            if let screen = model.activeScreen { PluginScreenHost(model: model, screen: screen).id(screen.id + (screen.digest ?? "")) }
+            if let screen = model.activeScreen { PluginScreenHost(model: model, screen: screen).id(screen.id + (screen.digest ?? "") + String(model.renderEpoch)) }
             if let error = model.graphicsError {
                 VStack(spacing: 10) {
                     Image(systemName: "map").font(.largeTitle)
                     Text(error).multilineTextAlignment(.center).frame(maxWidth: 340)
+                    if model.canRetryWorldScreen {
+                        Button("Retry world") { model.retryWorldScreen() }
+                            .accessibilityIdentifier("agentWorld.retry")
+                    }
+                    Button("Use native workspace") { model.openAgentControls() }
+                        .disabled(!model.canInteract)
                 }.padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
         }

@@ -92,13 +92,6 @@ final class SavedAgentConversationService: ObservableObject {
         guard creationTasks[key] == nil, runners[key] == nil, bindings[key].map({ state($0).busy }) != true else { return false }
         bindings[key] = nil; persist(); objectWillChange.send(); return true
     }
-    /// Unaccepted local drafts from a revoked presentation are discarded. Runs
-    /// already admitted to the application's worker lifecycle remain authoritative.
-    func discardQueuedDrafts(workspace: String) {
-        let prefix = SessionSummary.canonicalWorkspacePath(workspace) + "\n"
-        for key in Array(queues.keys) where key.hasPrefix(prefix) { queues[key] = [] }
-        objectWillChange.send()
-    }
     func enqueue(text: String, mode: WorkMode, sessionID: String, workspace: String, profileID: UUID) throws {
         let key = Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)
         guard (queues[key]?.count ?? 0) < 20 else { throw SavedAgentConversationError.unavailable("This agent already has 20 queued messages.") }
