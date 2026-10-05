@@ -193,3 +193,18 @@ def test_development_directory_is_explicit_marked_snapshot_with_rereview(tmp_pat
     (source / "ui/link").symlink_to(tmp_path)
     with pytest.raises(ValueError, match="symbolic"):
         installer.review(None, None, development_directory=source)
+
+
+def test_wrong_metadata_shape_fails_before_touching_state(tmp_path):
+    source = plugin(tmp_path / "source")
+    path = source / ".codex-plugin/plugin.json"
+    manifest = json.loads(path.read_text())
+    manifest["agentWorlds"] = False
+    path.write_text(json.dumps(manifest))
+    archive, pin = zip_plugin(source, tmp_path / "wrong-metadata.zip")
+    with pytest.raises(ValueError, match="metadata"):
+        installer.review(archive, pin)
+    manifest["interface"] = False
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="development manifest"):
+        installer.review(None, None, development_directory=source)

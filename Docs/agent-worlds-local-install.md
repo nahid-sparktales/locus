@@ -69,7 +69,7 @@ This opt-in configuration copies the directory, rejects symlinks, applies the vi
 
 ## Recorded verification
 
-`python -m pytest -q agent/tests/test_agent_worlds_artifact_install.py` passed **12 tests** on 2026-10-05 with Python 3.14.6. Tests cover read-only content review, safe extraction, identity/scope/catalog preservation, explicit legacy upgrade, stale pins, corrupt state, injected failed state commit, tampered rollback caches and development snapshot isolation/re-review.
+`python -m pytest -q agent/tests/test_agent_worlds_artifact_install.py` passed **13 tests** on 2026-10-05 with Python 3.14.6. Tests cover read-only content review, safe extraction, identity/scope/catalog preservation, explicit legacy upgrade, stale pins, corrupt state, injected failed state commit, tampered rollback caches and development snapshot isolation/re-review.
 
 A separate real-artifact rehearsal installed the existing legacy **0.1.1** plugin into disposable state, upgraded it to **0.2.0**, then rolled back to **0.1.1** with scopes preserved. The reviewed ZIP contained **113 files**:
 

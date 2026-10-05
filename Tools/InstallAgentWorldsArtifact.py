@@ -16,6 +16,7 @@ import re
 import shutil
 import sys
 import tempfile
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 from ollama_code.extensions import ExtensionManager, _tree_digest, parse_plugin
@@ -70,6 +71,11 @@ def candidate(archive: Path | None, pin: str | None, development_directory: Path
                 raise ValueError("Development source changed during staging")
             manifest_path = destination / ".codex-plugin/plugin.json"
             marked = json.loads(manifest_path.read_text())
+            if not isinstance(marked, dict) or not isinstance(marked.get("interface", {}), dict) \
+                    or not isinstance(marked.get("locus", {}), dict) \
+                    or not isinstance(marked.get("locus", {}).get("screens", []), list) \
+                    or any(not isinstance(row, dict) for row in marked.get("locus", {}).get("screens", [])):
+                raise ValueError("Malformed development manifest")
             marked.setdefault("interface", {})["displayName"] = "Agent Worlds (development)"
             for screen in marked.get("locus", {}).get("screens", []):
                 screen["title"] = "Agent Worlds (development)"
@@ -86,11 +92,11 @@ def candidate(archive: Path | None, pin: str | None, development_directory: Path
         if any(parsed[key] for key in ["skills", "mcp_servers", "panels", "scripts", "unsupported"]):
             raise ValueError("Artifact requests features outside the reviewed Agent Worlds screen")
         metadata = manifest.get("agentWorlds", {})
-        if metadata.get("worlds") != ["local-line"] or metadata.get("bridgeVersion") != 2 \
+        if not isinstance(metadata, dict) or metadata.get("worlds") != ["local-line"] or metadata.get("bridgeVersion") != 2 \
                 or metadata.get("sdkVersion") != 1 or metadata.get("runtimeVersion") != parsed["version"]:
             raise ValueError("Unexpected Agent Worlds runtime metadata")
         world = json.loads((destination / "ui/world.json").read_text())
-        if world.get("id") != "local-line" or world.get("version") != parsed["version"]:
+        if not isinstance(world, dict) or world.get("id") != "local-line" or world.get("version") != parsed["version"]:
             raise ValueError("Expected matching Local Line world metadata")
         files = [{"path": str(path.relative_to(destination)), "bytes": path.stat().st_size, "sha256": sha256(path)}
                  for path in sorted(destination.rglob("*")) if path.is_file()]
@@ -260,7 +266,7 @@ def main() -> None:
         elif args.command == "install": result = install(args.artifact, args.sha256, args.review_digest, args.state_root.expanduser().resolve(), workspace=args.workspace, scope=args.scope, upgrade_legacy_v1=args.upgrade_legacy_v1, development_directory=args.development_directory)
         else: result = rollback(args.state_root.expanduser().resolve(), args.current_digest, args.target_digest)
         print(json.dumps(result, indent=2))
-    except (OSError, ValueError, RuntimeError, KeyError) as error:
+    except (OSError, ValueError, RuntimeError, KeyError, zipfile.BadZipFile) as error:
         parser.exit(1, f"Artifact operation failed: {error}\n")
 
 
