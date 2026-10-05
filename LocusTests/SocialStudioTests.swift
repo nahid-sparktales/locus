@@ -182,7 +182,17 @@ final class SocialStudioTests: XCTestCase {
     func testNativeScreenCapabilityHasNoWebAgentAccess() {
         let screen = ExtensionPluginScreen(id: "social-studio", title: "Social Studio", entrypoint: "ui/index.html", version: 1, capabilities: ["social.workspace"])
         XCTAssertTrue(screen.isSupported); XCTAssertTrue(screen.isSocialStudio)
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "createAgent"], screen: screen))
+        XCTAssertNil(AgentWorldBridgeContract.decode(["version": 1, "type": "createAgent"]))
+        XCTAssertTrue(Set(screen.capabilities).isDisjoint(with: AgentWorldBridgeContract.capabilities))
+        let identity = AgentWorldBridgeSession.Identity(pluginID: "social", digest: "fixture", root: "/plugin", workspace: "/workspace", capabilities: Set(screen.capabilities))
+        let bridge = AgentWorldBridgeSession(identity: identity)
+        var executed = false
+        let response = bridge.handle(.hello(.init(requestID: "hello", protocols: [2], runtimeVersion: "0.2.0", sdkVersion: 1,
+            required: ["agents.interact"], optional: [])), current: identity, hostVersion: "fixture") { _ in executed = true; return [:] }
+        XCTAssertEqual((response["error"] as? [String: Any])?["code"] as? String, "denied")
+        XCTAssertFalse(executed, "Native social workspace authority cannot negotiate agent actions")
+        XCTAssertFalse(ExtensionPluginScreen(id: "social-studio", title: "Social Studio", entrypoint: "ui/index.html", version: 2,
+                                            capabilities: ["social.workspace"]).isSupported)
         let mixed = ExtensionPluginScreen(id: "social-studio", title: "Social Studio", entrypoint: "ui/index.html", version: 1, capabilities: ["social.workspace", "agents.read"])
         XCTAssertFalse(mixed.isSupported)
     }
