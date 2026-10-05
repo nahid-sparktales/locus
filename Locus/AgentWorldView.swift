@@ -449,7 +449,7 @@ private struct AgentWorldSurface: View {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if model.residents.isEmpty {
                         VStack(spacing: 12) {
-                            Image(systemName: "person.crop.square.badge.plus")
+                            Image(systemName: "person.crop.circle.badge.plus")
                                 .font(.locus(size: 30)).foregroundStyle(palette.warning)
                             Text(model.pluginLabel("emptyTitle", fallback: "No saved agents"))
                                 .font(.locus(size: 13, weight: .semibold))
