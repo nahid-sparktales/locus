@@ -25,12 +25,13 @@ def test_social_studio_marketplace_install(tmp_path):
     assert installed["mcp_servers"] == []
 
 
-@pytest.mark.parametrize("identifier,capabilities", [
-    ("agent-world", ["social.workspace"]),
-    ("social-studio", ["social.workspace", "agents.read"]),
-    ("social-studio", ["social.workspace", "agents.interact"]),
+@pytest.mark.parametrize("identifier,capabilities,version", [
+    ("agent-world", ["social.workspace"], 1),
+    ("social-studio", ["social.workspace", "agents.read"], 1),
+    ("social-studio", ["social.workspace", "agents.interact"], 1),
+    ("social-studio", ["social.workspace"], 2),
 ])
-def test_native_capability_cannot_be_mixed_with_web_bridge(tmp_path, identifier, capabilities):
+def test_native_capability_cannot_be_mixed_with_web_bridge(tmp_path, identifier, capabilities, version):
     (tmp_path / ".codex-plugin").mkdir()
     (tmp_path / "ui").mkdir()
     (tmp_path / "ui/index.html").write_text("<!doctype html><title>Fixture</title>")
@@ -38,6 +39,7 @@ def test_native_capability_cannot_be_mixed_with_web_bridge(tmp_path, identifier,
     screen = manifest["locus"]["screens"][0]
     screen["id"] = identifier
     screen["capabilities"] = capabilities
+    screen["version"] = version
     (tmp_path / ".codex-plugin/plugin.json").write_text(json.dumps(manifest))
     with pytest.raises(ExtensionError, match="native social-studio"):
         parse_plugin(tmp_path)

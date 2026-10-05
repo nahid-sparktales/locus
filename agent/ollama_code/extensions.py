@@ -385,8 +385,8 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
                 or any(ord(character) < 32 or ord(character) == 127 for character in title):
             raise ExtensionError(f"screen {identifier} title must contain 1–120 printable characters")
         version = screen.get("version")
-        if type(version) is not int or version != 1:
-            raise ExtensionError(f"screen {identifier} requires supported bridge version 1")
+        if type(version) is not int or version not in {1, 2}:
+            raise ExtensionError(f"screen {identifier} requires supported bridge version 1 or 2")
         capabilities = screen.get("capabilities", [])
         if not isinstance(capabilities, list) or any(
             not isinstance(value, str) or value not in PLUGIN_SCREEN_CAPABILITIES
@@ -395,8 +395,10 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
             raise ExtensionError(f"screen {identifier} requests unsupported capabilities")
         if len(capabilities) != len(set(capabilities)):
             raise ExtensionError(f"screen {identifier} declares duplicate capabilities")
-        if "social.workspace" in capabilities and (identifier != "social-studio" or capabilities != ["social.workspace"]):
-            raise ExtensionError("social.workspace requires the native social-studio screen with no additional capabilities")
+        if "social.workspace" in capabilities and (
+            identifier != "social-studio" or version != 1 or capabilities != ["social.workspace"]
+        ):
+            raise ExtensionError("social.workspace requires the native social-studio version 1 screen with no additional capabilities")
         entrypoint = _html_entrypoint(root, screen.get("entrypoint"), f"screen {identifier}")
         screens.append({
             "id": identifier,
