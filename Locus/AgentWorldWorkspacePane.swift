@@ -5,7 +5,7 @@ import SwiftUI
 struct AgentWorldMapChat: View {
     @ObservedObject var world: AgentWorldModel
     @ObservedObject var model: AppModel
-    private var palette: AgentWorldPalette { .init(ocean: world.theme == "grand-line") }
+    private var palette: AgentWorldPalette { .init(ocean: (world.pluginPresentation != nil || world.theme == "grand-line"), custom: world.pluginSurfacePalette) }
     private var residents: [AgentWorldResident] { world.residents }
     private var resident: AgentWorldResident? { residents.first { $0.id == world.selection } }
     private var conversations: [SessionSummary] { world.selection.map(world.residentConversations(for:)) ?? [] }
@@ -50,7 +50,7 @@ struct AgentWorldMapChat: View {
                         if let resident {
                             HStack(spacing: 4) {
                                 Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
-                                Text(AgentWorldChrome.statusLabel(resident.status, ocean: world.theme == "grand-line"))
+                                Text(AgentWorldChrome.statusLabel(resident.status, ocean: (world.pluginPresentation != nil || world.theme == "grand-line")))
                                     .font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                             }
                         }
@@ -145,8 +145,8 @@ struct AgentWorldWorkspacePane: View {
     @State private var toolsWidth: CGFloat?
     @State private var resizeStart: CGFloat?
     @State private var activityContext: AgentInspectorContext?
-    private var ocean: Bool { world.theme == "grand-line" }
-    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters, island: world.activeQuartersIsland) }
+    private var ocean: Bool { (world.pluginPresentation != nil || world.theme == "grand-line") }
+    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters, island: world.activeQuartersIsland, custom: world.pluginSurfacePalette) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
     private var placement: AgentWorldResidentPlacement? { world.selection.flatMap { world.residentPlacements[$0] } }
     private var residentConversations: [SessionSummary] {
@@ -269,7 +269,7 @@ struct AgentWorldWorkspacePane: View {
                 Menu {
                     Button("New chat", action: world.newConversation).disabled(!world.canStartConversation(for: profile.id.uuidString))
                     if ocean {
-                        Menu("Ship style") { AgentWorldShipStyleOptions(world: world, agentID: profile.id.uuidString) }
+                        Menu(world.pluginLabel("style", fallback: "Ship style")) { AgentWorldShipStyleOptions(world: world, agentID: profile.id.uuidString) }
                             .disabled(world.activeScreen?.screen.capabilities.contains("world.preferences") != true)
                     }
                     Divider()

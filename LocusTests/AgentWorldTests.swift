@@ -117,11 +117,11 @@ final class AgentWorldTests: XCTestCase {
         ]
         app.taskConversationStates["earlier-chat"] = TaskConversationState(sessionID: "earlier-chat", taskID: nil, teamID: nil,
             workerID: nil, runID: "queued-run", state: .queued, updatedAt: Date())
-        XCTAssertEqual(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world")?.status, "queued")
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: other.id, workspace: "/tmp/world"))
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/another-world"))
+        XCTAssertEqual(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/world")?.status, "queued")
+        XCTAssertNil(app.savedAgentChatActivity(profileID: other.id, workspace: "/tmp/world"))
+        XCTAssertNil(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/another-world"))
         app.taskConversationStates["earlier-chat"] = nil
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world"))
+        XCTAssertNil(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/world"))
     }
 
     func testWorldOverviewAndActivityUseNativeControlsWithoutStartingAChat() async throws {
@@ -664,17 +664,17 @@ final class AgentWorldTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         let profile = AgentProfile(name: "Atlas", model: "exact-local:7b", instructions: "Review carefully", tokenLimit: 4096)
         model.agentProfiles = [profile]
-        let dispatch = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .ask)
+        let dispatch = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .ask)
         XCTAssertTrue(dispatch.profileOnly)
         XCTAssertEqual(dispatch.profile.model, "exact-local:7b")
         XCTAssertEqual(dispatch.mode, .ask)
         XCTAssertEqual(dispatch.provider, "ollama")
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: UUID(), mode: .work))
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: UUID(), mode: .work))
         var disconnected = profile
         disconnected.route = .providerAccount(UUID())
         model.agentProfiles = [disconnected]
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: disconnected.id, mode: .work))
-        let payload = AppModel.agentWorldProfileBody(profile)
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: disconnected.id, mode: .work))
+        let payload = AppModel.savedAgentProfileBody(profile)
         XCTAssertEqual(payload["token_limit"] as? Int, 4096)
         XCTAssertEqual(payload["access_ceiling"] as? String, profile.accessCeiling.rawValue)
         XCTAssertEqual(payload["instructions"] as? String, "Review carefully")

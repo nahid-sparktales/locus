@@ -46,7 +46,7 @@ enum PluginScreenMessage: Equatable {
     case setShipStyle(agentID: String, style: String?)
 
     static func decode(_ body: Any, screen: ExtensionPluginScreen) -> PluginScreenMessage? {
-        guard screen.isSupported, let value = body as? [String: Any],
+        guard screen.isSupported, screen.version == 1, let value = body as? [String: Any],
               let version = value["version"] as? NSNumber,
               CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 1,
               let type = value["type"] as? String else { return nil }
@@ -208,7 +208,7 @@ struct PluginScreenHost: NSViewRepresentable {
         web.setValue(false, forKey: "drawsBackground")
         context.coordinator.web = web
         model.visibilityChanged = { [weak coordinator = context.coordinator] visible in
-            coordinator?.send(["version": 1, "type": "visibility", "visible": visible])
+            coordinator?.sendVisibility(visible)
         }
         let rules = "[{\"trigger\":{\"url-filter\":\"^https?://\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\"^wss?://\"},\"action\":{\"type\":\"block\"}}]"
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LocusPluginScreenLocalOnlyV1", encodedContentRuleList: rules) { [weak coordinator = context.coordinator] rules, error in
@@ -236,11 +236,20 @@ struct PluginScreenHost: NSViewRepresentable {
         let files: PluginScreenSchemeHandler
         private var ready = false
         private var lastSnapshot: Data?
+        let bridge: AgentWorldBridgeSession
+        private var receivedV2Snapshot = false
         init(model: AgentWorldModel, screen: AgentWorldModel.AvailableScreen) {
             self.model = model; self.screen = screen
+            bridge = AgentWorldBridgeSession(identity: .init(pluginID: screen.pluginID, digest: screen.digest, root: screen.root,
+                                                              workspace: model.workspace, capabilities: Set(screen.screen.capabilities)))
             files = PluginScreenSchemeHandler(root: URL(fileURLWithPath: screen.root))
         }
         func revoke() {
+            if bridge.connected {
+                var message = bridge.scope("revoked"); message["reason"] = "The installed plugin connection was closed."
+                sendWire(message)
+            }
+            bridge.revoke()
             files.revoked = true; ready = false
             web?.stopLoading()
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "locusScreen")
@@ -249,8 +258,9 @@ struct PluginScreenHost: NSViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard !files.revoked, model?.activeScreen == screen, message.frameInfo.isMainFrame,
                   message.frameInfo.request.url?.scheme == PluginScreenSchemeHandler.scheme,
-                  message.frameInfo.request.url?.host == PluginScreenSchemeHandler.host,
-                  let action = PluginScreenMessage.decode(message.body, screen: screen.screen) else { return }
+                  message.frameInfo.request.url?.host == PluginScreenSchemeHandler.host else { return }
+            if screen.screen.version == 2 { receiveV2(message.body); return }
+            guard let action = PluginScreenMessage.decode(message.body, screen: screen.screen) else { return }
             switch action {
             case .ready: ready = true; lastSnapshot = nil; sendSnapshot()
             case .selectAgent(let id): model?.chooseResident(id)
@@ -271,10 +281,117 @@ struct PluginScreenHost: NSViewRepresentable {
             }
         }
         func sendSnapshot() {
+            if screen.screen.version == 2 { sendV2Projection(); return }
             guard let model, model.activeScreen == screen,
                   let data = try? JSONSerialization.data(withJSONObject: model.snapshot, options: [.sortedKeys]), data != lastSnapshot else { return }
             guard ready else { return }
             lastSnapshot = data; send(model.snapshot)
+        }
+        private func currentBridgeIdentity() -> AgentWorldBridgeSession.Identity? {
+            guard let model, !files.revoked else { return nil }
+            guard model.activeScreen == screen, model.workspace == bridge.identity.workspace else { return nil }
+            if let app = model.appModel,
+               SessionSummary.canonicalWorkspacePath(app.workspacePath) != bridge.identity.workspace { return nil }
+            return .init(pluginID: screen.pluginID, digest: screen.digest, root: screen.root,
+                         workspace: model.workspace, capabilities: Set(screen.screen.capabilities))
+        }
+        private func receiveV2(_ body: Any) {
+            guard let client = AgentWorldBridgeContract.decode(body) else {
+                if let value = body as? [String: Any], AgentWorldBridgeContract.isToken(value["requestID"]), let id = value["requestID"] as? String {
+                    sendWire(bridge.failure(id, code: "invalid_request", message: "The world request does not match the supported contract.", scoped: bridge.connected))
+                }
+                return
+            }
+            model?.refresh() // Refresh authorization before an invocation, never from a SwiftUI update.
+            let current = currentBridgeIdentity()
+            let response = bridge.handle(client, current: current, hostVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development", execute: executeV2)
+            sendWire(response)
+            if current != bridge.identity { revoke(); return }
+            if case .hello = client, bridge.connected {
+                ready = true; lastSnapshot = nil; receivedV2Snapshot = false; sendV2Projection(force: true)
+            } else if case .request(let request) = client, response["ok"] as? Bool == true {
+                sendV2Projection(force: request.command == "host.snapshot")
+            }
+        }
+        private func executeV2(_ request: AgentWorldBridgeContract.Request) throws -> [String: Any] {
+            guard let model, currentBridgeIdentity() == bridge.identity else {
+                throw AgentWorldBridgeContract.Failure(code: "stale_session", message: "The plugin or project changed before the action.")
+            }
+            func agent(_ raw: Any?) throws -> String {
+                guard let raw = raw as? String, let id = UUID(uuidString: raw)?.uuidString,
+                      model.residents.contains(where: { $0.id == id }) else {
+                    throw AgentWorldBridgeContract.Failure(code: "not_found", message: "The requested agent is not available in this world.")
+                }
+                return id
+            }
+            switch request.command {
+            case "host.snapshot": break
+            case "agents.open": model.chooseResident(try agent(request.arguments["agentID"]))
+            case "agents.create":
+                guard model.canCreateAgent else { throw AgentWorldBridgeContract.Failure(code: "unavailable", message: "Agent creation is unavailable.") }
+                model.createAgent()
+            case "selection.clear": model.clearWorldSelection()
+            case "attention.open":
+                guard let raw = request.arguments["requestID"] as? String, let id = UUID(uuidString: raw)?.uuidString else {
+                    throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "An attention ID is required.")
+                }
+                guard model.attentionRequests.contains(where: { $0.id == id }) else { throw AgentWorldBridgeContract.Failure(code: "not_found", message: "This attention request is no longer available.") }
+                model.openAttention(id)
+            case "transfers.open":
+                guard let raw = request.arguments["transferID"] as? String, let id = UUID(uuidString: raw)?.uuidString else {
+                    throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "A transfer ID is required.")
+                }
+                guard model.transfers.contains(where: { $0.id == id }) else { throw AgentWorldBridgeContract.Failure(code: "not_found", message: "This transfer is no longer available.") }
+                model.openTransfer(id)
+            case "chats.openShared":
+                guard model.appModel != nil else { throw AgentWorldBridgeContract.Failure(code: "unavailable", message: "The native chat is unavailable.") }
+                model.openSharedChat()
+            case "navigation.open":
+                let id = try request.arguments["agentID"].map(agent)
+                guard let surface = request.arguments["surface"] as? String else { throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "A native surface is required.") }
+                model.openWorldNativeSurface(surface, agentID: id)
+            case "presentation.open":
+                guard let id = request.arguments["presentationID"] as? String else { throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "A presentation ID is required.") }
+                try model.openWorldPresentation(id)
+            case "preferences.set":
+                guard let key = request.arguments["key"] as? String, let value = request.arguments["value"] else { throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "A preference key and value are required.") }
+                try model.updateWorldPreference(key: key, value: value)
+            case "preferences.reset": try model.resetWorldPreferences()
+            case "placements.set":
+                guard let rows = request.arguments["placements"] as? [[String: Any]] else { throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "Display placements are required.") }
+                let placements = try rows.map { row in
+                    guard let primary = row["primary"] as? String, let secondary = row["secondary"] as? String else {
+                        throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "Display labels are required.")
+                    }
+                    return AgentWorldResidentPlacement(agentID: try agent(row["agentID"]), ship: primary, home: secondary)
+                }
+                model.receiveResidentPlacements(placements)
+            default: throw AgentWorldBridgeContract.Failure(code: "invalid_request", message: "The command is not supported.")
+            }
+            return [:]
+        }
+        private func sendV2Projection(force: Bool = false) {
+            guard bridge.connected, !bridge.revoked, let model else { return }
+            guard currentBridgeIdentity() == bridge.identity else { revoke(); return }
+            let state = model.worldDisplayState(capabilities: bridge.granted)
+            guard AgentWorldBridgeContract.validDisplayState(state),
+                  let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]), force || data != lastSnapshot else { return }
+            let message = bridge.projection(state, initial: !receivedV2Snapshot || force)
+            guard AgentWorldBridgeContract.validHostMessage(message) else {
+                model.graphicsError = "The world display data exceeded its supported limits."
+                return
+            }
+            receivedV2Snapshot = true; lastSnapshot = data; sendWire(message)
+        }
+        func sendVisibility(_ visible: Bool) {
+            if screen.screen.version == 2 {
+                guard bridge.connected else { return }
+                var message = bridge.scope("visibility"); message["visible"] = visible; sendWire(message)
+            } else { send(["version": 1, "type": "visibility", "visible": visible]) }
+        }
+        private func sendWire(_ value: [String: Any]) {
+            guard !files.revoked, model?.activeScreen == screen, AgentWorldBridgeContract.validHostMessage(value) else { return }
+            web?.callAsyncJavaScript("window.locusAgentWorld?.receive(message)", arguments: ["message": value], in: nil, in: .page, completionHandler: nil)
         }
         func send(_ value: [String: Any]) {
             guard ready, !files.revoked, model?.activeScreen == screen else { return }

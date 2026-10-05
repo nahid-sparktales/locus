@@ -64,7 +64,7 @@ final class AgentWorkLedger: ObservableObject {
         guard FileManager.default.fileExists(atPath: file.path) else { return }
         do {
             let data = try Data(contentsOf: file)
-            guard data.count <= 8 * 1024 * 1024 else { throw AgentWorldError.unavailable("The assignment file is too large.") }
+            guard data.count <= 8 * 1024 * 1024 else { throw SavedAgentConversationError.unavailable("The assignment file is too large.") }
             records = try JSONDecoder().decode([AgentWorkRecord].self, from: data)
         }
         catch { loadFailed = true; self.error = "Saved assignments could not be loaded. \(error.localizedDescription)" }
@@ -76,13 +76,13 @@ final class AgentWorkLedger: ObservableObject {
     }
 
     func save(_ record: AgentWorkRecord) throws {
-        guard !loadFailed else { throw AgentWorldError.unavailable(error ?? "Saved assignments are unavailable.") }
+        guard !loadFailed else { throw SavedAgentConversationError.unavailable(error ?? "Saved assignments are unavailable.") }
         var next = records
         if let index = next.firstIndex(where: { $0.id == record.id }) { next[index] = record }
         else { next.append(record) }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(next)
-        guard data.count <= 8 * 1024 * 1024 else { throw AgentWorldError.unavailable("Saved assignments have reached their storage limit.") }
+        guard data.count <= 8 * 1024 * 1024 else { throw SavedAgentConversationError.unavailable("Saved assignments have reached their storage limit.") }
         try data.write(to: file, options: .atomic)
         records = next; error = nil
     }

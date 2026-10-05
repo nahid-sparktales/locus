@@ -156,7 +156,7 @@ final class TaskCapsuleRoutingTests: XCTestCase {
         XCTAssertTrue(model.isCurrentRoute(account: nil, model: profile.model))
         XCTAssertFalse(model.isCurrentRoute(account: globalAccount, model: "gpt-5.6-sol"))
         XCTAssertNil(model.modelSelectionLockReason)
-        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertEqual(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                          sessionID: "agent-chat").profile.model, profile.model)
     }
 
@@ -336,7 +336,7 @@ final class TaskCapsuleRoutingTests: XCTestCase {
         model.providerAccounts = [account]
 
         model.selectModel(account: account, model: "gpt-5.6-sol")
-        let dispatch = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        let dispatch = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
         _ = try await model.prepareChatWorkerCapsuleRoute(using: makeService(port: 10),
             capsuleDispatch: dispatch, restoringOverride: true, ordinaryProviderBody: [:])
 
@@ -364,13 +364,13 @@ final class TaskCapsuleRoutingTests: XCTestCase {
         let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(model.settings))
         let (reopened, _) = agentChat(profile: profile)
         reopened.settings = restored
-        let dispatch = try reopened.agentWorldProfileDispatch(profileID: profile.id, mode: .ask, sessionID: "agent-chat")
+        let dispatch = try reopened.savedAgentProfileDispatch(profileID: profile.id, mode: .ask, sessionID: "agent-chat")
         _ = try await reopened.prepareChatWorkerCapsuleRoute(using: makeService(port: 10),
             capsuleDispatch: dispatch, restoringOverride: true, ordinaryProviderBody: [:])
         XCTAssertEqual(BackendStub.requestPaths, ["/api/provider", "/api/config"])
         XCTAssertEqual(try requestBody(BackendStub.requests[1])["model"] as? String, "chat-local:14b")
         XCTAssertEqual(reopened.modelPickerLabel, "chat-local:14b")
-        XCTAssertEqual(try reopened.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertEqual(try reopened.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                             sessionID: "another-chat").profile.model, profile.model)
         reopened.installTranscriptSession("another-chat", blocks: [])
         XCTAssertNil(reopened.currentAgentChatProfile)
@@ -384,12 +384,12 @@ final class TaskCapsuleRoutingTests: XCTestCase {
 
     func testSelectionDuringAgentTurnAppliesToNextDispatchWithoutRetargetingCapturedTurn() throws {
         let (model, profile) = agentChat()
-        let submitted = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        let submitted = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
         model.isBusy = true
         model.selectModel(account: nil, model: "next-model")
 
         XCTAssertEqual(submitted.profile.model, profile.model)
-        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertEqual(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                          sessionID: "agent-chat").profile.model, "next-model")
         XCTAssertNil(model.pendingProviderSwitch, "A per-chat choice must not later switch whichever global chat is open")
         XCTAssertNoBackendTraffic()
@@ -398,20 +398,20 @@ final class TaskCapsuleRoutingTests: XCTestCase {
     func testQueuedAgentTurnRetainsItsModelAfterAnotherPickerChoice() async throws {
         let (model, profile) = agentChat()
         model.selectModel(account: nil, model: "submitted-model")
-        let submitted = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
+        let submitted = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat")
         let prepared = try await model.prepareAgentChatQueueRoute(submitted, sessionID: "agent-chat")
         let snapshot = try XCTUnwrap(prepared)
         let route = try JSONDecoder().decode([String: JSONValue].self, from: JSONSerialization.data(withJSONObject: snapshot))
         model.selectModel(account: nil, model: "next-model")
 
-        let restored = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        let restored = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                           sessionID: "agent-chat", queuedRoute: route)
         XCTAssertEqual(restored.profile.model, "submitted-model")
         XCTAssertEqual(Set(snapshot.keys), ["profile_id", "provider", "model"])
         XCTAssertEqual(model.modelPickerLabel, "next-model")
         var wrongOwner = route
         wrongOwner["profile_id"] = .string(UUID().uuidString)
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                                 sessionID: "agent-chat", queuedRoute: wrongOwner))
         XCTAssertNoBackendTraffic()
     }
@@ -425,7 +425,7 @@ final class TaskCapsuleRoutingTests: XCTestCase {
 
         XCTAssertTrue(model.modelSelectionLockReason?.contains("automation") == true)
         XCTAssertEqual(model.modelPickerLabel, profile.model)
-        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertEqual(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                          sessionID: "agent-chat").profile.model, profile.model)
         XCTAssertEqual(model.settings.agentChatModelSelections["agent-chat"]?.model, "earlier-side-chat-model")
         XCTAssertNil(model.settings.activeAccountID)
@@ -439,14 +439,14 @@ final class TaskCapsuleRoutingTests: XCTestCase {
         model.selectModel(account: account, model: "gpt-5.6-sol")
         model.providerAccounts = []
 
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat"))
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work, sessionID: "agent-chat"))
         XCTAssertEqual(model.modelPickerLabel, "Unavailable account · gpt-5.6-sol")
         model.selectModel("same-source-change")
         XCTAssertEqual(model.settings.agentChatModelSelections["agent-chat"]?.accountID, account.id)
         let otherOwner = AgentProfile(name: "Other", model: "other-default")
         XCTAssertEqual(model.agentChatProfile(otherOwner, sessionID: "agent-chat"), otherOwner)
         model.selectModel(account: nil, model: "local-recovery")
-        XCTAssertEqual(try model.agentWorldProfileDispatch(profileID: profile.id, mode: .work,
+        XCTAssertEqual(try model.savedAgentProfileDispatch(profileID: profile.id, mode: .work,
                                                          sessionID: "agent-chat").profile.model, "local-recovery")
         XCTAssertNoBackendTraffic()
     }

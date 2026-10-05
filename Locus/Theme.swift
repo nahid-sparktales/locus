@@ -305,6 +305,10 @@ enum LocusBrandIcon {
     }
 }
 
+private struct LocusPluginPaletteKey: EnvironmentKey {
+    static let defaultValue: PluginSurfacePalette? = nil
+}
+
 private struct LocusOceanThemeKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -321,7 +325,12 @@ extension EnvironmentValues {
     /// Resolve the complete presentation context in one place. Reading this
     /// environment value also updates stable child views when islands change.
     var locusViewColors: LocusViewColors {
-        LocusViewColors(ocean: locusOceanTheme, deck: locusCaptainDeckTheme, island: locusQuartersIsland)
+        LocusViewColors(ocean: locusOceanTheme, deck: locusCaptainDeckTheme, island: locusQuartersIsland, custom: locusPluginPalette)
+    }
+
+    var locusPluginPalette: PluginSurfacePalette? {
+        get { self[LocusPluginPaletteKey.self] }
+        set { self[LocusPluginPaletteKey.self] = newValue }
     }
 
     var locusQuartersIsland: AgentWorldQuartersIsland? {
@@ -342,12 +351,13 @@ extension EnvironmentValues {
 }
 
 struct LocusWorldSheetTheme: ViewModifier {
+    @Environment(\.locusPluginPalette) private var pluginPalette
     @Environment(\.locusOceanTheme) private var ocean
     @Environment(\.locusCaptainDeckTheme) private var deck
     @Environment(\.locusQuartersIsland) private var quartersIsland
     @Environment(\.locusViewColors) private var colors
     func body(content: Content) -> some View {
-        if ocean || deck {
+        if ocean || deck || pluginPalette != nil {
             content.foregroundStyle(colors.ink).tint(colors.signalDeep).background(colors.paper)
         } else { content }
     }
@@ -378,11 +388,12 @@ struct LocusViewColors {
     let ocean: Bool
     let deck: Bool
     let island: AgentWorldQuartersIsland?
-    init(ocean: Bool, deck: Bool = false, island: AgentWorldQuartersIsland? = nil) {
-        self.ocean = ocean; self.deck = deck; self.island = island
+    let custom: PluginSurfacePalette?
+    init(ocean: Bool, deck: Bool = false, island: AgentWorldQuartersIsland? = nil, custom: PluginSurfacePalette? = nil) {
+        self.ocean = ocean; self.deck = deck; self.island = island; self.custom = custom
     }
-    private var themed: Bool { ocean || deck || island != nil }
-    private var palette: LocusTheme.Palette { island.map(LocusTheme.islandPalette) ?? (deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette) }
+    private var themed: Bool { custom != nil || ocean || deck || island != nil }
+    private var palette: LocusTheme.Palette { custom?.native ?? island.map(LocusTheme.islandPalette) ?? (deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette) }
     var ink: Color { themed ? Color(nsColor: palette.ink) : LocusTheme.ink }
     var inkSoft: Color { themed ? Color(nsColor: palette.inkSoft) : LocusTheme.inkSoft }
     var paper: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.paper }

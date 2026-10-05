@@ -168,7 +168,7 @@ final class CompanionPanelTests: XCTestCase {
         let (app, _, _) = try fixture()
         defer { cleanup(app) }
         app.companionPanel.configure(app: app) { _, _, _, _, _ in
-            throw AgentWorldError.unavailable("Fixture provider unavailable")
+            throw SavedAgentConversationError.unavailable("Fixture provider unavailable")
         }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value

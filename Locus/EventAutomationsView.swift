@@ -1452,7 +1452,7 @@ private struct EventTriggerEditorView: View {
                                           "provider_account_id": route.accountID ?? ""]
                 }
                 if draft.targetSessionID == EventTriggerEditorDraft.newOwnedAgentChat {
-                    guard let owner else { throw AgentWorldError.unavailable("This saved agent is no longer available.") }
+                    guard let owner else { throw SavedAgentConversationError.unavailable("This saved agent is no longer available.") }
                     try app.prepareSavedAgentWorkspace(owner, workspace: draft.workspaceRoot)
                     let chat = try await app.createSavedAgentConversation(owner, workspace: draft.workspaceRoot)
                     createdReceivingChats.append(chat)

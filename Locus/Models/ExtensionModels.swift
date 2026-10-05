@@ -110,9 +110,9 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
     }
 
     var isSupported: Bool {
-        version == 1 && !id.isEmpty && !title.isEmpty
+        [1, 2].contains(version) && !id.isEmpty && !title.isEmpty
             && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences", "social.workspace"])
-            && (!capabilities.contains("social.workspace") || (id == "social-studio" && capabilities == ["social.workspace"]))
+            && (!capabilities.contains("social.workspace") || (version == 1 && id == "social-studio" && capabilities == ["social.workspace"]))
             && PluginScreenFiles.isSafeRelativePath(entrypoint)
             && ["html", "htm"].contains(URL(fileURLWithPath: entrypoint).pathExtension.lowercased())
     }

@@ -11,11 +11,11 @@ extension AppModel {
                 do { _ = try self.agentProfileProvider(profile); return nil }
                 catch { return error.localizedDescription }
             },
-            state: { [weak self] id in self?.agentWorldConversationState(id) ?? .init() },
+            state: { [weak self] id in self?.savedAgentConversationState(id) ?? .init() },
             create: { [weak self] workspace, profile in
                 guard let self, self.agentProfiles.contains(where: { $0.id == profile.id }),
                       !self.removingSavedAgentIDs.contains(profile.id) else {
-                    throw AgentWorldError.unavailable("This agent was removed from the crew.")
+                    throw SavedAgentConversationError.unavailable("This agent was removed from the crew.")
                 }
                 self.savedAgentConversationCreationCounts[profile.id, default: 0] += 1
                 defer { self.savedAgentConversationCreationCounts[profile.id, default: 0] -= 1 }
@@ -38,15 +38,15 @@ extension AppModel {
                 guard let profileID = self.agentCrewChat.boundProfileID(for: id),
                       let workspace = self.agentCrewChat.boundWorkspace(for: id),
                       loaded.identity.matches(sessionID: id, profileID: profileID, workspace: workspace) else {
-                    throw AgentWorldError.unavailable("This conversation no longer matches its crew member and project.")
+                    throw SavedAgentConversationError.unavailable("This conversation no longer matches its crew member and project.")
                 }
                 let detail = loaded.detail
-                guard detail.archived != true else { throw AgentWorldError.unavailable("This crew conversation is archived.") }
+                guard detail.archived != true else { throw SavedAgentConversationError.unavailable("This crew conversation is archived.") }
                 self.splitPaneBlocks[id] = ChatTranscriptBuilder.blocks(from: detail.messages)
             },
             dispatch: { [weak self] sessionID, workspace, profileID, text, mode in
                 guard let self else { throw CancellationError() }
-                try await self.sendAgentWorldTurn(sessionID: sessionID, workspace: workspace,
+                try await self.sendSavedAgentTurn(sessionID: sessionID, workspace: workspace,
                                                  profileID: profileID, text: text, mode: mode)
             },
             stop: { [weak self] id in self?.stopGoalTurn(sessionID: id) },
@@ -59,7 +59,7 @@ extension AppModel {
                     Task { @MainActor in
                         do {
                             let workspace = self.sessionCatalog.snapshot.sessionsByID[sessionID]?.workspacePath ?? self.workspacePath
-                            try await self.activateAgentWorldConversation(sessionID, workspace: workspace)
+                            try await self.activateSavedAgentConversation(sessionID, workspace: workspace)
                         } catch { self.showToast(error.localizedDescription) }
                     }
                 }
@@ -82,33 +82,33 @@ extension AppModel {
 
     /// Shares the ordinary native chat lifecycle without moving keyboard focus
     /// to a different window. Its composer owns all approvals and tool access.
-    func activateAgentWorldConversation(_ sessionID: String, workspace: String, expectedProfileID: UUID? = nil, stillCurrent: () -> Bool = { true }) async throws {
+    func activateSavedAgentConversation(_ sessionID: String, workspace: String, expectedProfileID: UUID? = nil, stillCurrent: () -> Bool = { true }) async throws {
         let previousSessionID = currentSessionID
         if sessionCatalog.snapshot.sessionsByID[sessionID] == nil { await refreshMetadata() }
         try Task.checkCancellation()
         guard stillCurrent(), currentSessionID == previousSessionID || currentSessionID == sessionID else { throw CancellationError() }
         guard let session = sessionCatalog.snapshot.sessionsByID[sessionID] else {
             // A failed catalog refresh is not proof that a chat was deleted.
-            throw AgentWorldError.unavailable("This chat could not be found in the current history. Try again, or start a new chat.")
+            throw SavedAgentConversationError.unavailable("This chat could not be found in the current history. Try again, or start a new chat.")
         }
         guard !session.isArchived else {
-            throw AgentWorldError.conversationUnavailable("This conversation is archived.")
+            throw SavedAgentConversationError.conversationUnavailable("This conversation is archived.")
         }
-        if let expectedProfileID, (session.savedAgentProfileID ?? agentWorld.boundProfileID(for: sessionID)) != expectedProfileID {
-            throw AgentWorldError.unavailable("This chat belongs to another agent. Start a new chat for the selected resident.")
+        if let expectedProfileID, (session.savedAgentProfileID ?? savedAgentConversations.boundProfileID(for: sessionID)) != expectedProfileID {
+            throw SavedAgentConversationError.unavailable("This chat belongs to another agent. Start a new chat for the selected resident.")
         }
         guard session.belongsToWorkspace(workspace) else {
-            throw AgentWorldError.unavailable("This conversation is unavailable in this project.")
+            throw SavedAgentConversationError.unavailable("This conversation is unavailable in this project.")
         }
         if currentSessionID != sessionID {
             guard !chatNavigationDisabled else {
-                throw AgentWorldError.unavailable("Finish or stop the current foreground task before opening this conversation.")
+                throw SavedAgentConversationError.unavailable("Finish or stop the current foreground task before opening this conversation.")
             }
             resume(session)
             if let loading = activeTranscriptLoad?.task { await loading.value }
             try Task.checkCancellation()
             guard stillCurrent(), currentSessionID == sessionID, canAcceptTranscriptInput else {
-                throw AgentWorldError.unavailable("The conversation changed or could not finish loading. Reopen this captain’s quarters.")
+                throw SavedAgentConversationError.unavailable("The conversation changed or could not finish loading. Reopen this captain’s quarters.")
             }
         }
         // Resume owns a cancellable asynchronous transcript load. The World
