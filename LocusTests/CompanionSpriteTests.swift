@@ -16,7 +16,7 @@ final class CompanionSpriteTests: XCTestCase {
         let restored = try JSONDecoder().decode(CompanionAppearance.self, from: JSONEncoder().encode(legacy))
         XCTAssertEqual(restored, legacy)
         XCTAssertEqual(restored.validated, legacy)
-        for sprite in CompanionBundledSprite.allCases {
+        for sprite in CompanionBundledSprite.supportedAssets {
             let appearance = CompanionAppearance(sprite: sprite)
             XCTAssertEqual(try JSONDecoder().decode(CompanionAppearance.self, from: JSONEncoder().encode(appearance)), appearance)
             XCTAssertEqual(appearance.validated, appearance)
@@ -81,18 +81,57 @@ final class CompanionSpriteTests: XCTestCase {
     }
 
     func testEveryGallerySpriteHasItsApprovedBundledAtlasVersion() throws {
-        for sprite in CompanionBundledSprite.allCases {
+        for sprite in CompanionBundledSprite.supportedAssets {
             let url = try XCTUnwrap(CompanionSpriteCatalog.resourceURL(for: sprite), sprite.displayName)
             let atlas = try CompanionSpriteAtlas(data: Data(contentsOf: url))
-            let isOriginalPitou = sprite == .pitou
-            XCTAssertEqual(atlas.version, isOriginalPitou ? 2 : 1, sprite.displayName)
-            XCTAssertEqual(atlas.frameCount, isOriginalPitou ? 73 : 57, sprite.displayName)
+            let hasGaze = sprite != .gon
+            XCTAssertEqual(atlas.version, hasGaze ? 2 : 1, sprite.displayName)
+            XCTAssertEqual(atlas.frameCount, hasGaze ? 73 : 57, sprite.displayName)
             XCTAssertEqual(atlas.pixelWidth, 1536, sprite.displayName)
-            XCTAssertEqual(atlas.pixelHeight, isOriginalPitou ? 2288 : 1872, sprite.displayName)
-            if !isOriginalPitou {
+            XCTAssertEqual(atlas.pixelHeight, hasGaze ? 2288 : 1872, sprite.displayName)
+            if !hasGaze {
                 XCTAssertNil(atlas.frame(row: .lookFirst, index: 0))
                 XCTAssertNil(atlas.frame(row: .lookSecond, index: 0))
             }
+        }
+    }
+
+    func testScoutReplacesGonInGalleryWithoutBreakingSavedGonReferences() throws {
+        XCTAssertEqual(CompanionBundledSprite.allCases.count, 6)
+        XCTAssertTrue(CompanionBundledSprite.allCases.contains(.scout))
+        XCTAssertFalse(CompanionBundledSprite.allCases.contains(.gon))
+        let stored = CompanionAppearance(sprite: .gon)
+        let restored = try JSONDecoder().decode(CompanionAppearance.self, from: JSONEncoder().encode(stored))
+        XCTAssertEqual(restored.assetID, "gon-v1")
+        XCTAssertEqual(restored.validated, stored)
+        XCTAssertNotNil(CompanionSpriteCatalog.atlas(for: .gon))
+        XCTAssertEqual(CompanionAppearance(sprite: .scout).displayName, "Scout")
+    }
+
+    func testDisplayedCharactersHaveComparableVisibleHeight() throws {
+        // Compare real opaque pixels rather than the identically sized transparent cells.
+        let pitou = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: .pitou)?.frame(row: .idle, index: 0))
+        let reference = try opaqueHeight(pitou)
+        for sprite in CompanionBundledSprite.supportedAssets {
+            let frame = try XCTUnwrap(CompanionSpriteCatalog.atlas(for: sprite)?.frame(row: .idle, index: 0))
+            let ratio = try opaqueHeight(frame) * sprite.presentationScale / reference
+            XCTAssertGreaterThanOrEqual(ratio, 0.86, sprite.displayName)
+            XCTAssertLessThanOrEqual(ratio, 1.08, sprite.displayName)
+        }
+    }
+
+    private func opaqueHeight(_ image: CGImage) throws -> Double {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        return try pixels.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            let occupied = (0..<image.height).filter { row in
+                (0..<image.width).contains { column in bytes[(row * image.width + column) * 4 + 3] > 32 }
+            }
+            return Double(try XCTUnwrap(occupied.last) - XCTUnwrap(occupied.first) + 1)
         }
     }
 

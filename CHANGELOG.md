@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- A dedicated Companion tab in the left sidebar opens the companion's normal
+  chat, project-scoped history, profile, and activity. Conversation drafts survive
+  switching between Companion and Work.
+- Scout, a new MHA/HxH-inspired character, replaces Gon in the gallery. Saved Gon
+  appearances remain available, and character sizes are more consistent.
+- Idle characters follow the cursor inside their Locus window with sixteen
+  directional poses. Real activity takes priority, and reduced motion or disabled
+  animations stops the reactions.
+
+### Fixed
+
+- Re-selecting the active companion chat preserves its run, approvals, and draft.
+  Offline navigation and delayed chat creation cannot replace a newer selection.
+  A failed transcript load can be retried by reopening the same chat after reconnecting.
+
 ## 4.0.0 — 2026-10-05
 
 ### Added

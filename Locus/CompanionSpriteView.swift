@@ -94,6 +94,13 @@ final class CompanionSpriteAtlas {
     }
 
     var frameCount: Int { frames.values.reduce(0) { $0 + $1.count } }
+
+    func lookFrame(for pointer: CompanionPointerResponse, pose: CompanionCharacterPose,
+                   canAnimate: Bool) -> (row: CompanionSpriteRow, index: Int)? {
+        guard version == 2, CompanionPointerResponse.allowsReaction(canAnimate: canAnimate, pose: pose),
+              let direction = pointer.directionIndex else { return nil }
+        return (direction < 8 ? .lookFirst : .lookSecond, direction % 8)
+    }
 }
 
 @MainActor
@@ -124,18 +131,24 @@ enum CompanionSpriteCatalog {
 
 /// Plays only the approved source frames, without tinting, warping, redrawing,
 /// artificial limb motion, or added breathing. Its owner supplies visibility.
+/// Directional v2 cells are held poses selected by the pointer, never an animation loop.
 struct CompanionSpriteView: View {
     let atlas: CompanionSpriteAtlas
     let pose: CompanionCharacterPose
     let canAnimate: Bool
+    var pointer: CompanionPointerResponse = .neutral
+    var onGreetingCompleted: () -> Void = {}
     @State private var activeRow: CompanionSpriteRow = .idle
     @State private var frameIndex = 0
     @State private var activeKey: String?
 
-    private var playbackKey: String { "\(pose.rawValue)-\(canAnimate)" }
+    private var lookFrame: (row: CompanionSpriteRow, index: Int)? {
+        atlas.lookFrame(for: pointer, pose: pose, canAnimate: canAnimate)
+    }
+    private var playbackKey: String { "\(pose.rawValue)-\(canAnimate)-\(lookFrame != nil)" }
     private var requestedRow: CompanionSpriteRow { .row(for: pose) }
-    private var displayedRow: CompanionSpriteRow { activeKey == playbackKey ? activeRow : requestedRow }
-    private var displayedFrame: Int { activeKey == playbackKey ? frameIndex : 0 }
+    private var displayedRow: CompanionSpriteRow { lookFrame?.row ?? (activeKey == playbackKey ? activeRow : requestedRow) }
+    private var displayedFrame: Int { lookFrame?.index ?? (activeKey == playbackKey ? frameIndex : 0) }
 
     var body: some View {
         Group {
@@ -151,10 +164,11 @@ struct CompanionSpriteView: View {
         activeKey = playbackKey
         activeRow = requestedRow
         frameIndex = 0
-        guard canAnimate else { return }
+        guard canAnimate, lookFrame == nil else { return }
         do {
             if pose == .greeting || pose == .completed || pose == .failed {
                 try await playOnce(requestedRow)
+                if pose == .greeting { onGreetingCompleted() }
                 if pose == .failed { return }
                 activeRow = .idle
             }

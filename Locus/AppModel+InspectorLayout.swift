@@ -69,7 +69,7 @@ extension AppModel {
     /// A collapsed panel is a preference and stays collapsed either way.
     func syncInspectorWithSidebarDestination() {
         switch sidebarDestination {
-        case .agents:
+        case .agents, .companion:
             guard !inspectorCollapsed, inspectorTab == .files, !justChatEnabled else { return }
             selectInspectorTab(.agent)
         case .ask:

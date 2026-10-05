@@ -6,6 +6,7 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
     /// stable while exposing the destination the user actually sees.
     case ask
     case agents
+    case companion
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
         switch self {
         case .ask: "Work"
         case .agents: "Agent"
+        case .companion: "Companion"
         }
     }
 }

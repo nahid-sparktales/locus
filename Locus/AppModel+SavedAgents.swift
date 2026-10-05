@@ -348,14 +348,23 @@ extension AppModel {
         }.sorted { $0.mtime > $1.mtime }
     }
 
-    func newSavedAgentChat(_ profile: AgentProfile, workspace: String? = nil) {
+    func newSavedAgentChat(_ profile: AgentProfile, workspace: String? = nil,
+                           destination: SidebarDestination = .agents) {
         guard creatingSavedAgentChatIDs.insert(profile.id).inserted else { return }
         let workspace = workspace ?? savedAgentWorkspacePath(profile)
+        let transcriptRequestRevision = transcriptPresentation.sessionOwnershipToken.requestRevision
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { creatingSavedAgentChatIDs.remove(profile.id) }
             do {
                 let session = try await createSavedAgentConversation(profile, workspace: workspace)
+                if destination == .companion,
+                   (sidebarDestination != .companion || !canSwitchToCompanionChat || primaryCompanionProfile?.id != profile.id
+                    || transcriptPresentation.sessionOwnershipToken.requestRevision != transcriptRequestRevision
+                    || companionWorkspacePath != SessionSummary.canonicalWorkspacePath(workspace)) {
+                    showToast("\(profile.name)’s chat is ready in its project.")
+                    return
+                }
                 guard !chatNavigationDisabled else {
                     showToast("\(profile.name)’s chat is ready in Agent.")
                     return
@@ -365,8 +374,8 @@ extension AppModel {
                 agentInspector.clearAgentSelection()
                 agentInspector.show(.fleet)
                 configureAgentPresented = false
-                sidebarDestination = .agents
-                resume(session)
+                sidebarDestination = destination
+                resume(session, destination: destination)
             } catch {
                 showToast("Could not open \(profile.name)’s chat: \(error.localizedDescription)")
             }

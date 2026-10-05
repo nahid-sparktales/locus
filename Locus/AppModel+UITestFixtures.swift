@@ -1,6 +1,52 @@
 import AppKit
 import Foundation
 
+/// Navigation-only transport. It resumes two empty fixture transcripts and
+/// rejects every other mutation; it never connects a provider or executes work.
+private final class CompanionChatUITestProtocol: URLProtocol {
+    static let profileID = UUID(uuidString: "C0111111-1111-4111-8111-111111111111")!
+    static let companionSessionID = "companion-fixture-chat"
+    static let workSessionID = "companion-fixture-work"
+
+    static func sessionInfo(_ id: String) -> SessionInfo {
+        SessionInfo(model: "qwen3:8b", host: "http://localhost:11434", cwd: "/tmp",
+                    session: id, sessionID: id, messages: 0, approxTokens: 0,
+                    promptTokens: 0, completionTokens: 0, maxIterations: 40,
+                    hasProjectContext: false, provider: "ollama",
+                    permissions: SessionPermissions(skipAll: false, allowed: []))
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let sessionID = url.pathComponents.dropLast().last ?? ""
+        let knownSession = [Self.companionSessionID, Self.workSessionID].contains(sessionID)
+        let response: [String: Any]
+        let status: Int
+        if request.httpMethod == "POST", url.path.hasSuffix("/resume"), knownSession,
+           let data = try? JSONEncoder().encode(Self.sessionInfo(sessionID)),
+           let info = try? JSONSerialization.jsonObject(with: data) {
+            response = ["ok": true, "messages": [], "session_info": info]
+            status = 200
+        } else if request.httpMethod == "GET" {
+            response = ["goals": [], "runs": [], "goal": NSNull(), "task": NSNull()]
+            status = 200
+        } else {
+            response = ["detail": "This navigation fixture does not execute work."]
+            status = 409
+        }
+        let payload = (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
+        let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                                   headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 private final class GoalUITestProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var goal: [String: Any]?
@@ -104,6 +150,13 @@ private final class GoalUITestProtocol: URLProtocol {
 }
 
 extension AppModel {
+    static func companionChatUITestBackend() -> BackendService {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CompanionChatUITestProtocol.self]
+        return BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, authToken: "companion-ui-fixture",
+                              session: URLSession(configuration: configuration))
+    }
+
     static func goalUITestBackend() -> BackendService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [GoalUITestProtocol.self]
@@ -911,6 +964,39 @@ extension AppModel {
             selectInspectorTab(tab)
         }
         seedResponseOutputFixture()
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_CHAT"] == "1" {
+            seedCompanionChatFixture(workspace: workspace)
+        }
+    }
+
+    /// Opt-in test state uses the canonical profile owner and normal empty
+    /// chats. Runtime availability here is a fixture, not a live-model claim.
+    private func seedCompanionChatFixture(workspace: String) {
+        let profile = AgentProfile(id: CompanionChatUITestProtocol.profileID,
+                                   name: "Pitou", model: "qwen3:8b")
+        agentProfiles = [profile]
+        _ = try? agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        agentTeamsModel.setAgentAppearance(.default, profileID: profile.id)
+        sessions = [
+            SessionSummary(id: CompanionChatUITestProtocol.companionSessionID,
+                           name: "Companion UI fixture", preview: "", mtime: 2, size: 0,
+                           title: "Companion UI fixture", cwd: workspace,
+                           agentProfileID: profile.id.uuidString),
+            SessionSummary(id: CompanionChatUITestProtocol.workSessionID,
+                           name: "Work UI fixture", preview: "", mtime: 1, size: 0,
+                           title: "Work UI fixture", cwd: workspace),
+        ]
+        installTranscriptSession(CompanionChatUITestProtocol.companionSessionID, blocks: [])
+        sessionInfo = CompanionChatUITestProtocol.sessionInfo(CompanionChatUITestProtocol.companionSessionID)
+        lastSidebarSessionIDs[SidebarDestination.ask.rawValue] = CompanionChatUITestProtocol.workSessionID
+        selectedSavedAgentID = profile.id
+        selectedAgentID = nil
+        savedAgentOverviewID = nil
+        emptySidebarDestination = nil
+        sidebarDestination = .companion
+        inspectorCollapsed = true
+        isBusy = false
+        draftText = ""
     }
 
     /// A feature-scoped in-process transport exercises the real goal editor and

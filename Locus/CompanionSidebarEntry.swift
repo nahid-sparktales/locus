@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// One stable navigation entry, also the unobtrusive opt-in for upgraded installs.
+/// Identity and real status within the companion tab. Its name opens the
+/// existing profile; conversations remain in the normal workspace below.
 struct CompanionSidebarEntry: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel

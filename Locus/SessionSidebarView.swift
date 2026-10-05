@@ -498,7 +498,7 @@ struct SessionSidebarView: View {
             header
             controls
 
-            CompanionSidebarEntry()
+            if model.sidebarDestination == .companion { CompanionSidebarEntry() }
 
             Button { model.openLibrary() } label: {
                 Label("Library", systemImage: "books.vertical")
@@ -530,7 +530,9 @@ struct SessionSidebarView: View {
                         searchField(snapshot: snapshot)
                             .transition(LocusMotion.transition(edge: .top, reduceMotion: reduceMotion))
                     }
-                    if model.sidebarDestination == .agents {
+                    if model.sidebarDestination == .companion {
+                        companionConversations(snapshot: snapshot)
+                    } else if model.sidebarDestination == .agents {
                         AgentSidebarSection(
                             crew: model.agentCrewChat,
                             automation: model.eventAutomations,
@@ -648,7 +650,8 @@ struct SessionSidebarView: View {
             .frame(maxHeight: .infinity)
             .accessibilityIdentifier("sidebar.scroll")
             .accessibilityLabel(
-                model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
+                model.sidebarDestination == .companion ? "Companion conversations in this project"
+                    : model.sidebarDestination == .agents ? "Agents and chats" : "Workspaces and chats"
             )
             .task(id: sessionCatalog.sessionReveal?.id) {
                 guard let request = sessionCatalog.sessionReveal else { return }
@@ -878,7 +881,16 @@ struct SessionSidebarView: View {
             primaryCreationButton
 
             HStack(spacing: 7) {
-                if model.sidebarDestination == .agents {
+                if model.sidebarDestination == .companion {
+                    secondaryButton(
+                        symbol: "person.crop.rectangle", title: "Profile",
+                        help: "Open your companion’s model, access, conversations, and activity",
+                        accessibilityLabel: "Companion profile", identifier: "sidebar.companion.profile"
+                    ) {
+                        if let profile = model.primaryCompanionProfile { model.selectSavedAgent(profile) }
+                        else { model.presentCompanion() }
+                    }
+                } else if model.sidebarDestination == .agents {
                     secondaryButton(
                         symbol: "gearshape.2",
                         title: "Manage Agents",
@@ -910,13 +922,14 @@ struct SessionSidebarView: View {
     /// The primary action creates a saved agent in Agent, or a chat in Work.
     private var primaryCreationButton: some View {
         let isAgents = model.sidebarDestination == .agents
+        let isCompanion = model.sidebarDestination == .companion
         return Button {
             model.newChatForSidebarDestination()
         } label: {
             HStack(spacing: SidebarMetrics.iconGap) {
                 Image(systemName: "plus")
                     .frame(width: SidebarMetrics.iconColumn)
-                Text(isAgents ? "New agent" : "New chat")
+                Text(isCompanion ? "New companion chat" : isAgents ? "New agent" : "New chat")
                 Spacer(minLength: 4)
                 Text("⌘N")
                     .font(.locus(size: 8, design: .monospaced))
@@ -931,11 +944,11 @@ struct SessionSidebarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.locus())
-        .help(isAgents
+        .help(isCompanion ? "Start a new conversation with your companion in this project (⌘N)" : isAgents
             ? "Create a saved agent and its first chat (⌘N)"
             : "Start a new chat (⌘N)")
-        .accessibilityLabel(isAgents ? "New agent" : "New chat")
-        .accessibilityValue(isAgents ? "Saved agent" : "Standard chat")
+        .accessibilityLabel(isCompanion ? "New companion chat" : isAgents ? "New agent" : "New chat")
+        .accessibilityValue(isCompanion ? "Your companion, current project" : isAgents ? "Saved agent" : "Standard chat")
         .accessibilityIdentifier("sidebar.newSession")
     }
 
@@ -1062,12 +1075,34 @@ struct SessionSidebarView: View {
 
     // MARK: - Search
 
+    @ViewBuilder
+    private func companionConversations(snapshot: SessionCatalogSnapshot) -> some View {
+        let query = snapshot.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chats = model.companionChats().filter {
+            query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query)
+        }
+        Text(URL(fileURLWithPath: model.companionWorkspacePath).lastPathComponent)
+            .font(.locus(size: 11)).foregroundStyle(viewColors.muted)
+            .lineLimit(1).truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+            .help(model.companionWorkspacePath)
+            .accessibilityIdentifier("companion.workspace")
+        if chats.isEmpty {
+            Text(query.isEmpty ? "Conversations with your companion in this project appear here."
+                 : "No matching companion conversations in this project.")
+                .font(.locus(size: 12)).foregroundStyle(viewColors.muted)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+        } else {
+            ForEach(chats) { session in sessionRow(session, snapshot: snapshot) }
+        }
+    }
+
     /// Search is a section control now: the glyph beside WORKSPACES reveals
     /// the field, so an unused search box no longer occupies the sidebar.
     private func sectionHeader(snapshot: SessionCatalogSnapshot) -> some View {
         HStack(spacing: 0) {
             SectionLabel(
-                model.sidebarDestination == .agents
+                model.sidebarDestination == .companion ? "Conversations" : model.sidebarDestination == .agents
                     ? "Agents"
                     : (snapshot.showArchivedSessions ? "All Workspaces" : "Workspaces")
             )
@@ -1183,7 +1218,8 @@ struct SessionSidebarView: View {
             startedAt: model.chatStartedAt(session),
             showsAgentIcon: model.sidebarDestination != .agents
         ) {
-            model.resume(session)
+            if model.sidebarDestination == .companion { model.openCompanionChat(session) }
+            else { model.resume(session) }
         }
         .id("sidebar.session.\(session.id)")
         .contextMenu {

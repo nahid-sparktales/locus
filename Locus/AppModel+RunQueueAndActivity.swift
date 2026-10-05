@@ -147,7 +147,7 @@ extension AppModel {
 
     func presentConfigureAgent(draftText: String) {
         configureAgentWorkspace = workspacePath
-        configureAgentProfileID = sidebarDestination == .agents ? selectedSavedAgentProfile?.id : nil
+        configureAgentProfileID = sidebarDestination != .ask ? selectedSavedAgentProfile?.id : nil
         configureAgentDraftSuggestion = String(
             draftText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4_000)
         )

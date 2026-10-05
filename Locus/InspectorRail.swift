@@ -42,12 +42,12 @@ struct InspectorRail: View {
             panelToggleButton
             Rectangle().fill(viewColors.line).frame(width: 24, height: 1).padding(.vertical, 5)
                 .accessibilityHidden(true)
-            if model.sidebarDestination == .agents {
+            if model.sidebarDestination != .ask {
                 // Agents mode leads with the selected agent.
                 railTab(.agent)
             }
             railTab(.preview)
-            if model.sidebarDestination == .agents {
+            if model.sidebarDestination != .ask {
                 railTab(.runs)
             }
             railTab(.terminal)
@@ -186,7 +186,7 @@ struct InspectorRail: View {
 
             Divider()
 
-            ForEach(Self.menuTabs.filter { model.sidebarDestination != .agents || $0 != .runs }) { tab in
+            ForEach(Self.menuTabs.filter { model.sidebarDestination == .ask || $0 != .runs }) { tab in
                 Button(menuTitle(for: tab)) {
                     withAnimation(reduceMotion ? nil : LocusMotion.spatial) {
                         model.selectInspectorTab(tab)

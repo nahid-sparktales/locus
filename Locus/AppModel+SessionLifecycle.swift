@@ -12,12 +12,16 @@ extension AppModel {
     /// background workers, and cancellation of superseded transcript loads.
     func switchSidebarDestination(_ destination: SidebarDestination) {
         guard destination != sidebarDestination else { return }
+        if destination == .companion {
+            openCompanionDestination()
+            return
+        }
         if destination == .agents, let profile = agentProfiles.first(where: { $0.id == selectedSavedAgentID })
             ?? agentProfiles.first {
             selectSavedAgent(profile)
             return
         }
-        if destination == .ask, savedAgentOverviewProfile != nil,
+        if destination == .ask, (savedAgentOverviewProfile != nil || sidebarDestination == .companion),
            let current = sessions.first(where: { $0.id == currentSessionID }), !current.isAgentChat {
             savedAgentOverviewID = nil
             emptySidebarDestination = nil
@@ -55,6 +59,11 @@ extension AppModel {
         guard let session, session.archived != true else { return }
         let destination: SidebarDestination = session.isAgentChat ? .agents : .ask
         lastSidebarSessionIDs[destination.rawValue] = session.id
+        if session.savedAgentProfileID == agentTeamsModel.primaryCompanionID,
+           session.savedAgentProfileID != nil, !session.isAgentEventChat,
+           session.agentTriggerID?.nilIfEmpty == nil, let workspace = session.workspacePath {
+            lastSidebarSessionIDs[companionSessionKey(workspace: workspace)] = session.id
+        }
         if persistenceEnabled {
             UserDefaults.standard.set(lastSidebarSessionIDs, forKey: "Locus.lastSidebarSessionIDs")
         }
@@ -312,7 +321,7 @@ extension AppModel {
         }
     }
 
-    func resume(_ session: SessionSummary) {
+    func resume(_ session: SessionSummary, destination: SidebarDestination? = nil) {
         agentCrewChatPresented = false
         if session.id != currentSessionID { voiceControl.exitVoiceMode() }
         let currentIsBackgroundCapable = taskWorkers[currentSessionID] != nil
@@ -335,7 +344,11 @@ extension AppModel {
         if let agentID = session.agentTriggerID?.nilIfEmpty {
             selectedAgentID = agentID
         }
-        sidebarDestination = session.isAgentChat ? .agents : .ask
+        let isCompanionChat = session.savedAgentProfileID != nil
+            && session.savedAgentProfileID == agentTeamsModel.primaryCompanionID
+            && !session.isAgentEventChat && session.agentTriggerID?.nilIfEmpty == nil
+        sidebarDestination = destination == .companion && isCompanionChat ? .companion
+            : session.isAgentChat ? .agents : .ask
         prepareSplitSelection(session.id)
         if let runtime = taskWorkers[session.id] {
             activateWorkerSession(session, runtime: runtime)

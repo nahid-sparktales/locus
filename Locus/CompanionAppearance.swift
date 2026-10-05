@@ -108,11 +108,17 @@ struct CompanionAppearance: Codable, Hashable {
 enum CompanionBundledSprite: String, Codable, CaseIterable, Identifiable {
     case pitou = "pitou-v2"
     case gon = "gon-v1", ninja = "ninja-v1", clover = "clover-v1", shadow = "shadow-v1", pirate = "pirate-v1"
+    case scout = "scout-v2"
+
+    /// Gon remains resolvable for saved appearances, while new selections use Scout.
+    static let allCases: [Self] = [.pitou, .scout, .ninja, .clover, .shadow, .pirate]
+    static let supportedAssets: [Self] = allCases + [.gon]
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .pitou: "Pitou"
         case .gon: "Gon"
+        case .scout: "Scout"
         case .ninja: "Ninja"
         case .clover: "Clover"
         case .shadow: "Shadow"
@@ -120,10 +126,14 @@ enum CompanionBundledSprite: String, Codable, CaseIterable, Identifiable {
         }
     }
     var resourceName: String { displayName }
+    /// The earlier generated atlases have a larger transparent safety inset.
+    /// Their common scale stays consistent across every pose, including gaze.
+    var presentationScale: Double { self == .pitou || self == .scout ? 1 : 1.4 }
     var detail: String {
         switch self {
         case .pitou: "Your original Pitou"
         case .gon: "Gon × Jujutsu Kaisen · Hell’s Paradise details"
+        case .scout: "My Hero Academia × Hunter x Hunter"
         case .ninja: "Naruto × Chainsaw Man"
         case .clover: "Black Clover × Fullmetal Alchemist"
         case .shadow: "Solo Leveling × Kaiju No. 8"

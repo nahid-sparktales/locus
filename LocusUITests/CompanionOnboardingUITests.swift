@@ -23,7 +23,7 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(element("companion.continue").waitForExistence(timeout: 15))
         capture("Companion welcome")
         element("companion.continue").click()
-        for sprite in ["pitou-v2", "gon-v1", "ninja-v1", "clover-v1", "shadow-v1", "pirate-v1"] {
+        for sprite in ["pitou-v2", "scout-v2", "ninja-v1", "clover-v1", "shadow-v1", "pirate-v1"] {
             XCTAssertTrue(element("companion.sprite.\(sprite)").exists)
         }
         XCTAssertFalse(element("companion.palette").exists, "Bundled sprites do not expose unsupported recoloring")
@@ -53,12 +53,16 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(element("onboarding.path.coding").exists)
         XCTAssertTrue(element("onboarding.path.agents").exists)
         element("onboarding.skip").click()
-        let entry = element("sidebar.companion")
+        let entry = element("sidebar.mode.companion")
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         entry.click()
+        XCTAssertTrue(element("companion.destination.name").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("companion.destination.name").label.contains("Mochi"))
+        XCTAssertTrue(element("companion.destination.unavailable").exists)
+        element("companion.destination.profile").click()
         XCTAssertTrue(element("savedAgent.name").waitForExistence(timeout: 5))
         XCTAssertEqual(element("savedAgent.name").label, "Mochi")
-        capture("Persistent companion overview")
+        capture("Companion tab and existing profile")
     }
 
     func testSkipEscapeAndReturnPreserveDraftWithoutCreatingAgent() {
@@ -73,8 +77,10 @@ final class CompanionOnboardingUITests: XCTestCase {
         app.typeKey("a", modifierFlags: .command)
         name.typeText("Pip")
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(element("sidebar.companion").waitForExistence(timeout: 5))
-        element("sidebar.companion").click()
+        XCTAssertTrue(element("sidebar.mode.companion").waitForExistence(timeout: 5))
+        element("sidebar.mode.companion").click()
+        XCTAssertTrue(element("companion.destination.setup").waitForExistence(timeout: 5))
+        element("companion.destination.setup").click()
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         XCTAssertEqual(name.value as? String, "Pip")
         element("companion.back").click()
@@ -110,6 +116,35 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(element("companion.continue").isHittable)
         element("companion.continue").click()
         XCTAssertTrue(element("companion.name").waitForExistence(timeout: 5))
+    }
+
+    func testCompanionTabUsesNormalComposerAndRestoresDraftAfterWork() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launch()
+        let composer = element("composer.input")
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        XCTAssertFalse(element("companion.destination").exists)
+        composer.click()
+        composer.typeText("Unsent companion idea")
+        capture("Companion tab with normal composer")
+        element("sidebar.mode.ask").click()
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForComposerValue(""))
+        composer.click()
+        composer.typeText("Unsent work note")
+        element("sidebar.mode.companion").click()
+        XCTAssertTrue(waitForComposerValue("Unsent companion idea"))
+        XCTAssertFalse(element("companion.destination").exists)
+        XCTAssertTrue(element("composer.send").exists)
+        capture("Companion draft restored after Work tab")
+    }
+
+    private func waitForComposerValue(_ value: String) -> Bool {
+        let predicate = NSPredicate(format: "value == %@", value)
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate,
+                                object: element("composer.input"))], timeout: 5) == .completed
     }
 
     private func capture(_ name: String) {
