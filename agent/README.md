@@ -37,8 +37,9 @@ release. A fresh clone includes the wheel and needs no sibling checkout. Release
 builders verify its SHA-256 before installing the hashed dependency lock.
 `locus-runtime` is owned only by that wheel; this product registers the trusted
 `locus_runtime.host` entry point `locus` to retain existing service flags and
-Locus worker behavior. Build composition requires Python 3.11+; installed product
-and runtime packages retain Python 3.10+ support.
+Locus worker behavior. Build composition uses Python 3.11+, or Python 3.10 with
+the `tomli` development dependency; installed product and runtime packages retain
+Python 3.10+ support.
 
 ## Locus and LocusX builds
 

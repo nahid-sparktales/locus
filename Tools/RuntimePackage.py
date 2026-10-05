@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the vendored runtime wheel and stage the Locus host registration.
 
-Build tool only (Python 3.11+); product and runtime wheels support Python 3.10+.
+Build tool only (Python 3.10+; tomli is needed before 3.11).
 Reads committed build inputs, never an installed runtime or production profile.
 """
 from __future__ import annotations
@@ -18,7 +18,10 @@ import zipfile
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 HOST_GROUP = "locus_runtime.host"
 HOST_ENTRY = "ollama_code.runtime_host:main"

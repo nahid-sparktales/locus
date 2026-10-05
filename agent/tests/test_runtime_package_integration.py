@@ -4,6 +4,9 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
+import shlex
+import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -69,6 +72,51 @@ def test_composition_rejects_installed_runtime_with_changed_metadata(candidate, 
     (installed / "locus_runtime-0.1.0.dist-info/entry_points.txt").write_text("[console_scripts]\nlocus-runtime = other:main\n")
     with pytest.raises(ValueError, match="differs from the reviewed wheel"):
         package.verify_installed_runtime(agent, installed)
+
+
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="Native bundling uses zsh")
+def test_venv_bundle_rejects_missing_runtime_before_staging_provenance(candidate, tmp_path):
+    agent, _wheel, _manifest = candidate
+    root = Path(__file__).resolve().parents[2]
+    venv = agent / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "lib/python3.14/site-packages").mkdir(parents=True)
+    (venv / "bin/python").symlink_to(sys.executable)
+    (venv / "pyvenv.cfg").write_text(f"home = {Path(sys.executable).parent}\n")
+    builder = (root / "Tools/BundleBackend.sh").read_text()
+    function = "bundle_venv() {" + builder.split("bundle_venv() {", 1)[1].split('\nif [[ "${mode}"', 1)[0]
+    staged = tmp_path / "source-was-staged"
+    script = ("set -euo pipefail\nsetopt null_glob\n"
+              f"backend_root={shlex.quote(str(agent))}\nscript_dir={shlex.quote(str(root / 'Tools'))}\n"
+              f"bundle_source() {{ touch {shlex.quote(str(staged))}; }}\n"
+              + function + "\nbundle_venv\n")
+    result = subprocess.run(["zsh", "-c", script], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "differs from the reviewed wheel" in result.stderr
+    assert not staged.exists()
+
+
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="Native bundling uses zsh")
+def test_host_staging_failure_propagates_even_inside_shell_condition(candidate, tmp_path):
+    agent, _wheel, _manifest = candidate
+    root = Path(__file__).resolve().parents[2]
+    source = agent / "ollama_code"
+    source.mkdir()
+    (source / "product_build.py").write_text("# product edition\n")
+    (source / "runtime_host.py").write_text("# host adapter\n")
+    fail_python = tmp_path / "fail-python"
+    fail_python.write_text('#!/bin/zsh\n[[ "$2" != "stage-host" ]] || exit 9\nexit 0\n')
+    fail_python.chmod(0o755)
+    runtime = tmp_path / "runtime"
+    builder = (root / "Tools/BundleBackend.sh").read_text()
+    function = "bundle_source() {" + builder.split("bundle_source() {", 1)[1].split("\nprune_disallowed_runtime_components()", 1)[0]
+    script = ("set -euo pipefail\nsetopt null_glob\nTARGET_NAME=Locus\nLOCUS_EDITION=locus\n"
+              f"backend_root={shlex.quote(str(agent))}\nscript_dir={shlex.quote(str(root / 'Tools'))}\n"
+              f"runtime={shlex.quote(str(runtime))}\nsource_package={shlex.quote(str(source))}\n"
+              + function + f"\nif ! bundle_source {shlex.quote(str(fail_python))}; then exit 23; fi\n")
+    result = subprocess.run(["zsh", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 23, result.stderr
+    assert not (runtime / "provenance.json").exists()
 
 
 def test_wheel_paths_cannot_escape_vendor(candidate):
