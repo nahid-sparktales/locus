@@ -7,16 +7,16 @@ registration, app launch, profile migration or implicit default state directory.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
-from pathlib import Path
 import re
 import shutil
 import sys
 import tempfile
 import zipfile
+from contextlib import contextmanager
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
 from ollama_code.extensions import ExtensionManager, _tree_digest, parse_plugin

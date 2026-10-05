@@ -10,12 +10,12 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import sys
 import tempfile
 import zipfile
+from pathlib import Path, PurePosixPath
 
 
 def extract_candidate(archive: Path, expected_sha256: str, destination: Path) -> None:
@@ -51,7 +51,12 @@ def verify(archive: Path, expected_sha256: str, previous: Path | None) -> dict:
         # Set isolation before importing any application module.
         os.environ["OLLAMA_CODE_HOME"] = str(root / "app-state")
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
-        from ollama_code.extensions import ExtensionError, ExtensionManager, _tree_digest, parse_plugin
+        from ollama_code.extensions import (
+            ExtensionError,
+            ExtensionManager,
+            _tree_digest,
+            parse_plugin,
+        )
 
         candidate = root / "candidate"
         extract_candidate(archive, expected_sha256, candidate)

@@ -4,10 +4,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import stat
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -61,7 +61,8 @@ def test_review_lists_exact_content_without_creating_extension_state(tmp_path):
                                 "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
                                for p in sorted(source.rglob("*")) if p.is_file()]
     assert not (tmp_path / "state").exists()
-    with pytest.raises(FileExistsError): installer.review(archive, pin, extracted)
+    with pytest.raises(FileExistsError):
+        installer.review(archive, pin, extracted)
 
 
 def test_install_preserves_identity_existing_marketplaces_and_workspace_scopes(tmp_path):
@@ -133,7 +134,8 @@ def test_unsafe_zip_content_rejected_before_install(tmp_path, name, mode):
         item = zipfile.ZipInfo(name)
         item.external_attr = mode << 16
         package.writestr(item, "bad")
-    with pytest.raises(ValueError): installer.review(archive, installer.sha256(archive))
+    with pytest.raises(ValueError):
+        installer.review(archive, installer.sha256(archive))
 
 
 def test_corrupt_state_is_not_replaced_by_degraded_defaults(tmp_path):
