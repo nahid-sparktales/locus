@@ -21,3 +21,23 @@ The native owner launched the current app build with `LOCUS_UI_TESTING=1` and `L
 The Activity Center correctly exposed its unavailable state because this isolated visual fixture has no live backend activity service. The native roster's zero actual activity items and the renderer's one synthetic status requiring attention are different fixture inputs. This verifies routing/presentation, not live task fetching or permission resolution. New Agent remained disabled in this fixture.
 
 The actual visible app closes the physical-visibility gap left by the hidden WKWebView structural test. Screenshots preserve the native window layout, chat/tools composition and artwork; they are not frame-identical comparisons with the browser baseline, and do not claim CPU/GPU or startup budgets. Existing browser baseline/candidate evidence and native automated tests provide the complementary checks. The disposable app was left running after capture for the native owner to stop deliberately.
+
+## Final extracted-host pass
+
+Repeated on October 5 after cutover, using final independent source `ec9416679a5f4929d78ae2f19acb6e4d572eb234` and ZIP SHA-256 `4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8`. The native owner provided build `12786fb4` in the uniquely identified app `io.sparktales.agent-worlds-native-final.8w2ehif4`, PID 14198, at `/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-worlds-verified-ui-8w2ehif4/AgentWorldsNativeFinal.app`. UI tests were stopped during this exclusive CUA pass. The machine was macOS 26.4.1 (25E253), Apple M2 Max, 32 GiB memory. Native window captures are 2560 × 1704 pixels; picker sheets have their own dimensions.
+
+| Check | Observed result | Evidence |
+| --- | --- | --- |
+| Final artifact and native host | Six synthetic native profiles; connected installed `locus-screen://plugin/ui/index.html` world; map and communicator loaded. | `native-final-map.png` |
+| Detailed model textures | Camera zoom showed colored candy-island roofs, gray/tan masonry, green vegetation, pink/cream ship sails and hulls, wood decks and a black skull sail. The whole-map pale silhouettes also occur in the original browser baseline and earlier native capture; close-up colors match the earlier native camera capture. | `native-final-textures.png`, `native-final-ship.png`, `native-final-reset-reopen.png` |
+| Native portrait cancellation | Selected Nova as a preview, cancelled, reopened the real picker: it still reported Selected picture: Initials. | `native-final-picture-picker.png`, `native-final-picture-cancel.txt` |
+| Canonical portrait apply | Applied bundled Nova to synthetic Atlas through the native picker. Native overview, roster and chat displayed the picture. | `native-final-wano-profile.png` |
+| Declarative Wano presentation | Wano artwork and purple palette loaded in native quarters around the existing overview, chat, composer and native tools. | `native-final-wano-profile.png`, `native-final-chat-board.png` |
+| Cosmetic reset boundary | Reset world settings removed Wano styling; returning to the world and reopening native overview retained the avatar and the same fixture conversation. Reopened picker showed the identical Nova image as Custom character (the existing image-data representation). | `native-final-reset-reopen.png`, `native-final-picture-preserved.png` |
+| Chat/tool composition | Native Board columns appeared beside the fixture transcript and composer. Browser, Files and Agent tabs remained available. No messages or cards were submitted. | `native-final-chat-board.png` |
+
+The WebKit logs' WEBP `-50` diagnostics did not correspond to missing colors in these inspected models or missing required quarters artwork. This observation does not classify every decoder diagnostic as harmless; the detailed captures complement the packaged asset and native transport tests.
+
+This pass exposed a concrete visual defect: after applying a portrait, the world chat-peek menu label displayed it as a large cropped strip instead of a bounded avatar (`native-final-reset-reopen.png`). The root implementation owner was notified; final visual closure requires a fixed-build follow-up capture. Portrait persistence/reset behavior itself passed.
+
+Both disposable native apps (14198 and earlier 86954) were quit through their exact CUA app bindings; a process check confirmed both exited. All owned temporary HTTP/developer servers and browser tabs had already been closed. The actual user's Locus app was never selected or operated. These synthetic profile/chat changes remained in the UI fixture's nonpersistent stores.

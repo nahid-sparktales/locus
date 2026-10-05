@@ -1,0 +1,47 @@
+Window: "", App: Locus.
+0 sheet Secondary Actions: Raise
+	1 container agentPicture.picker
+		2 text Your companion Give Atlas a familiar face across Locus. Selected picture: Initials Initials Animated characters · Your own pictures
+		3 button Description: Create your own…, ID: agentPicture.create
+		4 Picture collection, ID: agentPicture.collection
+			5 radio button Description: Characters, Value: 0
+			6 radio button Description: All pictures, Value: 1
+			7 radio button Description: One Piece, Value: 0
+		8 scroll area ID: agentPicture.gallery, Secondary Actions: Scroll Up, Scroll Down
+			9 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+				10 button Description: Choose Atlas profile picture, ID: agentPicture.preset.atlas
+				11 button Description: Choose Nova profile picture, ID: agentPicture.preset.nova
+				12 button Description: Choose Kitsune profile picture, ID: agentPicture.preset.kitsune
+				13 button Description: Choose Moss profile picture, ID: agentPicture.preset.moss
+				14 button Description: Choose Orbit profile picture, ID: agentPicture.preset.orbit
+				15 button Description: Choose Sage profile picture, ID: agentPicture.preset.sage
+				16 button Description: Choose Tide profile picture, ID: agentPicture.preset.tide
+				17 button Description: Choose Pixel profile picture, ID: agentPicture.preset.pixel
+				18 button Description: Choose Sol profile picture, ID: agentPicture.preset.sol
+				19 button Description: Choose Bloom profile picture, ID: agentPicture.preset.bloom
+				20 button Description: Choose Luffy profile picture, ID: agentPicture.preset.luffy
+				21 button Description: Choose Zoro profile picture, ID: agentPicture.preset.zoro
+				22 button Description: Choose Nami profile picture, ID: agentPicture.preset.nami
+				23 button Description: Choose Chopper profile picture, ID: agentPicture.preset.chopper
+				24 button Description: Choose Law profile picture, ID: agentPicture.preset.law
+			25 scroll bar (settable, float) 0
+				26 value indicator (settable, float) 0
+				27 increment arrow button
+				28 decrement arrow button
+				29 increment page button
+				30 decrement page button
+		31 checkbox Description: Animate characters, Value: 1, ID: agentPicture.animations
+		32 button (disabled) Description: Use initials, ID: agentPicture.initials
+		33 button Cancel
+		34 button (disabled) Description: Use initials, ID: agentPicture.apply
+35 menu bar
+	36 Locus
+	37 File
+	38 Edit
+	39 View
+	40 Work
+	41 Locus
+	42 Window
+	43 Help
+
+The focused UI element is 0 sheet Secondary Actions: Raise
