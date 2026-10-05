@@ -38,6 +38,12 @@ Repeated on October 5 after cutover, using final independent source `ec9416679a5
 
 The WebKit logs' WEBP `-50` diagnostics did not correspond to missing colors in these inspected models or missing required quarters artwork. This observation does not classify every decoder diagnostic as harmless; the detailed captures complement the packaged asset and native transport tests.
 
-This pass exposed a concrete visual defect: after applying a portrait, the world chat-peek menu label displayed it as a large cropped strip instead of a bounded avatar (`native-final-reset-reopen.png`). The root implementation owner was notified; final visual closure requires a fixed-build follow-up capture. Portrait persistence/reset behavior itself passed.
+This pass exposed a concrete visual defect: after applying a portrait, the world chat-peek menu label displayed it as a large cropped strip instead of a bounded avatar (`native-final-reset-reopen.png`). The root implementation owner corrected the AppKit Menu image extraction in `86077f43`; the fixed-build follow-up below closes this visual defect. Portrait persistence/reset behavior itself passed.
 
 Both disposable native apps (14198 and earlier 86954) were quit through their exact CUA app bindings; a process check confirmed both exited. All owned temporary HTTP/developer servers and browser tabs had already been closed. The actual user's Locus app was never selected or operated. These synthetic profile/chat changes remained in the UI fixture's nonpersistent stores.
+
+### Portrait-header closure
+
+The native owner rebuilt `86077f43`, ran 42 focused checks successfully, and supplied a fresh nonpersistent fixture: `io.sparktales.agent-worlds-native-final.u7848a3j`, PID 15953, at `/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-worlds-avatar-ui-u7848a3j/AgentWorldsNativeFinal.app`. It used the unchanged final `4a4ca458…` ZIP. Applying bundled Nova to synthetic Atlas and reopening the map now rendered a compact avatar beside the Atlas switch menu, with no large image strip. `native-final-portrait-header-fixed.png` is the reviewed after image; the earlier failure image remains as evidence.
+
+The switch menu still listed all six profiles. Selecting Nova changed the native header to Chat with Nova and updated the preview contents. See `native-final-agent-switch-menu.png`. This exact app was then quit through its CUA binding, and a process check confirmed PID 15953 had exited. No further GUI actions were performed before handing exclusive focus back for the final complete native suite.

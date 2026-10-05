@@ -4,7 +4,7 @@
   "old_build_pipeline": "absent",
   "built_loose_resources": 50,
   "compiled_asset_catalog": "assetutil scan passed: no removed backdrop names",
-  "appResources": "/tmp/locus-agent-worlds-final-ui-fixture/AgentWorldsNativeFinal.app/Contents/Resources",
+  "appResources": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-worlds-avatar-ui-u7848a3j/AgentWorldsNativeFinal.app/Contents/Resources",
   "compiledAssetNames": [
     "AccentColor",
     "AgentPortrait-atlas",
@@ -56,6 +56,7 @@
     "locus.robot"
   ],
   "compiledRemovedBackdrops": [],
+  "compiledAssetUniqueNameCount": 48,
   "retainedSharedPortraitImageSets": 15,
   "files": [
     {
@@ -258,6 +259,5 @@
       "path": "catalog.json",
       "bytes": 385786
     }
-  ],
-  "compiledAssetUniqueNameCount": 48
+  ]
 }
