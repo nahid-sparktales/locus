@@ -44,7 +44,7 @@ struct PluginWorldPresentation: Decodable, Equatable {
               value.appearances.allSatisfy({ slug($0.id) && text($0.title) && validPalette($0.palette) }),
               value.styles.count <= 64, Set(value.styles.map(\.id)).count == value.styles.count,
               value.styles.allSatisfy({ token($0.id) && text($0.name) && PluginScreenFiles.isSafeRelativePath($0.previewAsset) }),
-              Set(value.labels.keys).isSubset(of: ["workspace", "style", "contextShortcut", "visit", "appearance", "workHint", "selectionHelp", "placementPrimary", "placementSecondary"]),
+              Set(value.labels.keys).isSubset(of: ["workspace", "style", "contextShortcut", "visit", "appearance", "workHint", "selectionHelp", "placementPrimary", "placementSecondary", "emptyTitle", "welcomeLabel", "welcomeTitle", "emptyWorkspaceTitle", "emptyDescription"]),
               value.labels.values.allSatisfy(text),
               [value.appearancePreferenceKey, value.stylePreferenceKey, value.contextEnabledPreferenceKey].allSatisfy({ $0.range(of: "^[a-z][a-z0-9.-]{0,79}$", options: .regularExpression) != nil }),
               exactRows(json["presentations"], keys: ["title", "backgroundAsset"], optional: ["palette"]),

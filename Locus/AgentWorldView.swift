@@ -1,5 +1,4 @@
 import SwiftUI
-import ImageIO
 
 struct AgentWorldCommands: Commands {
     @ObservedObject var model: AgentWorldModel
@@ -18,9 +17,7 @@ struct AgentWorldCommands: Commands {
 }
 
 struct AgentWorldView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: AgentWorldModel
@@ -31,17 +28,15 @@ struct AgentWorldView: View {
                 AgentWorldHub(model: model, appModel: appModel)
                     .modifier(LocusSharedPresentations(surface: .agentWorld, updates: appModel.appUpdates))
                     .appFeatureEnvironment(from: appModel)
-                    .tint((model.pluginPresentation != nil || model.theme == "grand-line") ? AgentWorldPalette(ocean: true, deck: model.usesWoodQuarters, island: model.activeQuartersIsland, custom: model.pluginSurfacePalette).warning : appModel.accentActionColor)
+                    .tint((model.pluginPresentation != nil) ? AgentWorldPalette(custom: model.pluginSurfacePalette).warning : appModel.accentActionColor)
             } else {
                 AgentWorldHub(model: model, appModel: nil)
             }
         }
         .environment(\.locusPluginPalette, model.pluginSurfacePalette)
-        .environment(\.locusOceanTheme, (model.pluginPresentation != nil || model.theme == "grand-line"))
-        .environment(\.locusCaptainDeckTheme, model.usesWoodQuarters)
-        .environment(\.locusQuartersIsland, model.activeQuartersIsland)
-        .transformEnvironment(\.colorScheme) { scheme in if (model.pluginPresentation != nil || model.theme == "grand-line") { scheme = .dark } }
-        .background((model.pluginPresentation != nil || model.theme == "grand-line") ? Color(nsColor: LocusTheme.oceanPalette.paper) : viewColors.paper)
+
+        .transformEnvironment(\.colorScheme) { scheme in if (model.pluginPresentation != nil) { scheme = .dark } }
+        .background((model.pluginPresentation != nil) ? AgentWorldPalette(custom: model.pluginSurfacePalette).paper : viewColors.paper)
         .locusSheet(item: $model.selectedTransfer) { transfer in
             AgentWorldTransferDetail(world: model, transfer: transfer)
         }
@@ -53,16 +48,12 @@ struct AgentWorldView: View {
                     .appFeatureEnvironment(from: appModel)
                     .modifier(LocusWorldSheetTheme())
                     .environment(\.locusPluginPalette, model.pluginSurfacePalette)
-        .environment(\.locusOceanTheme, (model.pluginPresentation != nil || model.theme == "grand-line"))
-                    .environment(\.locusCaptainDeckTheme, model.usesWoodQuarters)
-                    .environment(\.locusQuartersIsland, model.activeQuartersIsland)
+
             }
         }
         .modifier(LocusWorldSheetTheme())
         .environment(\.locusPluginPalette, model.pluginSurfacePalette)
-        .environment(\.locusOceanTheme, (model.pluginPresentation != nil || model.theme == "grand-line"))
-        .environment(\.locusCaptainDeckTheme, model.usesWoodQuarters)
-        .environment(\.locusQuartersIsland, model.activeQuartersIsland)
+
         .accessibilityIdentifier("agentWorld.window")
     }
 }
@@ -77,8 +68,7 @@ private struct AgentWorldHub: View {
         ZStack {
             AgentWorldSurface(model: model, appModel: appModel)
                 .environment(\.locusPluginPalette, model.pluginPresentation?.mapPalette)
-                .environment(\.locusCaptainDeckTheme, false)
-                .environment(\.locusQuartersIsland, nil)
+
                 .allowsHitTesting(!model.quartersPresented)
                 .accessibilityHidden(model.quartersPresented)
             if model.quartersPresented {
@@ -88,7 +78,7 @@ private struct AgentWorldHub: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
                     .overlay(RoundedRectangle(cornerRadius: 18)
-                        .stroke(AgentWorldPalette(ocean: (model.pluginPresentation != nil || model.theme == "grand-line"), deck: model.usesWoodQuarters, island: model.activeQuartersIsland, custom: model.pluginSurfacePalette).line, lineWidth: 1))
+                        .stroke(AgentWorldPalette(custom: model.pluginSurfacePalette).line, lineWidth: 1))
                     .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
                     .padding(10)
                     .onExitCommand { model.quartersPresented = false }
@@ -99,9 +89,7 @@ private struct AgentWorldHub: View {
 }
 
 private struct AgentWorldTransferDetail: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var world: AgentWorldModel
@@ -158,15 +146,15 @@ private struct AgentWorldSurface: View {
     @State private var deckPage: DeckPage = .agents
     @State private var boardCard: BoardCard?
     private enum DeckPage { case agents, board, calendar }
-    private var ocean: Bool { (model.pluginPresentation != nil || model.theme == "grand-line") }
-    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: isQuarters && model.usesWoodQuarters, island: isQuarters ? model.activeQuartersIsland : nil, custom: isQuarters ? model.pluginSurfacePalette : model.pluginPresentation?.mapPalette) }
-    private var workspaceTitle: String { model.pluginLabel("workspace", fallback: isQuarters && ocean ? "Captain’s Quarters" : "Agent workspace") }
+    private var hosted: Bool { (model.pluginPresentation != nil) }
+    private var palette: AgentWorldPalette { .init(custom: isQuarters ? model.pluginSurfacePalette : model.pluginPresentation?.mapPalette) }
+    private var workspaceTitle: String { model.pluginLabel("workspace", fallback: "Agent workspace") }
     private var filteredResidents: [AgentWorldResident] {
         model.residents.filter {
             search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)
                 || $0.role.localizedCaseInsensitiveContains(search)
-                || model.residentPlacements[$0.id]?.ship.localizedCaseInsensitiveContains(search) == true
-                || model.residentPlacements[$0.id]?.home.localizedCaseInsensitiveContains(search) == true
+                || model.residentPlacements[$0.id]?.primary.localizedCaseInsensitiveContains(search) == true
+                || model.residentPlacements[$0.id]?.secondary.localizedCaseInsensitiveContains(search) == true
         }
     }
     private var workingCount: Int { model.residents.filter { $0.status == "working" }.count }
@@ -175,6 +163,15 @@ private struct AgentWorldSurface: View {
     var body: some View {
         VStack(spacing: 0) {
             topBar
+            if let error = model.error {
+                HStack(spacing: 8) {
+                    Text(error).font(.locus(size: 12)).textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    Button { model.error = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).accessibilityLabel("Dismiss message")
+                }.padding(12).foregroundStyle(palette.ink).background(palette.paper)
+                    .accessibilityIdentifier("agentWorld.message")
+            }
             Rectangle().fill(palette.line).frame(height: 1)
             HSplitView {
                 if showsResidents || model.graphicsError != nil {
@@ -191,20 +188,20 @@ private struct AgentWorldSurface: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
             }
-            .padding(isQuarters && ocean ? 10 : 0)
-            // Preserve drafts, scroll positions and browser tabs while revealing the deck.
+            .padding(isQuarters && hosted ? 10 : 0)
+            // Preserve drafts, scroll positions and browser tabs while revealing the background.
             .opacity(!isQuarters || showsDeckWorkspace ? 1 : 0)
             .allowsHitTesting(!isQuarters || showsDeckWorkspace)
             .accessibilityHidden(isQuarters && !showsDeckWorkspace)
         }
         .foregroundStyle(palette.ink)
         .background {
-            if isQuarters && ocean {
+            if isQuarters && hosted {
                 GeometryReader { geometry in
                     backgroundArtwork.resizable().scaledToFill()
                         .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                         .overlay {
-                            if model.activeQuartersIsland != nil {
+                            if model.selectedPresentationID != nil {
                                 LinearGradient(colors: [palette.paper.opacity(0.34), palette.paper.opacity(0.10), palette.paper.opacity(0.22)], startPoint: .leading, endPoint: .trailing)
                             } else { Color.black.opacity(0.16) }
                         }
@@ -241,8 +238,7 @@ private struct AgentWorldSurface: View {
 
     private var backgroundArtwork: Image {
         if let path = model.pluginSurface?.backgroundAsset, let image = model.pluginAssetImage(path) { return Image(nsImage: image) }
-        if model.activeScreen?.screen.version == 2 { return Image(systemName: "square") }
-        return Image(model.activeQuartersIsland?.backgroundAsset ?? "CaptainDeck")
+        return Image(systemName: "square")
     }
 
     @ViewBuilder private var agentWorkspace: some View {
@@ -272,7 +268,7 @@ private struct AgentWorldSurface: View {
                 .buttonStyle(AgentWorldChromeButtonStyle(selected: deckPage == .calendar))
                 .accessibilityIdentifier("agentWorld.quarters.calendar")
             Spacer(minLength: 0)
-            if ocean { quartersSettings }
+            if hosted { quartersSettings }
             Menu {
                 Button("Connections") { openManagement(.sources) }
                 Button("Automations & schedules") { openManagement(.agents) }
@@ -283,43 +279,23 @@ private struct AgentWorldSurface: View {
                 .menuStyle(.borderlessButton).fixedSize().font(.locus(size: 12))
                 .accessibilityLabel("Connections and more tools")
         }.padding(.horizontal, 12).padding(.vertical, 6)
-            .background(palette.panel.opacity(isQuarters && ocean ? 0.93 : 1)).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
+            .background(palette.panel.opacity(isQuarters && hosted ? 0.93 : 1)).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
     }
 
     private var quartersSettings: some View {
         Menu {
             if let descriptor = model.pluginPresentation { pluginAppearanceSettings(descriptor) }
-            else {
-            Toggle("Open quarters when clicking islands", isOn: Binding(
-                get: { model.islandQuartersEnabled }, set: model.setIslandQuartersEnabled))
-                .accessibilityIdentifier("agentWorld.quarters.islandShortcut")
-            if model.islandQuartersEnabled {
-                Section("Visit an island") {
-                    ForEach(AgentWorldQuartersIsland.allCases) { island in
-                        Button(island.title) { model.openIslandQuarters(island) }
-                    }
-                }
-            }
-            Section("Captain’s Quarters appearance") {
-                ForEach(AgentWorldQuartersAppearance.allCases) { appearance in
-                    Button { model.setQuartersAppearance(appearance) } label: {
-                        if model.quartersAppearance == appearance { Label(appearance.title, systemImage: "checkmark") }
-                        else { Text(appearance.title) }
-                    }
-                }
-            }
-            }
         } label: { Image(systemName: "gearshape") }
             .menuStyle(.borderlessButton).fixedSize().font(.locus(size: 12))
             .disabled(model.activeScreen?.screen.capabilities.contains("world.preferences") != true)
-            .accessibilityLabel("Captain’s Quarters settings")
+            .accessibilityLabel(model.pluginLabel("workspace", fallback: "Workspace") + " settings")
             .accessibilityIdentifier("agentWorld.quarters.settings")
     }
 
     @ViewBuilder private func pluginAppearanceSettings(_ descriptor: PluginWorldPresentation) -> some View {
         Toggle(model.pluginLabel("contextShortcut", fallback: "Context shortcuts"), isOn: Binding(
             get: { model.worldPreferences[descriptor.contextEnabledPreferenceKey] as? Bool ?? true },
-            set: { try? model.updateWorldPreference(key: descriptor.contextEnabledPreferenceKey, value: $0) }))
+            set: { value in savePreference { try model.updateWorldPreference(key: descriptor.contextEnabledPreferenceKey, value: value) } }))
         if model.worldPreferences[descriptor.contextEnabledPreferenceKey] as? Bool != false {
             Section(model.pluginLabel("visit", fallback: "Visit")) {
                 ForEach(descriptor.presentations.keys.sorted().filter { $0 != descriptor.defaultPresentationID }, id: \.self) { id in
@@ -331,14 +307,18 @@ private struct AgentWorldSurface: View {
             ForEach(descriptor.appearances) { appearance in
                 Button {
                     model.selectedPresentationID = nil
-                    try? model.updateWorldPreference(key: descriptor.appearancePreferenceKey, value: appearance.id)
+                    savePreference { try model.updateWorldPreference(key: descriptor.appearancePreferenceKey, value: appearance.id) }
                 } label: {
                     if (model.worldPreferences[descriptor.appearancePreferenceKey] as? String ?? descriptor.appearances.first?.id) == appearance.id { Label(appearance.title, systemImage: "checkmark") }
                     else { Text(appearance.title) }
                 }
             }
         }
-        Button("Reset world settings") { try? model.resetWorldPreferences() }
+        Button("Reset world settings") { savePreference { try model.resetWorldPreferences() } }
+    }
+
+    private func savePreference(_ action: () throws -> Void) {
+        do { try action() } catch { model.error = error.localizedDescription }
     }
 
     private func openDeckTool(_ page: DeckPage) {
@@ -352,57 +332,18 @@ private struct AgentWorldSurface: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            Image(systemName: ocean ? "safari" : "folder")
-                .font(.locus(size: 16, weight: .medium)).foregroundStyle(ocean ? palette.warning : palette.muted)
+            Image(systemName: hosted ? "safari" : "folder")
+                .font(.locus(size: 16, weight: .medium)).foregroundStyle(hosted ? palette.warning : palette.muted)
             VStack(alignment: .leading, spacing: 4) {
                 if isQuarters, model.selectedPresentationID != nil, let surface = model.pluginSurface {
                     Text(surface.title.uppercased()).font(.locus(size: 10, weight: .semibold)).foregroundStyle(palette.warning)
                 }
-                if isQuarters, let island = model.activeQuartersIsland {
-                    Text(island.title.uppercased()).font(.locus(size: 10, weight: .semibold)).tracking(2)
-                        .foregroundStyle(palette.warning)
-                        .accessibilityIdentifier("agentWorld.quarters.island")
-                }
                 Text(isQuarters ? workspaceTitle : model.projectName)
-                    .font(.locus(size: isQuarters ? 18 : 14, weight: .semibold, design: isQuarters && ocean ? .serif : .default))
+                    .font(.locus(size: isQuarters ? 18 : 14, weight: .semibold, design: isQuarters && hosted ? .serif : .default))
                     .lineLimit(1).truncationMode(.middle)
             }.frame(minWidth: 60, alignment: .leading)
             Spacer(minLength: 10)
-            if !isQuarters && model.activeScreen?.screen.version != 2 { Menu {
-                ForEach(model.availableThemes) { theme in
-                    Button {
-                        model.setTheme(theme.id)
-                    } label: {
-                        if theme.id == model.theme { Label(theme.name, systemImage: "checkmark") }
-                        else { Text(theme.name) }
-                    }
-                }
-            } label: {
-                Label(model.availableThemes.first(where: { $0.id == model.theme })?.name ?? "World", systemImage: ocean ? "globe.americas.fill" : "globe")
-                    .font(.locus(size: 11, weight: .medium)).lineLimit(1)
-            }
-            .menuStyle(.borderlessButton).frame(minWidth: 100, idealWidth: 160, maxWidth: 190)
-            .padding(.horizontal, 11).padding(.vertical, 8)
-            .background(palette.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.line, lineWidth: 1))
-            .disabled(model.activeScreen?.screen.capabilities.contains("world.preferences") != true)
-            .accessibilityLabel("Choose a world")
-            .accessibilityIdentifier("agentWorld.themePicker")
-            }
-            if !ocean && !isQuarters && model.activeScreen?.screen.version != 2 {
-                Menu {
-                    ForEach(["mixed", "pandas", "explorers"], id: \.self) { style in
-                        Button { model.setResidentStyle(style) } label: {
-                            if style == model.residentStyle { Label(style.capitalized, systemImage: "checkmark") }
-                            else { Text(style.capitalized) }
-                        }
-                    }
-                } label: { Label("Appearance", systemImage: "person.crop.circle") }
-                .menuStyle(.borderlessButton).fixedSize()
-                .disabled(model.activeScreen?.screen.capabilities.contains("world.preferences") != true)
-                .accessibilityIdentifier("agentWorld.appearance")
-            }
-            if ocean && !isQuarters { quartersSettings }
+            if hosted && !isQuarters { quartersSettings }
             if isQuarters {
                 Button {
                     showsDeckWorkspace.toggle()
@@ -411,7 +352,7 @@ private struct AgentWorldSurface: View {
                     Label(showsDeckWorkspace ? "Hide workspace" : "Show workspace", systemImage: showsDeckWorkspace ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                 }
                 .buttonStyle(AgentWorldChromeButtonStyle(selected: !showsDeckWorkspace))
-                .help("Reveal the deck without closing your conversation or tools")
+                .help("Reveal the background without closing your conversation or tools")
                 .accessibilityIdentifier("agentWorld.quarters.toggleWorkspace")
             }
             Button(action: model.createAgent) { Label("New Agent", systemImage: "plus") }
@@ -429,7 +370,7 @@ private struct AgentWorldSurface: View {
                     .accessibilityIdentifier("agentWorld.quarters.close")
             } else {
                 Button { model.openAgentControls() } label: {
-                    Label(model.pluginLabel("workspace", fallback: ocean ? "Captain’s Quarters" : "Agent workspace"), systemImage: "person.text.rectangle")
+                    Label(model.pluginLabel("workspace", fallback: "Agent workspace"), systemImage: "person.text.rectangle")
                 }
                 .buttonStyle(AgentWorldChromeButtonStyle(selected: true))
                 .disabled(!model.canInteract)
@@ -442,7 +383,7 @@ private struct AgentWorldSurface: View {
         .font(.locus(size: 11, weight: .medium))
         .controlSize(.small).padding(.horizontal, isQuarters ? 24 : 18).frame(height: isQuarters ? 54 : 56)
         .background {
-            if isQuarters && ocean { palette.paper.opacity(0.78) }
+            if isQuarters && hosted { palette.paper.opacity(0.78) }
             else { palette.panel }
         }
     }
@@ -508,9 +449,9 @@ private struct AgentWorldSurface: View {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if model.residents.isEmpty {
                         VStack(spacing: 12) {
-                            Image(systemName: ocean ? "sailboat" : "person.crop.square.badge.plus")
+                            Image(systemName: "person.crop.square.badge.plus")
                                 .font(.locus(size: 30)).foregroundStyle(palette.warning)
-                            Text(ocean ? "Your adventure starts here" : "No saved agents")
+                            Text(model.pluginLabel("emptyTitle", fallback: "No saved agents"))
                                 .font(.locus(size: 13, weight: .semibold))
                             Text("Create an agent to give it a home in this world.")
                                 .font(.locus(size: 11)).foregroundStyle(palette.muted).multilineTextAlignment(.center)
@@ -529,8 +470,8 @@ private struct AgentWorldSurface: View {
                 }.padding(10)
             }
             Rectangle().fill(palette.line).frame(height: 1)
-            if ocean && !isQuarters {
-                Label(model.pluginLabel("workHint", fallback: "Glowing ship: traveling to work. Lit island: working ashore."), systemImage: "sparkles")
+            if hosted && !isQuarters {
+                Label(model.pluginLabel("workHint", fallback: "Live agent activity"), systemImage: "sparkles")
                     .font(.locus(size: 11)).foregroundStyle(palette.muted)
                     .fixedSize(horizontal: false, vertical: true).padding(12)
             }
@@ -549,7 +490,7 @@ private struct AgentWorldSurface: View {
                     .disabled(!model.canInteract || appModel == nil)
                     .accessibilityIdentifier("agentWorld.residents.crewChat")
                 if !isQuarters {
-                compactResidentAction(ocean ? "Captain’s Quarters" : "Agent workspace", icon: "person.text.rectangle") { model.openAgentControls() }
+                compactResidentAction(model.pluginLabel("workspace", fallback: "Agent workspace"), icon: "person.text.rectangle") { model.openAgentControls() }
                     .disabled(!model.canInteract)
                     .accessibilityIdentifier("agentWorld.residents.quarters")
                 }
@@ -563,12 +504,12 @@ private struct AgentWorldSurface: View {
                 Circle().fill(model.canInteract ? palette.success : palette.muted).frame(width: 4, height: 4)
                 Text(model.canInteract ? "Connected" : "World preview")
                 Spacer()
-                Text(ocean ? "LOCAL LINE" : "OUTPOST").tracking(1)
+                Text(model.pluginPresentation?.name.uppercased() ?? "AGENTS").tracking(1)
             }.font(.locus(size: 8)).foregroundStyle(palette.muted).padding(.horizontal, 12).padding(.vertical, 9)
                 .background(palette.paper.opacity(0.5))
         }
         .frame(minWidth: 205, idealWidth: 220, maxWidth: isQuarters ? 240 : 290)
-        .background(palette.panel.opacity(isQuarters && ocean ? 0.94 : 1))
+        .background(palette.panel.opacity(isQuarters && hosted ? 0.94 : 1))
         .accessibilityIdentifier("agentWorld.residents")
     }
 
@@ -581,8 +522,8 @@ private struct AgentWorldSurface: View {
                     if let id = UUID(uuidString: resident.id), let appModel {
                         AgentWorldResidentPortrait(world: model, resident: resident, agentTeams: appModel.agentTeamsModel, profileID: id)
                             .frame(width: 44, height: 48)
-                    } else if ocean {
-                        AgentWorldShipPortrait(world: model, resident: resident)
+                    } else if hosted {
+                        PluginResidentArtwork(world: model, resident: resident)
                             .frame(width: 44, height: 48)
                             .background(palette.paper, in: RoundedRectangle(cornerRadius: 8))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -593,14 +534,14 @@ private struct AgentWorldSurface: View {
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(resident.name).font(.locus(size: 12, weight: .semibold)).foregroundStyle(palette.ink).lineLimit(1)
-                        Text(placement?.ship ?? resident.role.capitalized)
+                        Text(placement?.primary ?? resident.role.capitalized)
                             .font(.locus(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
                         if let placement {
-                            Label(placement.home, systemImage: "mappin").font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
+                            Label(placement.secondary, systemImage: "mappin").font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                         }
                         HStack(spacing: 5) {
                             Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
-                            Text(AgentWorldChrome.statusLabel(resident.status, ocean: ocean)).font(.locus(size: 11, weight: .medium))
+                            Text(AgentWorldChrome.statusLabel(resident.status)).font(.locus(size: 11, weight: .medium))
                         }.foregroundStyle(AgentWorldChrome.statusColor(resident.status)).padding(.top, 2)
                     }
                     Spacer(minLength: 0)
@@ -609,8 +550,8 @@ private struct AgentWorldSurface: View {
                 .padding(9).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.locus(.card))
-            .help(isQuarters ? "Open \(resident.name)’s overview, chats, and automations" : "Follow \(resident.name)’s ship")
-            .accessibilityLabel("\(resident.name), \(placement.map { "\($0.ship), \($0.home), " } ?? "")\(resident.role), \(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))")
+            .help(isQuarters ? "Open \(resident.name)’s overview, chats, and automations" : "Focus \(resident.name) in the world")
+            .accessibilityLabel("\(resident.name), \(placement.map { "\($0.primary), \($0.secondary), " } ?? "")\(resident.role), \(AgentWorldChrome.statusLabel(resident.status))")
             .accessibilityIdentifier("agentWorld.resident.\(resident.id)")
             HStack(spacing: 7) {
                 Button { deckPage = .agents; model.newConversation(for: resident.id) } label: {
@@ -620,11 +561,11 @@ private struct AgentWorldSurface: View {
                 .accessibilityLabel("New chat with \(resident.name)")
                 .accessibilityIdentifier("agentWorld.residentNewChat.\(resident.id)")
                 Spacer(minLength: 0)
-                if ocean {
-                    Menu { AgentWorldShipStyleOptions(world: model, agentID: resident.id) } label: { Text("Ship") }
+                if model.pluginPresentation?.styles.isEmpty == false {
+                    Menu { PluginResidentStyleOptions(world: model, agentID: resident.id) } label: { Text(model.pluginLabel("style", fallback: "Style")) }
                         .menuStyle(.borderlessButton).fixedSize()
                         .disabled(model.activeScreen?.screen.capabilities.contains("world.preferences") != true)
-                        .accessibilityLabel("Ship style for \(resident.name)")
+                        .accessibilityLabel(model.pluginLabel("style", fallback: "Style") + " for " + resident.name)
                         .accessibilityIdentifier("agentWorld.residentShipStyle.\(resident.id)")
                 }
                 Menu {
@@ -665,10 +606,10 @@ private struct AgentWorldSurface: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 9) {
-                    Label(ocean ? "WELCOME ABOARD" : "YOUR WORKSPACE", systemImage: ocean ? "sun.max" : "person.3")
+                    Label(model.pluginLabel("welcomeLabel", fallback: "YOUR WORKSPACE"), systemImage: hosted ? "sun.max" : "person.3")
                         .font(.locus(size: 11, weight: .semibold)).tracking(2).foregroundStyle(palette.warning)
-                    Text(ocean ? "All hands on deck" : "Your agents")
-                        .font(.locus(size: 30, weight: .semibold, design: ocean ? .serif : .default))
+                    Text(model.pluginLabel("welcomeTitle", fallback: "Your agents"))
+                        .font(.locus(size: 30, weight: .semibold, design: hosted ? .serif : .default))
                     Text("Choose a crewmate to open their overview, or start a chat with tools at your side.")
                         .font(.locus(size: 13)).foregroundStyle(palette.inkSoft).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 16) {
@@ -685,8 +626,8 @@ private struct AgentWorldSurface: View {
                     }
                 }
                 if filteredResidents.isEmpty {
-                    ContentUnavailableView(search.isEmpty ? "Your crew starts here" : "No matching agents",
-                        systemImage: "person.3", description: Text(search.isEmpty ? "Create your first agent to give it a ship and a place on your deck." : "Try another name or clear the search."))
+                    ContentUnavailableView(search.isEmpty ? model.pluginLabel("emptyWorkspaceTitle", fallback: "Your agents start here") : "No matching agents",
+                        systemImage: "person.3", description: Text(search.isEmpty ? model.pluginLabel("emptyDescription", fallback: "Create your first agent to start working in this workspace.") : "Try another name or clear the search."))
                         .background(palette.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 14))
                 }
             }.padding(20)
@@ -705,7 +646,7 @@ private struct AgentWorldSurface: View {
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text(resident.name).font(.locus(size: 17, weight: .semibold)).foregroundStyle(palette.ink)
-                            Text(model.residentPlacements[resident.id]?.ship ?? resident.role.capitalized)
+                            Text(model.residentPlacements[resident.id]?.primary ?? resident.role.capitalized)
                                 .font(.locus(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -713,7 +654,7 @@ private struct AgentWorldSurface: View {
                     }
                     HStack(spacing: 6) {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 6, height: 6)
-                        Text(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))
+                        Text(AgentWorldChrome.statusLabel(resident.status))
                             .font(.locus(size: 12, weight: .medium)).foregroundStyle(palette.inkSoft)
                     }
                 }.contentShape(Rectangle())
@@ -766,9 +707,7 @@ private struct AgentWorldSurface: View {
 }
 
 private struct AgentWorldBoardChatPicker: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var world: AgentWorldModel
@@ -820,28 +759,26 @@ private struct AgentWorldResidentPortrait: View {
     let profileID: UUID
 
     var body: some View {
-        if agentTeams.agentAppearances[profileID] != nil || agentTeams.agentAvatarData[profileID] != nil || (world.pluginPresentation == nil && world.theme != "grand-line") {
+        if agentTeams.agentAppearances[profileID] != nil || agentTeams.agentAvatarData[profileID] != nil || world.pluginPresentation == nil {
             AgentAvatarView(profileID: profileID, name: resident.name, size: 44)
         } else {
-            AgentWorldShipPortrait(world: world, resident: resident)
-                .background(AgentWorldPalette(ocean: true, deck: world.usesWoodQuarters, island: world.activeQuartersIsland, custom: world.pluginSurfacePalette).paper, in: RoundedRectangle(cornerRadius: 9))
+            PluginResidentArtwork(world: world, resident: resident)
+                .background(AgentWorldPalette(custom: world.pluginSurfacePalette).paper, in: RoundedRectangle(cornerRadius: 9))
                 .clipShape(RoundedRectangle(cornerRadius: 9))
         }
     }
 }
 
-private struct AgentWorldShipPortrait: View {
+private struct PluginResidentArtwork: View {
     @ObservedObject var world: AgentWorldModel
     let resident: AgentWorldResident
     @State private var portrait: NSImage?
     private var style: String? {
         if let descriptor = world.pluginPresentation {
             return (world.worldPreferences[descriptor.stylePreferenceKey] as? [String: String])?[resident.id]
-                ?? descriptor.styles.first { $0.name == world.residentPlacements[resident.id]?.ship }?.id
+                ?? descriptor.styles.first { $0.name == world.residentPlacements[resident.id]?.primary }?.id
         }
-        return world.shipStyles[resident.id] ?? AgentWorldShipStyle.all.first {
-            $0.name == world.residentPlacements[resident.id]?.ship
-        }?.id
+        return nil
     }
     private var identity: String { (world.activeScreen?.root ?? "") + (world.activeScreen?.digest ?? "") + (style ?? "") }
 
@@ -850,7 +787,7 @@ private struct AgentWorldShipPortrait: View {
             if let portrait { Image(nsImage: portrait).resizable().scaledToFit().padding(1) }
             else {
                 Text(String(resident.name.prefix(1))).font(.locus(size: 23, weight: .medium, design: .serif))
-                    .foregroundStyle(AgentWorldPalette(ocean: true, deck: world.usesWoodQuarters, island: world.activeQuartersIsland, custom: world.pluginSurfacePalette).warning)
+                    .foregroundStyle(AgentWorldPalette(custom: world.pluginSurfacePalette).warning)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -862,41 +799,12 @@ private struct AgentWorldShipPortrait: View {
                 portrait = world.pluginAssetImage(item.previewAsset)
                 return
             }
-            guard let screen = world.activeScreen, screen.screen.version == 1, let style, AgentWorldShipStyle.isSupported(style) else { return }
-            portrait = AgentWorldPortraitCache.image(screen: screen, style: style)
+
         }
     }
 }
 
-@MainActor
-private enum AgentWorldPortraitCache {
-    static let images: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>(); cache.countLimit = 45; cache.totalCostLimit = 8 * 1024 * 1024
-        return cache
-    }()
-    static func image(screen: AgentWorldModel.AvailableScreen, style: String) -> NSImage? {
-        let key = (screen.root + (screen.digest ?? "") + style) as NSString
-        if let cached = images.object(forKey: key) { return cached }
-        let expanded = ["ship_mihawk_coffin", "ship_garp_battleship", "ship_marine_patrol"].contains(style)
-        let name = expanded ? style : String(style.dropFirst("ship_".count))
-        let directory = (screen.screen.entrypoint as NSString).deletingLastPathComponent
-        let relative = (directory.isEmpty ? "" : directory + "/") + "themes/grand-line/references/" + name + ".jpg"
-        guard let file = try? PluginScreenFiles.file(root: URL(fileURLWithPath: screen.root), path: relative),
-              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 5 * 1024 * 1024,
-              let source = CGImageSourceCreateWithURL(file as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 192,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) else { return nil }
-        let result = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-        images.setObject(result, forKey: key, cost: image.bytesPerRow * image.height)
-        return result
-    }
-}
-
-/// Shared native chrome follows the same palette as the chart and quarters.
+/// Shared status chrome belongs to the native host.
 enum AgentWorldChrome {
     static func statusColor(_ status: String) -> Color {
         switch status {
@@ -907,7 +815,7 @@ enum AgentWorldChrome {
         default: LocusTheme.muted
         }
     }
-    static func statusLabel(_ status: String, ocean: Bool) -> String {
+    static func statusLabel(_ status: String) -> String {
         switch status {
         case "working": "Working"
         case "needs_attention": "Needs you"
@@ -922,10 +830,7 @@ enum AgentWorldChrome {
 struct AgentWorldChromeButtonStyle: ButtonStyle {
     @Environment(\.locusPluginPalette) private var pluginPalette
     var selected = false
-    @Environment(\.locusOceanTheme) private var ocean
-    @Environment(\.locusCaptainDeckTheme) private var deck
-    @Environment(\.locusQuartersIsland) private var quartersIsland
-    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: deck, island: quartersIsland, custom: pluginPalette) }
+    private var palette: AgentWorldPalette { .init(custom: pluginPalette) }
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -938,31 +843,21 @@ struct AgentWorldChromeButtonStyle: ButtonStyle {
     }
 }
 
-/// Explicit colors keep the nautical chrome independent of AppKit appearance normalization.
+/// Explicit plugin colors are independent of AppKit appearance normalization.
 typealias AgentWorldPalette = LocusViewColors
 
-struct AgentWorldShipStyleOptions: View {
+struct PluginResidentStyleOptions: View {
     @ObservedObject var world: AgentWorldModel
     let agentID: String
     var body: some View {
         if let descriptor = world.pluginPresentation { pluginStyles(descriptor) }
-        else {
-        Button { world.setShipStyle(agentID: agentID, style: nil) } label: {
-            if world.shipStyles[agentID] == nil { Label("Automatic", systemImage: "checkmark") }
-            else { Text("Automatic") }
-        }
-        Divider()
-        ForEach(AgentWorldShipStyle.all) { style in
-            Button { world.setShipStyle(agentID: agentID, style: style.id) } label: {
-                if world.shipStyles[agentID] == style.id { Label(style.name, systemImage: "checkmark") }
-                else { Text(style.name) }
-            }
-        }
-        }
     }
     @ViewBuilder private func pluginStyles(_ descriptor: PluginWorldPresentation) -> some View {
         let values = world.worldPreferences[descriptor.stylePreferenceKey] as? [String: String] ?? [:]
-        Button("Automatic") { saveStyle(nil, descriptor: descriptor, values: values) }
+        Button { saveStyle(nil, descriptor: descriptor, values: values) } label: {
+            if values[agentID] == nil { Label("Automatic", systemImage: "checkmark") }
+            else { Text("Automatic") }
+        }
         Divider()
         ForEach(descriptor.styles) { style in
             Button { saveStyle(style.id, descriptor: descriptor, values: values) } label: {
@@ -973,7 +868,8 @@ struct AgentWorldShipStyleOptions: View {
     }
     private func saveStyle(_ style: String?, descriptor: PluginWorldPresentation, values: [String: String]) {
         var updated = values; updated[agentID] = style
-        try? world.updateWorldPreference(key: descriptor.stylePreferenceKey, value: updated)
+        do { try world.updateWorldPreference(key: descriptor.stylePreferenceKey, value: updated) }
+        catch { world.error = error.localizedDescription }
     }
 }
 

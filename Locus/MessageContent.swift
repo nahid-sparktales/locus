@@ -158,8 +158,7 @@ enum DiffDetector {
 /// thinking-visibility mode, block markdown with copyable code cards, plain
 /// paragraphs elsewhere.
 struct MessageContentView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let text: String
@@ -286,8 +285,7 @@ struct MessageContentView: View {
 /// The active reply publishes an append-only revision. Completed Markdown
 /// blocks freeze once, while the mutable tail stays native plain text.
 struct StreamingMessageContentView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var reply: StreamingReplyState
@@ -356,8 +354,7 @@ struct StreamingMessageContentView: View {
 }
 
 private struct StreamingThinkingSegmentView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -669,8 +666,7 @@ final class AppendOnlyTextView: LocusSelectionTextView {
 /// Reasoning disclosure. Collapsed mode rests as a lightweight inline summary;
 /// Expanded mode pins the existing detailed card open.
 struct ThinkingSegmentView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -784,8 +780,7 @@ struct ThinkingSegmentView: View {
 }
 
 private struct ReasoningSectionsView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let sections: [String]
@@ -1216,8 +1211,7 @@ extension EnvironmentValues {
 }
 
 struct CodeBlockView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let language: String?
@@ -1510,8 +1504,7 @@ struct DiffTextView: View {
 
 /// Chooses between diff-aware and plain monospaced rendering for tool output.
 struct ToolOutputText: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let text: String

@@ -5,8 +5,7 @@ import SwiftUI
 /// decision is always where your hands already are. ↑/↓ move the selection,
 /// 1–3 answer directly, ↵ confirms, esc denies.
 struct PermissionPromptView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

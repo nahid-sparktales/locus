@@ -80,8 +80,7 @@ enum ResponseWritingDrafts {
 }
 
 struct ResponseWritingView<Original: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let part: ResponsePart
@@ -236,8 +235,7 @@ struct ResponseWritingView<Original: View>: View {
 }
 
 private struct ResponseWritingDraftContent: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: NotesStore

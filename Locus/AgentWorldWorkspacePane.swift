@@ -5,7 +5,7 @@ import SwiftUI
 struct AgentWorldMapChat: View {
     @ObservedObject var world: AgentWorldModel
     @ObservedObject var model: AppModel
-    private var palette: AgentWorldPalette { .init(ocean: (world.pluginPresentation != nil || world.theme == "grand-line"), custom: world.pluginSurfacePalette) }
+    private var palette: AgentWorldPalette { .init(custom: world.pluginSurfacePalette) }
     private var residents: [AgentWorldResident] { world.residents }
     private var resident: AgentWorldResident? { residents.first { $0.id == world.selection } }
     private var conversations: [SessionSummary] { world.selection.map(world.residentConversations(for:)) ?? [] }
@@ -50,7 +50,7 @@ struct AgentWorldMapChat: View {
                         if let resident {
                             HStack(spacing: 4) {
                                 Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
-                                Text(AgentWorldChrome.statusLabel(resident.status, ocean: (world.pluginPresentation != nil || world.theme == "grand-line")))
+                                Text(AgentWorldChrome.statusLabel(resident.status))
                                     .font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                             }
                         }
@@ -58,7 +58,7 @@ struct AgentWorldMapChat: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             .menuStyle(.borderlessButton)
-            .help("Switch agent and follow their ship")
+            .help("Switch agent and focus them in the world")
             .accessibilityLabel("Chat with \(world.selectedProfile?.name ?? "agent"). Switch agent")
             .accessibilityIdentifier("agentWorld.mapChat.agentPicker")
             iconButton("chevron.left", "Previous agent", "previous") { switchAgent(by: -1) }
@@ -145,8 +145,8 @@ struct AgentWorldWorkspacePane: View {
     @State private var toolsWidth: CGFloat?
     @State private var resizeStart: CGFloat?
     @State private var activityContext: AgentInspectorContext?
-    private var ocean: Bool { (world.pluginPresentation != nil || world.theme == "grand-line") }
-    private var palette: AgentWorldPalette { .init(ocean: ocean, deck: world.usesWoodQuarters, island: world.activeQuartersIsland, custom: world.pluginSurfacePalette) }
+    private var hosted: Bool { (world.pluginPresentation != nil) }
+    private var palette: AgentWorldPalette { .init(custom: world.pluginSurfacePalette) }
     private var resident: AgentWorldResident? { world.residents.first { $0.id == world.selection } }
     private var placement: AgentWorldResidentPlacement? { world.selection.flatMap { world.residentPlacements[$0] } }
     private var residentConversations: [SessionSummary] {
@@ -219,10 +219,10 @@ struct AgentWorldWorkspacePane: View {
             } else { ZStack {
                 Circle().stroke(palette.warning.opacity(0.2), lineWidth: 1)
                 Circle().stroke(palette.warning.opacity(0.3), lineWidth: 1).padding(5)
-                Image(systemName: ocean ? "safari" : "square.stack.3d.up")
+                Image(systemName: hosted ? "safari" : "square.stack.3d.up")
                     .font(.locus(size: 24, weight: .ultraLight))
             }
-            .foregroundStyle(ocean ? palette.warning : palette.signal)
+            .foregroundStyle(hosted ? palette.warning : palette.signal)
             .frame(width: 34, height: 34).padding(.top, 5)
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -231,7 +231,7 @@ struct AgentWorldWorkspacePane: View {
                 if !world.sharedChatPresented, let resident {
                     HStack(spacing: 4) {
                         Circle().fill(AgentWorldChrome.statusColor(resident.status)).frame(width: 5, height: 5)
-                        Text(AgentWorldChrome.statusLabel(resident.status, ocean: ocean))
+                        Text(AgentWorldChrome.statusLabel(resident.status))
                             .font(.locus(size: 9)).foregroundStyle(palette.muted).lineLimit(1)
                     }
                 }
@@ -268,8 +268,8 @@ struct AgentWorldWorkspacePane: View {
                     .accessibilityIdentifier("agentWorld.workspace.header.newChat")
                 Menu {
                     Button("New chat", action: world.newConversation).disabled(!world.canStartConversation(for: profile.id.uuidString))
-                    if ocean {
-                        Menu(world.pluginLabel("style", fallback: "Ship style")) { AgentWorldShipStyleOptions(world: world, agentID: profile.id.uuidString) }
+                    if hosted {
+                        Menu(world.pluginLabel("style", fallback: "Style")) { PluginResidentStyleOptions(world: world, agentID: profile.id.uuidString) }
                             .disabled(world.activeScreen?.screen.capabilities.contains("world.preferences") != true)
                     }
                     Divider()

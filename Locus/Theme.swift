@@ -309,55 +309,22 @@ private struct LocusPluginPaletteKey: EnvironmentKey {
     static let defaultValue: PluginSurfacePalette? = nil
 }
 
-private struct LocusOceanThemeKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-private struct LocusQuartersIslandKey: EnvironmentKey {
-    static let defaultValue: AgentWorldQuartersIsland? = nil
-}
-
-private struct LocusCaptainDeckThemeKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
 extension EnvironmentValues {
-    /// Resolve the complete presentation context in one place. Reading this
-    /// environment value also updates stable child views when islands change.
-    var locusViewColors: LocusViewColors {
-        LocusViewColors(ocean: locusOceanTheme, deck: locusCaptainDeckTheme, island: locusQuartersIsland, custom: locusPluginPalette)
-    }
-
+    /// Decorative context for a hosted plugin. Standard windows use the native theme.
+    var locusViewColors: LocusViewColors { LocusViewColors(custom: locusPluginPalette) }
     var locusPluginPalette: PluginSurfacePalette? {
         get { self[LocusPluginPaletteKey.self] }
         set { self[LocusPluginPaletteKey.self] = newValue }
     }
-
-    var locusQuartersIsland: AgentWorldQuartersIsland? {
-        get { self[LocusQuartersIslandKey.self] }
-        set { self[LocusQuartersIslandKey.self] = newValue }
-    }
-
-    var locusCaptainDeckTheme: Bool {
-        get { self[LocusCaptainDeckThemeKey.self] }
-        set { self[LocusCaptainDeckThemeKey.self] = newValue }
-    }
-
-    /// Scoped to the Agent World subtree; regular Locus windows retain their appearance.
-    var locusOceanTheme: Bool {
-        get { self[LocusOceanThemeKey.self] }
-        set { self[LocusOceanThemeKey.self] = newValue }
-    }
+    var locusHostedSurface: Bool { locusPluginPalette != nil }
 }
 
 struct LocusWorldSheetTheme: ViewModifier {
     @Environment(\.locusPluginPalette) private var pluginPalette
-    @Environment(\.locusOceanTheme) private var ocean
-    @Environment(\.locusCaptainDeckTheme) private var deck
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var ocean
     @Environment(\.locusViewColors) private var colors
     func body(content: Content) -> some View {
-        if ocean || deck || pluginPalette != nil {
+        if pluginPalette != nil {
             content.foregroundStyle(colors.ink).tint(colors.signalDeep).background(colors.paper)
         } else { content }
     }
@@ -385,15 +352,10 @@ extension View {
 /// NSColors. Read the world palette from the view environment instead, so
 /// forms, popovers and sheets retain the theme without affecting other windows.
 struct LocusViewColors {
-    let ocean: Bool
-    let deck: Bool
-    let island: AgentWorldQuartersIsland?
     let custom: PluginSurfacePalette?
-    init(ocean: Bool, deck: Bool = false, island: AgentWorldQuartersIsland? = nil, custom: PluginSurfacePalette? = nil) {
-        self.ocean = ocean; self.deck = deck; self.island = island; self.custom = custom
-    }
-    private var themed: Bool { custom != nil || ocean || deck || island != nil }
-    private var palette: LocusTheme.Palette { custom?.native ?? island.map(LocusTheme.islandPalette) ?? (deck ? LocusTheme.deckPalette : LocusTheme.oceanPalette) }
+    init(custom: PluginSurfacePalette? = nil) { self.custom = custom }
+    private var themed: Bool { custom != nil }
+    private var palette: LocusTheme.Palette { custom?.native ?? LocusTheme.darkPalette }
     var ink: Color { themed ? Color(nsColor: palette.ink) : LocusTheme.ink }
     var inkSoft: Color { themed ? Color(nsColor: palette.inkSoft) : LocusTheme.inkSoft }
     var paper: Color { themed ? Color(nsColor: palette.paper) : LocusTheme.paper }
@@ -535,63 +497,6 @@ enum LocusTheme {
         successSoft: rgb(0x2A3226),
         codeKeyword: rgb(0xC1A4BD),
         codeType: rgb(0x92B9B5)
-    )
-
-    /// Warm walnut surfaces and brass accents for Captain’s Quarters.
-    static let deckPalette = Palette(
-        ink: rgb(0xFFF4DF), inkSoft: rgb(0xE7D1B5),
-        paper: rgb(0x3B271D), paperDeep: rgb(0x2C1E18),
-        panel: rgb(0x4A3123), white: rgb(0x5F402B),
-        line: rgb(0x8A6542), lineStrong: rgb(0xB89162),
-        muted: rgb(0xD6BBA0), signal: rgb(0xF2CB89), signalDeep: rgb(0xEFC27D),
-        coral: rgb(0xEAB59D), danger: rgb(0xF0A39A), blue: rgb(0xB8D4D8),
-        success: rgb(0xBAD19E), warning: rgb(0xF2CB89),
-        permissionInk: rgb(0xF0D3A8), permissionMuted: rgb(0xD0C6AA),
-        successSoft: rgb(0x3C4B30), codeKeyword: rgb(0xDDB9CE), codeType: rgb(0xAED7CF)
-    )
-
-    static func islandPalette(_ island: AgentWorldQuartersIsland) -> Palette {
-        let colors: (paper: UInt32, panel: UInt32, raised: UInt32, line: UInt32, ink: UInt32, muted: UInt32, accent: UInt32)
-        switch island {
-        case .elbaf: colors = (0x172D23, 0x233D2E, 0x36513B, 0x6D8154, 0xF4F1D9, 0xC1D0B1, 0xE4C27D)
-        case .marineford: colors = (0x182B42, 0x243D59, 0x365372, 0x6988A4, 0xF0F5FC, 0xBDD0E2, 0xC6DEEF)
-        case .waterSeven: colors = (0x133437, 0x204A4C, 0x326568, 0x639E99, 0xECF6ED, 0xB8D9D1, 0xF3BF88)
-        case .wano: colors = (0x302034, 0x462D47, 0x61405C, 0x9B6E8B, 0xFFF0EE, 0xDEC1D0, 0xF3B5CE)
-        case .drum: colors = (0x233248, 0x30465E, 0x435E79, 0x819DB4, 0xF2F8FF, 0xC9DCEB, 0xBDDFF6)
-        }
-        return Palette(
-            ink: rgb(colors.ink), inkSoft: rgb(colors.muted), paper: rgb(colors.paper), paperDeep: rgb(colors.paper),
-            panel: rgb(colors.panel), white: rgb(colors.raised), line: rgb(colors.line), lineStrong: rgb(colors.accent),
-            muted: rgb(colors.muted), signal: rgb(colors.accent), signalDeep: rgb(colors.accent),
-            coral: deckPalette.coral, danger: deckPalette.danger, blue: oceanPalette.blue,
-            success: oceanPalette.success, warning: rgb(colors.accent), permissionInk: rgb(colors.ink),
-            permissionMuted: rgb(colors.muted), successSoft: oceanPalette.successSoft,
-            codeKeyword: deckPalette.codeKeyword, codeType: oceanPalette.codeType
-        )
-    }
-
-    static let oceanPalette = Palette(
-        ink: rgb(0xF4EFDF),
-        inkSoft: rgb(0xD4E0DD),
-        paper: rgb(0x0B2633),
-        paperDeep: rgb(0x102F3D),
-        panel: rgb(0x0D2B39),
-        white: rgb(0x173C4A),
-        line: rgb(0x2B4B57),
-        lineStrong: rgb(0x729298),
-        muted: rgb(0xACC3C5),
-        signal: rgb(0xE8C381),
-        signalDeep: rgb(0xE8C381),
-        coral: rgb(0xE5AD97),
-        danger: rgb(0xF4A7A0),
-        blue: rgb(0xA5CEDD),
-        success: rgb(0xA2D7C2),
-        warning: rgb(0xE8C381),
-        permissionInk: rgb(0xF0D3A8),
-        permissionMuted: rgb(0xD0C6AA),
-        successSoft: rgb(0x244A45),
-        codeKeyword: rgb(0xD5B2D2),
-        codeType: rgb(0x9DD8D1)
     )
 
     static let ink = adaptive(\.ink)
@@ -898,12 +803,10 @@ enum LocusSurfaceKind {
 }
 
 private struct LocusSurfaceModifier: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.locusIsLiveResizing) private var isLiveResizing
@@ -957,12 +860,10 @@ private struct LocusSurfaceModifier: ViewModifier {
 }
 
 private struct LocusCardModifier: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     @Environment(\.colorSchemeContrast) private var contrast
     let radius: CGFloat
 
@@ -986,12 +887,10 @@ private struct LocusCardModifier: ViewModifier {
 }
 
 private struct LocusWorkspaceBackground: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     func body(content: Content) -> some View {
         content.background(viewColors.panel)
     }
@@ -1014,9 +913,7 @@ struct LocusButtonStyle: ButtonStyle {
 }
 
 private struct LocusButtonStyleBody: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1121,9 +1018,7 @@ struct BrandMark: View {
 }
 
 struct SettingsAdvancedLabel: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     var detail: String
@@ -1148,9 +1043,7 @@ struct SettingsAdvancedLabel: View {
 }
 
 struct SettingsAdvancedDisclosureRow: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
-    @Environment(\.locusQuartersIsland) private var quartersIsland
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var isExpanded: Bool
