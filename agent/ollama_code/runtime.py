@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import secrets
+import signal
 import socket
 import sys
 import time
@@ -39,6 +40,8 @@ class Worker:
     last_controller: float = 0
     session_info: dict = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Set only for a fresh child launched in a new session, never from a stored PID.
+    process_group: int | None = None
 
 
 class RuntimeSupervisor:
@@ -141,8 +144,10 @@ class RuntimeSupervisor:
             process = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "ollama_code.server", "--host", "127.0.0.1", "--port", str(port),
                 "--cwd", workspace, env=environment, stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                start_new_session=os.name == "posix")
             worker = Worker(session_id, process, port, token)
+            worker.process_group = process.pid if os.name == "posix" else None
             self.workers[session_id] = worker
             # Always drain child output; provider errors may include secrets, so
             # raw child output is deliberately not exported as a runtime event.
@@ -360,19 +365,39 @@ class RuntimeSupervisor:
             return
         if worker.pump:
             worker.pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker.pump
         if worker.ws:
-            await worker.ws.close()
-        if worker.process.returncode is None:
-            worker.process.terminate()
-            try:
-                await asyncio.wait_for(worker.process.wait(), timeout=5)
-            except TimeoutError:
-                worker.process.kill()
-                await worker.process.wait()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(worker.ws.close(), timeout=5)
+
+        def stop_owned(force=False):
+            # Only the in-memory group created by this supervisor is eligible.
+            # Descendants can retain the output pipe after the leader exits.
+            with contextlib.suppress(ProcessLookupError):
+                if worker.process_group is not None and os.name == "posix":
+                    os.killpg(worker.process_group, signal.SIGKILL if force else signal.SIGTERM)
+                elif worker.process.returncode is None:
+                    (worker.process.kill if force else worker.process.terminate)()
+
+        stop_owned()
+        try:
+            pending = [worker.process.wait()]
+            if worker.log_task:
+                pending.append(asyncio.shield(worker.log_task))
+            await asyncio.wait_for(asyncio.gather(*pending), timeout=5)
+        except asyncio.TimeoutError:
+            stop_owned(force=True)
+            await asyncio.wait_for(worker.process.wait(), timeout=5)
+        finally:
+            worker.process_group = None
         if worker.active_command:
             self.store.interrupted(session_id)
         if worker.log_task:
-            await worker.log_task
+            try:
+                await asyncio.wait_for(worker.log_task, timeout=1)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
 
     async def detach(self) -> None:
         was_direct = bool(self.direct_controller_seen)
