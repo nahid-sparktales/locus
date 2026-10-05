@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import WebKit
 import XCTest
@@ -159,6 +160,78 @@ final class AgentWorldBridgeTests: XCTestCase {
         XCTAssertFalse(String(decoding: try JSONSerialization.data(withJSONObject: snapshot), as: UTF8.self).contains("secret-provider-model"))
         XCTAssertNil(fixture.world.selectedSessionID)
         XCTAssertNil(fixture.world.newAgentDraft)
+    }
+
+    func testSharedMalformedClientVectorsAreRejectedThroughActualWebKitWithoutNativeIntents() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        let profile = AgentProfile(id: try XCTUnwrap(UUID(uuidString: "11111111-1111-4111-8111-111111111111")), name: "Wire fixture", model: "native:1")
+        fixture.configure(profiles: [profile])
+        try writeTransportPage(in: fixture)
+        fixture.world.open(pluginID: "fixture")
+        let transport = try await makeIsolatedTransport(in: fixture)
+        defer { transport.coordinator.revoke() }
+        _ = try await handshake(transport)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("ProtocolFixtures/agent-worlds/wire-v2.json"))
+        let vectors = try XCTUnwrap((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["vectors"] as? [[String: Any]])
+        let beforePreferences = try JSONSerialization.data(withJSONObject: fixture.world.worldPreferences, options: [.sortedKeys])
+        let beforeNavigation = fixture.world.nativeNavigationRequest
+        var tested = 0
+        for (index, vector) in vectors.enumerated() where vector["direction"] as? String == "client" {
+            let name = vector["id"] as? String ?? "fixture"
+            guard vector["valid"] as? Bool == false || name == "unsupported-protocol-schema-valid" else { continue }
+            var message = try XCTUnwrap(vector["message"] as? [String: Any])
+            let hasReplyID = AgentWorldBridgeContract.isToken(message["requestID"])
+            if hasReplyID { message["requestID"] = "wire_\(index)" }
+            // Bind otherwise well-formed requests to this real connection, retaining malformed scope values.
+            if AgentWorldBridgeContract.isToken(message["sessionID"]) { message["sessionID"] = transport.coordinator.bridge.sessionID }
+            if AgentWorldBridgeContract.isToken(message["scopeID"]) { message["scopeID"] = transport.coordinator.bridge.scopeID }
+            try await post(message, to: transport.web)
+            if hasReplyID {
+                let reply = try await receive(requestID: "wire_\(index)", from: transport.web)
+                XCTAssertTrue(AgentWorldBridgeContract.validHostMessage(reply), name)
+                XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String,
+                               name == "unsupported-protocol-schema-valid" ? "incompatible" : "invalid_request", name)
+                XCTAssertNotEqual(reply["ok"] as? Bool, true, name)
+            } else {
+                // A valid request provides an ordering barrier for the malformed request with an unsafe ID.
+                let barrierID = "barrier_\(index)"
+                try await post(request("host.snapshot", id: barrierID, transport: transport), to: transport.web)
+                _ = try await receive(requestID: barrierID, from: transport.web)
+                let received = try await transport.web.evaluateJavaScript("window.received") as? [[String: Any]] ?? []
+                XCTAssertFalse(received.contains { $0["requestID"] as? String == message["requestID"] as? String }, name)
+            }
+            XCTAssertNil(fixture.world.selection, name)
+            XCTAssertNil(fixture.world.newAgentDraft, name)
+            XCTAssertNil(fixture.world.selectedSessionID, name)
+            XCTAssertEqual(fixture.world.nativeNavigationRequest, beforeNavigation, name)
+            XCTAssertEqual(try JSONSerialization.data(withJSONObject: fixture.world.worldPreferences, options: [.sortedKeys]), beforePreferences, name)
+            tested += 1
+        }
+        XCTAssertGreaterThan(tested, 20, "The shared malformed hello and request corpus must cross WKScriptMessageHandler")
+        var valid = try XCTUnwrap(vectors.first(where: { $0["id"] as? String == "open-agent" })?["message"] as? [String: Any])
+        valid["requestID"] = "positive_control"
+        valid["sessionID"] = transport.coordinator.bridge.sessionID
+        valid["scopeID"] = transport.coordinator.bridge.scopeID
+        try await post(valid, to: transport.web)
+        let positive = try await receive(requestID: "positive_control", from: transport.web)
+        XCTAssertEqual(positive["ok"] as? Bool, true)
+        XCTAssertEqual(fixture.world.selection, profile.id.uuidString, "The same real transport can execute an authorized native selection")
+        XCTAssertNil(fixture.world.selectedSessionID)
+        let focus = fixture.world.focusRequest
+        try await post(valid, to: transport.web)
+        try await post(request("host.snapshot", id: "replay_barrier", transport: transport), to: transport.web)
+        _ = try await receive(requestID: "replay_barrier", from: transport.web)
+        XCTAssertEqual(fixture.world.focusRequest, focus, "Replayed request IDs must not execute selection twice")
+    }
+
+    func testPendingNativeWorkSurvivesExplicitCloseExceptionAndHangAndRealRetry() async throws {
+        for failure in ["close", "exception", "hang"] { try await verifyPendingWorkSurvives(failure) }
+    }
+
+    func testPendingNativeWorkSurvivesActualOwnedWebContentTerminationAndRealRetry() async throws {
+        try await verifyPendingWorkSurvives("termination")
     }
 
     func testNativeQueuesSurviveWorldDisableUpgradeAndWorkspaceRevocation() async throws {
@@ -373,6 +446,209 @@ final class AgentWorldBridgeTests: XCTestCase {
         XCTAssertTrue(coordinator.files.revoked)
         XCTAssertTrue(fixture.world.canRetryWorldScreen)
         XCTAssertNil(fixture.world.selectedSessionID)
+    }
+
+    private struct Transport {
+        let web: WKWebView
+        let coordinator: PluginScreenHost.Coordinator
+    }
+
+    private func writeTransportPage(in fixture: Fixture) throws {
+        try Data("window.received=[];window.locusAgentWorld={receive(message){window.received.push(message)}};".utf8)
+            .write(to: fixture.root.appendingPathComponent("ui/transport.js"))
+        try Data("<html><head></head><body><script src='transport.js'></script></body></html>".utf8)
+            .write(to: fixture.root.appendingPathComponent("ui/index.html"))
+    }
+
+    private func makeIsolatedTransport(in fixture: Fixture) async throws -> Transport {
+        let coordinator = PluginScreenHost.Coordinator(model: fixture.world, screen: try XCTUnwrap(fixture.world.activeScreen))
+        let config = WKWebViewConfiguration()
+        // The process used by the termination test belongs only to this disposable test surface.
+        config.processPool = WKProcessPool()
+        config.websiteDataStore = .nonPersistent()
+        config.setURLSchemeHandler(coordinator.files, forURLScheme: PluginScreenSchemeHandler.scheme)
+        config.userContentController.add(coordinator, name: "locusScreen")
+        config.userContentController.addUserScript(WKUserScript(source: PluginScreenHost.Coordinator.failureMonitorScript,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let web = WKWebView(frame: .zero, configuration: config)
+        coordinator.web = web
+        web.navigationDelegate = coordinator
+        web.load(URLRequest(url: try XCTUnwrap(URL(string: "locus-screen://plugin/ui/index.html"))))
+        try await waitForTransportPage(web)
+        return Transport(web: web, coordinator: coordinator)
+    }
+
+    private func waitForTransportPage(_ web: WKWebView) async throws {
+        for _ in 0..<200 {
+            if (try? await web.evaluateJavaScript("Array.isArray(window.received)")) as? Bool == true { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("The local test transport did not load")
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func post(_ message: [String: Any], to web: WKWebView) async throws {
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: message, options: [.sortedKeys]), as: UTF8.self)
+        _ = try await web.evaluateJavaScript("window.webkit.messageHandlers.locusScreen.postMessage(\(json)); true")
+    }
+
+    private func receive(requestID: String, from web: WKWebView) async throws -> [String: Any] {
+        for _ in 0..<200 {
+            let messages = try await web.evaluateJavaScript("window.received") as? [[String: Any]] ?? []
+            if let message = messages.first(where: { $0["requestID"] as? String == requestID }) { return message }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("No native bridge response for \(requestID)")
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func request(_ command: String, id: String, transport: Transport) -> [String: Any] {
+        ["version": 2, "type": "request", "requestID": id, "sessionID": transport.coordinator.bridge.sessionID,
+         "scopeID": transport.coordinator.bridge.scopeID, "command": command, "arguments": [:]]
+    }
+
+    private func handshake(_ transport: Transport) async throws -> [String: Any] {
+        try await post(["version": 2, "type": "hello", "requestID": "hello", "protocols": [2], "runtimeVersion": "0.2.0", "sdkVersion": 1,
+                        "requiredCapabilities": ["agents.read"], "optionalCapabilities": ["agents.interact", "world.preferences"]], to: transport.web)
+        let welcome = try await receive(requestID: "hello", from: transport.web)
+        XCTAssertEqual(welcome["type"] as? String, "welcome")
+        XCTAssertTrue(AgentWorldBridgeContract.validHostMessage(welcome))
+        for _ in 0..<200 {
+            let messages = try await transport.web.evaluateJavaScript("window.received") as? [[String: Any]] ?? []
+            if let snapshot = messages.first(where: { $0["type"] as? String == "snapshot" }) {
+                XCTAssertTrue(AgentWorldBridgeContract.validHostMessage(snapshot))
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("The accepted handshake did not publish its authoritative snapshot")
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func mountedTransport(in fixture: Fixture, excluding old: WKWebView? = nil) async throws -> Transport {
+        func findWeb(_ view: NSView?) -> WKWebView? {
+            guard let view else { return nil }
+            if let web = view as? WKWebView, web !== old { return web }
+            return view.subviews.lazy.compactMap(findWeb).first
+        }
+        for _ in 0..<200 {
+            if let web = NSApp.windows.first(where: { $0.title.hasPrefix(fixture.title) }).flatMap({ findWeb($0.contentView) }),
+               let coordinator = web.navigationDelegate as? PluginScreenHost.Coordinator, !coordinator.files.revoked {
+                try await waitForTransportPage(web)
+                return Transport(web: web, coordinator: coordinator)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("The native window did not mount a fresh PluginScreenHost coordinator")
+        throw CocoaError(.coderReadCorrupt)
+    }
+
+    private func verifyPendingWorkSurvives(_ failure: String) async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        let profile = AgentProfile(name: "Pending native agent", model: "native:1")
+        let service = SavedAgentConversationService()
+        var started: [String] = []
+        var completed: [String] = []
+        var releaseFirst: CheckedContinuation<Void, Never>?
+        defer { releaseFirst?.resume() }
+        service.configure(defaults: fixture.defaults, state: { _ in .init() }, create: { _, _ in
+            XCTFail("Renderer recovery must not create a conversation"); return "unexpected"
+        }, dispatch: { sessionID, workspace, profileID, text, _ in
+            XCTAssertEqual(sessionID, "pending-chat")
+            XCTAssertEqual(workspace, fixture.root.path)
+            XCTAssertEqual(profileID, profile.id)
+            started.append(text)
+            if text == "first" { await withCheckedContinuation { releaseFirst = $0 } }
+            completed.append(text)
+        })
+        service.bind("pending-chat", workspace: fixture.root.path, profileID: profile.id)
+        fixture.configure(profiles: [profile], conversations: service)
+        try writeTransportPage(in: fixture)
+        fixture.world.open(pluginID: "fixture")
+        let mounted = try await mountedTransport(in: fixture)
+        let transport = try await makeIsolatedTransport(in: fixture)
+        defer { transport.coordinator.revoke() }
+        _ = try await handshake(transport)
+        let previousSession = transport.coordinator.bridge.sessionID
+        var ownedProcess: pid_t?
+        if failure == "termination" {
+            // Test-only SPI: never infer a process from its name or terminate another application's WK process.
+            let selector = NSSelectorFromString("_webProcessIdentifier")
+            guard transport.web.responds(to: selector),
+                  let value = transport.web.value(forKey: "_webProcessIdentifier") as? NSNumber,
+                  value.int32Value > 0, value.int32Value != getpid() else {
+                throw XCTSkip("This WebKit build does not expose the disposable test surface's exact web-process identifier")
+            }
+            ownedProcess = pid_t(value.int32Value)
+            if mounted.web.responds(to: selector), let mountedPID = mounted.web.value(forKey: "_webProcessIdentifier") as? NSNumber {
+                XCTAssertNotEqual(ownedProcess, pid_t(mountedPID.int32Value))
+                guard ownedProcess != pid_t(mountedPID.int32Value) else { throw XCTSkip("WebKit did not isolate the test process from the mounted host") }
+            }
+        }
+        try service.enqueue(text: "first", mode: .work, sessionID: "pending-chat", workspace: fixture.root.path, profileID: profile.id)
+        try service.enqueue(text: "second", mode: .work, sessionID: "pending-chat", workspace: fixture.root.path, profileID: profile.id)
+        for _ in 0..<100 where releaseFirst == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(releaseFirst, failure)
+        XCTAssertEqual(started, ["first"], failure)
+        XCTAssertTrue(service.hasPendingWork(profileID: profile.id), failure)
+        switch failure {
+        case "close":
+            for window in NSApp.windows where window.title.hasPrefix(fixture.title) { window.close() }
+            transport.coordinator.sendSnapshot()
+            XCTAssertNil(fixture.world.activeScreen)
+        case "exception":
+            try Data("throw new Error('Pending-work renderer exception');".utf8).write(to: fixture.root.appendingPathComponent("ui/fault.js"))
+            _ = try await transport.web.evaluateJavaScript("let fault=document.createElement('script');fault.src='fault.js';document.head.append(fault);true")
+            for _ in 0..<100 {
+                if (try? await transport.web.evaluateJavaScript("window.__locusScreenFailure")) as? Bool == true { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        case "hang": transport.web.evaluateJavaScript("while(true){}", completionHandler: nil)
+        case "termination": XCTAssertEqual(kill(try XCTUnwrap(ownedProcess), SIGKILL), 0, "Only the explicitly identified disposable WebKit process is terminated")
+        default: XCTFail("Unknown renderer fault")
+        }
+        for _ in 0..<200 where !transport.coordinator.files.revoked {
+            if failure == "exception" || failure == "hang" { transport.coordinator.checkRendererHealth(timeout: .milliseconds(100)) }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(transport.coordinator.files.revoked, failure)
+        XCTAssertTrue(transport.coordinator.bridge.revoked, failure)
+        XCTAssertTrue(service.hasPendingWork(profileID: profile.id), failure)
+        XCTAssertEqual(service.boundProfileID(for: "pending-chat"), profile.id, failure)
+        XCTAssertEqual(started, ["first"], failure)
+        XCTAssertTrue(completed.isEmpty, failure)
+        fixture.statuses[profile.id.uuidString] = "working"
+        fixture.world.refresh()
+        if failure == "close" { fixture.world.open(pluginID: "fixture") }
+        else {
+            XCTAssertNotNil(fixture.world.graphicsError, failure)
+            XCTAssertTrue(fixture.world.canRetryWorldScreen, failure)
+            let epoch = fixture.world.renderEpoch
+            fixture.world.retryWorldScreen()
+            XCTAssertEqual(fixture.world.renderEpoch, epoch + 1, failure)
+        }
+        let recovered = try await mountedTransport(in: fixture, excluding: mounted.web)
+        defer { recovered.coordinator.revoke() }
+        XCTAssertFalse(recovered.coordinator === mounted.coordinator, failure)
+        XCTAssertFalse(recovered.coordinator === transport.coordinator, failure)
+        let fresh = try await handshake(recovered)
+        XCTAssertNotEqual(recovered.coordinator.bridge.sessionID, previousSession, failure)
+        let agents = (fresh["state"] as? [String: Any])?["agents"] as? [[String: Any]]
+        XCTAssertEqual(agents?.count, 1, failure)
+        XCTAssertEqual(agents?.first?["id"] as? String, profile.id.uuidString, failure)
+        XCTAssertEqual(agents?.first?["status"] as? String, "working", failure)
+        XCTAssertNil(fixture.world.graphicsError, failure)
+        XCTAssertNil(fixture.world.selection, failure)
+        XCTAssertNil(fixture.world.selectedSessionID, failure)
+        XCTAssertNil(fixture.world.newAgentDraft, failure)
+        XCTAssertEqual(started, ["first"], failure)
+        releaseFirst?.resume(); releaseFirst = nil
+        for _ in 0..<200 where service.hasPendingWork(profileID: profile.id) { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(service.hasPendingWork(profileID: profile.id), failure)
+        XCTAssertEqual(started, ["first", "second"], failure)
+        XCTAssertEqual(completed, ["first", "second"], failure)
+        XCTAssertEqual(service.boundProfileID(for: "pending-chat"), profile.id, failure)
     }
 
     @MainActor
