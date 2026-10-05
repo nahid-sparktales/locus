@@ -338,6 +338,74 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertTrue(world.profilePresented)
     }
 
+    func testWorldBoardHandoffUsesCanonicalChatAndLeavesWorkAsAnEditableDraft() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close(); BackendStub.reset() }
+        BackendStub.reset()
+        let profile = fixture.profiles[0]
+        let sessionID = "board-fixture-chat"
+        func info(_ id: String) throws -> [String: Any] {
+            let value = SessionInfo(model: "fixture", host: "http://127.0.0.1:9", cwd: fixture.root.path,
+                session: id, sessionID: id, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+                maxIterations: 10, hasProjectContext: false, permissions: .init(skipAll: false, allowed: []))
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        }
+        let originalInfo = try info("foreground")
+        let boardInfo = try info(sessionID)
+        BackendStub.respond(toPath: "/api/sessions/detached") { _ in ["session_id": sessionID] }
+        BackendStub.respond(toPath: "/api/sessions") { _ in ["current": "foreground", "sessions": [
+            ["id": sessionID, "name": "Board draft", "preview": "", "mtime": 1, "size": 0,
+             "cwd": fixture.root.path, "agent_profile_id": profile.id.uuidString]
+        ]] }
+        BackendStub.respond(toPath: "/api/config") { _ in ["model": "fixture", "host": "http://127.0.0.1:9",
+            "cwd": fixture.root.path, "max_iterations": 10, "session_info": originalInfo] }
+        BackendStub.respond(toPath: "/api/models") { _ in ["models": ["fixture"]] }
+        BackendStub.respond(toPath: "/api/chat-folders") { _ in ["folders": []] }
+        BackendStub.respond(toPath: "/api/sessions/\(sessionID)/resume") { _ in
+            ["ok": true, "messages": [], "session_info": boardInfo]
+        }
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer {
+            app.activeTranscriptLoad?.task.cancel()
+            app.pendingChatTurns.values.forEach { $0.cancel() }
+            app.knowledge.cancelAll(); app.agentInstructions.cancelAll(); app.toastCenter.cancelPendingDismissal()
+        }
+        app.agentProfiles = fixture.profiles
+        app.initialWorkspacePath = fixture.root.path
+        app.installTranscriptSession("foreground", blocks: [])
+        app.draftText = "Keep my earlier draft"
+        let world = app.agentWorld
+        world.configure(extensions: fixture.extensions, conversations: app.savedAgentConversations,
+            profiles: { fixture.profiles }, workspace: { fixture.root.path }, availability: { _ in nil },
+            state: { app.savedAgentConversationState($0) },
+            create: { _, _ in XCTFail("The handoff must use the canonical app service"); return "unused" },
+            load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("A card draft must not submit work") },
+            stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.openAgentProfile(profile.id.uuidString)
+        // The production route obtains the canonical shared store. A fresh UUID
+        // workspace guarantees this is a new test-owned file, never a user board.
+        let store = BoardStore.shared(workspacePath: fixture.root.path)
+        let file = try XCTUnwrap(store.fileURL)
+        try XCTUnwrap(FileManager.default.fileExists(atPath: file.path) ? nil : file, "The unique test board must not already exist")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let card = try store.createCard(title: "Review the draft", details: "Wait for explicit Send")
+        let originalCard = store.cards.first
+        try await world.openBoardCard(card, profileID: profile.id.uuidString)
+        XCTAssertEqual(app.currentSessionID, sessionID)
+        XCTAssertEqual(app.savedAgentProfileID(for: sessionID), profile.id)
+        XCTAssertEqual(world.selectedSessionID, sessionID)
+        XCTAssertEqual(app.draftText, store.chatPrompt(for: card))
+        XCTAssertEqual(app.paneDraft(for: "foreground"), "Keep my earlier draft")
+        XCTAssertEqual(store.cards.first, originalCard)
+        XCTAssertTrue(app.blocks.isEmpty)
+        XCTAssertFalse(app.isBusy)
+        XCTAssertTrue(world.conversationPresented)
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/sessions/detached" }.count, 1)
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0.contains("/chat") || $0.contains("/runs/queue") || $0.contains("/send") })
+    }
+
     func testNativeWorldPresentationReadsOnlyBoundedConfinedMetadata() throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let root = base.appendingPathComponent("plugin")
