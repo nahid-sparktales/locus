@@ -48,3 +48,10 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''^LocusTests/WalletConnectionTests\.swift$''']
 regexes = ['''^\s*key: Curve25519\.Signing\.PrivateKey\s*$''']
+
+[[allowlists]]
+description = "The companion completion UserDefaults key is a persistence identifier, not a credential"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^Locus/ActivityCenterModel\.swift$''']
+regexes = ['''forKey: "Locus\.companionCompletionRunIDs\.v1"''']

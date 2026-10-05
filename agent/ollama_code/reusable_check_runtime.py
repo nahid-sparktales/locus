@@ -11,7 +11,8 @@ class RunChecks:
         existing = self.tasks.get(self.id)
         self.task = self.tasks.ensure(self.id, request=request, revision=(existing or {}).get('revision', 1),
                                       workspace=self.core.workspace_root or self.core.cwd, execution=self.core.cwd,
-                                      session_id=self.core.session.session_id, include_reusable=frozen is None)
+                                      session_id=self.core.session.session_id, agent_id=self.core.agent_id,
+                                      include_reusable=frozen is None)
         if frozen is not None and existing is None:
             from .reusable_checks import scoped_state
             self.task["reusable_checks"] = [{**item, "baseline": scoped_state(self.core.cwd, item["scope"]["files"]) if item["scope"]["files"] else {}} for item in frozen]

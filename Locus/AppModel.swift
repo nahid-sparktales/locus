@@ -49,6 +49,7 @@ final class AppModel: ObservableObject {
     private var providerAccountsCapabilityObservation: AnyCancellable?
     let voiceControl = VoiceControlModel()
     let imageGeneration = ImageGenerationModel()
+    lazy var companionActivityPresentation = CompanionActivityPresentation(app: self)
 
     /// The ChatGPT-plan helpers ship as a downloadable component. Owned here so
     /// the account editor and the settings row observe the same install rather
@@ -848,6 +849,9 @@ final class AppModel: ObservableObject {
         }
         let existingInstallation = defaults.data(forKey: "Locus.settings") != nil
             || defaults.data(forKey: "Locus.sessionOverviewStates.v1") != nil
+            || defaults.data(forKey: AgentTeamStore.profilesKey) != nil
+            || defaults.data(forKey: ProviderAccountStore.defaultsKey) != nil
+            || defaults.data(forKey: "Locus.onboarding.v1") != nil
         activity.restore(persistenceEnabled: !isUITesting && persistenceEnabled)
         if !isUITesting, persistenceEnabled {
             if let data = defaults.data(forKey: Self.splitRestorationKey),
@@ -1418,6 +1422,10 @@ final class AppModel: ObservableObject {
 
         if isUITesting {
             seedUITestState()
+            if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] == "1" {
+                agentRuntimePhase = .unavailable("Runtime unavailable in this offline preview")
+                modelRuntimePhase = .unavailable("Connect a model to start chatting")
+            }
             if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SOCIAL_STUDIO"] == "1" {
                 Task { @MainActor [weak self] in self?.agentWorld.openSocialStudioUITestFixture() }
             }

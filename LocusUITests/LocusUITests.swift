@@ -236,7 +236,10 @@ final class LocusUITests: XCTestCase {
             let viewport = scroll.frame
             if target.exists, viewport.contains(target.frame), target.isHittable { return }
             let scrollUp = target.exists && target.frame.minY < viewport.minY
-            scroll.scroll(byDeltaX: 0, deltaY: scrollUp ? 100 : -100)
+            // A compact sidebar can be shorter than the old fixed step. Keep
+            // overlapping viewports so scrolling cannot skip a full row.
+            let step = min(100, max(24, viewport.height * 0.4))
+            scroll.scroll(byDeltaX: 0, deltaY: scrollUp ? step : -step)
         }
         XCTAssertTrue(waitUntilHittable(target), file: file, line: line)
         XCTAssertTrue(scroll.frame.contains(target.frame),
@@ -2822,9 +2825,11 @@ final class LocusUITests: XCTestCase {
 
         // The schedule's dedicated chat groups under the schedule like any agent.
         let group = anyElement("agent.seed-schedule")
-        XCTAssertTrue(group.waitForExistence(timeout: Self.launchContentTimeout))
         let sidebarScroll = anyElement("sidebar.scroll")
+        // Compact navigation materializes this lazy row after scrolling; the
+        // companion entry can leave it below the initial visible viewport.
         revealSettingsControl(group, in: sidebarScroll)
+        XCTAssertTrue(group.exists)
         XCTAssertTrue((group.label + " " + (group.value as? String ?? "")).contains("Ready"))
         // Fleets with more than three Agents start collapsed. Expanding the
         // branch reveals its chats without leaving the fleet overview.
@@ -2909,6 +2914,8 @@ final class LocusUITests: XCTestCase {
         )
 
         // Per-agent actions live on the agent, where which agent is unambiguous.
+        // An offscreen row can exist in AX yet right-click its enclosing group.
+        revealSettingsControl(stopped, in: anyElement("sidebar.scroll"))
         stopped.rightClick()
         XCTAssertTrue(
             app.menuItems["agent.seed-stopped-agent.newChat"].waitForExistence(timeout: 3)

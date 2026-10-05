@@ -157,6 +157,8 @@ def prepare(target: str, cache: Path, output: Path, *, require_clean: bool = Fal
             raise ValueError("Unexpected standalone Python layout")
         lock = ROOT / "agent/requirements-runtime.lock"
         platforms = [argument for value in wheel_platforms(target) for argument in ("--platform", value)]
+        # The lock names the Locus Memory release wheel directly. Fetch and
+        # verify it here so remote installations need no package downloads.
         subprocess.run([str(python), "-s", "-m", "pip", "--isolated", "install", "--disable-pip-version-check", *platforms,
                         "--require-hashes", "--only-binary=:all:", "--no-compile", "--target", str(runtime / "site-packages"),
                         "--requirement", str(lock)], check=True, timeout=900)

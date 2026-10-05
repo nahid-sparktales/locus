@@ -124,10 +124,16 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                 query: [URLQueryItem(name: "workspace", value: workspacePath)],
                 as: SkillObservationsResponse.self
             )
+            memoryVaultStatus = try await vaultStatus
+            if memoryVaultStatus?.memoryAvailable == false {
+                workspaceMemories = []
+                memoryCandidates = []
+                memoryDiagnosticReport = nil
+                return
+            }
             knowledgeStatus = try await status
             workspaceMemories = try await memories.memories
             memoryCandidates = try await candidates.memories
-            memoryVaultStatus = try await vaultStatus
             memoryDiagnosticReport = try await diagnostics
             contextSnapshots = try await snapshots.snapshots
             skillObservations = try await observations.observations

@@ -1127,6 +1127,8 @@ class ToolRegistry:
         self._user_capability_policy: dict[str, bool] = {}
         self._solo_swarm_enabled = False
         self.goal_enabled = False
+        self.memory_search_enabled = True
+        self.memory_proposals_enabled = True
         self.runtime_wait_enabled = False
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
@@ -1475,7 +1477,7 @@ class ToolRegistry:
             })
         return schemas
 
-    def parity_schemas(self, plan_mode: bool = False) -> list[dict[str, Any]]:
+    def parity_schemas(self, plan_mode: bool = False, memory_enabled: bool = False) -> list[dict[str, Any]]:
         """The Codex-parity tool surface for a native-mode ChatGPT turn.
 
         Deliberately minimal: the Codex-native aliases plus Locus's bounded
@@ -1509,6 +1511,13 @@ class ToolRegistry:
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted
         )
+        if memory_enabled:
+            # Reuse the full schema gates; direct tool execution still rechecks
+            # the agent's search/proposal switches and scopes in ToolContext.
+            allowed_memory = ({"search_memory"} if self.memory_search_enabled else set()) | (
+                {"propose_memory"} if self.memory_proposals_enabled else set())
+            schemas.extend(schema for schema in self.schemas()
+                           if schema["function"]["name"] in allowed_memory)
         if (self.dispatcher is not None and self.dispatcher.mode_enabled()
                 and self._user_allows("read_dispatcher_resource")):
             schemas.extend(schema for schema in EXTENSION_TOOL_SCHEMAS

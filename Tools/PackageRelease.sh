@@ -330,6 +330,16 @@ document_helper="${app}/Contents/Helpers/LocusDocumentExtractor"
 }
 /usr/bin/codesign --force --timestamp --options runtime \
     --sign "${identity}" "${document_helper}"
+memory_guard="${app}/Contents/Helpers/LocusMemoryGuard"
+[[ -x "${memory_guard}" ]] || {
+    echo "error: release is missing the memory guard helper" >&2
+    exit 1
+}
+# Replace a build-time development/ad-hoc signature before sealing the app.
+# The explicit identifier is the identity enforced by the distribution audit.
+/usr/bin/codesign --force --timestamp --options runtime \
+    --identifier io.sparktales.locus.memory-guard \
+    --sign "${identity}" "${memory_guard}"
 if [[ "${edition}" == "locus" ]]; then
     runtime_helper="${app}/Contents/Helpers/LocusRuntime"
     [[ -x "${runtime_helper}" ]] || {

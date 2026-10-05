@@ -188,7 +188,7 @@ class CapsuleRuntime:
         self.store.save(self.value, claiming=True)
         try:
             self.tasks.ensure(f"capsule:{self.value['id']}:final", request=capsule["request"], revision=capsule["revision"],
-                              workspace=self.core.workspace_root, execution=root, plan=capsule["plan"],
+                              workspace=self.core.workspace_root, execution=root, plan=capsule["plan"], agent_id=getattr(self.core, "agent_id", "primary"),
                               session_id=getattr(getattr(self.core, "session", None), "session_id", ""))
         except Exception:
             self.value["state"] = "paused"
@@ -301,7 +301,7 @@ class CapsuleRuntime:
         step = self.definition(identifier)
         task_id = f"capsule:{self.value['id']}:{identifier}"
         self.tasks.ensure(task_id, request=step.get("title", identifier), revision=self.capsule["revision"],
-                          workspace=self.core.workspace_root, execution=self.core.cwd, plan=step, include_reusable=False)
+                          workspace=self.core.workspace_root, execution=self.core.cwd, plan=step, include_reusable=False, agent_id=getattr(self.core, "agent_id", "primary"))
         if checked is None:
             checked = TaskVerifier(self.tasks, task_id, self.core, self.run_id).verify(
                 step.get("acceptance_checks", []), decider, fallback="; ".join(step.get("checks", [])) or step.get("title", identifier))
@@ -402,7 +402,7 @@ class CapsuleRuntime:
         self.value.pop("recheck_after_repair", None)
         identifier = f"capsule:{self.value['id']}:final"
         self.tasks.ensure(identifier, request=self.capsule["request"], revision=self.capsule["revision"],
-            workspace=self.core.workspace_root, execution=self.core.cwd, plan=self.capsule["plan"])
+            workspace=self.core.workspace_root, execution=self.core.cwd, plan=self.capsule["plan"], agent_id=getattr(self.core, "agent_id", "primary"))
         checks = self.capsule["plan"].get("acceptance_checks", [])
         if checks or (self.tasks.get(identifier) or {}).get("reusable_checks"):
             checked = TaskVerifier(self.tasks, identifier, self.core, self.run_id).verify(checks, decider)

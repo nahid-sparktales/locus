@@ -60,8 +60,11 @@ def context_breakdown(core: Any) -> dict[str, Any]:
     # Provider measurements can include working history held outside Locus.
     # Keep that difference explicit instead of attributing it to local files.
     provider_extra = max(conversation - core.approx_tokens(), 0)
+    reference = core._memory_reference_input()
+    memory_tokens = min(len(reference) // 4, max(conversation - system_tokens - provider_extra, 0))
+    add("memory", "Request-only memory and continuity references", memory_tokens)
     add("messages", "Conversation, reasoning, attachments and tool results",
-        conversation - system_tokens - provider_extra)
+        conversation - system_tokens - provider_extra - memory_tokens)
     if provider_extra:
         categories["provider_context"] = {
             "id": "provider_context", "label": "Additional provider context",

@@ -767,7 +767,7 @@ private struct AgentWorldResidentPortrait: View {
     let profileID: UUID
 
     var body: some View {
-        if agentTeams.agentAvatarData[profileID] != nil || world.theme != "grand-line" {
+        if agentTeams.agentAppearances[profileID] != nil || agentTeams.agentAvatarData[profileID] != nil || world.theme != "grand-line" {
             AgentAvatarView(profileID: profileID, name: resident.name, size: 44)
         } else {
             AgentWorldShipPortrait(world: world, resident: resident)

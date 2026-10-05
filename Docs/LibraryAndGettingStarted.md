@@ -62,6 +62,15 @@ normal agent workflow to make changes. The saved reference stays immutable.
 
 ## Getting Started
 
+Fresh setup begins with **Your companion** in this same Getting Started surface:
+choose an original offline character, give it a name, then enter its normal saved-agent
+conversation or choose **Explore Locus** to continue the paths below. Model accounts,
+workspace access, and paid generation are optional after character setup. Appearance
+and naming do not send a message or start a task. Existing users can opt in through
+**Set up your companion** and explicitly link an existing agent without changing its
+settings. See [Your companion](YourCompanion.md) for persistence ownership, recovery,
+artwork, and isolated development setup.
+
 New installations open setup automatically once the first main window is ready.
 The first appearance is remembered immediately, even if Locus is quit with the
 guide still open, so later launches do not interrupt the user. Existing users

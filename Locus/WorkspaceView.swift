@@ -157,6 +157,22 @@ struct WorkspaceView: View {
                 }
             }
 
+            if let profileID = model.savedAgentProfileID(for: model.currentSessionID),
+               let profile = agentTeams.agentProfiles.first(where: { $0.id == profileID }) {
+                Button { model.selectSavedAgent(profile) } label: {
+                    HStack(spacing: 7) {
+                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 32)
+                        if !compactHeader {
+                            Text(profile.name).font(.locus(size: 12, weight: .semibold)).lineLimit(1)
+                        }
+                    }
+                }
+                .buttonStyle(.locus())
+                .help("Open \(profile.name)’s profile")
+                .accessibilityLabel("Open profile for \(profile.name)")
+                .accessibilityIdentifier("workspace.companionProfile")
+            }
+
             VStack(alignment: .leading, spacing: 3) {
                 WorkspaceSessionTitle(sessionID: model.currentSessionID)
 
@@ -6183,6 +6199,9 @@ struct MessageBlockView: View, Equatable {
 
     @ViewBuilder
     private var messageActions: some View {
+        if let runID = block.runID, block.kind == .assistant || block.kind == .user {
+            MemoryInspectorButton(runID: runID)
+        }
         if block.kind == .assistant, !AssistantSegment.copyableText(from: block.text, reasoningFormat: block.reasoningFormat ?? .legacyTags).isEmpty {
             responseCopyButton
         } else if block.kind == .user {

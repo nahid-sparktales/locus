@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 4.0.0 — 2026-10-05
+
+### Added
+
+- Your companion joins the existing first-launch setup. Choose a character, give
+  it a name, and continue with the same saved agent across conversations,
+  projects, the sidebar, profile, and Agent World.
+- Pitou is the default character, alongside five anime-inspired animated choices
+  and six original native characters. All bundled choices work offline.
+- Character setup can be deferred and resumed, preserves drafts, and reconciles
+  interrupted creation without duplicating agents. Existing users can opt in.
+- Characters reflect actual activity, approval requests, failures, and connection
+  state, with reduced-motion and animation preferences.
+- Custom character previews use the selected image-generation account only after
+  Generate. Imported pictures are validated and stored through the existing
+  portrait system; cancellation preserves the previous appearance.
+- Memory inspection, candidate review, per-agent native memory controls, optional
+  local semantic retrieval, verified-learning review, and restore protection are
+  integrated with the existing memory and runtime boundaries.
+
+### Fixed
+
+- Companion identity survives restart and appearance changes without resetting
+  conversation bindings, permissions, model selection, or memory.
+- Offline setup completes without starting a task or requiring a model account;
+  the profile explains how to connect a model before chatting.
+
+
 ## 3.3.0 — 2026-09-30
 
 ### Added

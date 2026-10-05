@@ -18,7 +18,9 @@ from .ollama import OllamaError
 
 
 class UsageLimitError(OllamaError):
-    pass
+    def __init__(self, message, *, category='budget_exhausted'):
+        super().__init__(message)
+        self.category = category
 
 
 def initialize_schema(db):
@@ -39,6 +41,11 @@ def initialize_schema(db):
         CREATE INDEX IF NOT EXISTS usage_task ON usage_invocations(task_id,created_at);
         CREATE INDEX IF NOT EXISTS usage_run ON usage_invocations(run_id,created_at);
         CREATE INDEX IF NOT EXISTS usage_session ON usage_invocations(session_id,created_at);
+        CREATE TABLE IF NOT EXISTS usage_admission_refusals(
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL, run_id TEXT NOT NULL,
+            category TEXT NOT NULL, reason TEXT NOT NULL, created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS usage_refusal_task ON usage_admission_refusals(task_id,created_at);
     ''')
 
 
@@ -160,6 +167,22 @@ class UsageLedger:
         consumed = sum(count(json.loads(row['usage']).get('total_tokens')) if row['state'] == 'settled' else max(row['reserved_tokens'], count(json.loads(row['usage']).get('total_tokens'))) for row in rows)
         return max(limits['max_tokens'] - consumed, 0)
 
+    def record_refusal(self, context, error):
+        """Keep admission failures visible even when a worker catches provider errors."""
+        value = {'id': uuid.uuid4().hex, 'task_id': str(context.get('task_id') or ''),
+                 'run_id': str(context.get('run_id') or ''),
+                 'category': str(getattr(error, 'category', 'budget_exhausted')),
+                 'reason': str(error)[:1000], 'created_at': time.time()}
+        with self.runs._connect() as db:
+            db.execute('INSERT INTO usage_admission_refusals VALUES(?,?,?,?,?,?)', tuple(value.values()))
+        return value
+
+    def refusals(self, task_id, *, since=0):
+        with self.runs._connect(readonly=True) as db:
+            return [dict(row) for row in db.execute(
+                'SELECT * FROM usage_admission_refusals WHERE task_id=? AND created_at>=? ORDER BY created_at,id',
+                (task_id, since))]
+
     def begin(self, context, *, input_tokens=0, output_tokens=4096, invocation_id=None, attempt=1):
         context = dict(context)
         for key in ('task_id', 'run_id', 'session_id', 'provider', 'model', 'purpose'):
@@ -172,16 +195,19 @@ class UsageLedger:
         key = f'{invocation_id}:{attempt}'
         provider = context['provider']
         price = context.get('pricing') or default_price(context, input_tokens)
+        rates = (price or {}).get('rates_per_million') or {}
+        if not isinstance(rates, dict):
+            raise ValueError('Invalid pricing rates')
         if price:
-            for rate in price.get('rates_per_million', {}).values():
+            for rate in rates.values():
                 if rate is not None and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate < 0):
                     raise ValueError('Invalid pricing rate')
             if not price.get('version') or not price.get('source') or price.get('currency') != 'USD':
                 raise ValueError('Pricing requires a version, source and USD currency')
         price_id = hashlib.sha256(json.dumps(price, sort_keys=True).encode()).hexdigest() if price else None
         # Reserve the full output allowance and the most expensive input category.
-        maximum_rate = max((float(value) for name, value in (price or {}).get('rates_per_million', {}).items() if name != 'output_tokens' and value is not None), default=0)
-        reservation = (count(input_tokens) * maximum_rate + count(output_tokens) * float(price['rates_per_million'].get('output_tokens') or 0)) / 1e6 if price else None
+        maximum_rate = max((float(value) for name, value in rates.items() if name != 'output_tokens' and value is not None), default=0)
+        reservation = (count(input_tokens) * maximum_rate + count(output_tokens) * float(rates.get('output_tokens') or 0)) / 1e6 if price else None
         coverage = 'local' if provider == 'ollama' else 'subscription' if provider in {'chatgpt', 'claude_plan'} else 'pending' if price else 'unavailable'
         tokens = count(input_tokens) + count(output_tokens)
         with self.runs._connect() as db:
@@ -201,8 +227,10 @@ class UsageLedger:
                 raise UsageLimitError('The remaining token allowance cannot reserve this call')
             if limits.get('max_estimated_usd') and provider not in {'ollama', 'chatgpt', 'claude_plan'}:
                 billable = [row for row in previous if row['provider'] not in {'ollama', 'chatgpt', 'claude_plan'}]
-                if price is None or any(row['state'] == 'uncertain' or row['coverage'] in {'partial', 'unavailable'} or (row['state'] == 'pending' and row['reserved_cost'] is None) for row in billable):
-                    raise UsageLimitError('Estimated spending control is paused until pricing and unsettled usage are reconciled')
+                if price is None or rates.get('input_uncached') is None or rates.get('output_tokens') is None:
+                    raise UsageLimitError('Billable model skipped because pricing is unknown', category='unknown_pricing')
+                if any(row['state'] == 'uncertain' or row['coverage'] in {'partial', 'unavailable'} or (row['state'] == 'pending' and row['reserved_cost'] is None) for row in billable):
+                    raise UsageLimitError('Estimated spending control is paused until unsettled usage is reconciled', category='unsettled_usage')
                 spent = sum(float(row['estimated_cost'] if row['state'] == 'settled' else row['reserved_cost'] or 0) for row in billable)
                 if spent + reservation > limits['max_estimated_usd']:
                     raise UsageLimitError('The remaining estimated spending allowance cannot reserve this call')

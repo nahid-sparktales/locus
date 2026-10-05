@@ -1,10 +1,10 @@
 """Cross-session context, memory, and skill-observation routes."""
 
-import re
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from locus_memory.learning.selected_chat import review_selected_chat
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
@@ -152,8 +152,27 @@ def memory_status(
     workspace: str = Query(default=""),
     agent_id: str = Query(default="primary"),
 ) -> dict[str, Any]:
+    from .. import paths
+    from ..memory_adapter import LocusKeyProvider
+    from ..memory_guard import restore_protection_status
+    from ..product_build import PRODUCT_NAME
+
     target = memory_workspace(service, workspace)
-    return memory_vault(target).status(workspace=target, agent_id=agent_id)
+    protection = restore_protection_status(paths.APP_DIR, PRODUCT_NAME, LocusKeyProvider(paths.APP_DIR))
+    if protection["state"] == "recovery_required":
+        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+                "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
+                "restore_protection": protection}
+    try:
+        result = memory_vault(target).status(workspace=target, agent_id=agent_id)
+    except MemoryError as exc:
+        # A healthy external checkpoint can still detect a rolled-back local
+        # ledger. Keep recovery status available while canonical reads fail closed.
+        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+                "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
+                "restore_protection": {**protection, "state": "recovery_required", "message": str(exc),
+                                       "offline_recovery": True}}
+    return {**result, "memory_available": True, "counts_available": True, "restore_protection": protection}
 
 
 def memory_list(
@@ -257,7 +276,7 @@ def memory_delete(
     outcome: str = Query(default="delete"),
 ) -> dict[str, Any]:
     target = memory_workspace(service, workspace)
-    vault = memory_vault(target)
+    vault = memory_vault(target, agent_id=agent_id)
     if not vault.delete(memory_id):
         raise HTTPException(404, "memory not found")
     vault.record_event(
@@ -333,10 +352,12 @@ def memory_import(
 
 def memory_feedback(
     memory_id: str,
+    service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     try:
-        vault = memory_vault()
+        target = memory_workspace(service, str(body.get("workspace") or ""))
+        vault = memory_vault(target, agent_id=str(body.get("agent_id") or "primary"))
         memory = vault.feedback(memory_id, str(body.get("outcome") or ""))
         vault.record_event(
             "feedback",
@@ -431,81 +452,17 @@ def memory_reprocess(
     store.append_event(
         run_id, {"type": "memory_review_started", "state": "running"}
     )
-    cues = re.compile(
-        r"\b(?:remember|always|never|prefer|preference|decided|decision|"
-        r"do not|don't|must|should use|confirmed|that worked|fixed|resolved)\b",
-        re.IGNORECASE,
+    # Host prompt decoration includes selected files and attachment text; only
+    # the original user request crosses the package's review boundary.
+    evidence = (
+        {"role": message.get("role"),
+         "content": strip_prompt_decoration(str(message.get("content") or ""))}
+        for message in messages if message.get("role") == "user"
     )
-    secret = re.compile(
-        r"(?i)(?:api[_-]?key|authorization|password|secret|bearer\s+[A-Za-z0-9])"
+    candidates = review_selected_chat(
+        memory_vault(target), evidence, workspace=target, agent_id=agent_id,
+        session_id=session_id, run_id=run_id,
     )
-    candidates: list[dict[str, Any]] = []
-    vault = memory_vault(target)
-    existing_content = {
-        re.sub(r"\s+", " ", str(item.get("content") or "").strip()).casefold()
-        for item in vault.list(workspace=target, agent_id=agent_id)
-    }
-    for message in messages:
-        if str(message.get("role") or "") != "user":
-            continue
-        # Stored work turns may contain the app's mode/context wrapper. Keep
-        # only the original request so selected files and attachment text can
-        # never become a candidate through reprocessing.
-        text = strip_prompt_decoration(str(message.get("content") or "")).strip()
-        if (
-            not text
-            or len(text) > 4_000
-            or not cues.search(text)
-            or secret.search(text)
-        ):
-            continue
-        content = re.sub(r"\s+", " ", text)[:2_000]
-        normalized = content.casefold()
-        if normalized in existing_content:
-            vault.record_event(
-                "proposal",
-                "deduplicated",
-                workspace=target,
-                agent_id=agent_id,
-                session_id=session_id,
-                run_id=run_id,
-                reason_code="existing_memory",
-            )
-            continue
-        try:
-            candidate = vault.save(
-                {
-                    "title": "From selected chat",
-                    "content": content,
-                    "reason": (
-                        "Explicit durable wording found during selected-chat review."
-                    ),
-                    "scope": "workspace",
-                    "status": "candidate",
-                    "kind": "preference",
-                    "confidence": 0.8,
-                    "source_session_id": session_id,
-                    "source_run_id": run_id,
-                },
-                workspace=target,
-                agent_id=agent_id,
-                default_status="candidate",
-            )
-        except MemoryError:
-            continue
-        vault.record_event(
-            "proposal",
-            "accepted",
-            workspace=target,
-            agent_id=agent_id,
-            session_id=session_id,
-            run_id=run_id,
-            memory_id=candidate["id"],
-        )
-        candidates.append(candidate)
-        existing_content.add(normalized)
-        if len(candidates) >= 20:
-            break
     store.append_event(
         run_id,
         {

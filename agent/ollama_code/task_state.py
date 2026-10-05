@@ -151,6 +151,8 @@ class TaskStateStore:
             value["requirements"] = [request]
         if existing and prior_request != request:
             value.update(evidence_ids=[], verification_status="pending")
+        if not existing and agent_id:
+            value["agent_id"] = agent_id
         if not existing and include_reusable:
             from .reusable_checks import ReusableCheckStore
             if not agent_id and session_id:

@@ -357,6 +357,6 @@ def attach_goal_runtime(core: Any, runtime: GoalRuntime | None, *, coordinator: 
         TaskStateStore(runtime.store.run_store).ensure("goal:" + runtime.goal_id,
             request=goal["objective"], revision=runtime.revision,
             workspace=core.workspace_root, execution=core.cwd, session_id=core.session.session_id,
-            plan=core.tool_ctx.plan_document)
+            plan=core.tool_ctx.plan_document, agent_id=core.agent_id)
     core.tool_ctx.goal = runtime.tool if runtime is not None and coordinator else None
     core.tool_registry.goal_enabled = runtime is not None and coordinator

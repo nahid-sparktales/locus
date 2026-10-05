@@ -11,12 +11,12 @@ import uuid
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any
 
 from fastapi import WebSocket
 
-from . import __version__
+from . import __version__, paths
 from .claude_runtime import ClaudeBrokerClient, ClaudeManagerRegistry
 from .codex_app_server import CodexBrokerClient, CodexManagerRegistry, codex_home_for_account
 from .core import AgentCore
@@ -24,6 +24,7 @@ from .devserver import DevServerError, DevServerManager
 from .evaluations import EvaluationStore
 from .identity import context_sources, source_references
 from .image_generation import ImageGenerationService, ImageProviderConfig
+from .memory_adapter import MemoryAdapter
 from .orchestration import (
     GLOBAL_MODEL_SCHEDULER,
     OrchestrationError,
@@ -35,6 +36,7 @@ from .orchestration import (
     set_chatgpt_manager,
 )
 from .permissions import RESERVED_BOARD_ARGUMENTS as _RESERVED_BOARD_ARGUMENTS
+from .product_build import PRODUCT_NAME
 from .question_service import QUESTION_VERSION, QuestionError, QuestionService
 from .runstore import ACTIVE_NONRECOVERABLE_STATES, RunStore, RunStoreError
 from .solo_swarm import SoloSwarmExecutor
@@ -111,6 +113,11 @@ def _format_question_answers(
             "unresolved until the user explicitly answers."
         )
     return "\n".join(lines).strip() or "The user did not answer."
+
+
+def _run_in_background(task: Any) -> None:
+    """Host scheduling for memory maintenance: never on the caller's thread."""
+    Thread(target=task, name="locus-memory-maintenance", daemon=True).start()
 
 
 class ChatService:
@@ -192,6 +199,15 @@ class ChatService:
         self.active_evaluation_core: AgentCore | None = None
         self.current_task: TaskCheckout | None = None
         self.run_store = RunStore()
+        from .transcript_search import prepare_transcript_cache
+        prepare_transcript_cache()
+        # Hold a profile lease even with rollout disabled: cutover waits for all
+        # services capable of using the legacy vault to shut down.
+        self.memory_adapter = MemoryAdapter.from_environment(
+            app_dir=paths.APP_DIR, edition=PRODUCT_NAME, schedule=_run_in_background,
+            hold_profile_lease=True,
+        )
+        self.core.memory_adapter = self.memory_adapter
         self.core.usage_store = self.run_store
         self.core.mcp.task_store = self.run_store
         self.core.mcp.context_provider = self.mcp_context
@@ -509,6 +525,17 @@ class ChatService:
                     self.run_store.set_state(run_id, terminal_state, recoverable=False)
             except (RunStoreError, sqlite3.DatabaseError, OSError):
                 pass
+        if event_type == "turn_done" and run_id:
+            from .memory_learning import capture_terminal
+            try:
+                episode_id = capture_terminal(self, event, run_id)
+                if episode_id:
+                    event = {**event, "memory_episode_id": episode_id}
+            except Exception as exc:
+                # Retention is not execution authority. Only an opaque failure
+                # category enters run events; memory text stays encrypted.
+                event = {**event, "memory_episode_state": "unavailable",
+                         "memory_episode_error": type(exc).__name__}
         if event_type == "turn_done" and self.goal_runtime is not None:
             from .goals import GoalError
             event = dict(event)
@@ -1650,7 +1677,8 @@ class ChatService:
             with self._state_guard:
                 self._state_mutating = False
 
-    def start_turn(self, loop: asyncio.AbstractEventLoop, call, *args: Any) -> bool:
+    def start_turn(self, loop: asyncio.AbstractEventLoop, call, *args: Any,
+                   reset_interrupt: bool = False) -> bool:
         """Atomically reserve the turn slot and submit its worker."""
         with self._state_guard:
             if self._state_mutating or (
@@ -1659,12 +1687,13 @@ class ChatService:
                 return False
             name = str(getattr(call, "__name__", ""))
             steerable = name in {"_run_user_turn", "_run_team_turn", "retry_last_response"}
-            if steerable:
+            if steerable or reset_interrupt:
                 # Stop belongs to the turn it interrupted. Team dispatch uses
                 # the flag before AgentCore.run_turn (which clears it for solo
                 # turns), so carrying it forward makes the next team request
                 # terminate immediately after a successful cancellation.
                 self.core._interrupt.clear()
+            if steerable:
                 self.core.begin_steerable_turn()
             terminal_before = self._terminal_events
             try:

@@ -4,12 +4,21 @@ import CoreText
 import Foundation
 
 extension AppModel {
+    func presentCompanion() {
+        if let id = agentTeamsModel.primaryCompanionID,
+           let profile = agentProfiles.first(where: { $0.id == id }) {
+            selectSavedAgent(profile)
+        } else {
+            onboarding.beginCompanionSetup()
+        }
+    }
+
     func configureOnboarding(defaults: UserDefaults?, existingInstallation: Bool) {
         let isFirstLaunchFixture = isUITesting
             && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_FIRST_LAUNCH"] == "1"
         onboarding.configure(
             defaults: defaults,
-            isExistingInstallation: isFirstLaunchFixture ? false : existingInstallation,
+            isExistingInstallation: isFirstLaunchFixture ? false : (existingInstallation || isUITesting),
             autoPresent: (persistenceEnabled && !isUITesting) || isFirstLaunchFixture,
             readiness: { [weak self] in
                 guard let self else { return .unknown }
@@ -36,6 +45,40 @@ extension AppModel {
                 return await observeOnboardingTask(run)
             }
         )
+        onboarding.configureCompanion(
+            commit: { [weak self] draft in
+                guard let self else { throw CocoaError(.userCancelled) }
+                let route = settings.activeAccountID.flatMap(UUID.init(uuidString:))
+                    .map(AgentRoute.providerAccount) ?? .localOllama
+                return try agentTeamsModel.commitCompanion(draft, route: route, model: selectedModel)
+            },
+            primaryProfileID: { [weak self] in self?.agentTeamsModel.primaryCompanionID }
+        )
+    }
+
+    /// Saving is entirely local. Opening a chat uses the existing profile-bound
+    /// conversation API and never submits a turn or activates an automation.
+    func finishCompanionSetup(startChat: Bool) {
+        guard let id = onboarding.completeCompanion(),
+              let profile = agentProfiles.first(where: { $0.id == id }) else { return }
+        if !startChat {
+            onboarding.showGettingStarted()
+            return
+        }
+        onboarding.dismiss()
+        selectSavedAgent(profile)
+        guard isAgentOnline else {
+            showToast("Your companion is ready. Connect a model to start chatting.")
+            return
+        }
+        let workspace = savedAgentWorkspacePath(profile)
+        if let session = savedAgentChats(profile.id).first(where: {
+            $0.workspacePath.map(SessionSummary.canonicalWorkspacePath) == SessionSummary.canonicalWorkspacePath(workspace)
+        }) {
+            resume(session)
+        } else {
+            newSavedAgentChat(profile, workspace: workspace)
+        }
     }
 
     func chooseOnboardingWorkspace() {

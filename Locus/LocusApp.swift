@@ -117,6 +117,8 @@ struct LocusApp: App {
             CommandGroup(replacing: .help) {
                 Button("Getting Started…") { model.onboarding.present() }
                     .accessibilityIdentifier("menu.gettingStarted")
+                Button("Your companion…") { model.presentCompanion() }
+                .accessibilityIdentifier("menu.companion")
             }
             CommandGroup(after: .appInfo) {
                 if updates.isAvailable {

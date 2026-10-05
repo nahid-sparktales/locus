@@ -226,6 +226,8 @@ def validate_suite(value: Any, *, suite_id: str = "") -> dict[str, Any]:
         "description": str(value.get("description") or "")[:4_000],
         "tags": _tags(value.get("tags")), "read_only_mcp": bool(value.get("read_only_mcp")),
         "pinned": bool(value.get("pinned")), "cases": cases,
+        "memory_comparison": bool(value.get("memory_comparison", False)),
+        "memory_campaign_token_limit": min(max(_integer(value.get("memory_campaign_token_limit"), 250_000), 1), 250_000),
         "repetitions": min(max(_integer(value.get("repetitions"), 1), 1), 20),
     }
 
@@ -430,7 +432,10 @@ def configuration_snapshot(core, case: dict, manifest: dict) -> dict:
              "effort": config.get("chatgpt_reasoning_effort", config.get("reasoning_effort")),
              "account_class": "subscription" if getattr(core, "provider", "") in {"chatgpt", "claude_plan"} else "local" if getattr(core, "provider", "") == "ollama" else "metered",
              "recipe": manifest.get("team") or {}, "profiles": profiles,
-             "tools": "local_evaluation", "permissions": "isolated_workspace", "app_version": __import__("ollama_code").__version__}
+             "tools": "local_evaluation", "permissions": "isolated_workspace", "app_version": __import__("ollama_code").__version__,
+             "memory_agent_id": getattr(core, "agent_id", "primary"),
+             "memory_policy": getattr(getattr(core, "agent_configuration", None), "memory_policy", None).__dict__
+                 if getattr(getattr(core, "agent_configuration", None), "memory_policy", None) is not None else None}
     value["fingerprint"] = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return value
 

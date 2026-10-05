@@ -833,6 +833,9 @@ enum LocusMotion {
     static let content = Animation.easeInOut(duration: 0.18)
     static let scroll = Animation.easeOut(duration: 0.14)
     static let press = Animation.easeOut(duration: 0.10)
+    /// Decorative character breathing. Visibility and Reduce Motion are gated
+    /// by the renderer; this finite animation never implies execution progress.
+    static let companionBreath = Animation.easeInOut(duration: 1.8)
     static let activityPulse = Animation.easeInOut(duration: 0.9)
         .repeatForever(autoreverses: true)
     /// Streaming caret. Slower than `activityPulse` so it reads as a text

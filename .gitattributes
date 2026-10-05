@@ -4,3 +4,5 @@ plugins/agent-world/ui/static/world.css linguist-generated=true
 # Architecture reports are generated; preserve PDF byte streams as binary.
 .xray/** linguist-generated=true
 *.pdf binary
+# Historical source patches retain exact context whitespace and recorded hashes.
+agent/vendor/wheels/patches/*.patch -whitespace

@@ -439,6 +439,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
         content
             .environmentObject(model)
             .environment(\.locusCommandRouter, model)
+            .environment(\.companionActivityPresentation, model.companionActivityPresentation)
             .environmentObject(model.workspaceLayout)
             .environmentObject(model.composerState)
             .environmentObject(model.runtimeStatus)

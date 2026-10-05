@@ -70,3 +70,69 @@ def test_startup_failure_remains_in_denominator(tmp_path, monkeypatch):
         assert result['duration_ms'] >= 0
     finally:
         core.close()
+
+
+@pytest.mark.parametrize("refuse", [False, True])
+def test_paired_suite_replays_baseline_and_preserves_agent_identity(tmp_path, monkeypatch, refuse):
+    from ollama_code import evaluation_runtime as runtime
+    root = tmp_path / "workspace"
+    root.mkdir()
+    core = AgentCore(cwd=str(root), config={"model": "fixture", "max_iterations": 1})
+    core.configure_agent({}, agent_id="saved-reviewer")
+    monkeypatch.setattr("ollama_code.agent_profile_runtime.trusted_memory_agent",
+                        lambda _: ("saved-reviewer", core.agent_configuration))
+    service = ChatService(core)
+    service.close_codex()
+    service.run_store = RunStore(tmp_path / "paired.db")
+    store = EvaluationStore(service.run_store)
+    suite = store.save_suite({"name": "Paired", "workspace_root": str(root), "memory_comparison": True,
+        "cases": [{"id": "case", "name": "Output", "target": "solo", "prompt": "Say done",
+                   "assertions": [{"kind": "output_contains", "value": "done"}]}]})
+    created, replayed, calls = [], [], []
+    class Fixture:
+        state = "ready"
+        id = "fixture"
+        workspace_root = str(root)
+        execution_path = str(root)
+        baseline_tree = "immutable-fixture-tree"
+        def save(self): pass
+        def as_dict(self): return {"id": self.id, "workspace_root": str(root), "execution_path": str(root)}
+        def patch(self): return "", "immutable-fixture-tree"
+    def create(*args):
+        created.append(args)
+        return Fixture()
+    def replay(source, task_id):
+        replayed.append(source.baseline_tree)
+        return Fixture()
+    monkeypatch.setattr(runtime.TaskCheckoutStore, "create", create)
+    monkeypatch.setattr(runtime.TaskCheckoutStore, "replay", replay)
+    monkeypatch.setattr(runtime, "_evaluation_changed_paths", lambda *_: [])
+    def response(*args, **kwargs):
+        current = service.active_evaluation_core
+        calls.append((current.agent_id, current.agent_configuration.memory_policy.recall_enabled,
+                      current.agent_configuration.memory_policy.proposals_enabled,
+                      current.memory_evaluation_disabled, current.usage_owner_task_id))
+        if refuse:
+            from ollama_code.model_usage import context_for
+            from ollama_code.usage_ledger import UsageLedger, UsageLimitError
+            UsageLedger(service.run_store).record_refusal(context_for(current),
+                UsageLimitError("Unknown fixture price", category="unknown_pricing"))
+        return ChatResponse(content_parts=["done"], done=True, done_reason="stop", prompt_eval_count=4, eval_count=1)
+    core.client = SimpleNamespace(context_length=lambda *_: 32768, loaded_context_length=lambda *_: 32768,
+                                  model_info=lambda *_: {}, chat_stream=response)
+    try:
+        result = run_evaluation_suite(service, suite, {}, {}, "paired", lambda *_: pytest.fail("unexpected team"))
+        assert result["expected_cases"] == result["actual_cases"] == 2
+        assert len(created) == 1 and replayed == ["immutable-fixture-tree"]
+        assert {row[0] for row in calls} == {"saved-reviewer"}
+        assert {row[1] for row in calls} == {False, True}
+        assert all(not row[2] and row[3] for row in calls)
+        assert len({row[4] for row in calls}) == 1
+        assert set(result["paired_outcomes"]) == {"on", "off"}
+        assert result["complete"] is (not refuse)
+        if refuse:
+            assert result["incomplete_reason"] == "unknown_pricing"
+            assert all(row["state"] == "skipped" and row["skip_category"] == "unknown_pricing"
+                       for row in result["results"])
+    finally:
+        core.close()

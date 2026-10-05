@@ -7,6 +7,8 @@ on:
       - '.github/workflows/runtime-packages.yml'
       - 'Tools/*RemoteRuntime*'
       - 'agent/requirements-runtime.lock'
+      - 'agent/requirements-runtime.in'
+      - 'agent/pyproject.toml'
       - 'agent/ollama_code/**'
       - 'agent/tests/test_runtime_release.py'
       - 'Locus/Resources/ThirdPartyLicenses/**'

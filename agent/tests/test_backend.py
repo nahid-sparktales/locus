@@ -6568,8 +6568,10 @@ def test_memory_diagnostics_and_selected_chat_reprocessing_are_content_free(clie
     body = diagnostics.json()
     assert body["candidate_count"] == 1 and body["approved_count"] == 0
     assert body["propose_memory_available"] is True
-    assert body["counts"]["proposal:accepted"] == 1
-    assert body["counts"]["proposal:deduplicated"] == 2
+    # Fresh profiles use canonical memory. Its partition event stream has no
+    # workspace attribution, so scoped diagnostics explicitly omit that history.
+    assert body["history_available"] is False
+    assert body["counts"] == {} and body["events"] == []
     encoded_events = json.dumps(body["events"])
     assert "compact progress" not in encoded_events
     assert str(tmp_path) not in encoded_events
@@ -9351,6 +9353,23 @@ def test_context_breakdown_partitions_the_real_prompt_without_exporting_content(
     )
     assert "private-marker" not in json.dumps(result)
     assert json.dumps(core.messages) == before
+
+
+def test_request_only_memory_counts_toward_context_without_persisting_or_reading_sources(tmp_path):
+    core = _core(tmp_path, [])
+    baseline = core.approx_tokens()
+    transcript = json.dumps(core.messages)
+    core.memory_context = "approved-private-reference" * 60
+    reference = core._memory_reference_input()
+    assert core.approx_tokens() == baseline + len(reference) // 4
+    breakdown = core.context_breakdown()
+    memory = next(row for row in breakdown["categories"] if row["id"] == "memory")
+    assert memory["tokens"] == len(reference) // 4
+    assert "approved-private-reference" not in json.dumps(breakdown)
+    assert json.dumps(core.messages) == transcript
+    assert any(message.get("content") == reference for message in core._request_messages())
+    core.memory_context = ""
+    assert core.approx_tokens() == baseline
 
 
 def test_context_breakdown_unknown_window_and_tools_disabled(tmp_path):

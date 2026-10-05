@@ -149,6 +149,11 @@ class AgentWorkerRuntime:
             model=parent.model,
             host=parent.host,
         )
+        core.memory_evaluation_disabled = bool(getattr(parent, "memory_evaluation_disabled", False))
+        core.memory_comparison_arm = getattr(parent, "memory_comparison_arm", None)
+        # The helper's checkout is an execution detail; approved workspace
+        # memories belong to the root project shared by these worktrees.
+        core.workspace_root = parent.workspace_root
         from .goal_runtime import attach_goal_runtime
         core.task_journal = getattr(parent, "task_journal", None)
         core.task_usage_stage = "helper"
@@ -625,6 +630,12 @@ class AgentWorkerRuntime:
 
         core.on_event(emit)
         try:
+            from .server import _automatic_memory_context
+            core._memory_learning_prompt = prompt
+            core.memory_context = _automatic_memory_context(
+                core, prompt, core.agent_configuration,
+                just_chat=False, agent_id=self.spec.agent_id,
+            )
             core.run_turn(
                 prompt,
                 self._decide,
@@ -634,8 +645,19 @@ class AgentWorkerRuntime:
                 else [],
             )
         except InterruptedError:
+            from .memory_learning import capture_helper_terminal
+            try:
+                capture_helper_terminal(self.svc, core, self.spec, {"reason": "interrupted"})
+            except Exception:
+                pass
             return {"output": "", "reason": "interrupted", "validation": self.validation}
         result = dict(core.last_turn_result)
+        from .memory_learning import capture_helper_terminal
+        try:
+            capture_helper_terminal(self.svc, core, self.spec, result)
+        except Exception:
+            # Memory retention does not stop helper execution; no content is logged.
+            pass
         usage = {
             key: int(result.get(key) or 0)
             for key in ("model_calls", "prompt_tokens", "completion_tokens")

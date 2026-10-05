@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct OnboardingView: View {
+    var availableSize = CGSize(width: 760, height: 720)
     @Environment(\.locusOceanTheme) private var usesWorldTheme
     @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
     @Environment(\.locusViewColors) private var viewColors
@@ -13,6 +14,17 @@ struct OnboardingView: View {
     @State private var modelLibraryPresented = false
 
     var body: some View {
+        Group {
+            if onboarding.showsCompanionSetup {
+                CompanionSetupView(availableSize: availableSize)
+            } else {
+                gettingStarted
+            }
+        }
+        .onExitCommand { onboarding.dismiss() }
+    }
+
+    private var gettingStarted: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
@@ -83,6 +95,12 @@ struct OnboardingView: View {
 
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if onboarding.companion.status != .completed {
+                Button { onboarding.beginCompanionSetup() } label: {
+                    Label("Set up your companion", systemImage: "person.crop.square")
+                }
+                .accessibilityIdentifier("onboarding.setupCompanion")
+            }
             Text("Pick something to try. We’ll help you take the first step.")
                 .foregroundStyle(viewColors.textSecondary)
             ForEach(OnboardingStartingPoint.allCases) { point in

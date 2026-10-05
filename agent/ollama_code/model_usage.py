@@ -5,7 +5,7 @@ import json
 import threading
 from urllib.parse import urlsplit, urlunsplit
 
-from .usage_ledger import UsageLedger, count, normalize_usage
+from .usage_ledger import UsageLedger, UsageLimitError, count, normalize_usage
 
 _STORES = {}
 _LOCK = threading.Lock()
@@ -79,9 +79,11 @@ def tracked_chat(core, client, *args, purpose='worker', context=None, runs=None,
     estimated_output = options.get('max_completion_tokens') or options.get('max_tokens') or options.get('num_predict') or 8192
     remaining = ledger.remaining_tokens(context['task_id'])
     if remaining is not None:
-        from .usage_ledger import UsageLimitError
         if remaining <= estimated_input:
-            raise UsageLimitError('The remaining token allowance cannot reserve this input')
+            error = UsageLimitError('The remaining token allowance cannot reserve this input')
+            if str(context['task_id']).startswith('memory-campaign:'):
+                ledger.record_refusal(context, error)
+            raise error
         estimated_output = min(count(estimated_output), remaining - estimated_input)
     # Spending reservations require a bounded output allowance at the provider.
     if effective_limits.get('max_estimated_usd') or effective_limits.get('max_tokens'):
@@ -89,7 +91,12 @@ def tracked_chat(core, client, *args, purpose='worker', context=None, runs=None,
         family = 'num_predict' if context['provider'] == 'ollama' else 'max_tokens' if 'anthropic.com' in context.get('route', '') else 'max_completion_tokens'
         options[family] = count(estimated_output)
         kwargs['options'] = options
-    invocation = ledger.begin(context, input_tokens=estimated_input, output_tokens=max(count(estimated_output), 1))
+    try:
+        invocation = ledger.begin(context, input_tokens=estimated_input, output_tokens=max(count(estimated_output), 1))
+    except UsageLimitError as error:
+        if str(context['task_id']).startswith('memory-campaign:'):
+            ledger.record_refusal(context, error)
+        raise
     try:
         response = client.chat_stream(*args, **kwargs)
         usage = response_usage(context['provider'], response)
@@ -109,6 +116,14 @@ def tracked_chat(core, client, *args, purpose='worker', context=None, runs=None,
 def tracked_native(core, call, *, purpose='worker', context=None, runs=None, **kwargs):
     context = dict(context or context_for(core, purpose))
     context.update(provider=getattr(core, 'provider', None) or context.get('provider') or 'chatgpt', purpose=purpose)
+    # Native subscription turns contain internal calls without a host-enforceable output
+    # cap. A strict comparison campaign must skip before dispatch, not overspend and
+    # notice the total in a later usage event. Ordinary native turns remain unchanged.
+    if str(context.get('task_id', '')).startswith('memory-campaign:'):
+        error = UsageLimitError('Native comparison skipped: this transport cannot enforce a hard output-token bound', category='unbounded_native_transport')
+        if runs is not None or getattr(core, 'usage_store', None) is not None:
+            ledger_for(core, runs).record_refusal(context, error)
+        raise error
     ledger = ledger_for(core, runs)
     invocation = ledger.begin(context, input_tokens=len(str(kwargs.get('text', ''))) // 3 + 128, output_tokens=8192)
     original = kwargs.get('event_handler')

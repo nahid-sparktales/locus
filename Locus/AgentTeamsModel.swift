@@ -19,6 +19,11 @@ final class AgentTeamsModel: ObservableObject {
     /// Native display preferences, deliberately separate from execution profiles.
     @Published private(set) var agentAvatarData: [UUID: Data] = [:]
     static let avatarsKey = "Locus.AgentProfiles.avatars.v1"
+    @Published private(set) var agentAppearances: [UUID: CompanionAppearance] = [:]
+    @Published private(set) var primaryCompanionID: UUID?
+    @Published private(set) var companionAnimationsEnabled = true
+    static let companionPresentationKey = "Locus.AgentProfiles.companionPresentation.v1"
+    private var companionPresentation = AgentCompanionPresentation()
 
     @Published var globalAgentConcurrency = 3 {
         didSet {
@@ -98,13 +103,7 @@ final class AgentTeamsModel: ObservableObject {
         let loadedSelection = defaults.string(forKey: AgentTeamStore.selectionKey)
             .flatMap(UUID.init(uuidString:))
         agentProfiles = loadedProfiles
-        let profileIDs = Set(loadedProfiles.map(\.id))
-        agentAvatarData = Dictionary(uniqueKeysWithValues:
-            (defaults.dictionary(forKey: Self.avatarsKey) ?? [:]).compactMap { key, value in
-                guard let id = UUID(uuidString: key), profileIDs.contains(id),
-                      let data = value as? Data, data.count <= AgentAvatarImage.maximumStoredBytes else { return nil }
-                return (id, data)
-            })
+        restoreAgentAvatars()
         agentTeams = loadedTeams
         if approvalMigration.changed || budgetMigration.changed {
             AgentTeamStore.save(profiles: loadedProfiles, teams: loadedTeams, to: defaults)
@@ -114,6 +113,7 @@ final class AgentTeamsModel: ObservableObject {
         globalAgentConcurrency = storedConcurrency == 0 ? 3 : min(max(storedConcurrency, 1), 8)
         selectedAgentTeamID = loadedTeams.contains(where: { $0.id == loadedSelection })
             ? loadedSelection : nil
+        restoreCompanionPresentation()
     }
 
     func configure(
@@ -251,6 +251,137 @@ final class AgentTeamsModel: ObservableObject {
               data.map({ $0.count <= AgentAvatarImage.maximumStoredBytes }) ?? true else { return }
         agentAvatarData[profileID] = data
         persistAgentAvatars()
+        if data != nil { setAgentAppearance(.portrait, profileID: profileID) }
+    }
+
+    func setAgentAppearance(_ appearance: CompanionAppearance?, profileID: UUID) {
+        guard agentProfiles.contains(where: { $0.id == profileID }) else { return }
+        companionPresentation.appearances[profileID] = appearance?.validated
+        agentAppearances = companionPresentation.appearances.mapValues(\.validated)
+        persistCompanionPresentation()
+    }
+
+    func setCompanionAnimationsEnabled(_ enabled: Bool) {
+        companionAnimationsEnabled = enabled
+        companionPresentation.animationsEnabled = enabled
+        persistCompanionPresentation()
+    }
+
+    /// Explicit setup commits only identity and presentation. An offline profile
+    /// intentionally has no model; execution still requires the normal routing
+    /// and readiness checks. Existing-profile selection never edits that profile.
+    @discardableResult
+    func commitCompanion(
+        _ draft: CompanionOnboardingDraft,
+        route: AgentRoute = .localOllama,
+        model: String = ""
+    ) throws -> UUID {
+        if persistenceEnabled {
+            // MainActor serializes multiple windows. Read the durable winner so
+            // even separately constructed models cannot commit a second primary.
+            restoreCompanionPresentation()
+        }
+        if let id = primaryCompanionID,
+           agentProfiles.contains(where: { $0.id == id }) { return id }
+
+        if let existingID = draft.existingProfileID {
+            guard agentProfiles.contains(where: { $0.id == existingID }) else {
+                throw CompanionValidationError.missingProfile
+            }
+            companionPresentation.primaryProfileID = existingID
+            primaryCompanionID = existingID
+            persistCompanionPresentation()
+            return existingID
+        }
+
+        let name = try CompanionValidationError.validatedName(draft.name)
+        let appearance = draft.appearance.validated
+        var approvedAvatar: Data?
+        if appearance.kind == .portrait {
+            guard let data = draft.avatarData, data.count <= AgentAvatarImage.maximumStoredBytes,
+                  let normalized = try? AgentAvatarImage.normalized(data) else {
+                throw CompanionValidationError.invalidPortrait
+            }
+            approvedAvatar = normalized
+        }
+        // A reserved UUID, never a name match, reconciles interrupted creation.
+        // Presentation can use repeated human names; IDs remain authoritative.
+        let profile = agentProfiles.first(where: { $0.id == draft.reservedProfileID })
+            ?? AgentProfile(id: draft.reservedProfileID, name: name, route: route, model: model)
+        companionPresentation.primaryProfileID = profile.id
+        companionPresentation.appearances[profile.id] = appearance
+        companionPresentation.pendingCreation = profile
+        companionPresentation.pendingAvatarData = approvedAvatar
+        persistCompanionPresentation()
+        finishPendingCompanionCreation()
+        return profile.id
+    }
+
+    private func restoreCompanionPresentation() {
+        // Saved edits from another window win over this model's stale snapshot.
+        // Loading the full arrays also preserves teams when replay saves profiles.
+        if persistenceEnabled, defaults.data(forKey: AgentTeamStore.profilesKey) != nil {
+            agentProfiles = AgentTeamStore.loadProfiles(from: defaults)
+        }
+        if persistenceEnabled, defaults.data(forKey: AgentTeamStore.teamsKey) != nil {
+            agentTeams = AgentTeamStore.loadTeams(from: defaults)
+        }
+        if persistenceEnabled {
+            teamRoutingConsentAccountIDs = AgentTeamStore.loadConsent(from: defaults)
+            restoreAgentAvatars()
+        }
+        if let data = defaults.data(forKey: Self.companionPresentationKey),
+           let saved = try? JSONDecoder().decode(AgentCompanionPresentation.self, from: data),
+           saved.version == 1 {
+            companionPresentation = saved
+        }
+        // A complete canonical snapshot exists only in this short-lived intent.
+        // Replay is idempotent and is removed as soon as the profile is durable.
+        finishPendingCompanionCreation()
+        if let id = companionPresentation.primaryProfileID,
+           !agentProfiles.contains(where: { $0.id == id }),
+           let durable = AgentTeamStore.loadProfiles(from: defaults).first(where: { $0.id == id }) {
+            agentProfiles.append(durable)
+        }
+        primaryCompanionID = companionPresentation.primaryProfileID.flatMap { id in
+            agentProfiles.contains(where: { $0.id == id }) ? id : nil
+        }
+        agentAppearances = companionPresentation.appearances.mapValues(\.validated)
+        companionAnimationsEnabled = companionPresentation.animationsEnabled
+        restoreAgentAvatars()
+    }
+
+    private func finishPendingCompanionCreation() {
+        guard let pending = companionPresentation.pendingCreation else { return }
+        if !agentProfiles.contains(where: { $0.id == pending.id }) {
+            // Preserve other durable agents if this model was mounted earlier
+            // than another window's changes.
+            if persistenceEnabled {
+                for profile in AgentTeamStore.loadProfiles(from: defaults)
+                    where !agentProfiles.contains(where: { $0.id == profile.id }) {
+                    agentProfiles.append(profile)
+                }
+            }
+            if !agentProfiles.contains(where: { $0.id == pending.id }) { agentProfiles.append(pending) }
+        }
+        persistAgentTeams()
+        if let data = companionPresentation.pendingAvatarData {
+            setAgentAvatar(data, profileID: pending.id)
+        }
+        primaryCompanionID = pending.id
+        agentAppearances = companionPresentation.appearances.mapValues(\.validated)
+        companionAnimationsEnabled = companionPresentation.animationsEnabled
+        companionPresentation.pendingCreation = nil
+        companionPresentation.pendingAvatarData = nil
+        persistCompanionPresentation()
+    }
+
+    private func persistCompanionPresentation() {
+        guard persistenceEnabled,
+              let data = try? JSONEncoder().encode(companionPresentation) else { return }
+        // Like existing profiles, one encoded value is atomically replaced in
+        // the injected edition UserDefaults domain; no second profile database.
+        defaults.set(data, forKey: Self.companionPresentationKey)
     }
 
     private func persistAgentAvatars() {
@@ -259,15 +390,31 @@ final class AgentTeamsModel: ObservableObject {
                      forKey: Self.avatarsKey)
     }
 
+    private func restoreAgentAvatars() {
+        guard persistenceEnabled else { return }
+        let profileIDs = Set(agentProfiles.map(\.id))
+        agentAvatarData = Dictionary(uniqueKeysWithValues:
+            (defaults.dictionary(forKey: Self.avatarsKey) ?? [:]).compactMap { key, value in
+                guard let id = UUID(uuidString: key), profileIDs.contains(id),
+                      let data = value as? Data, data.count <= AgentAvatarImage.maximumStoredBytes else { return nil }
+                return (id, data)
+            })
+    }
+
     func saveAgentProfile(_ profile: AgentProfile) {
         var updated = profile
+        if updated.id == primaryCompanionID {
+            do { updated.name = try CompanionValidationError.validatedName(updated.name) }
+            catch { toastHandler(error.localizedDescription); return }
+        }
         updated.clamp()
-        guard updated.isConfigured else {
+        guard updated.isConfigured || (updated.id == primaryCompanionID && !updated.name.isEmpty) else {
             toastHandler("Give the agent a name and exact model")
             return
         }
-        let collision = agentProfiles.contains {
+        let collision = updated.id != primaryCompanionID && agentProfiles.contains {
             $0.id != updated.id
+                && $0.id != primaryCompanionID
                 && $0.name.caseInsensitiveCompare(updated.name) == .orderedSame
         }
         guard !collision else {
@@ -292,6 +439,17 @@ final class AgentTeamsModel: ObservableObject {
         agentProfiles.removeAll { $0.id == profile.id }
         agentAvatarData[profile.id] = nil
         persistAgentAvatars()
+        agentAppearances[profile.id] = nil
+        companionPresentation.appearances[profile.id] = nil
+        if primaryCompanionID == profile.id {
+            primaryCompanionID = nil
+            companionPresentation.primaryProfileID = nil
+        }
+        if companionPresentation.pendingCreation?.id == profile.id {
+            companionPresentation.pendingCreation = nil
+            companionPresentation.pendingAvatarData = nil
+        }
+        persistCompanionPresentation()
         agentTeams = agentTeams.compactMap { team in
             var updated = team
             updated.memberIDs.removeAll { $0 == profile.id }
