@@ -1,5 +1,10 @@
 # Your companion — implementation and verification
 
+This document records the initial v4.0.0 implementation and release checks.
+Later navigation and motion changes are documented in
+[Companion tab verification](CompanionTabVerification.md) and
+[pointer reactions](CompanionPointerReactions.md).
+
 This work extends the existing Getting Started sheet, saved `AgentProfile` owner,
 portrait storage, profile-bound conversations, activity catalogs and connection UI.
 It does not add a chat engine, scheduler, permissions store, memory store or Agent
@@ -121,9 +126,12 @@ The existing procedural-character UI was also inspected earlier. Atlas review
 covers all selected animation frames on white and dark backgrounds.
 
 Saved artwork previews: [light/dark](Assets/YourCompanion/companions-light-dark-160.png)
-and [animation](Assets/YourCompanion/companions-all-motion.gif). These are character
-contact sheets, not app screenshots; native app screenshots were captured inline
-during computer-use verification.
+and [historical frame-inspection reel](Assets/YourCompanion/companions-all-motion.gif).
+These are character contact sheets, not app screenshots. The reel cycles atlas
+rows at a uniform 140 ms per frame to inspect the artwork; it does not demonstrate
+current native playback, 125 ms stepped timing, idle holds, or pointer reactions.
+Native app screenshots were captured inline during computer-use verification;
+still images establish appearance and layout, not animation timing.
 
 Live image-provider cancellation/rate limits and real configured-model conversation
 round trips remain unverified. Automated tests cover routing boundaries, error
@@ -131,10 +139,13 @@ paths and state derivation, but they are not live provider evidence. Full VoiceO
 interaction, signed distribution and prolonged multi-window performance remain
 manual acceptance work. Native visibility lifecycle tests exercise observer cleanup.
 
-Pitou preserves the supplied sprite bytes. Generated variants retain their nine
-standard animation rows; unverified generated look-direction rows are excluded.
-The app does not implement a draggable desktop pet or cursor-following look poses,
-and does not claim undocumented ChatGPT timing or screen parity.
+Pitou preserves the supplied sprite bytes. At the initial release, generated
+variants retained nine standard animation rows and unverified look-direction
+rows were excluded. Subsequent updates added inspected look poses and native
+window-local pointer reactions; see [directional gaze](CompanionDirectionalGaze.md)
+and [pointer reactions](CompanionPointerReactions.md) for the current behavior.
+The app does not implement a draggable desktop pet or claim undocumented ChatGPT
+timing or screen parity.
 
 ## v4 release preflight
 

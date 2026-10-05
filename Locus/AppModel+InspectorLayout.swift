@@ -72,7 +72,7 @@ extension AppModel {
         case .agents:
             guard !inspectorCollapsed, inspectorTab == .files, !justChatEnabled else { return }
             selectInspectorTab(.agent)
-        case .ask:
+        case .ask, .companion:
             guard openInspectorTabs.contains(.agent) || inspectorTab == .agent else { return }
             let remaining = openInspectorTabs.filter { $0 != .agent }
             openInspectorTabs = remaining
@@ -142,7 +142,7 @@ extension AppModel {
     func toggleInspector() {
         guard !justChatEnabled else { return }
         // The general inspector command owns the workspace inspector, never a
-        // special-purpose Plan or Browser surface. From either of those it
+        // special-purpose Plan, Browser, or Companion surface. From those it
         // returns to the last workspace tab; a second press there collapses it.
         if !inspectorCollapsed, inspectorTab.isWorkspaceTab {
             lastClosedInspectorTab = inspectorTab

@@ -5,12 +5,7 @@ import Foundation
 
 extension AppModel {
     func presentCompanion() {
-        if let id = agentTeamsModel.primaryCompanionID,
-           let profile = agentProfiles.first(where: { $0.id == id }) {
-            selectSavedAgent(profile)
-        } else {
-            onboarding.beginCompanionSetup()
-        }
+        openCompanionMainConversation()
     }
 
     func configureOnboarding(defaults: UserDefaults?, existingInstallation: Bool) {
@@ -59,26 +54,18 @@ extension AppModel {
     /// Saving is entirely local. Opening a chat uses the existing profile-bound
     /// conversation API and never submits a turn or activates an automation.
     func finishCompanionSetup(startChat: Bool) {
-        guard let id = onboarding.completeCompanion(),
-              let profile = agentProfiles.first(where: { $0.id == id }) else { return }
+        guard onboarding.completeCompanion() != nil,
+              primaryCompanionProfile != nil else { return }
         if !startChat {
             onboarding.showGettingStarted()
             return
         }
         onboarding.dismiss()
-        selectSavedAgent(profile)
         guard isAgentOnline else {
             showToast("Your companion is ready. Connect a model to start chatting.")
             return
         }
-        let workspace = savedAgentWorkspacePath(profile)
-        if let session = savedAgentChats(profile.id).first(where: {
-            $0.workspacePath.map(SessionSummary.canonicalWorkspacePath) == SessionSummary.canonicalWorkspacePath(workspace)
-        }) {
-            resume(session)
-        } else {
-            newSavedAgentChat(profile, workspace: workspace)
-        }
+        openCompanionMainConversation()
     }
 
     func chooseOnboardingWorkspace() {

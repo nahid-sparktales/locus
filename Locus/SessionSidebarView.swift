@@ -498,8 +498,6 @@ struct SessionSidebarView: View {
             header
             controls
 
-            CompanionSidebarEntry()
-
             Button { model.openLibrary() } label: {
                 Label("Library", systemImage: "books.vertical")
                     .font(.locus(size: 12, weight: .medium))
@@ -854,6 +852,8 @@ struct SessionSidebarView: View {
                     model.switchSidebarDestination(destination)
                 }
             }
+
+            CompanionSidebarEntry()
 
             navigationRow(
                 symbol: "person.crop.circle",

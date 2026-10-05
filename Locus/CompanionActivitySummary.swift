@@ -97,20 +97,47 @@ struct CompanionActivitySummary: Equatable {
                     failureCount: failures, unreadCount: all.filter(\.unread).count,
                     workingCount: working, queuedCount: queued, latestCompletion: completion)
     }
+
+    /// Catalog identity wins over a stale or contradictory run manifest. A run
+    /// outside the recent catalog must supply both its owner and root itself.
+    static func includes(_ run: OrchestrationRun, profileID: UUID, workspace: String,
+                         sessionsByID: [String: SessionSummary]) -> Bool {
+        let root = SessionSummary.canonicalWorkspacePath(workspace)
+        if let sessionID = run.sessionID, let session = sessionsByID[sessionID] {
+            return session.savedAgentProfileID == profileID && session.belongsToWorkspace(root)
+        }
+        return run.manifest?["agent_profile_id"]?.string.flatMap(UUID.init(uuidString:)) == profileID
+            && run.workspaceRoot.map { SessionSummary.canonicalWorkspacePath($0) == root } == true
+    }
 }
 
 extension AppModel {
-    /// Global profile identity, current-project activity. This reads the normal
-    /// session/run catalogs and existing live workers without any model calls.
+    /// The primary companion has an independent selected folder. Other saved
+    /// agents retain their existing foreground-project presentation scope.
+    func companionActivityWorkspacePath(profileID: UUID) -> String {
+        SessionSummary.canonicalWorkspacePath(
+            primaryCompanionProfile?.id == profileID ? companionWorkspacePath : workspacePath
+        )
+    }
+
+    func companionActivityIncludes(_ run: OrchestrationRun, profileID: UUID) -> Bool {
+        CompanionActivitySummary.includes(run, profileID: profileID,
+            workspace: companionActivityWorkspacePath(profileID: profileID),
+            sessionsByID: sessionCatalog.snapshot.sessionsByID)
+    }
+
+    /// Global profile identity, explicitly scoped activity. This reads the
+    /// normal session/run catalogs and existing live workers without model calls.
     func companionActivitySummary(profileID: UUID) -> CompanionActivitySummary {
-        let workspace = SessionSummary.canonicalWorkspacePath(workspacePath)
+        let workspace = companionActivityWorkspacePath(profileID: profileID)
         let sessions = sessionCatalog.snapshot.sessionsByID
         func belongs(_ sessionID: String?, fallbackWorkspace: String? = nil) -> Bool {
             if let sessionID, let session = sessions[sessionID] { return session.belongsToWorkspace(workspace) }
             return fallbackWorkspace.map { SessionSummary.canonicalWorkspacePath($0) == workspace } ?? false
         }
         func owns(_ sessionID: String?) -> Bool {
-            sessionID.map { savedAgentProfileID(for: $0) == profileID } ?? false
+            if let sessionID, let session = sessions[sessionID] { return session.savedAgentProfileID == profileID }
+            return sessionID.map { savedAgentProfileID(for: $0) == profileID } ?? false
         }
         let available = companionAvailability(profileID: profileID)
         var samples: [CompanionActivitySummary.Run] = []
@@ -118,8 +145,7 @@ extension AppModel {
             + Array(runs.runDetailsByID.values) + (runs.selectedOrchestrationRun.map { [$0] } ?? [])
         var ownedRunIDs = Set<String>()
         for run in runSources {
-            guard belongs(run.sessionID, fallbackWorkspace: run.workspaceRoot),
-                  owns(run.sessionID) || run.manifest?["agent_profile_id"]?.string.flatMap(UUID.init(uuidString:)) == profileID,
+            guard companionActivityIncludes(run, profileID: profileID),
                   let state = TeamRunState(rawValue: run.state),
                   !activity.dismissedActivityRunIDs.contains(run.id) else { continue }
             ownedRunIDs.insert(run.id)

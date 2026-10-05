@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Added
+
+- Standard light and dark appearances use neutral white, gray, and charcoal
+  surfaces with clearer text and boundaries, replacing the earlier cream/olive
+  base. Saved accents, logos, semantic colours, and optional World/deck themes
+  retain their existing palettes.
+- The **Companion** row above **Manage Accounts** opens the saved companion's
+  normal chat in the main composer. The left **Agent** and **Work** modes remain
+  unchanged, with no third segmented tab. The right-rail Companion button opens
+  its separate inspector panel alongside the current work, using the existing
+  background worker and message queue with an independent conversation draft.
+  Click the panel's character or name to reach its existing profile and activity.
+- The Locus menu-bar button opens a native popover with **Chat** and **Activity**.
+  Quick chat shares the companion panel's saved conversation and draft. Activity
+  shows the selected companion's requests and unread results in its chosen folder.
+  **Open Locus** reveals the main window without switching chats; close or Escape
+  keeps the companion draft.
+- Companion uses its own stable folder by default. Explicitly choose another
+  folder through its folder control; the choice is saved with the existing agent
+  profile. Switching the central project does not silently change companion scope,
+  and existing conversations and queued work retain their original folders.
+- Scout, a new MHA/HxH-inspired character, replaces Gon in the gallery. Saved Gon
+  appearances remain available, and character sizes are more consistent.
+- The character gallery offers only Pitou, Scout, Ninja, Clover, Shadow, and Pirate.
+  Surprise me selects one of those six offline choices. The Originals collection
+  and accent/accessory controls are removed; saved procedural appearances still
+  render, and existing custom pictures and the separate static portrait library
+  remain available.
+- Idle characters follow the cursor inside their Locus window with sixteen
+  directional poses. Real activity takes priority, and reduced motion or disabled
+  animations stop the reactions. Existing artwork now uses held, stepped poses
+  on an eight-frame-per-second cadence, without eased glides or an art redraw.
+
+### Fixed
+
+- Opening or closing the Companion side panel preserves the central conversation,
+  draft, run, and pending approvals. Companion chat selection and queued work stay
+  bound to their saved profile and folder; offline and delayed requests cannot take over
+  a newer selection. Failed conversation loads offer an explicit retry, and failed
+  sends retain the companion draft without changing the central composer.
+- Companion file links use their conversation’s execution folder. Opening output
+  from another folder leaves the central Files browser and attachment context
+  intact; interactive tool views use the full companion conversation.
+- Companion status and activity follow its selected folder independently of the
+  central project. Canonical session ownership takes precedence over conflicting
+  run metadata, and completion reactions reset their baseline when that scope changes.
+
 ## 4.0.0 — 2026-10-05
 
 ### Added

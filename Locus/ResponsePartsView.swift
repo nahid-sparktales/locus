@@ -11,7 +11,29 @@ struct ResponseOutputContext {
     /// Attaches a workspace image to the composer for `edit_image`.
     var attachImage: (WorkspaceArtifactReference) -> Void = { _ in }
     var allowsImageEditing = false
+    /// MCP app actions and media currently use the foreground transport. Side
+    /// transcripts expose an explicit route instead of mounting those clients.
+    var allowsForegroundToolResults = true
+    var openFullConversation: (() -> Void)? = nil
     var interactiveAnswersEnabled = true
+}
+
+struct ForegroundToolResultNotice: View {
+    @Environment(\.responseOutputContext) private var context
+    let title: String
+
+    var body: some View {
+        Group {
+            if let open = context.openFullConversation {
+                Button(title, systemImage: "arrow.up.forward.app", action: open)
+                    .buttonStyle(.locus())
+                    .accessibilityIdentifier("tool.result.openFullConversation")
+            } else {
+                Label(title, systemImage: "arrow.up.forward.app")
+            }
+        }
+        .font(.locus(size: 11)).padding(10)
+    }
 }
 
 private struct ResponseOutputContextKey: EnvironmentKey {

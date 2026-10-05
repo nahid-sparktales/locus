@@ -1,31 +1,136 @@
 # Your companion
 
 See [verification and changed-file inventory](YourCompanionVerification.md) for
-executed checks and remaining manual acceptance work.
+the original launch checks, and [Companion panel verification](CompanionTabVerification.md)
+for the right-panel correction, Scout, cursor reactions, and remaining manual checks.
+The full run passed 1,966 native tests and seven companion UI cases, with one
+explicit notch-related UI skip and zero failures. Actual menu-popover interaction
+remains unverified locally. A later pointer guard's focused rerun had 13 passes
+and one explicit hosted-window skip, with zero failures; the full-suite result
+predates that guard change. The verification record includes fresh light/dark
+captures of the latest local build using isolated fixture data.
 
 Your companion is a saved Locus agent with a recognizable character. First-launch
-Getting Started introduces it, offers six bundled animated characters, lets you
-choose an accent/accessory or local **Surprise me** variation, and asks for its name.
+Getting Started introduces it, offers six bundled animated characters, and asks
+for its name. **Surprise me** locally selects one of those same six characters;
+it does not generate new artwork or make a model request.
 Fresh drafts start with **Pitou** as both character and editable name. Existing drafts
-and agents retain their saved name and appearance. **Characters** contains Pitou, Gon,
-Ninja, Clover, Shadow, and Pirate; **Originals** contains the six procedural characters
-with accent/accessory controls. Bundled sprites have no unsupported recoloring controls.
+and agents retain their saved name and appearance. Setup and the profile's
+**Characters** gallery offer only Pitou, Scout, Ninja, Clover, Shadow, and Pirate.
+There is no Originals collection or accent/accessory control. Older procedural and
+Gon appearances still load, and a saved custom picture stays selected until an
+explicit change. The separate static portrait library, image import, and generation
+remain available through the existing picture picker.
 Names accept Unicode, trim surrounding whitespace,
 and reject control characters and names longer than 64 characters without truncation.
 
-**Start with [Name]** saves the identity and opens the normal saved-agent entry;
-when the runtime is available it continues or creates a normal profile-bound chat.
-Without a usable model the identity still saves and the existing model connection
-controls remain available. **Explore Locus** continues the existing Getting Started
-document, coding, and recurring-agent paths. Saving, previewing, and naming do not
-send a message, start a task, grant permissions, activate schedules, or call a model.
+**Start with [Name]** saves the identity and opens the normal companion conversation
+in the main composer when the runtime is available. Offline setup still saves the
+identity and explains that a model must be connected before chatting. Existing model
+connection controls remain available. **Explore Locus** continues the existing
+Getting Started document, coding, and recurring-agent paths. Saving, previewing,
+and naming do not send a message, start a task, grant permissions, activate
+schedules, or call a model.
 
-The sidebar entry opens the existing agent Overview. The same shared avatar appears
-in the agent picker, profile, and conversation header. Rename and change its picture
-through the existing profile controls. Disabling character animation affects only
-presentation. Removing an agent remains the separate confirmed deletion action.
-Conversations keep the existing global profile ID and project-scoped session binding;
-changing appearance or model does not create a new identity.
+The left **Agent** and **Work** modes remain unchanged; there is no third segmented
+Companion mode. The **Companion** row above **Manage Accounts** opens the saved
+agent's normal conversation in the **main composer**. It prefers the current owned
+chat, then the remembered chat in the companion’s chosen folder, then an existing
+eligible chat there.
+When none exists and the runtime is available, this explicit click creates one
+empty canonical conversation. Normal switching rules protect active work and
+approvals; a late creation cannot take over a newer chat, project, or profile.
+Opening a conversation does not send a message.
+
+The **Companion button in the right rail** opens the side-panel inspector alongside
+the current workspace. Opening or closing that panel leaves the central conversation,
+composer draft, active work, and pending approvals in place. Main-chat navigation
+and side-panel presentation use the same saved identity with independent selections.
+
+The panel uses the same canonical saved-agent profile and normal folder-bound
+conversation records. Sending and queueing a message use the existing background
+worker and queued-chat path, with the companion's saved model, instructions,
+permissions, and real task state. It does not introduce a second chat engine or
+an autonomous controller. Opening the panel does not send a message; creating an
+empty conversation and starting work remain explicit actions. The companion draft
+is separate from the central draft and stays bound to its conversation and folder.
+Switching the central project does not change the companion’s folder. Explicitly
+choosing another companion folder changes the visible history without revealing
+other folders’ private transcripts or retargeting queued work. Late load or creation results retain their captured ownership rather
+than taking over a newer panel selection. If the selected companion conversation is
+also open in the central workspace, the panel presents it read-only and offers
+**New conversation**, so two editors do not compete for one draft. **Open full
+conversation** is the explicit route to the existing advanced composer, attachments,
+and approval controls; it intentionally selects that chat in the central workspace.
+Interactive tool views and image editing also use that full conversation.
+
+The panel provides access to the companion's conversations and existing profile
+and Overview controls. Click its face or name to open that profile, or use
+**Companion options → Profile and activity**. The same shared avatar appears in
+the agent picker, profile, and conversation header. Rename and change its picture
+through those existing profile controls. Disabling character animation affects only
+presentation. Removing an agent remains the separate confirmed deletion action. Changing
+appearance or model does not create a new identity, move conversations, or change
+access settings. Runtime/model availability and errors remain explicit; opening an
+offline panel does not imply a successful connection or fabricated reply.
+
+## Chat from the menu bar
+
+The Locus button in the macOS menu bar opens a native popover with **Chat** and
+**Activity**. Chat presents the same companion panel, canonical conversation, and
+session-bound draft as the right inspector. It uses the existing background worker
+and queue when you explicitly send. Showing the popover does not create a
+conversation, submit a message, or start a task. Close or Escape dismisses the
+popover while keeping the draft. If the selected chat is already open centrally,
+the same read-only rule prevents competing editors.
+
+Activity presents the companion's requests and unread results from the existing
+Activity Center, scoped to its saved identity and chosen folder. An unresolved
+request remains actionable independently of read status. The popover does not
+introduce another notification store or enable system notifications. Profile,
+approval/recovery, and full-conversation actions reveal the main window and use
+their existing surfaces. **Open Locus** only reveals that window; it does not
+switch its conversation or discard either draft. Native activity/filtering tests
+passed; actual popover clicking, typing, Escape, and reopening after closing the
+main window still need verification on an unobstructed display or CI.
+
+## Your companion's folder
+
+Unless you explicitly choose another folder, the companion uses its existing saved
+agent home:
+
+```text
+~/Library/Application Support/Locus/AgentHomes/<profile-uuid>/Workspace
+```
+
+`<profile-uuid>` is the stable agent ID in lowercase, not the display name. LocusX
+uses its separate `Application Support/LocusX` root. Renaming the companion,
+changing its character or model, reopening Locus, or selecting another central
+project does not select a different default folder. The home is created lazily by
+the existing workspace preparation API when an explicit action needs it; merely
+reading the preference does not create a folder or scan its contents.
+
+The right panel's folder menu shows **Companion home** for the dedicated folder,
+linked projects by folder name, and **Choose a folder…** for an explicit selection.
+Choose **Companion home** to return to the default. The existing
+`AgentProfile.workspacePreferences.defaultProjectPath` owns that choice; an earlier
+explicit saved-agent default is respected. Returning to the home clears only that
+default override, retaining linked projects and the rest of the profile. Choosing
+a folder leaves the central chat and draft in place and does not start work or
+change tool permissions.
+
+Folder selection affects subsequent companion chat selection and creation. It does
+not move or rewrite existing conversations, files, drafts, tasks, or queued requests.
+Each keeps its original execution folder. A missing explicit folder produces an
+error rather than a silent fallback. Existing home validation rejects redirected
+home symlinks and another agent's private home. The companion's folder is a working
+location, not an extra permission grant or a claim that its existing tools are
+sandboxed to that folder. File links use the conversation's actual execution
+folder, which may be a task folder within the chosen workspace. A file from a
+different folder opens in the existing viewer without replacing the central Files
+browser or adding it to the central chat's context. Document previews use their
+own workspace; an explicit Show Files action can reveal the companion folder in
+Finder while leaving the central project selected.
 
 ## Resume and upgrade behavior
 
@@ -33,8 +138,9 @@ The existing `OnboardingModel` owns this chapter and the Getting Started sheet.
 There is no second onboarding coordinator. The automatic offer is remembered before
 the sheet opens. **Not now**, Escape, sheet closure, and a quit during setup retain
 the selected draft without creating an agent. Return through **Help → Getting
-Started** or **Set up your companion** in the sidebar. Existing installations receive
-an opt-in entry; missing new presentation fields never force an upgrade wizard.
+Started**, click the left **Companion** row when no companion is configured, or
+open the right-rail Companion panel and choose **Set up your companion**. Existing
+installations receive an opt-in entry; missing new presentation fields never force an upgrade wizard.
 Existing agents are linked only by explicit selection, retaining their name, picture,
 instructions, account, model, access, and conversation bindings.
 
@@ -50,6 +156,9 @@ model instances using the same defaults cannot automatically offer it twice.
 | Primary companion binding, versioned appearance references, animation preference | `AgentTeamsModel` presentation record, `Locus.AgentProfiles.companionPresentation.v1` |
 | Approved custom raster pixels | Existing `AgentTeamsModel.agentAvatarData`, `Locus.AgentProfiles.avatars.v1` |
 | Draft name, reserved UUID, chosen appearance, temporary approved draft pixels, step and completion link | Existing `OnboardingModel.Progress`, `Locus.onboarding.v1`; the payload version is now 2 |
+| Explicit companion folder choice | Existing `AgentProfile.workspacePreferences.defaultProjectPath`; absent means the stable edition-scoped Agent home |
+| Panel selection, loading, error, and presentation mode | `CompanionPanelModel`; presentation only, with no profile or execution database |
+| Companion drafts and loaded transcript blocks | Existing `paneDraft`/`setPaneDraft` and `splitPaneBlocks`, keyed by the normal session identity |
 | Chats, runs, approvals, schedules, execution scope and permissions | Existing session/runtime stores and APIs; no character-owned execution state |
 
 `Progress.companion` is optional when reading the former payload. Version-1 Getting
@@ -74,13 +183,43 @@ system instruction. Unknown/missing artwork falls back visually without changing
 
 ## Artwork, custom images and activity
 
-Bundled animated characters use local sprite assets; the six procedural originals use
-native SwiftUI Canvas paths and gradients on the existing macOS 14 deployment target.
-They require no download, provider, or Agent
-World installation. See [artwork provenance and input limits](CompanionArtwork.md).
+The standard workspace now uses neutral light and dark surfaces: near-white and
+white in light appearance, charcoal and gray in dark appearance. Text uses neutral
+ink tones; saved accents, character artwork, logos, and optional World/deck themes
+keep their intentional colours. The companion follows the same native palette as
+the rest of Locus. See [Colour palette](ColourPalette.md) for exact values,
+source-derived contrast measurements and executed native theme checks. Current
+light/dark fixture captures are in the [verification record](CompanionTabVerification.md#native-ui-inspection-and-screenshots).
+
+The six offered animated characters use local sprite assets. Native SwiftUI Canvas
+paths and gradients retain support for previously saved procedural appearances
+and the internal visual fallback; they are no longer offered as new choices.
+Both renderers support the existing macOS 14 deployment target and require no
+download, provider, or Agent World installation.
+See [artwork provenance and input limits](CompanionArtwork.md).
 Reduce Motion, the animation preference, scene inactivity, and view disappearance
 disable or stop the cancellable animation task. Static text/status equivalents remain.
 Imported/generated pictures receive honest whole-image motion, never face rigging.
+Idle bundled characters look toward the pointer within their own key Locus window.
+The app-local listener requires that window and enabled, visible tracking; it does
+not separately require the whole app to be active. Actual pointer delivery and
+scene activation in the nonactivating menu popover remain unverified locally.
+Playback holds discrete poses on an eight-frame-per-second cadence: each source
+frame lasts one or more 125 ms ticks, with quiet idle/waiting holds and brief
+greetings and completion reactions. Legacy procedural appearances use held key poses too;
+static art receives only snapped whole-image movement. There are no eased glides.
+The existing painted character assets remain unchanged by this motion adjustment.
+The renderer measures each atlas's visible bounds once and uses a shared scale and
+baseline for every pose. All seven supported sprites, including saved Gon, have
+a resting silhouette height of 78% of their square view while preserving the
+whole animation inside its safety inset. This is 34.32 points in a 44-point view
+and 140.4 points in a 180-point view. Native sizing/bounds tests passed; no artwork
+was redrawn. See [artwork sizing](CompanionArtwork.md#consistent-displayed-size).
+See [pointer reactions](CompanionPointerReactions.md) for motion, status-priority,
+privacy, and lifecycle rules. Scout combines My Hero Academia and Hunter x Hunter
+influences and replaces Gon in the new-selection gallery. Existing Gon appearances
+remain loadable and receive the same corrected display scale as the other earlier
+generated sprites; updating the gallery does not silently replace saved artwork.
 
 **Create your own** uses the configured image-generation account and existing provider
 handoff. The picker names the receiving account and discloses usage/possible charges
@@ -94,6 +233,11 @@ store. Prompts and provider URLs do not become appearance references.
 
 `CompanionActivitySummary` derives execution, outstanding approvals/failures, unread
 results, and connection availability from the normal session/run/activity catalogs.
+The primary companion's summary follows its chosen folder, independently of the
+central project. Other saved agents retain their existing foreground-project
+summary scope. A known canonical session's owner and folder take precedence over
+conflicting run metadata; only a run missing from the recent session catalog may
+use its recorded profile and workspace as a fallback.
 Decorative movement does not claim work is running. Completion reactions consume
 unique live completion events; restored history does not replay celebrations. Runtime
 and work controls remain in the existing Overview and Activity surfaces. Local
@@ -113,17 +257,41 @@ remote-access service, or mobile-pairing feature is introduced by this setup.
   `Locus/AgentTeamsModel.swift`: versioned draft, canonical commit and recovery.
 - `Locus/CompanionAppearance.swift`, `Locus/CompanionCharacterView.swift`,
   `Locus/CompanionSpriteView.swift`, `Locus/AgentPicturePicker.swift`, and
-  `Locus/SavedAgentInspectorView.swift`: original renderer, approved catalog and shared
+  `Locus/SavedAgentInspectorView.swift`: sprite and legacy fallback renderers, approved catalog and shared
   profile image handling.
-- `Locus/CompanionSidebarEntry.swift` and `Locus/CompanionActivitySummary.swift`:
-  persistent entry and presentation of authoritative activity.
+- `Locus/CompanionPanelModel.swift`, `Locus/CompanionInspectorTab.swift`, and
+  `Locus/AppModel+CompanionNavigation.swift`: right-panel presentation and project-bound
+  conversation selection. `openCompanionMainConversation` handles the left shortcut
+  through normal central session routing; the right rail selects the inspector.
+  `selectCompanionWorkspace` saves an explicit choice through existing profile
+  workspace preferences; `AppModel+SavedAgents.swift` owns home paths and validation.
+  Existing `paneDraft`/`setPaneDraft` and `splitPaneBlocks`
+  hold drafts and transcript blocks. Canonical saved-agent conversation creation and
+  the native `sendAgentWorldTurn` worker/admission queue handle explicit work; that
+  native path is independent of the optional Agent World plugin. Panel navigation
+  does not replace the central transcript selection. `conversationWorkspacePath`
+  supplies the actual execution folder for file/output rendering while the selected
+  root remains the conversation-binding scope. Interactive MCP views and their
+  foreground tool-result fetches are deferred to the full conversation.
+- `Locus/CompanionSidebarEntry.swift`, `Locus/InspectorRail.swift`, and
+  `Locus/CompanionActivitySummary.swift`: main-chat shortcut, separate inspector
+  entry, and presentation of authoritative activity.
+- `Locus/CompanionMenuBarView.swift` and `Locus/LocusApp.swift`: the native
+  `MenuBarExtra` window-style popover and main window presenter. Quick chat reuses `CompanionInspectorTab` and
+  `CompanionPanelModel`; menu activity reuses the existing Activity Center records
+  and the shared canonical owner/folder predicate.
 - `Locus/CompanionCustomCharacterPicker.swift`,
   `agent/ollama_code/api/portrait_preview.py`, and the existing
   `agent/ollama_code/image_generation.py`: explicit generation/import preview.
 - `LocusTests/CompanionPersistenceTests.swift`, `CompanionAppearanceTests.swift`,
-  `CompanionActivitySummaryTests.swift`, `CompanionIntegrationTests.swift`, and
-  `LocusUITests/CompanionOnboardingUITests.swift` and `LibraryOnboardingUITests.swift`: focused recovery, boundary,
-  rendering-input, status, routing, and UI coverage.
+  `CompanionActivitySummaryTests.swift`, `CompanionIntegrationTests.swift`,
+  `CompanionPanelTests.swift`, `CompanionInspectorNavigationTests.swift`,
+  `CompanionMotionTests.swift`,
+  `LocusTests/SavedAgentTests.swift`, `LocusUITests/CompanionOnboardingUITests.swift`,
+  and `LibraryOnboardingUITests.swift`: recovery, boundary, rendering-input, status,
+  project routing, draft/approval preservation, asynchronous selection, and UI coverage.
+- `Locus/AppModel+UITestFixtures.swift` and the fixture transport selection in
+  `Locus/AppModel.swift`: opt-in, in-process companion navigation fixture.
 
 To inspect a fresh first-launch surface without touching real user defaults, set these
 environment variables on the Xcode **Locus** Debug scheme's Run action:
@@ -137,8 +305,41 @@ LOCUS_UI_TESTING_COMPANION_OFFLINE=1
 This uses the app's in-memory UI fixture mode. Launch a separate development build;
 do not delete the real app's defaults or Application Support. The fixture is suitable
 for offline appearance/name/skip UI checks and resets its in-memory data on relaunch.
+
+The separate companion-chat fixture is intended for inspecting the configured
+profile and project-bound conversation without a provider:
+
+```text
+LOCUS_UI_TESTING=1
+LOCUS_UI_TESTING_FIRST_LAUNCH=0
+LOCUS_UI_TESTING_COMPANION_OFFLINE=0
+LOCUS_UI_TESTING_COMPANION_CHAT=1
+```
+
+Its two empty conversations in `/tmp` are **Companion UI fixture** and **Work UI
+fixture**, owned by the normal session/profile stores. Work remains in the central
+workspace while Companion opens in the right inspector. Type different unsent
+drafts in the two editors, close/reopen the panel, and verify each retains its own
+text. The fixture deliberately rejects submitted work with a visible error; it does
+not connect a provider or generate an AI reply. Runtime availability is simulated.
+Remove the companion-chat flag before returning to other fixture scenarios.
+
+The completed full run passed **1,966 native tests** and **seven companion UI
+cases**, with **one explicit UI skip**, zero failures, and `xcodebuild` exit 0.
+It covers folder/output isolation, sizing, palette, gallery, activity, and menu
+activity. The Python suite passed **3,083 tests plus 31 subtests**. Actual menu
+interaction is the notch-related skip and remains unverified locally. A later
+pointer guard is not covered by those full-suite totals; its focused rerun passed
+13 cases and explicitly skipped hosted event delivery because the fixture could
+not activate, with zero failures. That hosted case passed before the guard change.
+Earlier isolated host/UI interruptions passed unchanged
+on retry and are not outstanding acceptance failures.
+See [the verification record](CompanionTabVerification.md) for final status, commands,
+evidence, static-layout screenshots, and the remaining live-provider/manual limits.
+
 Durable restoration and interrupted-commit tests use unique injected UserDefaults
 suites in `CompanionPersistenceTests` and remove only those test domains afterward.
-Provider calls, real-model chat routing, signed distribution, VoiceOver interaction,
-and resource cleanup should be validated separately against the relevant environment;
-the presence of test source alone is not evidence that those checks have run.
+Live-provider conversation and generation, real permission/approval flows, physical
+cursor interaction, VoiceOver use, signed distribution, and the latest LocusX build
+remain unverified in this follow-up. Renderer tracking and observer teardown have
+native test coverage; that is separate from manual resource profiling.

@@ -12,13 +12,7 @@ struct CompanionSetupView: View {
     @EnvironmentObject private var accounts: ProviderAccountsModel
     @Environment(\.locusViewColors) private var colors
     @State private var customCharacterPresented = false
-    @State private var characterCollection: CharacterCollection = .characters
     @FocusState private var nameFocused: Bool
-
-    private enum CharacterCollection: String, CaseIterable, Identifiable {
-        case characters = "Characters", originals = "Originals"
-        var id: String { rawValue }
-    }
 
     private var draft: CompanionOnboardingDraft { onboarding.companion.draft }
     private var existingProfile: AgentProfile? {
@@ -91,12 +85,7 @@ struct CompanionSetupView: View {
         .onChange(of: onboarding.companion.step) { _, step in nameFocused = step == .name }
         .onAppear {
             nameFocused = onboarding.companion.step == .name
-            characterCollection = appearance.kind == .builtIn ? .originals : .characters
             onboarding.refreshReadiness()
-        }
-        .onChange(of: appearance.kind) { _, kind in
-            if kind == .builtIn { characterCollection = .originals }
-            else if kind == .bundledSprite { characterCollection = .characters }
         }
         .onReceive(runtime.objectWillChange) { _ in
             Task { @MainActor in onboarding.refreshReadiness() }
@@ -168,24 +157,6 @@ struct CompanionSetupView: View {
                 Text("Bundled characters and Surprise me work offline. Create your own also offers image import.")
                     .font(.locus(size: 11)).foregroundStyle(colors.textSecondary)
                     .multilineTextAlignment(.center)
-                if appearance.supportsAppearanceControls {
-                    HStack(spacing: 20) {
-                        Picker("Accent", selection: Binding(get: { appearance.palette }, set: { palette in
-                            var value = appearance; value.palette = palette
-                            onboarding.selectCompanionAppearance(value)
-                        })) {
-                            ForEach(CompanionPalette.allCases) { Text($0.name).tag($0) }
-                        }
-                        .accessibilityIdentifier("companion.palette")
-                        Picker("Accessory", selection: Binding(get: { appearance.accessory }, set: { accessory in
-                            var value = appearance; value.accessory = accessory
-                            onboarding.selectCompanionAppearance(value)
-                        })) {
-                            ForEach(CompanionAccessory.allCases) { Text($0.name).tag($0) }
-                        }
-                        .accessibilityIdentifier("companion.accessory")
-                    }
-                }
             }
             Toggle("Animate characters", isOn: Binding(get: { agentTeams.companionAnimationsEnabled },
                 set: { agentTeams.setCompanionAnimationsEnabled($0) }))
@@ -195,32 +166,13 @@ struct CompanionSetupView: View {
     }
 
     private var gallery: some View {
-        VStack(spacing: 12) {
-            Picker("Character collection", selection: $characterCollection) {
-                ForEach(CharacterCollection.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityIdentifier("companion.collection")
-            LazyVGrid(columns: [GridItem(.fixed(86)), GridItem(.fixed(86)), GridItem(.fixed(86))], spacing: 10) {
-                if characterCollection == .characters {
-                    ForEach(CompanionBundledSprite.allCases) { sprite in
-                        characterButton(appearance: .init(sprite: sprite), title: sprite.displayName,
-                            selected: appearance.bundledSprite == sprite,
-                            identifier: "companion.sprite.\(sprite.id)",
-                            hint: sprite.detail) {
-                            onboarding.selectCompanionAppearance(.init(sprite: sprite))
-                        }
-                    }
-                } else {
-                    ForEach(CompanionCharacterKind.allCases) { character in
-                        characterButton(appearance: .init(character: character, palette: appearance.palette),
-                            title: character.name, selected: appearance.builtIn == character,
-                            identifier: "companion.character.\(character.rawValue)", hint: character.detail) {
-                            onboarding.selectCompanionAppearance(CompanionAppearance(character: character,
-                                palette: appearance.palette, accessory: appearance.accessory))
-                        }
-                    }
+        LazyVGrid(columns: [GridItem(.fixed(86)), GridItem(.fixed(86)), GridItem(.fixed(86))], spacing: 10) {
+            ForEach(CompanionBundledSprite.allCases) { sprite in
+                characterButton(appearance: .init(sprite: sprite), title: sprite.displayName,
+                    selected: appearance.bundledSprite == sprite,
+                    identifier: "companion.sprite.\(sprite.id)",
+                    hint: sprite.detail) {
+                    onboarding.selectCompanionAppearance(.init(sprite: sprite))
                 }
             }
         }

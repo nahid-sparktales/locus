@@ -116,6 +116,8 @@ struct ComposerTextInput: View {
     @Binding var text: String
     let placeholder: String
     let focus: FocusState<Bool>.Binding
+    var accessibilityID = "composer.input"
+    var accessibilityName = "Message Locus"
     var draftRevision: UInt? = nil
     var onUp: () -> KeyPress.Result = { .ignored }
     var onDown: () -> KeyPress.Result = { .ignored }
@@ -135,7 +137,7 @@ struct ComposerTextInput: View {
                         .foregroundStyle(viewColors.inkSoft.opacity(0.82))
                         .padding(.horizontal, 12).padding(.top, 11)
                         .allowsHitTesting(false)
-                        .accessibilityIdentifier("composer.placeholder")
+                        .accessibilityIdentifier(accessibilityID == "composer.input" ? "composer.placeholder" : "\(accessibilityID).placeholder")
                 }
                 TextEditor(text: $text)
                     .foregroundStyle(viewColors.inkSoft).tint(viewColors.accentAction)
@@ -144,8 +146,8 @@ struct ComposerTextInput: View {
                     .padding(.horizontal, 7).padding(.vertical, 5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .focused(focus)
-                    .accessibilityLabel("Message Locus")
-                    .accessibilityIdentifier("composer.input")
+                    .accessibilityLabel(accessibilityName)
+                    .accessibilityIdentifier(accessibilityID)
                     .onKeyPress(.upArrow, action: onUp)
                     .onKeyPress(.downArrow, action: onDown)
                     .onKeyPress(.return, phases: .down, action: onReturn)

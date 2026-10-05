@@ -30,12 +30,19 @@ struct CompanionCharacterView: View {
     @State private var blinking = false
     @State private var lift: CGFloat = 0
     @State private var wave: CGFloat = 0
+    @State private var pointer = CompanionPointerResponse.neutral
+    @State private var finishedGreetingKey: String?
 
     private var canAnimate: Bool {
         visible && windowVisible && animationsEnabled && !reduceMotion && scenePhase == .active
             && pose != .paused && pose != .unavailable
     }
     private var animationKey: String { "\(canAnimate)-\(pose.rawValue)-\(appearance.assetID)" }
+    private var presentationPose: CompanionCharacterPose {
+        pose == .greeting && finishedGreetingKey == animationKey ? .idle : pose
+    }
+    private var canFollowPointer: Bool { CompanionPointerResponse.allowsReaction(canAnimate: canAnimate, pose: presentationPose) }
+    private var pointerResponse: CompanionPointerResponse { canFollowPointer ? pointer : .neutral }
 
     var body: some View {
         let sprite = appearance.validated.bundledSprite
@@ -43,20 +50,28 @@ struct CompanionCharacterView: View {
         ZStack(alignment: .bottomTrailing) {
             Group {
                 if let atlas = spriteAtlas {
-                    CompanionSpriteView(atlas: atlas, pose: pose, canAnimate: canAnimate)
-                        .scaleEffect(sprite == .pitou ? 1 : 1.25)
+                    CompanionSpriteView(atlas: atlas, pose: presentationPose, canAnimate: canAnimate,
+                        pointer: pointerResponse, onGreetingCompleted: { finishedGreetingKey = animationKey })
+                        .id(appearance.assetID)
+                        .rotationEffect(.degrees(atlas.version == 1
+                            ? Double(CompanionSteppedMotion.snapped(pointerResponse.x * 2)) : 0), anchor: .bottom)
+                        .offset(x: atlas.version == 1 ? CompanionSteppedMotion.snapped(pointerResponse.x * size * 0.015) : 0,
+                                y: atlas.version == 1 ? CompanionSteppedMotion.snapped(pointerResponse.y * size * 0.01) : 0)
                 } else if appearance.kind == .portrait, let customImageData,
                    let image = NSImage(data: customImageData) {
                     // Static artwork receives whole-image movement only. It is not a rig.
                     Image(nsImage: image).resizable().scaledToFit()
                         .padding(size * 0.06)
                         .clipShape(RoundedRectangle(cornerRadius: size * 0.18))
-                        .offset(y: lift * size / 200)
+                        .rotationEffect(.degrees(Double(CompanionSteppedMotion.snapped(pointerResponse.x * 2))), anchor: .bottom)
+                        .offset(x: CompanionSteppedMotion.snapped(pointerResponse.x * size * 0.015),
+                                y: CompanionSteppedMotion.snapped(lift * size / 200 + pointerResponse.y * size * 0.01))
                 } else {
                     CompanionCanvas(appearance: appearance.validated, blinking: blinking,
-                        lift: lift, wave: wave, pose: pose)
+                        lift: lift, wave: wave, pointer: pointerResponse, pose: presentationPose)
                 }
             }
+            .transaction { $0.animation = nil }
             .saturation(pose == .unavailable && appearance.kind != .bundledSprite ? 0.55 : 1)
             if let symbol = statusSymbol {
                 Image(systemName: symbol)
@@ -70,6 +85,7 @@ struct CompanionCharacterView: View {
         }
         .frame(width: size, height: size)
         .background(CompanionWindowVisibility { windowVisible = $0 }.frame(width: 0, height: 0))
+        .background(CompanionPointerTracking(enabled: canFollowPointer) { pointer = $0 }.allowsHitTesting(false))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(appearance.kind == .portrait
             ? (customImageData == nil ? "Character picture unavailable; showing Robot" : "Custom character")
@@ -77,7 +93,7 @@ struct CompanionCharacterView: View {
                : "\(appearance.validated.displayName) character"))
         .accessibilityValue(pose.label)
         .onAppear { visible = true }
-        .onDisappear { visible = false; resetMotion() }
+        .onDisappear { visible = false; pointer = .neutral; finishedGreetingKey = nil; resetMotion() }
         .task(id: animationKey) { await animate() }
     }
 
@@ -103,27 +119,31 @@ struct CompanionCharacterView: View {
     @MainActor private func resetMotion() { blinking = false; lift = 0; wave = 0 }
     @MainActor private func animate() async {
         resetMotion()
+        finishedGreetingKey = nil
         guard canAnimate, appearance.kind != .bundledSprite else { return }
         do {
             if pose == .greeting || pose == .completed {
-                for _ in 0..<2 {
-                    withAnimation(LocusMotion.content) { wave = 1; lift = -2 }
-                    try await Task.sleep(for: .milliseconds(240))
-                    withAnimation(LocusMotion.content) { wave = 0; lift = 0 }
-                    try await Task.sleep(for: .milliseconds(240))
+                // Deliberate key poses, including a short anticipation and settle.
+                for arm: CGFloat in [0.5, 1, 0.75, 1, 0.5, 0] {
+                    try Task.checkCancellation()
+                    wave = arm
+                    lift = arm == 0 ? 0 : -2
+                    try await Task.sleep(for: .milliseconds(CompanionSteppedMotion.frameMilliseconds))
                 }
+                if pose == .greeting { finishedGreetingKey = animationKey }
             }
             while !Task.isCancelled {
-                // A slow breath is decorative; only a real working pose gets a nod.
-                withAnimation(LocusMotion.companionBreath) { lift = pose == .working ? -2 : -0.8 }
+                // Quiet held poses replace a continuously eased breath. Only a
+                // real working state gets the deeper nod; idle is decorative.
                 try await Task.sleep(for: .seconds(2))
-                withAnimation(LocusMotion.companionBreath) { lift = 0 }
-                try await Task.sleep(for: .seconds(2))
+                lift = pose == .working ? -2 : -1
+                try await Task.sleep(for: .milliseconds(CompanionSteppedMotion.frameMilliseconds))
                 if appearance.animationCapability == .articulated {
                     blinking = true
-                    try await Task.sleep(for: .milliseconds(130))
-                    blinking = false
                 }
+                try await Task.sleep(for: .milliseconds(CompanionSteppedMotion.frameMilliseconds))
+                blinking = false
+                lift = 0
             }
         } catch { /* View task cancellation is normal lifecycle cleanup. */ }
     }
@@ -197,20 +217,17 @@ final class CompanionVisibilityView: NSView {
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }
 
-private struct CompanionCanvas: View, Animatable {
+private struct CompanionCanvas: View {
     let appearance: CompanionAppearance
     let blinking: Bool
-    var lift: CGFloat
-    var wave: CGFloat
+    let lift: CGFloat
+    let wave: CGFloat
+    let pointer: CompanionPointerResponse
     let pose: CompanionCharacterPose
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(lift, wave) }
-        set { lift = newValue.first; wave = newValue.second }
-    }
     var body: some View {
         Canvas { context, size in
             var painter = CompanionPainter(context: context, appearance: appearance,
-                blinking: blinking, lift: lift, wave: wave, pose: pose)
+                blinking: blinking, lift: lift, wave: wave, pointer: pointer, pose: pose)
             painter.draw(size: size)
         }
     }
@@ -222,6 +239,7 @@ private struct CompanionPainter {
     let blinking: Bool
     let lift: CGFloat
     let wave: CGFloat
+    let pointer: CompanionPointerResponse
     let pose: CompanionCharacterPose
     private let ink = Color(red: 0.13, green: 0.20, blue: 0.25)
     private let cream = Color(red: 1, green: 0.94, blue: 0.82)
@@ -270,15 +288,17 @@ private struct CompanionPainter {
     }
     private func face(x: CGFloat = 100, y: CGFloat = 95, spread: CGFloat = 20, bright: Bool = false, mouth: Bool = true) {
         let eyeColor = bright ? cream : ink
+        let eyeX = x + CompanionSteppedMotion.snapped(pointer.x * 2.5)
+        let eyeY = y + CompanionSteppedMotion.snapped(pointer.y * 2)
         if blinking {
-            line([.init(x: x-spread-3, y: y), .init(x: x-spread+3, y: y)], eyeColor, width: 2.4)
-            line([.init(x: x+spread-3, y: y), .init(x: x+spread+3, y: y)], eyeColor, width: 2.4)
+            line([.init(x: eyeX-spread-3, y: eyeY), .init(x: eyeX-spread+3, y: eyeY)], eyeColor, width: 2.4)
+            line([.init(x: eyeX+spread-3, y: eyeY), .init(x: eyeX+spread+3, y: eyeY)], eyeColor, width: 2.4)
         } else {
-            oval(x-spread-3, y-5, 6, 10, eyeColor, shaded: false)
-            oval(x+spread-3, y-5, 6, 10, eyeColor, shaded: false)
+            oval(eyeX-spread-3, eyeY-5, 6, 10, eyeColor, shaded: false)
+            oval(eyeX+spread-3, eyeY-5, 6, 10, eyeColor, shaded: false)
             if !bright {
-                oval(x-spread-1.5, y-4, 2, 3, .white, shaded: false)
-                oval(x+spread-1.5, y-4, 2, 3, .white, shaded: false)
+                oval(eyeX-spread-1.5, eyeY-4, 2, 3, .white, shaded: false)
+                oval(eyeX+spread-1.5, eyeY-4, 2, 3, .white, shaded: false)
             }
         }
         if mouth {

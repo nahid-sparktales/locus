@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// The always-visible right rail. Collapsing the inspector no longer empties
-/// the window edge: Context, Terminal, Browser, Notes, Calendar, and Board
+/// the window edge: Companion, Context, Terminal, Browser, Notes, Calendar, and Board
 /// stay within reach, while the vertical-ellipsis menu contains Side Chat and
 /// every additional workspace panel, including Simulator, Model Router, and
 /// Proxies.
@@ -46,6 +46,7 @@ struct InspectorRail: View {
                 // Agents mode leads with the selected agent.
                 railTab(.agent)
             }
+            railTab(.companion)
             railTab(.preview)
             if model.sidebarDestination == .agents {
                 railTab(.runs)
@@ -139,7 +140,7 @@ struct InspectorRail: View {
                 }
             }
         } label: {
-            Image(locusSymbol: tab.symbol)
+            railIcon(for: tab)
                 .font(.locus(size: 13, weight: .medium))
                 .foregroundStyle(selected ? viewColors.ink : viewColors.muted)
                 .overlay(alignment: .topTrailing) {
@@ -171,6 +172,14 @@ struct InspectorRail: View {
         .accessibilityLabel(representsOverview ? "Agent overview" : "\(tab.title) inspector")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityIdentifier("inspector.rail.\(tab.rawValue)")
+    }
+
+    @ViewBuilder private func railIcon(for tab: InspectorTab) -> some View {
+        if tab == .companion {
+            CompanionInspectorRailIcon()
+        } else {
+            Image(locusSymbol: tab.symbol)
+        }
     }
 
     private var moreMenu: some View {
@@ -236,6 +245,20 @@ struct InspectorRail: View {
         return tab.title
     }
 
+}
+
+/// Observe profile presentation only in the companion button; a rename or
+/// appearance edit does not invalidate the rest of the inspector rail.
+private struct CompanionInspectorRailIcon: View {
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+
+    var body: some View {
+        if let profile = agentTeams.agentProfiles.first(where: { $0.id == agentTeams.primaryCompanionID }) {
+            AgentAvatarView(profileID: profile.id, name: profile.name, size: 28)
+        } else {
+            Image(locusSymbol: InspectorTab.companion.symbol)
+        }
+    }
 }
 
 /// Workspace-level actions sit beside the model picker in the conversation

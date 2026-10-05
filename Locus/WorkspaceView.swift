@@ -7212,12 +7212,21 @@ private struct MCPImagePreview: View {
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.responseOutputContext) private var context
     let reference: ToolMediaReference
     @State private var data: Data?
     @State private var image: NSImage?
     @State private var failure: String?
 
     var body: some View {
+        if context.allowsForegroundToolResults {
+            preview
+        } else {
+            ForegroundToolResultNotice(title: "View tool image in full conversation")
+        }
+    }
+
+    private var preview: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let image {
                 Image(nsImage: image)

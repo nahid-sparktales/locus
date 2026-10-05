@@ -35,6 +35,8 @@ struct InspectorView: View {
                     InspectorContextTab()
                 case .agent:
                     InspectorAgentTab()
+                case .companion:
+                    CompanionInspectorTab()
                 case .changes:
                     InspectorChangesTab(gitWorkspace: gitWorkspace)
                 case .files:

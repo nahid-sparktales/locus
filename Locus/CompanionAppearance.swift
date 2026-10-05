@@ -85,8 +85,8 @@ struct CompanionAppearance: Codable, Hashable {
         return self
     }
 
-    /// All choices are local and deterministic. The resulting reference is persisted,
-    /// so a launch never re-rolls the character, even if the palette list later grows.
+    /// Only the six current sprite choices participate. The resulting asset ID
+    /// is persisted directly; legacy artwork stays readable but is not re-offered.
     static func surprise(seed: UInt64) -> CompanionAppearance {
         var value = seed
         func next(_ count: Int) -> Int {
@@ -96,11 +96,7 @@ struct CompanionAppearance: Codable, Hashable {
             mixed = (mixed ^ (mixed >> 27)) &* 0x94D049BB133111EB
             return Int((mixed ^ (mixed >> 31)) % UInt64(count))
         }
-        return CompanionAppearance(
-            character: CompanionCharacterKind.allCases[next(CompanionCharacterKind.allCases.count)],
-            palette: CompanionPalette.allCases[next(CompanionPalette.allCases.count)],
-            accessory: CompanionAccessory.allCases[next(CompanionAccessory.allCases.count)],
-            variationSeed: seed)
+        return CompanionAppearance(sprite: CompanionBundledSprite.allCases[next(CompanionBundledSprite.allCases.count)])
     }
 }
 
@@ -108,11 +104,17 @@ struct CompanionAppearance: Codable, Hashable {
 enum CompanionBundledSprite: String, Codable, CaseIterable, Identifiable {
     case pitou = "pitou-v2"
     case gon = "gon-v1", ninja = "ninja-v1", clover = "clover-v1", shadow = "shadow-v1", pirate = "pirate-v1"
+    case scout = "scout-v2"
+
+    /// Gon remains resolvable for saved appearances, while new selections use Scout.
+    static let allCases: [Self] = [.pitou, .scout, .ninja, .clover, .shadow, .pirate]
+    static let supportedAssets: [Self] = allCases + [.gon]
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .pitou: "Pitou"
         case .gon: "Gon"
+        case .scout: "Scout"
         case .ninja: "Ninja"
         case .clover: "Clover"
         case .shadow: "Shadow"
@@ -124,6 +126,7 @@ enum CompanionBundledSprite: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .pitou: "Your original Pitou"
         case .gon: "Gon × Jujutsu Kaisen · Hell’s Paradise details"
+        case .scout: "My Hero Academia × Hunter x Hunter"
         case .ninja: "Naruto × Chainsaw Man"
         case .clover: "Black Clover × Fullmetal Alchemist"
         case .shadow: "Solo Leveling × Kaiju No. 8"

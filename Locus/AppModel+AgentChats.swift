@@ -286,7 +286,9 @@ extension AppModel {
 
     /// The primary action creates the parent object for the active destination.
     func newChatForSidebarDestination() {
-        if sidebarDestination == .agents {
+        if sidebarDestination == .companion {
+            startCompanionConversation()
+        } else if sidebarDestination == .agents {
             presentNewAgent()
         } else {
             newSession()

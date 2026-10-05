@@ -12,7 +12,12 @@ struct WorkspaceFileViewerRequest: Identifiable, Equatable, Sendable {
     let relativePath: String
     let location: WorkspacePreviewLocation?
 
-    var id: String { relativePath }
+    var id: String { url.standardizedFileURL.path }
+
+    func belongsToWorkspace(_ workspace: String) -> Bool {
+        MarkdownLinkPolicy.containedWorkspaceFileURL(relativePath, workspacePath: workspace)
+            == url.standardizedFileURL.resolvingSymlinksInPath()
+    }
 }
 
 /// Feature-owned state for workspace file discovery and inline previews.

@@ -139,4 +139,140 @@ final class CompanionActivitySummaryTests: XCTestCase {
         XCTAssertEqual(summary.failureCount, 0)
         XCTAssertEqual(summary.queuedCount, 1)
     }
+
+    func testPrimaryCompanionUsesDedicatedHomeWithoutBorrowingCenterOrOtherAgentActivity() throws {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let primary = AgentProfile(name: "Companion", model: "", role: .generalist)
+        let other = AgentProfile(name: "Other", model: "", role: .generalist)
+        model.agentProfiles = [primary, other]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: primary.id))
+        model.initialWorkspacePath = "/tmp/activity-center"
+        let home = model.savedAgentHomePath(primary)
+        model.sessions = [
+            activitySession("home", owner: primary.id, workspace: home),
+            activitySession("center", owner: primary.id, workspace: model.workspacePath),
+            activitySession("other-home", owner: other.id, workspace: home),
+            activitySession("other-center", owner: other.id, workspace: model.workspacePath),
+        ]
+        model.taskConversationStates = [
+            "home": .init(sessionID: "home", runID: "home-run", state: .waitingPermission, updatedAt: Date()),
+            "center": .init(sessionID: "center", runID: "center-run", state: .failed, updatedAt: Date()),
+            "other-home": .init(sessionID: "other-home", runID: "other-home-run", state: .failed, updatedAt: Date()),
+            "other-center": .init(sessionID: "other-center", runID: "other-center-run", state: .queued, updatedAt: Date()),
+        ]
+        let source = CompanionActivityPresentation(app: model)
+        let summary = model.companionActivitySummary(profileID: primary.id)
+        XCTAssertEqual(summary.execution, .needsApproval)
+        XCTAssertEqual(summary.approvalCount, 1)
+        XCTAssertEqual(summary.failureCount, 0)
+        XCTAssertEqual(model.companionActivitySummary(profileID: other.id).queuedCount, 1)
+        XCTAssertEqual(source.scopeID(profileID: primary.id), SessionSummary.canonicalWorkspacePath(home))
+        XCTAssertEqual(source.scopeID(profileID: other.id), SessionSummary.canonicalWorkspacePath(model.workspacePath))
+
+        model.initialWorkspacePath = "/tmp/another-center"
+        XCTAssertEqual(model.companionActivitySummary(profileID: primary.id), summary)
+        XCTAssertEqual(source.scopeID(profileID: primary.id), SessionSummary.canonicalWorkspacePath(home))
+        XCTAssertEqual(model.companionActivitySummary(profileID: other.id).queuedCount, 0)
+    }
+
+    func testExplicitCompanionFolderScopesUnreadAndCompletionWithoutReplayingHistory() throws {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        var profile = AgentProfile(name: "Companion", model: "", role: .generalist,
+                                   workspacePreferences: .init(defaultProjectPath: "/tmp/first-companion"))
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        model.initialWorkspacePath = "/tmp/unrelated-center"
+        model.sessions = [
+            activitySession("first", owner: profile.id, workspace: "/tmp/first-companion"),
+            activitySession("second", owner: profile.id, workspace: "/tmp/second-companion"),
+        ]
+        model.activity.activityRuns = [
+            activityRun("first-run", owner: profile.id, workspace: "/tmp/first-companion", sessionID: "first"),
+            activityRun("second-run", owner: profile.id, workspace: "/tmp/second-companion", sessionID: "second"),
+        ]
+        for id in ["first-run", "second-run"] {
+            model.activity.recordCompletion(runID: id, succeeded: true, wasRunning: true, isViewed: false)
+        }
+        let source = CompanionActivityPresentation(app: model)
+        let first = try XCTUnwrap(source.summary(profileID: profile.id))
+        XCTAssertEqual(first.unreadCount, 1)
+        XCTAssertEqual(first.latestCompletion?.runID, "first-run")
+        let firstScope = source.scopeID(profileID: profile.id)
+        var gate = CompanionCompletionReactionGate()
+        gate.establishBaseline(scopeID: firstScope, event: first.latestCompletion)
+
+        profile.workspacePreferences?.defaultProjectPath = "/tmp/second-companion"
+        model.agentTeamsModel.saveAgentProfile(profile)
+        let second = try XCTUnwrap(source.summary(profileID: profile.id))
+        XCTAssertEqual(second.unreadCount, 1)
+        XCTAssertEqual(second.latestCompletion?.runID, "second-run")
+        XCTAssertNotEqual(source.scopeID(profileID: profile.id), firstScope)
+        XCTAssertFalse(gate.receive(scopeID: source.scopeID(profileID: profile.id), event: second.latestCompletion))
+        XCTAssertEqual(model.workspacePath, "/tmp/unrelated-center")
+    }
+
+    func testUnlistedRunsAndAttentionRequireCompanionFolderAndProfileOwnership() throws {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let profile = AgentProfile(name: "Companion", model: "", role: .generalist,
+                                   workspacePreferences: .init(defaultProjectPath: "/tmp/companion-activity"))
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        model.initialWorkspacePath = "/tmp/center-activity"
+        model.activity.activityRuns = [
+            activityRun("owned", owner: profile.id, workspace: "/tmp/companion-activity", state: "failed"),
+            activityRun("other-project", owner: profile.id, workspace: "/tmp/center-activity", state: "failed"),
+            activityRun("other-profile", owner: UUID(), workspace: "/tmp/companion-activity", state: "failed"),
+        ]
+        let decisions = ["owned", "other-project", "other-profile"].map { id in
+            AttentionItem(id: "decision-\(id)", kind: "permission_request", group: .decisions,
+                          runID: id, title: "Permission", detail: "Review", actions: ["open_chat"])
+        }
+        model.activity.configure(backend: stubbedBackendService(), liveAttentionProvider: { decisions }, toastHandler: { _ in })
+        let summary = model.companionActivitySummary(profileID: profile.id)
+        XCTAssertEqual(summary.approvalCount, 1)
+        XCTAssertEqual(summary.failureCount, 1)
+        XCTAssertEqual(summary.unreadCount, 1)
+    }
+
+    func testCanonicalSessionOwnerAndFolderOverrideConflictingManifest() throws {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let root = "/tmp/companion-canonical"
+        let profile = AgentProfile(name: "Companion", model: "", role: .generalist,
+                                   workspacePreferences: .init(defaultProjectPath: root))
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        let otherID = UUID()
+        model.sessions = [
+            activitySession("owned", owner: profile.id, workspace: root),
+            activitySession("other-owner", owner: otherID, workspace: root),
+            activitySession("other-folder", owner: profile.id, workspace: "/tmp/foreign-project"),
+            SessionSummary(id: "unowned", name: "Unowned", preview: "", mtime: 1, size: 0, cwd: root),
+        ]
+        model.activity.activityRuns = [
+            activityRun("valid", owner: otherID, workspace: "/tmp/stale-root", sessionID: "owned"),
+            activityRun("wrong-owner", owner: profile.id, workspace: root, sessionID: "other-owner"),
+            activityRun("wrong-folder", owner: profile.id, workspace: root, sessionID: "other-folder"),
+            activityRun("no-owner", owner: profile.id, workspace: root, sessionID: "unowned"),
+        ]
+        XCTAssertEqual(model.activity.activityRuns.filter {
+            model.companionActivityIncludes($0, profileID: profile.id)
+        }.map(\.id), ["valid"])
+        XCTAssertEqual(model.companionActivitySummary(profileID: profile.id).unreadCount, 1)
+    }
+
+    private func activitySession(_ id: String, owner: UUID, workspace: String) -> SessionSummary {
+        SessionSummary(id: id, name: id, preview: "", mtime: 1, size: 0,
+                       cwd: workspace, agentProfileID: owner.uuidString)
+    }
+
+    private func activityRun(_ id: String, owner: UUID, workspace: String,
+                             sessionID: String? = nil, state: String = "completed") -> OrchestrationRun {
+        var value: [String: Any] = [
+            "id": id, "workspace_root": workspace, "state": state, "request": "Fixture",
+            "created_at": 1.0, "updated_at": 2.0, "last_seq": 1, "pinned": false,
+            "legacy": false, "recoverable": false, "manifest": ["agent_profile_id": owner.uuidString],
+        ]
+        if let sessionID { value["session_id"] = sessionID }
+        return decode(OrchestrationRun.self, from: value)!
+    }
 }

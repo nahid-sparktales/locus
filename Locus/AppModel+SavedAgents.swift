@@ -348,7 +348,13 @@ extension AppModel {
         }.sorted { $0.mtime > $1.mtime }
     }
 
-    func newSavedAgentChat(_ profile: AgentProfile, workspace: String? = nil) {
+    func newSavedAgentChat(_ profile: AgentProfile, workspace: String? = nil,
+                           destination: SidebarDestination = .agents) {
+        if destination == .companion {
+            openCompanionDestination()
+            companionPanel.createConversation()
+            return
+        }
         guard creatingSavedAgentChatIDs.insert(profile.id).inserted else { return }
         let workspace = workspace ?? savedAgentWorkspacePath(profile)
         Task { @MainActor [weak self] in
@@ -365,15 +371,16 @@ extension AppModel {
                 agentInspector.clearAgentSelection()
                 agentInspector.show(.fleet)
                 configureAgentPresented = false
-                sidebarDestination = .agents
-                resume(session)
+                sidebarDestination = destination
+                resume(session, destination: destination)
             } catch {
                 showToast("Could not open \(profile.name)’s chat: \(error.localizedDescription)")
             }
         }
     }
 
-    func createSavedAgentConversation(_ profile: AgentProfile, workspace: String) async throws -> SessionSummary {
+    func createSavedAgentConversation(_ profile: AgentProfile, workspace: String,
+                                      preservingForeground: Bool = false) async throws -> SessionSummary {
         guard agentProfiles.contains(where: { $0.id == profile.id }),
               !removingSavedAgentIDs.contains(profile.id) else {
             throw AgentWorldError.unavailable("This saved agent was removed.")
@@ -392,11 +399,19 @@ extension AppModel {
         ], as: Created.self)
         splitPaneModes[response.session_id] = profile.defaultMode ?? .work
         agentWorld.bindConversation(response.session_id, workspace: workspace, profileID: profile.id)
-        await refreshMetadata()
+        if preservingForeground { try await refreshCompanionConversationCatalog() }
+        else { await refreshMetadata() }
         guard let session = sessionCatalog.snapshot.sessionsByID[response.session_id] else {
             throw AgentWorldError.unavailable("The saved conversation could not be loaded. Refresh the agent list to reopen it.")
         }
         return session
+    }
+
+    /// Refresh history without reconciling the backend's selected transcript,
+    /// provider or workspace into the independently visible center workspace.
+    func refreshCompanionConversationCatalog() async throws {
+        let response = try await backend.get("/api/sessions?limit=500", as: SessionsResponse.self)
+        sessionCatalog.replaceRemoteCatalog(sessions: response.sessions, chatFolders: nil)
     }
 
     func manageSavedAgent(_ profile: AgentProfile, workspace: String? = nil) {

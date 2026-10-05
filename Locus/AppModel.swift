@@ -428,6 +428,7 @@ final class AppModel: ObservableObject {
         ? OutputsLibraryStore(directory: NotesStore.applicationSupportDirectory.appendingPathComponent("ResponseOutputLibrary"))
         : OutputsLibraryStore())
     let onboarding = OnboardingModel()
+    let companionPanel = CompanionPanelModel()
     let agentInspector = AgentInspectorModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
     /// observes this directly, and republishing here would invalidate the whole
@@ -1029,9 +1030,17 @@ final class AppModel: ObservableObject {
         openInspectorTabs = restoredOpenInspectorTabs
         inspectorTab = initialInspectorTab
 
-        backend = backendOverride ?? (isUITesting && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GOAL"] != nil ? Self.goalUITestBackend() : BackendService(
-            baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
-        ))
+        if let backendOverride {
+            backend = backendOverride
+        } else if isUITesting && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_CHAT"] == "1" {
+            backend = Self.companionChatUITestBackend()
+        } else if isUITesting && ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_GOAL"] != nil {
+            backend = Self.goalUITestBackend()
+        } else {
+            backend = BackendService(
+                baseURL: URL(string: loadedSettings.backendURL) ?? URL(string: "http://127.0.0.1:8791")!
+            )
+        }
         sessionCatalog.configure(
             persistenceEnabled: !isUITesting && persistenceEnabled,
             defaults: defaults,
@@ -1372,6 +1381,7 @@ final class AppModel: ObservableObject {
             }
         }
 
+        companionPanel.configure(app: self)
         configureLibraryFeatures()
         configureIdentityVault()
         configureOnboarding(
