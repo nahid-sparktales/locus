@@ -140,7 +140,8 @@ The extraction branch builds the product distribution with the immutable
 repository is separate from this product archive. `Tools/RuntimePackage.py`
 verifies the wheel hash, metadata and source commit before preparation, including
 cache reuse. Provenance records both runtime and product source identities.
-Build tooling uses Python 3.11+; the installed runtime retains Python 3.10+.
+Build tooling uses Python 3.11+, or Python 3.10 with the `tomli` development
+dependency; the installed runtime retains Python 3.10+.
 A fresh build tooling environment must install the reviewed runtime before the
 smoke runner imports the canonical installer:
 

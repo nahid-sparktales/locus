@@ -152,6 +152,106 @@ this still does not verify signed SMAppService registration. Run only with
 separate profiles/accounts/workspaces, retain the report/checksum, and require
 successful cleanup. Preserve journals after interrupted updates.
 
+## Post-extraction product and boundary checks
+
+The product tests below used the disposable baseline venv described above,
+loading `locus_runtime` from that venv's `site-packages`. They load the Locus
+checkout through the existing product pytest configuration. These are product
+integration checks; they do not replace the separate clean independent-wheel
+gate in the runtime repository.
+
+The frozen runtime source is `db1955b106d747ff715885ff6d68c834e2d3129d`.
+The latest full product run used Locus commit
+`425bda09e0c876ecd4ccfb68a39d5d293fca7726`, including the final package-smoke
+import fix, exact venv-wheel verification, shell failure propagation and Python
+3.10 TOML-parser fallback.
+The exact vendored wheel below was installed in the disposable venv for this
+latest full run. Every one of its ten installed runtime Python modules was
+compared byte for byte with the committed wheel beforehand; there were no
+differences. The earlier explicit reinstall and focused integration rerun are
+also recorded below:
+
+```text
+agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl
+SHA-256: 8c7cdbc0d623f9c1cde600c2dd49af8460f3b558bd26d4576f794a759b292c36
+```
+
+From the Locus root, with `BASELINE_PY` set as above:
+
+```sh
+"$BASELINE_PY" -m pytest -q \
+  agent/tests/test_runtime.py agent/tests/test_runtime_remote.py \
+  agent/tests/test_runtime_release.py agent/tests/test_runtime_hardening.py \
+  agent/tests/test_runtime_connectors.py agent/tests/test_runtime_helper_signing.py \
+  agent/tests/test_runtime_acceptance.py agent/tests/test_app_factory.py \
+  agent/tests/test_runtime_worker_lifecycle.py \
+  agent/tests/test_runtime_storage_adapter.py \
+  agent/tests/test_runtime_package_integration.py \
+  --junitxml=/tmp/locus-runtime-extraction-product-runtime-425bda09.xml
+
+"$BASELINE_PY" -m pytest -q \
+  agent/tests/test_runstore.py agent/tests/test_runstore_connections.py \
+  agent/tests/test_usage_ledger.py agent/tests/test_schedules.py \
+  agent/tests/test_goals.py agent/tests/test_goal_runtime.py \
+  agent/tests/test_automation_workflows.py agent/tests/test_memory_adapter.py \
+  agent/tests/test_chatgpt_broker_accounts.py agent/tests/test_collaboration.py \
+  agent/tests/test_collaboration_runtime.py agent/tests/test_collaboration_transport.py \
+  agent/tests/test_collaboration_bridge.py agent/tests/test_agent_chat_routes.py \
+  --junitxml=/tmp/locus-runtime-extraction-product-neighbors-final.xml
+
+"$BASELINE_PY" -m pip install --no-deps --force-reinstall \
+  agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl
+"$BASELINE_PY" -m pytest -q \
+  agent/tests/test_runtime_package_integration.py \
+  agent/tests/test_runtime_worker_lifecycle.py \
+  agent/tests/test_runtime_storage_adapter.py \
+  --junitxml=/tmp/locus-runtime-extraction-exact-wheel.xml
+python3 Tools/ProtocolManifest.py
+```
+
+Results:
+
+| Layer | Result | Coverage |
+| --- | --- | --- |
+| Product runtime, HTTP, deterministic process and package contracts | **108 passed in 32.02 seconds** | Runtime contracts, deterministic actual processes, shared-storage/usage, package composition and shell failure-path checks at `425bda09` |
+| Affected product neighbors | **306 passed in 38.19 seconds** | Runs/connections, usage, schedules, goals, workflow adapter, memory adapter, selected provider accounts, collaboration and saved chat routes |
+| Earlier exact vendored-wheel focused rerun | **15 passed in 1.77 seconds** | Package pin/composition checks, lifecycle failures/cancellation and shared-storage/usage adapter; these cases also passed in the latest full run |
+| Companion protocol manifest | **Current, revision 2** | Existing fixture unchanged |
+
+Logs for the first two pytest commands are
+`/tmp/locus-runtime-extraction-product-runtime-425bda09.log` and
+`/tmp/locus-runtime-extraction-product-neighbors-final.log`; XML records retain
+the individual cases. The native-helper signing tests use deterministic or
+ad-hoc fixtures and do not establish a Developer ID signed release.
+
+The 306 affected-neighbor cases ran against identical product execution and
+runtime code before the later packaging-only fixes. They were not repeated
+because those fixes changed build tooling, package fixtures and a conditional
+development dependency, without changing product execution behavior.
+
+The package's storage and snapshot boundary subset was also rerun from the
+sibling runtime checkout using the exact installed wheel (no `PYTHONPATH`):
+
+```sh
+"$BASELINE_PY" -m pytest -q tests/test_storage.py tests/test_snapshots.py \
+  --junitxml=/tmp/locus-runtime-extraction-package-storage-snapshots.xml
+```
+
+Result: **25 passed in 0.41 seconds**. This subset covers durable concurrent
+admission without replay, stale/interrupted decisions, native claim authority,
+private-file permissions/symlinks/FIFOs, reviewed archive integrity and path
+boundaries, and revalidation of every selected result before applying changes.
+These cases are included in the separate full package suite; do not add the
+subset count to that suite's total.
+
+An earlier diagnostic run against an intermediate installed wheel found a
+stale `launch` reference in worker cleanup (three lifecycle failures). The
+implementation was corrected before the frozen source and all lifecycle
+cases passed in the final runs above. The extraction also deliberately adds
+owned process-group cleanup, bounded helper-startup cleanup and stronger
+private-file validation; those are safety fixes beyond the initial baseline,
+not claims that the baseline already provided nested-child cleanup.
+
 ## Native compilation and test-runner results
 
 The isolated `xcodebuild test` invocation above compiled the application and
