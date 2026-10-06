@@ -71,12 +71,16 @@ def failed_startup_package(package: Path, output: Path) -> str:
     """A valid fixture package that imports normally but fails service startup."""
     with tarfile.open(package, "r:gz") as source:
         manifest = json.load(source.extractfile("manifest.json"))
+        entrypoint = "site-packages/locus_runtime/cli.py"
+        if entrypoint not in manifest["files"]:
+            raise ValueError("Cannot locate the runtime entry point for the rollback fixture")
+        patched = False
         with tarfile.open(output, "w:gz") as target:
             for member in source:
                 if member.name == "manifest.json":
                     continue
                 stream = source.extractfile(member)
-                if member.name == "source/ollama_code/runtime.py":
+                if member.name == entrypoint:
                     data = stream.read()
                     # Future imports must remain first. Appending this before the
                     # existing main guard triggers failure only during startup.
@@ -87,7 +91,10 @@ def failed_startup_package(package: Path, output: Path) -> str:
                     manifest["files"][member.name] = hashlib.sha256(data).hexdigest()
                     member.size = len(data)
                     stream = io.BytesIO(data)
+                    patched = True
                 target.addfile(member, stream)
+            if not patched:
+                raise ValueError("Cannot locate the runtime entry point for the rollback fixture")
             data = json.dumps(manifest, sort_keys=True).encode()
             member = tarfile.TarInfo("manifest.json")
             member.size, member.mode = len(data), 0o600
@@ -211,7 +218,7 @@ def run(package: Path, checksum: str, output: Path, *, service_manager: bool, ex
                 (root / "workspaces").mkdir()
                 extracted = installer.extract_package(package.read_bytes(), checksum, root, host_target())
                 _, environment = installer.service_definition(info, root, extracted, port, "fixture")
-                process = subprocess.Popen([str(extracted / "python/bin/python3"), "-m", "ollama_code.runtime", "--home", str(root),
+                process = subprocess.Popen([str(extracted / "python/bin/python3"), "-m", "locus_runtime.cli", "--home", str(root),
                                             "--port", str(port), "--cwd", str(root / "workspaces")],
                                            env={**os.environ, **environment}, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
                 installer.wait_ready(root, port, checksum)
