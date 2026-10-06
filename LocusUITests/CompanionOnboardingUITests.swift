@@ -248,7 +248,15 @@ final class CompanionOnboardingUITests: XCTestCase {
         try openMenuBarCompanion(statusItem)
         XCTAssertTrue(popover.waitForExistence(timeout: 5))
         XCTAssertEqual(input.value as? String, "A quick companion draft")
+        element("companion.menubar.close").click()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: popover)], timeout: 5), .completed)
+        try openMenuBarCompanion(statusItem)
+        XCTAssertTrue(popover.waitForExistence(timeout: 5))
+        XCTAssertEqual(input.value as? String, "A quick companion draft")
         element("companion.menubar.open").click()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: popover)], timeout: 5), .completed)
         XCTAssertTrue(waitForComposerValue("Keep my main task draft"))
         XCTAssertFalse(element("companion.panel").exists)
         element("inspector.rail.companion").click()
