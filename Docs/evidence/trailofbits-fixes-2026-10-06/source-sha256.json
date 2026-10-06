@@ -1,0 +1,16 @@
+{
+  "Docs/MemoryCutover.md": "3a340b5105406cbc62116534a5d4f8d53cbe6ac6e442f93766f5d53d4c03ed1a",
+  "Locus/AppModel+CompanionNavigation.swift": "99ce8c5cbd275863b019e14172ed72c6d376accb7feb17c0de9f80a5ecb67f14",
+  "Locus/CompanionPanelModel.swift": "42ef2d55a92841d766ea0041a468ab3755e72926e0cce0e7e1ec04d19edadc95",
+  "LocusTests/CompanionPanelTests.swift": "601546eeb5b62c7431c90a25bdba7b8fc0184325f32fc192629cda049cd332d2",
+  "agent/ollama_code/api/disconnect.py": "08fe00ff32a528b9218a65a4b08df61c8f094b537611548790b4790d51b66484",
+  "agent/ollama_code/api/extensions.py": "11e1d15b3b16c3be27b9c45286342307b774cb161691743fb1fc90df52f6cce8",
+  "agent/ollama_code/api/portrait_preview.py": "f59375c0210b6cd5267456cd51ca5f98e3771868cc2c09a52b93f2d41f955286",
+  "agent/ollama_code/memory_adapter.py": "be38b5150d680bef799e38843a2327c3691d11d26a19360479e4f1e1f987e52e",
+  "agent/ollama_code/memory_canonical.py": "a130ff90d039a5f3e79b706384f29c07cdddc7e783c6957b4c94f96ca1179bed",
+  "agent/ollama_code/memory_migration.py": "f3d1fa1b14f48fc472c9e509a6dbe3bba43abfb42dfcd870ed3acf1b7f61c74e",
+  "agent/ollama_code/memory_ownership.py": "a29df85eca09fbb7c70e427f6f225163a1c932cb60544a60cc23db781379093b",
+  "agent/tests/test_memory_ownership.py": "3b9901c9a0c7105a092a07a46f8e8b214f44faa1112fd7e3224a734da636cd6d",
+  "agent/tests/test_plugin_panel_disconnect.py": "23a13e44d7f9afbe552abfd6f23c9afdae677931ef248c4d998287c0dc451a79",
+  "agent/tests/test_portrait_preview.py": "7b621be5b85ee27c7cb1dde9bb2f80ee56428128a43b60ceb0f5542dfc30381c"
+}

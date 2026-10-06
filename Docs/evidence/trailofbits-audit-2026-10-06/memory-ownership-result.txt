@@ -1,0 +1,8 @@
+actual shadow ownership rows 0
+cutover state package_authoritative
+before restore visible True
+missing file negative control LegacyVaultError
+old control restored state legacy_authoritative
+after restore visible False
+legacy write accepted 2
+package record preserved True
