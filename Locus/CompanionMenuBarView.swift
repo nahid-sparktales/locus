@@ -166,7 +166,7 @@ struct CompanionMenuBarView: View {
                     } label: {
                         AgentAvatarView(profileID: profile.id, name: profile.name, size: 64)
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Open \(profile.name)’s profile")
+                    .buttonStyle(.locus(.icon)).accessibilityLabel("Open \(profile.name)’s profile")
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(profile?.name ?? "Your companion").font(.locus(size: 18, weight: .semibold)).lineLimit(1)

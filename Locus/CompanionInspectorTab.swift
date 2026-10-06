@@ -67,14 +67,14 @@ private struct CompanionInspectorContent: View {
             Button { revealMainWindow(); model.selectSavedAgent(profile) } label: {
                 AgentAvatarView(profileID: profile.id, name: profile.name, size: 72)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.locus(.icon))
             .accessibilityLabel("Open \(profile.name)’s profile")
             .help("Open profile and activity")
             VStack(alignment: .leading, spacing: 4) {
                 Button { revealMainWindow(); model.selectSavedAgent(profile) } label: {
                     Text(profile.name).font(.locus(size: 18, weight: .semibold)).lineLimit(1)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.locus(.quiet))
                 .accessibilityIdentifier("companion.panel.name")
                 .help("Open profile and activity")
                 workspaceMenu(profile)
