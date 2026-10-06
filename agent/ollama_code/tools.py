@@ -1251,7 +1251,12 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     if not content:
         vault.record_event("proposal", "rejected", reason_code="empty_content", **event_context)
         return "Error: 'content' is required."
-    scope = str(args.get("scope") or "workspace")
+    from .memory_automation import automatic_memory_scope
+
+    scope = str(args["scope"]) if args.get("scope") else automatic_memory_scope(
+        content, kind=str(args.get("kind") or "fact"), workspace=ctx.memory_workspace or ctx.cwd)
+    if scope is None:
+        return "This instruction is task-specific or has an ambiguous owner; keep it in the task checkpoint."
     if scope not in ctx.memory_scopes:
         vault.record_event("proposal", "rejected", reason_code="scope_disabled", **event_context)
         return "Error: that memory scope is disabled for this agent."
@@ -1517,7 +1522,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Saves or proposes its retained result into workspace memory according to Settings; supplied content cannot replace that evidence."},
             "title": {"type": "string"},
             "content": {"type": "string"},
-            "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},
+            "scope": {"type": "string", "enum": ["personal", "workspace", "agent"],
+                      "description": "Optional explicit destination. Omit to route general user preferences to personal memory and project knowledge to workspace memory."},
             "tags": {"type": "array", "items": {"type": "string"}},
             "reason": {"type": "string", "description": "Why this is durable enough to remember."},
             "kind": {
@@ -1529,7 +1535,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "valid_until": {"type": "number", "description": "Optional Unix timestamp after which this should be treated as outdated."},
             "source_paths": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative files supporting this fact. Locus marks the memory stale if their contents change. Do not include secrets or paths outside this workspace."},
         },
-        ["title", "content", "scope", "reason"],
+        ["title", "content", "reason"],
     ),
     _schema(
         "search_workspace_knowledge",

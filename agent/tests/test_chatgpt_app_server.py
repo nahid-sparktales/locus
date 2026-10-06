@@ -108,8 +108,9 @@ def test_chatgpt_route_contains_no_secret_fields():
 class FakeManagedRuntime:
     runtime_version = "0.147.0"
 
-    def __init__(self, *, reject_resume: bool = False):
+    def __init__(self, *, reject_resume: bool = False, answer: str = "managed answer"):
         self.reject_resume = reject_resume
+        self.answer = answer
         self.started: list[str] = []
         self.resumed: list[str] = []
         self.turn_texts: list[str] = []
@@ -144,7 +145,7 @@ class FakeManagedRuntime:
         })
         event_handler({
             "method": "item/agentMessage/delta",
-            "params": {"delta": "managed answer"},
+            "params": {"delta": self.answer},
         })
         event_handler({
             "method": "thread/tokenUsage/updated",

@@ -164,17 +164,82 @@ struct InspectorPlanTab: View {
 
 /// A detailed view of the runtime's context budget, separate from Overview.
 struct InspectorContextTab: View {
+    @EnvironmentObject private var model: AppModel
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Chat context")
                     .font(.locus(size: 16, weight: .semibold))
                 ContextWindowInfoCard()
+                ChatContextCleanupCard(result: model.blocks.reversed().first(where: { $0.contextCleanup != nil })?.contextCleanup)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier("inspector.context")
+    }
+}
+
+private struct ChatContextCleanupCard: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.locusViewColors) private var viewColors
+    let result: ChatContextCleanupResult?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Clean chat context").font(.locus(size: 13, weight: .semibold))
+            Text("Preserve durable memories and unfinished work, then shorten the context used for your next message.")
+                .font(.locus(size: 12)).foregroundStyle(viewColors.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Clean chat context", systemImage: "arrow.down.right.and.arrow.up.left") {
+                model.send("/compact")
+            }
+            .buttonStyle(.locus())
+            .disabled(model.isBusy || model.hasPendingPermission || !model.isAgentOnline)
+            .accessibilityIdentifier("context.cleanup")
+
+            if let result {
+                Divider()
+                Text(result.title).font(.locus(size: 12, weight: .semibold))
+                    .foregroundStyle(result.failed ? viewColors.warning : viewColors.ink)
+                if !result.countSummary.isEmpty {
+                    Text(result.countSummary).font(.locus(size: 12))
+                }
+                Text(result.checkpointLabel).font(.locus(size: 11)).foregroundStyle(viewColors.muted)
+                if (result.pending ?? 0) > 0 {
+                    Button("Review pending memories") {
+                        model.settingsPage = .knowledge
+                        model.settingsPresented = true
+                    }.buttonStyle(.locus())
+                }
+                DisclosureGroup("Cleanup receipt") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let operation = result.operationID {
+                            Text("Operation \(operation)")
+                        }
+                        if let generation = result.contextGeneration {
+                            Text("Context generation \(generation)")
+                        }
+                        Text("\(result.outcomes.count) memory outcomes recorded")
+                        ForEach(result.outcomeLabels, id: \.self) { label in
+                            Text(label).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Memory contents and checkpoint text are not included in this receipt.")
+                    }
+                    .font(.locus(size: 11))
+                    .foregroundStyle(viewColors.muted)
+                    .textSelection(.enabled)
+                    .padding(.top, 6)
+                }
+                .accessibilityIdentifier("context.cleanup.receipt")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .locusCard(radius: 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("context.cleanup.status")
     }
 }
 
@@ -225,7 +290,7 @@ struct ContextWindowInfoCard: View {
                 }
                 Divider().padding(.vertical, 5)
                 if let reserved = usage.reserved {
-                    valueRow(id: "buffer", title: usage.hasBreakdown ? "Compaction buffer" : "Reserved capacity",
+                    valueRow(id: "buffer", title: usage.hasBreakdown ? "Cleanup buffer" : "Reserved capacity",
                              tokens: reserved, window: usage.window)
                 }
                 valueRow(id: "free", title: "Free space", tokens: usage.free, window: usage.window)

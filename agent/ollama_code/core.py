@@ -2353,6 +2353,7 @@ class AgentCore:
             "memory_reference": hashlib.sha256(self._memory_reference_input(native=parity).encode()).hexdigest(),
         }, sort_keys=True)).encode()).hexdigest()
         manager = self.codex_manager
+        managed_context_generation = SessionStore.context_generation(self.session.path)
         # Hosted apps are opt-in per ChatGPT account. Restricted helper/agent
         # policies keep their existing ceiling; broad workspace agents may use
         # selected apps, with a native approval on every hosted tool call.
@@ -2525,6 +2526,10 @@ class AgentCore:
                                 + "\n\nCURRENT USER REQUEST:\n"
                                 + current_request
                             )
+                    # Compaction above may have advanced the durable context
+                    # boundary. Stamp this thread once; late usage updates
+                    # must retain its original generation.
+                    managed_context_generation = SessionStore.context_generation(self.session.path)
                     self._chatgpt_thread_id = manager.start_thread(
                         model=self.model,
                         cwd=self.cwd,
@@ -2546,6 +2551,7 @@ class AgentCore:
                         "protocol_version": self._chatgpt_thread_protocol,
                         "history_revision": self._chatgpt_thread_history_revision,
                         "tool_schema_fingerprint": fingerprint,
+                        "context_generation": managed_context_generation,
                     })
                 usage: dict[str, Any] = {}
                 assistant_items: dict[str, dict[str, Any]] = {}
@@ -3081,6 +3087,7 @@ class AgentCore:
                             "protocol_version": self._chatgpt_thread_protocol,
                             "history_revision": self._chatgpt_thread_history_revision,
                             "tool_schema_fingerprint": self._chatgpt_thread_fingerprint,
+                            "context_generation": managed_context_generation,
                             "total_input_tokens": self._chatgpt_thread_total_input,
                             "total_output_tokens": self._chatgpt_thread_total_output,
                         })

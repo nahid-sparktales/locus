@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from cleanup_fixtures import cleanup_reply
 
 from ollama_code.capsule_progress import CapsuleRuntime
 from ollama_code.capsules import CapsuleStore
@@ -123,7 +124,7 @@ def test_compaction_preserves_late_constraints_failures_and_usage(environment):
     captured = []
     def summarize(model, messages, **kwargs):
         captured.extend(messages)
-        return ChatResponse(content_parts=["Required check still fails."], prompt_eval_count=600, eval_count=25)
+        return ChatResponse(content_parts=[cleanup_reply("Required check still fails.")], prompt_eval_count=600, eval_count=25)
     core.client = SimpleNamespace(chat_stream=summarize)
     assert not core._slash_compact().get("error")
     assert "FAILED_REQUIRED_CHECK" in json.dumps(captured)
@@ -139,7 +140,7 @@ def test_failed_compaction_keeps_previous_context(environment, monkeypatch, faul
     core.messages = [core.system_message(), {"role": "user", "content": "Preserve this"}, {"role": "assistant", "content": "Working"}]
     original = list(core.messages)
     core.client = SimpleNamespace(chat_stream=lambda *a, **k: ChatResponse(
-        content_parts=[] if fault == "empty" else ["Summary"], done_reason="length" if fault == "limit" else "stop"))
+        content_parts=[] if fault == "empty" else [cleanup_reply("Summary")], done_reason="length" if fault == "limit" else "stop"))
     if fault == "persistence":
         monkeypatch.setattr(core.session, "append_strict", lambda *_: (_ for _ in ()).throw(OSError("full disk")))
     assert core._slash_compact().get("error")
@@ -276,7 +277,7 @@ def test_unresolved_failure_survives_an_optimistic_summary(environment):
     core._add_message({"role": "user", "content": "Ship after the check passes"})
     core._add_message({"role": "assistant", "content": "Checking"})
     core._add_message({"role": "tool", "name": "bash", "content": "Error: required migration failed"})
-    core.client = SimpleNamespace(chat_stream=lambda *a, **k: ChatResponse(content_parts=["Everything looks good."]))
+    core.client = SimpleNamespace(chat_stream=lambda *a, **k: ChatResponse(content_parts=[cleanup_reply("Everything looks good.")]))
     assert not core._slash_compact().get("error")
     assert "required migration failed" in json.dumps(core.messages)
     assert "required migration failed" in json.dumps(SessionStore.load_context(core.session.path))
@@ -286,7 +287,7 @@ def test_compaction_allowance_is_bounded_and_usage_counts_once(environment):
     from test_backend import FakeClient
     _, core, _, _ = environment
     core.config.update(auto_compact=True, context_window=32768)
-    core.client = FakeClient([ChatResponse(content_parts=["section"], prompt_eval_count=10, eval_count=2)] * 5 +
+    core.client = FakeClient([ChatResponse(content_parts=[cleanup_reply("section")], prompt_eval_count=10, eval_count=2)] * 5 +
                              [ChatResponse(content_parts=["done"], prompt_eval_count=20, eval_count=4)])
     core._add_message({"role": "user", "content": "Keep requirements"})
     core._add_message({"role": "assistant", "content": "x" * 100000})
@@ -421,7 +422,7 @@ def test_truncated_and_interrupted_classical_output_is_incomplete(environment, r
 def test_native_compaction_uses_selected_account_and_records_usage(environment):
     from test_chatgpt_app_server import FakeManagedRuntime, _managed_core
     workspace, _, _, _ = environment
-    runtime = FakeManagedRuntime()
+    runtime = FakeManagedRuntime(answer=cleanup_reply("Managed summary"))
     core = _managed_core(workspace, runtime)
     core.context_limit = 128000
     core._add_message({"role": "user", "content": "A constraint " + "x" * 2100 + " KEEP_THIS"})
@@ -697,14 +698,21 @@ def test_native_tool_failure_is_durable_even_without_classical_tool_messages(env
 
 
 def test_private_context_is_not_compacted_or_added_to_capsule_context(environment):
+    from test_backend import FakeClient
+
     from ollama_code.context_preservation import runtime_context
     _, core, _, _ = environment
     core.identity_mode = True
     assert runtime_context(core) == ""
-    core.messages = [core.system_message(), {"role": "user", "content": "private request"}]
+    core.messages = [core.system_message(), {"role": "user", "content": "private request"},
+                     {"role": "assistant", "content": "private answer"}]
+    core.client = FakeClient([ChatResponse(content_parts=[cleanup_reply("Private summary")])])
     before = list(core.messages)
+    stored = core.session.path.read_bytes()
     core._slash_compact()
     assert core.messages == before
+    assert core.client.calls == 0
+    assert core.session.path.read_bytes() == stored
 
 
 def test_essential_instructions_that_cannot_fit_stop_before_generation(environment):
@@ -742,7 +750,7 @@ def test_compaction_records_usage_in_the_normal_dashboard_store(environment):
     core._add_message({"role": "user", "content": "Preserve constraints"})
     core._add_message({"role": "assistant", "content": "Exploration"})
     core.client = SimpleNamespace(chat_stream=lambda *a, **k: ChatResponse(
-        content_parts=["Summary"], prompt_eval_count=600, eval_count=25))
+        content_parts=[cleanup_reply("Summary")], prompt_eval_count=600, eval_count=25))
     assert core._slash_compact()["data"]["summary"] == "Summary"
     assert runs.usage_summary()["solo"]["turns"] == 1
     assert core.total_prompt_tokens + core.total_completion_tokens == 625

@@ -393,7 +393,8 @@ def begin_turn(core, query: str, *, allow_tools=True):
         return
     parent_core = getattr(core, "adaptive_retrieval_parent", None)
     parent = getattr(parent_core, "adaptive_retrieval", None)
-    coordinator = AdaptiveRetrieval(core, query, allowance=parent.allowance if parent else None)
+    from .context_preservation import retrieval_query
+    coordinator = AdaptiveRetrieval(core, retrieval_query(core, query), allowance=parent.allowance if parent else None)
     coordinator.adapter.release_context(core)
     core.memory_context = ""
     core.adaptive_retrieval = coordinator

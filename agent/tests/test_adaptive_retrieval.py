@@ -57,6 +57,26 @@ def followup(coordinator, query="signed packages", sources=None):
         "missing_information": "Need exact deployment evidence", "sources": sources or ["all"]}))
 
 
+def test_next_turn_retrieves_using_committed_checkpoint_with_normal_allowance(retrieval):
+    from ollama_code.sessions import SessionStore
+
+    _, core, _, _, record, _ = retrieval
+    core.session = SessionStore(core.cwd, model="fixture", provider="ollama")
+    snapshot = SessionStore.cleanup_snapshot(core.session.path)
+    core.session.commit_cleanup({"type": "compacted_context", "messages": [],
+        "checkpoint": {"objective": "canary release", "unfinished_work": ["Find violet deployment"],
+                       "next_steps": ["Check signed packages"]},
+        "context_generation": 1, "covered_through": snapshot["covered_through"]}, snapshot)
+    core._memory_turn_id = "refreshed-turn"
+    rag.begin_turn(core, "Continue")
+    current = core.adaptive_retrieval
+    assert current.allowance.rounds == 1
+    assert "canary release" in current.query
+    assert record.id in {item["id"] for item in current.snapshot()["memory"]["items"]}
+    assert current.snapshot()["packed_bytes"] <= rag.EVIDENCE_BYTES
+    assert followup(current)["rounds"] == 2
+
+
 def test_initial_combines_canonical_memory_code_documents_and_labels(retrieval):
     co, core, _, _, record, events = retrieval
     co.initial()

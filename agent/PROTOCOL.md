@@ -896,7 +896,7 @@ Endpoint: `/ws/chat`.
 | `clear` | — | Resets the conversation and todos. Emits `todo_update`, `session_info`, then `slash_result {command: "clear"}`. |
 | `new_session` | — | Creates a different saved-session file and resets memory, todos, session permissions, interrupts, and token counters. Emits `session_started {reason: "clear_chat"}` followed by `session_info`. |
 | `retry_last` | — | Creates a new branch through the latest user message, preserving the original session, then regenerates the response. Emits `session_started {reason: "retry"}` before streaming. |
-| `compact` | — | Summarizes history to free context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
+| `compact` | — | Clean chat context: preserve eligible durable memories and checkpoint unfinished work before shortening working context (runs as a background slash command). Ends with `slash_result {command: "compact"}`. Rejected when busy. |
 | `resume` | `session_id: string` | Resumes a saved session. Ends with `slash_result {command: "resume", data: {messages: [...]}}`. Rejected when busy. |
 | `ping` | — | Emits `pong`; used as an ordering sentinel. |
 
@@ -1466,6 +1466,21 @@ Ends a slash command (`/help`, `/model`, `/clear`, `/compact`, `/init`,
 `text` may be absent; `data` is command-specific (`messages` for resume,
 `todos` for todos, `sessions` for sessions, `summary` for compact, full
 session-info fields for status). `error: true` marks failures.
+
+The **Clean chat context** result retains `command: "compact"`. Its `data` may
+include `cleanup_operation_id`, `context_generation`, `checkpoint_status`
+(`saved` or `not_committed`), `counts` (`saved`, `pending`, `skipped`), and memory
+`outcomes` (`status`, `id`, `revision`, `scope`). The desktop stores only these
+receipt fields, not checkpoint or extracted-memory bodies. An uncommitted cleanup
+failure retains the prior working context and reports any saves already completed.
+Cleanup errors may use a nonempty `error` string describing the failure; the
+desktop accepts both that form and `error: true`.
+Automatic and manual cleanup also emit a `context_cleanup` event with these
+metadata fields at the top level and `summary: null`. This event does not end the
+active turn. The desktop deduplicates it with `slash_result` by operation ID and
+excludes the receipt from restored model conversation text. A failed automatic
+cleanup includes `error` and `checkpoint_status: "not_committed"`.
+See [Persistent memory cleanup](../Docs/PersistentMemoryCleanup.md).
 
 ### Heartbeat event
 

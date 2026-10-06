@@ -204,7 +204,7 @@ enum ChatTranscriptBuilder {
             switch block.kind {
             case .user: "User: \(block.text)"
             case .assistant: "Assistant: \(block.text)"
-            case .note: block.completion == nil ? "Note: \(block.text)" : nil
+            case .note: block.completion == nil && block.contextCleanup == nil ? "Note: \(block.text)" : nil
             case .tool, .error: nil
             }
         }

@@ -662,7 +662,7 @@ class MemoryAdapter(RecallRuntime):
             from .memory_automation import capture_user_memory
 
             try:
-                capture_user_memory(core, text)
+                capture_user_memory(core, text, event_id=record.get("_item_id") or event_id or "")
             except Exception as exc:
                 # Memory capture must not prevent a committed chat from running.
                 self._failed("automatic_capture", exc)
@@ -671,7 +671,7 @@ class MemoryAdapter(RecallRuntime):
         self.archive_text(
             self.access(core, "ingest"), session_ref=core.session.session_id, role=role,
             text=strip_prompt_decoration(text) if role == "user" else text,
-            event_id=event_id or record.get("_item_id") or "", source="locus",
+            event_id=record.get("_item_id") or event_id or "", source="locus",
         )
 
     @staticmethod

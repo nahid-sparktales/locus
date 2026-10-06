@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 
-def protected_context(core: Any) -> str:
+def protected_context(core: Any, *, checkpoint: dict | None = None) -> str:
     from .sessions import SessionStore
     records = SessionStore.authoritative_inputs(core.session.path)
-    inputs = [m["content"] for m in records]
-    for message in core.messages[1:]:
+    saved = SessionStore.context_checkpoint(core.session.path)
+    checkpoint = checkpoint if checkpoint is not None else (saved or {}).get("checkpoint")
+    inputs = [m["content"] for m in records] if checkpoint is None else []
+    for message in (core.messages[1:] if checkpoint is None else []):
         if (message.get("role") == "user" and not message.get("_locus_context")
                 and not message.get("_compaction_summary")):
             text = message.get("content")
@@ -19,6 +22,9 @@ def protected_context(core: Any) -> str:
         from .sessions import strip_prompt_decoration
         inputs = [strip_prompt_decoration(text) for text in inputs]
     sections = ["Current task context. Preserve the user's constraints; later corrections supersede earlier instructions."]
+    if checkpoint is not None:
+        sections.append("Unfinished-work checkpoint (pending memories are not approved facts):\n" + json.dumps(checkpoint, ensure_ascii=False))
+        inputs = [m["content"] for m in records]
     if inputs:
         sections.append("User requests and corrections (verbatim):\n" + "\n\n".join(inputs))
     if core.tool_ctx.plan_document:
@@ -37,73 +43,96 @@ def protected_context(core: Any) -> str:
 
 
 def compact(core: Any) -> dict[str, Any]:
-    from .core import COMPACT_TRANSCRIPT_CAP_CHARS, SUMMARY_ALLOWANCE_TOKENS
-    history = [m for m in core.messages[1:] if m.get("role") in {"user", "assistant", "tool"}]
+    from . import context_cleanup
+    if core.identity_mode:
+        return {"command": "compact", "error": "identity_mode",
+                "text": "Identity chat context cannot be saved or cleaned."}
+    history = [m for m in core.messages[1:] if m.get("role") in {"user", "assistant", "tool"}
+               and not m.get("_locus_context")]
     if len(history) < 2:
-        return {"command": "compact", "text": "Nothing to compact yet."}
-    original = list(core.messages)
+        return {"command": "compact", "text": "Nothing to clean yet."}
+    attempt_id = uuid.uuid4().hex
+    operation = None
+    committed = False
+    outcomes = []
     try:
-        snapshot = protected_context(core)
+        operation = context_cleanup.prepare(core)
+        checkpoint = dict(operation["checkpoint"])
+        # Existing task/goal stores remain authoritative. The checkpoint holds
+        # references and a concise working summary, never invented completion.
+        runtime, capsule = getattr(core, "goal_runtime", None), getattr(core, "capsule_runtime", None)
+        checkpoint["task_state"] = {
+            "goal": runtime.snapshot() if runtime is not None else None,
+            "capsule": capsule.context() if capsule is not None else None,
+            "plan": core.tool_ctx.plan_document,
+        }
         system = core.system_message()
         available = core.context_limit or 128000
-        overhead = token_estimate(str(system.get("content", ""))) + core._tool_schema_tokens() + core._reply_room()
-        # Never shorten authoritative instructions just to make compaction succeed.
-        if token_estimate(snapshot) + overhead + SUMMARY_ALLOWANCE_TOKENS >= available:
-            raise ValueError("Essential task instructions exceed this model's context. Choose a larger context or explicitly narrow the task.")
-        user_positions = [i for i, m in enumerate(history) if m.get("role") == "user" and not m.get("_locus_context")]
-        tail_start = user_positions[-2] if len(user_positions) > 2 else len(history)
-        tail = history[tail_start:]
-        older = history[:tail_start]
-        # A recent tail is optional; if too large summarize it with every other
-        # message, preserving tool pairings in serialized complete records.
-        if token_estimate(json.dumps(tail)) + token_estimate(snapshot) + overhead + SUMMARY_ALLOWANCE_TOKENS >= available:
-            older, tail = history, []
-        cap = min(COMPACT_TRANSCRIPT_CAP_CHARS, max(3000, 3 * (available - SUMMARY_ALLOWANCE_TOKENS - 1500)))
-        transcript = "\n".join(json.dumps(m, ensure_ascii=False) for m in older)
-        summaries = []
-        chunks = bounded_sections(transcript, cap)
-        chunk_count = len(chunks)
-        allowance = getattr(core, "_compaction_call_limit", None) if core._accepting_steers else None
-        if allowance is not None and chunk_count >= allowance:
-            raise ValueError("Compaction and execution need more than the remaining model-call allowance. Context is preserved.")
-        for section in chunks:
-            if core._interrupt.is_set():
-                raise InterruptedError("Compaction interrupted; prior context retained.")
-            request = [{"role": "system", "content": "Summarize this consecutive section of agent history. Preserve decisions, failed and passed checks, source paths, unresolved blockers and tool evidence. User constraints are preserved separately. Never claim missing work was completed."},
-                       {"role": "user", "content": section}]
-            response = summarize_section(core, request)
-            core.total_prompt_tokens += response.prompt_eval_count
-            core.total_completion_tokens += response.eval_count
-            core._compaction_calls_pending = getattr(core, "_compaction_calls_pending", 0) + response.provider_fields.get("locus_model_calls", 1)
-            core._compaction_prompt_pending = getattr(core, "_compaction_prompt_pending", 0) + response.prompt_eval_count
-            core._compaction_completion_pending = getattr(core, "_compaction_completion_pending", 0) + response.eval_count
-            core._emit({"type": "compaction_usage", "model_calls": response.provider_fields.get("locus_model_calls", 1), "included_in_turn": core._accepting_steers,
-                        "prompt_tokens": response.prompt_eval_count, "completion_tokens": response.eval_count})
-            if getattr(core, "capsule_runtime", None) is not None:
-                core._emit({"type": "model_usage", "model_calls": core._compaction_calls_pending,
-                            "prompt_tokens": core._compaction_prompt_pending,
-                            "completion_tokens": core._compaction_completion_pending})
-            summary = response.content.strip()
-            if not summary or response.done_reason in {"length", "interrupted", "error", "incomplete"}:
-                raise ValueError("Compaction did not produce a complete summary; prior context retained.")
-            summaries.append(summary)
-        summary = "\n\n".join(summaries)
-        candidate = [system, {"role": "user", "content": snapshot, "_locus_context": True},
-                     {"role": "user", "content": "Summary of earlier exploration:\n" + summary,
-                      "_locus_context": True, "_compaction_summary": True}, *tail]
-        if token_estimate(json.dumps(candidate)) + core._tool_schema_tokens() + core._reply_room() >= available:
-            raise ValueError("The preserved context still exceeds the model window; prior context retained.")
-        core.session.append_strict({"type": "compacted_context", "messages": candidate[1:],
-                                    "plan": core.tool_ctx.plan_document})
-        core.messages = candidate
-        core._measured_prompt_tokens = 0
-        core._clear_chatgpt_thread()
-        core._emit_info()
-        return {"command": "compact", "text": "Conversation compacted; task instructions and evidence references preserved.",
-                "data": {"summary": summary}}
+        user_positions = [i for i, m in enumerate(history) if m.get("role") == "user"]
+        tail = history[user_positions[-2]:] if len(user_positions) > 2 else []
+        active_text = {item["content"] for item in checkpoint["active_constraints"]}
+        if any(m.get("role") == "user" and m.get("content") not in active_text for m in tail):
+            # Replaying the original turn would restore a retired instruction.
+            # Its still-active spans and evidence are already in the checkpoint.
+            tail = []
+
+        def replacement():
+            # This packet already covers frozen input; do not replay those
+            # same requests a second time through protected_context.
+            from .sessions import SessionStore
+            snapshot = "Current task checkpoint. Later corrections supersede earlier instructions. Pending or unresolved memories are not approved facts.\n" + json.dumps(checkpoint, ensure_ascii=False)
+            failures = SessionStore.unresolved_failures(core.session.path)
+            if failures:
+                snapshot += "\nUnresolved tool failures:\n" + json.dumps(failures, ensure_ascii=False)
+            snapshot += "\nFull source transcript: " + str(core.session.path)
+            messages = [system, {"role": "user", "content": snapshot, "_locus_context": True},
+                {"role": "user", "content": "Summary of earlier exploration:\n" + operation["summary"],
+                 "_locus_context": True, "_compaction_summary": True}]
+            overhead = core._tool_schema_tokens() + core._reply_room()
+            if token_estimate(json.dumps(messages, ensure_ascii=False)) + overhead >= available:
+                raise ValueError("Essential checkpoint exceeds this model's context; prior context retained. Choose a larger context or narrow the task.")
+            if token_estimate(json.dumps([*messages, *tail], ensure_ascii=False)) + overhead < available:
+                messages.extend(tail)
+            return messages
+
+        replacement()  # Do not write memories for an already impossible cleanup.
+        outcomes = context_cleanup.save(core, operation)
+        checkpoint["memory_outcomes"] = outcomes
+        checkpoint["unresolved_memories"] = [{"content": item["content"], "status": outcome["status"],
+            "reason": outcome.get("reason", "Awaiting memory review; do not treat as approved knowledge.")}
+            for item, outcome in zip(operation["candidates"], outcomes, strict=True) if outcome.get("status") in {"pending", "unresolved"}]
+        candidate = replacement()
+        generation = context_cleanup.commit(core, operation, candidate, checkpoint, outcomes)
+        committed = True
+        counts = {"saved": sum(r.get("status") in {"approved", "already_saved"} for r in outcomes),
+                  "pending": sum(r.get("status") == "pending" for r in outcomes),
+                  "skipped": sum(r.get("status") in {"suppressed", "policy_disabled", "unresolved"} for r in outcomes)}
+        data = {"summary": operation["summary"], "cleanup_operation_id": operation["operation_id"],
+                "context_generation": generation, "checkpoint_status": "saved", "counts": counts,
+                "outcomes": outcomes}
+        # Observability is best effort after the durable commit; it cannot undo
+        # committed context or report a failed cleanup after a successful fsync.
+        try:
+            core._emit({"type": "context_cleanup", **data, "summary": None})
+            core._emit_info()
+        except Exception:
+            pass
+        return {"command": "compact", "text": f"Chat context cleaned; {counts['saved']} memories saved, {counts['pending']} pending; unfinished work preserved.", "data": data}
     except Exception as exc:
-        core.messages = original
-        return {"command": "compact", "error": str(exc), "text": str(exc)}
+        if committed:
+            raise
+        data = {"cleanup_operation_id": operation["operation_id"] if operation else attempt_id,
+                "checkpoint_status": "not_committed", "outcomes": outcomes}
+        if outcomes:
+            data["counts"] = {"saved": sum(r.get("status") in {"approved", "already_saved"} for r in outcomes),
+                "pending": sum(r.get("status") == "pending" for r in outcomes),
+                "skipped": sum(r.get("status") in {"suppressed", "policy_disabled", "unresolved"} for r in outcomes)}
+        try:
+            core._emit({"type": "context_cleanup", "error": str(exc), **data})
+        except Exception:
+            pass
+        return {"command": "compact", "error": str(exc),
+                "text": "Cleanup failed — chat context retained. " + str(exc), "data": data}
 
 
 def runtime_context(core: Any) -> str:
@@ -115,7 +144,8 @@ def runtime_context(core: Any) -> str:
         return protected_context(core) if core.provider in {"chatgpt", "claude_plan"} and core._turn_allows_tools else ""
     from .sessions import SessionStore
     inputs = SessionStore.authoritative_inputs(core.session.path)
-    state = {"requests_and_corrections": [m["content"] for m in inputs],
+    checkpoint = (SessionStore.context_checkpoint(core.session.path) or {}).get("checkpoint")
+    state = {"checkpoint": checkpoint, "requests_and_corrections": [m["content"] for m in inputs],
              "goal": runtime.snapshot() if runtime is not None else None,
              "capsule": capsule.context() if capsule is not None else None,
              "unresolved_failures": SessionStore.unresolved_failures(core.session.path)}
@@ -124,9 +154,27 @@ def runtime_context(core: Any) -> str:
         store = TaskStateStore(runtime.store.run_store)
         record = store.get("goal:" + runtime.goal_id)
         if record:
-            record["inputs"] = inputs
+            record["inputs"] = [{"role": "user", "content": item["content"]}
+                                for item in (checkpoint or {}).get("active_constraints", [])] + inputs
             store.save(record, expected_revision=record["revision"])
     return "Current durable task state. Later user corrections supersede earlier instructions.\n" + json.dumps(state, ensure_ascii=False)
+
+
+def retrieval_query(core: Any, query: str) -> str:
+    """Include unfinished work in the next permitted search, never start a round."""
+    from .sessions import SessionStore
+    session = getattr(core, "session", None)
+    if getattr(core, "identity_mode", False) or not getattr(session, "path", None):
+        return query
+    checkpoint = (SessionStore.context_checkpoint(session.path) or {}).get("checkpoint") or {}
+    hints = [checkpoint.get("objective", ""), *checkpoint.get("unfinished_work", []),
+             *checkpoint.get("next_steps", [])]
+    # A continuation has no useful search terms of its own. For a substantive
+    # new question preserve its focused query; the model also receives the
+    # checkpoint and can spend the existing refinement if evidence is missing.
+    if query.strip().casefold().rstrip(".!?") in {"continue", "resume", "go on", "next", "carry on", "keep going", "proceed"}:
+        return next((value.strip()[:2000] for value in hints if isinstance(value, str) and value.strip()), query)
+    return query
 
 
 def summarize_section(core: Any, messages: list[dict]) -> Any:
@@ -137,7 +185,7 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
         reservation = core.goal_runtime.reserve() if core.goal_runtime is not None else None
         from .model_usage import tracked_chat
         response = tracked_chat(core, core.client, core.model, messages, purpose="compaction", options=core.chat_options(),
-                                           should_stop=core._interrupt.is_set)
+                                           should_stop=core._should_stop_stream)
         settle_core(task_call, response)
         if reservation:
             core.goal_runtime.settle(reservation, response)
@@ -172,7 +220,7 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
             turn = params.get("turn") or {}
             incomplete = turn.get("status") not in {None, "completed"}
     options = dict(thread_id=thread, text=messages[1]["content"], model=core.model,
-                   tool_handler=None, event_handler=observe, should_interrupt=core._interrupt.is_set)
+                   tool_handler=None, event_handler=observe, should_interrupt=core._should_stop_stream)
     try:
         from .model_usage import tracked_native
         from .task_usage_ledger import native_accounted

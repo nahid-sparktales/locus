@@ -334,6 +334,8 @@ def _automatic_memory_context(
             return ""
     if getattr(core, "identity_mode", False):
         return ""
+    from .context_preservation import retrieval_query
+    query = retrieval_query(core, query)
     def legacy() -> LegacyRecall:
         return _legacy_memory_recall(core, query, configuration, just_chat=just_chat, agent_id=agent_id)
 
@@ -2646,7 +2648,10 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             except OSError:
                 _command_error(svc, str(mtype), "The request could not be saved; it was not started.")
                 return
-        if not svc.start_turn(loop, call, *args):
+        start_options = {"reset_interrupt": True} if (
+            call is _run_slash and text.strip().split(maxsplit=1)[0].lower() == "/compact"
+        ) else {}
+        if not svc.start_turn(loop, call, *args, **start_options):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
         else:
             request_id = str(msg.get("request_id") or "")[:160]
@@ -2965,7 +2970,7 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
         except AgentBusyError:
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "compact":
-        if not svc.start_turn(loop, _run_slash, svc, "/compact"):
+        if not svc.start_turn(loop, _run_slash, svc, "/compact", reset_interrupt=True):
             _command_error(svc, str(mtype), "Agent is busy — press Stop first.")
     elif mtype == "resume":
         session_id = str(msg.get("session_id", "")).strip()

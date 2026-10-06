@@ -1,10 +1,10 @@
 """Cross-session context, memory, and skill-observation routes."""
 
 import uuid
+from types import SimpleNamespace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from locus_memory.learning.selected_chat import review_selected_chat
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
@@ -13,7 +13,7 @@ from ..knowledge import KnowledgeError, KnowledgeStore
 from ..knowledge_runtime import knowledge_store
 from ..memory import MemoryError
 from ..memory_runtime import memory_vault, memory_workspace
-from ..sessions import SessionStore, SessionTooLargeError, strip_prompt_decoration
+from ..sessions import SessionStore, SessionTooLargeError
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -483,9 +483,8 @@ def memory_reprocess(
     if path is None:
         raise HTTPException(404, "session not found")
     target = memory_workspace(service, str(body.get("workspace") or ""))
-    agent_id = str(body.get("agent_id") or "primary")
     try:
-        messages = SessionStore.load(path)
+        SessionStore.load(path)
     except SessionTooLargeError as exc:
         raise HTTPException(413, str(exc)) from exc
     run_id = uuid.uuid4().hex
@@ -508,17 +507,31 @@ def memory_reprocess(
     store.append_event(
         run_id, {"type": "memory_review_started", "state": "running"}
     )
-    # Host prompt decoration includes selected files and attachment text; only
-    # the original user request crosses the package's review boundary.
-    evidence = (
-        {"role": message.get("role"),
-         "content": strip_prompt_decoration(str(message.get("content") or ""))}
-        for message in messages if message.get("role") == "user"
-    )
-    candidates = review_selected_chat(
-        memory_vault(target), evidence, workspace=target, agent_id=agent_id,
-        session_id=session_id, run_id=run_id,
-    )
+    from ..agent_profile_runtime import trusted_memory_agent
+    from ..memory_automation import capture_user_memory
+
+    # Resolve the selected chat's saved owner from host metadata, not a request
+    # body's agent_id. Review remains candidate-only even with auto-save enabled.
+    review = SimpleNamespace(**vars(service.core))
+    review.session = SimpleNamespace(session_id=session_id, path=path)
+    review.tool_ctx = SimpleNamespace(memory_run_id="")
+    review._memory_profile_active = False
+    try:
+        review.agent_id, review.agent_configuration = trusted_memory_agent(review)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    review._memory_profile_active = True
+    review.workspace_root = target
+    review.cwd = target
+    review.tool_ctx.memory_run_id = run_id
+    candidates = []
+    for message in SessionStore.cleanup_source_records(path, include_covered=True):
+        if message.get("role") != "user":
+            continue
+        candidates.extend(capture_user_memory(review, message["content"],
+            event_id=message["source_id"], auto_save=False))
+        if len(candidates) >= 20:
+            break
     store.append_event(
         run_id,
         {

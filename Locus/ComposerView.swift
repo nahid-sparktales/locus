@@ -813,7 +813,7 @@ struct ComposerView: View {
                     popupRow(
                         index: index,
                         symbol: command.symbol,
-                        title: "/\(command.name)\(command.argumentHint.map { " <\($0)>" } ?? "")",
+                        title: command.displayTitle,
                         subtitle: command.summary,
                         identifier: "composer.slash.\(command.name)"
                     ) {

@@ -4541,6 +4541,117 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCleanupResultShowsCountsWithoutReplacingVisibleHistory() throws {
+        let model = AppModel(startImmediately: false)
+        let existing = ChatBlock(kind: .user, text: "Please finish the current task.")
+        model.blocks = [existing]
+        model.isBusy = true
+        model.handleEventForTesting([
+            "type": "slash_result", "command": "compact", "error": false,
+            "text": "Chat context cleaned.",
+            "data": ["cleanup_operation_id": "cleanup-1", "context_generation": 2,
+                     "checkpoint_status": "saved", "counts": ["saved": 3, "pending": 1, "skipped": 2]],
+        ])
+        XCTAssertFalse(model.isBusy)
+        XCTAssertEqual(model.blocks.first, existing)
+        let receipt = try XCTUnwrap(model.blocks.last)
+        XCTAssertEqual(receipt.kind, .note)
+        XCTAssertTrue(receipt.text.contains("3 memories saved"))
+        XCTAssertTrue(receipt.text.contains("1 pending review"))
+        XCTAssertEqual(receipt.contextCleanup?.contextGeneration, 2)
+    }
+
+    @MainActor
+    func testCleanupFailureClearlyKeepsContextAndReportsPartialSaves() throws {
+        let model = AppModel(startImmediately: false)
+        let existing = ChatBlock(kind: .assistant, text: "The unfinished plan remains here.")
+        model.blocks = [existing]
+        model.handleEventForTesting([
+            "type": "slash_result", "command": "compact", "error": "checkpoint write failed",
+            "text": "The checkpoint could not be committed.",
+            "data": ["cleanup_operation_id": "cleanup-2", "checkpoint_status": "not_committed",
+                     "counts": ["saved": 1, "pending": 0, "skipped": 0]],
+        ])
+        XCTAssertEqual(model.blocks.first, existing)
+        let receipt = try XCTUnwrap(model.blocks.last)
+        XCTAssertEqual(receipt.kind, .error)
+        XCTAssertTrue(receipt.text.contains("Cleanup failed — chat context retained"))
+        XCTAssertTrue(receipt.text.contains("1 memory saved"))
+        XCTAssertTrue(receipt.text.contains("The checkpoint could not be committed."))
+    }
+
+    @MainActor
+    func testAutomaticCleanupReceiptKeepsTurnActiveAndExcludesBodies() throws {
+        let model = AppModel(startImmediately: false)
+        let existing = ChatBlock(kind: .user, text: "Finish the current task.")
+        model.blocks = [existing]
+        model.isBusy = true
+        model.handleEventForTesting([
+            "type": "context_cleanup", "cleanup_operation_id": "automatic-1",
+            "context_generation": 2, "checkpoint_status": "saved",
+            "counts": ["saved": 1, "pending": 2, "skipped": 0],
+            "summary": "SUMMARY-CONTENT-CANARY", "checkpoint": ["objective": "CHECKPOINT-CONTENT-CANARY"],
+            "outcomes": [["status": "approved", "id": "memory-1", "revision": 3,
+                          "scope": "personal", "content": "MEMORY-CONTENT-CANARY"]],
+        ])
+        XCTAssertTrue(model.isBusy, "Automatic cleanup must not end the current turn")
+        XCTAssertEqual(model.blocks.first, existing)
+        let receipt = try XCTUnwrap(model.blocks.last)
+        XCTAssertEqual(receipt.kind, .note)
+        XCTAssertEqual(receipt.contextCleanup?.saved, 1)
+        XCTAssertEqual(receipt.contextCleanup?.pending, 2)
+        XCTAssertEqual(receipt.contextCleanup?.outcomes.first?.memoryID, "memory-1")
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(receipt), encoding: .utf8))
+        XCTAssertFalse(encoded.contains("CONTENT-CANARY"))
+        XCTAssertEqual(ChatTranscriptBuilder.transcriptContext(from: model.blocks), "User: Finish the current task.")
+    }
+
+    @MainActor
+    func testManualCleanupResultUpdatesTheAutomaticReceiptWithoutDuplicate() throws {
+        let model = AppModel(startImmediately: false)
+        let data: [String: Any] = ["cleanup_operation_id": "cleanup-shared", "context_generation": 3,
+                                  "checkpoint_status": "saved", "counts": ["saved": 2, "pending": 0, "skipped": 1],
+                                  "summary": NSNull()]
+        model.isBusy = true
+        model.handleEventForTesting(data.merging(["type": "context_cleanup"]) { _, value in value })
+        let initialID = try XCTUnwrap(model.blocks.last?.id)
+        XCTAssertTrue(model.isBusy)
+        model.handleEventForTesting([
+            "type": "slash_result", "command": "compact", "data": data,
+            "text": "Chat context cleaned; 2 memories saved, 0 pending; unfinished work preserved.",
+        ])
+        XCTAssertFalse(model.isBusy)
+        XCTAssertEqual(model.blocks.count, 1)
+        XCTAssertEqual(model.blocks.last?.id, initialID)
+        XCTAssertEqual(model.blocks.last?.contextCleanup?.saved, 2)
+        model.handleEventForTesting(data.merging(["type": "context_cleanup"]) { _, value in value })
+        XCTAssertEqual(model.blocks.count, 1, "Replayed automatic events share the same operation receipt")
+        XCTAssertTrue(ChatTranscriptBuilder.transcriptContext(from: model.blocks).isEmpty)
+    }
+
+    @MainActor
+    func testAutomaticCleanupFailureKeepsContextAndReportsPartialSaves() throws {
+        let model = AppModel(startImmediately: false)
+        let existing = ChatBlock(kind: .assistant, text: "The unfinished plan remains here.")
+        model.blocks = [existing]
+        model.isBusy = true
+        model.handleEventForTesting([
+            "type": "context_cleanup", "cleanup_operation_id": "automatic-failure",
+            "checkpoint_status": "not_committed", "error": "checkpoint write failed",
+            "counts": ["saved": 1, "pending": 1, "skipped": 0], "summary": NSNull(),
+        ])
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.blocks.first, existing)
+        let receipt = try XCTUnwrap(model.blocks.last)
+        XCTAssertEqual(receipt.kind, .error)
+        XCTAssertEqual(receipt.contextCleanup?.saved, 1)
+        XCTAssertEqual(receipt.contextCleanup?.pending, 1)
+        XCTAssertTrue(receipt.text.contains("Cleanup failed — chat context retained"))
+        XCTAssertTrue(receipt.text.contains("Checkpoint not committed"))
+        XCTAssertTrue(ChatTranscriptBuilder.transcriptContext(from: [receipt]).isEmpty)
+    }
+
+    @MainActor
     func testStopWithoutConnectionKeepsBusyStateForRecovery() {
         let model = AppModel(startImmediately: false)
         model.isBusy = true

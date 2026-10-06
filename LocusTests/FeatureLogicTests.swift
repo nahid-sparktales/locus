@@ -730,6 +730,55 @@ final class FeatureLogicTests: XCTestCase {
         XCTAssertEqual(SlashCommand.argument(in: "/model"), "")
     }
 
+    func testCleanupDisplayKeepsCompactCommandCompatible() throws {
+        let command = try XCTUnwrap(SlashCommand.command(invokedBy: "/compact"))
+        XCTAssertEqual(command.name, "compact")
+        XCTAssertEqual(command.action, .compact)
+        XCTAssertEqual(command.displayTitle, "Clean chat context")
+        XCTAssertTrue(SlashCommand.matches(for: "clean").contains(command))
+        XCTAssertTrue(command.helpLine.hasPrefix("/compact"))
+    }
+
+    func testCleanupReceiptStoresOnlyMetadataAndRoundTripsWithChatBlock() throws {
+        let result = try XCTUnwrap(ChatContextCleanupResult(event: [
+            "command": "compact", "error": false, "data": [
+                "cleanup_operation_id": "cleanup-123", "context_generation": 4,
+                "checkpoint_status": "saved", "checkpoint": ["objective": "CHECKPOINT-CONTENT-CANARY"],
+                "summary": "SUMMARY-CONTENT-CANARY", "counts": ["saved": 2, "pending": 1, "skipped": 0],
+                "outcomes": [["status": "approved", "id": "memory-1", "revision": 3,
+                              "scope": "workspace", "content": "MEMORY-CONTENT-CANARY"]],
+            ],
+        ]))
+        XCTAssertEqual(result.saved, 2)
+        XCTAssertEqual(result.pending, 1)
+        XCTAssertEqual(result.checkpointLabel, "Unfinished-work checkpoint saved")
+        XCTAssertEqual(result.outcomes.first?.memoryID, "memory-1")
+        let block = ChatBlock(kind: .note, text: result.message, contextCleanup: result)
+        let encoded = try JSONEncoder().encode(block)
+        XCTAssertEqual(try JSONDecoder().decode(ChatBlock.self, from: encoded).contextCleanup, result)
+        let text = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        XCTAssertFalse(text.contains("CONTENT-CANARY"))
+        XCTAssertTrue(ChatTranscriptBuilder.transcriptContext(from: [block]).isEmpty)
+    }
+
+    func testCleanupReceiptDoesNotInventUnknownCountsOrCheckpointSuccess() throws {
+        let result = try XCTUnwrap(ChatContextCleanupResult(event: [
+            "command": "compact", "error": true,
+            "data": ["cleanup_operation_id": "cleanup-123", "checkpoint_status": "not_committed"],
+        ]))
+        XCTAssertNil(result.saved)
+        XCTAssertTrue(result.countSummary.isEmpty)
+        XCTAssertEqual(result.title, "Cleanup failed — chat context retained")
+        XCTAssertEqual(result.checkpointLabel, "Checkpoint not committed; chat context retained")
+        XCTAssertNil(ChatContextCleanupResult(event: ["command": "compact", "text": "Legacy summary"]))
+        let earlyFailure = try XCTUnwrap(ChatContextCleanupResult(event: [
+            "command": "compact", "error": true, "text": "Memory storage is unavailable.",
+        ]))
+        XCTAssertNil(earlyFailure.saved)
+        XCTAssertEqual(earlyFailure.title, "Cleanup failed — chat context retained")
+        XCTAssertEqual(earlyFailure.checkpointLabel, "Checkpoint status unavailable")
+    }
+
     func testSlashCommandNamesAndAliasesAreUnique() {
         let names = SlashCommand.all.flatMap { [$0.name] + $0.aliases }
         XCTAssertEqual(names.count, Set(names).count)
