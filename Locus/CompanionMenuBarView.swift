@@ -68,7 +68,7 @@ struct CompanionMenuBarView: View {
     @EnvironmentObject private var runtime: RuntimeStatusModel
     @Environment(\.locusViewColors) private var colors
     @Environment(\.openWindow) private var openWindow
-    @StateObject private var windowHandle = CompanionMenuBarWindowHandle()
+    @Environment(\.dismiss) private var dismiss
     @State private var tab = Tab.chat
     let presenter: MainWindowPresenter
 
@@ -92,7 +92,7 @@ struct CompanionMenuBarView: View {
                 tabButton(.activity, title: snapshot.notificationCount == 0 ? "Activity" : "Activity (\(snapshot.notificationCount))",
                           symbol: "bell")
                 Spacer(minLength: 0)
-                Button { windowHandle.hide() } label: {
+                Button { dismiss() } label: {
                     Image(systemName: "xmark").frame(width: 28, height: 28)
                 }
                 .buttonStyle(.locus(.icon)).keyboardShortcut(.cancelAction).help("Close companion")
@@ -135,12 +135,11 @@ struct CompanionMenuBarView: View {
         }
         .frame(width: 440, height: 600)
         .background(colors.surfacePanel)
-        .background(CompanionMenuBarWindowCapture(handle: windowHandle).frame(width: 0, height: 0))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Your companion")
         .accessibilityIdentifier("companion.menubar.popover")
         .onAppear { presenter.install(openWindow) }
-        .onExitCommand { windowHandle.hide() }
+        .onExitCommand { dismiss() }
     }
 
     private func tabButton(_ selection: Tab, title: String, symbol: String) -> some View {
@@ -271,30 +270,8 @@ struct CompanionMenuBarView: View {
     }
 
     private func revealMainWindow() {
-        windowHandle.hide()
+        dismiss()
         presenter.install(openWindow)
         presenter.present()
-    }
-}
-
-/// Capture only this presentation's window; using NSApp.keyWindow could close
-/// an unrelated document after an action has already focused the main scene.
-@MainActor
-private final class CompanionMenuBarWindowHandle: ObservableObject {
-    weak var window: NSWindow?
-    func hide() { window?.orderOut(nil) }
-}
-
-private struct CompanionMenuBarWindowCapture: NSViewRepresentable {
-    let handle: CompanionMenuBarWindowHandle
-    func makeNSView(context: Context) -> CaptureView { CaptureView(handle: handle) }
-    func updateNSView(_ view: CaptureView, context: Context) {}
-    static func dismantleNSView(_ view: CaptureView, coordinator: ()) { view.handle.window = nil }
-
-    final class CaptureView: NSView {
-        let handle: CompanionMenuBarWindowHandle
-        init(handle: CompanionMenuBarWindowHandle) { self.handle = handle; super.init(frame: .zero) }
-        required init?(coder: NSCoder) { fatalError("CompanionMenuBarWindowCapture is programmatic") }
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); handle.window = window }
     }
 }
