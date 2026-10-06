@@ -14,7 +14,7 @@ The standalone repository owns SDK 1, renderer-neutral Core, Local Line Babylon 
 
 ## Compatibility and pins
 
-Versions are Agent Worlds release 0.2.0, World 0.2.0, SDK 1, wire 2 and cosmetic preferences 2. Existing Locus at the baseline rejects screen 2. The updated host negotiates runtime 0.2.x/SDK 1/wire 2; legacy web screen 1 is explicitly unsupported. It requires the preserved prior host/plugin pair. Social Studio retains its separate native screen 1 path. Installation identity remains `locus/agent-world`, screen `agent-world`. There is no second automatic install.
+Versions are Agent Worlds release 0.2.0, World 0.2.0, SDK 1, wire 2 and cosmetic preferences 2. Existing Locus at the baseline rejects screen 2. The updated host negotiates runtime 0.2.x/SDK 1/wire 2; legacy web screen 1 is explicitly unsupported. It requires the preserved prior host/plugin pair. Native Social Studio/OpenPost support has been removed; the independent Social Studio plugin uses the generic version-1 plugin-panel protocol, separate from world screens. Installation identity remains `locus/agent-world`, screen `agent-world`. There is no second automatic install.
 
 The canonical schema and 57 shared valid/invalid fixtures live in `agent-worlds`. Locus vendors fixtures with reviewed SHA-256 values in `ProtocolFixtures/agent-worlds/pin.json`; Swift and TypeScript validate the same messages. Updating this pin requires reviewing both repositories and rerunning both sides. App version strings alone are not a compatibility guarantee for an unpublished host change.
 

@@ -30,7 +30,7 @@ Developer guides: [World SDK and non-nautical example](/Users/nahid/Documents/ag
 
 ## Contract, state and compatibility
 
-This is a breaking web contract: wire 2, SDK 1, runtime/World 0.2.0, cosmetic schema 2. Updated hosts negotiate runtime ≥0.2.0 and <0.3.0. Original Locus rejects screen 2; the extracted host rejects legacy web screen 1. Native Social Studio keeps its independent version 1 path. App version strings alone do not establish support; the host must contain the reviewed adapter. Installation identity remains `locus/agent-world`, screen `agent-world`.
+This is a breaking web contract: wire 2, SDK 1, runtime/World 0.2.0, cosmetic schema 2. Updated hosts negotiate runtime ≥0.2.0 and <0.3.0. Original Locus rejects screen 2; the extracted host rejects legacy web screen 1. After the recorded extraction acceptance, native Social Studio/OpenPost support was removed; the independent Social Studio plugin uses the generic version-1 plugin-panel protocol. App version strings alone do not establish support; the host must contain the reviewed adapter. Installation identity remains `locus/agent-world`, screen `agent-world`.
 
 Every bridge invocation checks current installed identity/digest/root, workspace, session, grants and referenced native ownership. Envelopes, preferences, metadata, rosters and resource paths are bounded. Sequence gaps replace the projection from an authoritative snapshot. Reconnect never retries uncertain mutations. World close/revoke/upgrade, renderer errors and timeouts dispose access while native queued work continues.
 

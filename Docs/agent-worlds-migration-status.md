@@ -2,10 +2,12 @@
 
 Status: **local extraction complete: thin-host cutover, final native/Python suites, isolated package and native visual checks passed**. Publication is blocked on artwork redistribution rights.
 
+The gate results below record the original extraction checkpoint, before the later native Social Studio/OpenPost removal.
+
 - Inspected Locus: `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb`, originally clean detached HEAD.
 - Branch: `codex/agent-worlds-extraction`; audit committed before implementation as `d7f05e63`.
 - Independent repository: `/Users/nahid/Documents/agent-worlds`, local `main`; tested implementation `ec94166`.
-- Versions: release/World 0.2.0, SDK 1, wire 2, preferences 2. Legacy web wire 1 is explicitly rejected; native Social Studio remains a separate version 1 surface.
+- Versions: release/World 0.2.0, SDK 1, wire 2, preferences 2. Legacy web wire 1 is explicitly rejected. Native Social Studio/OpenPost support has since been removed; the independent Social Studio plugin uses the generic version-1 plugin-panel protocol, separate from world screens.
 - Final standalone ZIP SHA256: `4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8` (reproduced by two clean no-sibling builds).
 
 | Phase | Actual gate state |

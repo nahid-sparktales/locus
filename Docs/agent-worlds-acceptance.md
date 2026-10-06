@@ -2,6 +2,8 @@
 
 Status: **local extraction and thin-host cutover complete; final native, Python, isolated build/package and native visual checks passed**. The full native run executed 1,989 tests with zero failures or skips. Required world scenarios have the distinct automated, actual WK and native UI evidence recorded below; a unit pass is not represented as a native UI or OS fault experiment. Publication remains blocked on artwork rights.
 
+This ledger records the original extraction checkpoint. Native Social Studio/OpenPost support has since been removed; world screens require protocol 2, while the independent Social Studio plugin uses the generic version-1 plugin-panel protocol.
+
 Baseline: Locus `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb`, clean detached checkout. Audit `d7f05e63` preceded implementation. Native gate checkpoint `0e7e7b4b` passed before deletion. Generic native chrome is `af5cc2c7`; source/assets removal is `f53fc4e5`. Independent candidate source `ec94166` uses release/World 0.2.0, SDK 1, wire 2 and preferences 2. Remote publication has not occurred.
 
 ## Executed checks
@@ -20,7 +22,7 @@ Baseline: Locus `4cce6ebfaa31f76cd7790967ad8ce7d7e2338deb`, clean detached check
 | ID | Executed evidence |
 | --- | --- |
 | T01 | PASS: shared client/session tests and actual secured WK hello→welcome→scoped snapshot; no data before negotiation. |
-| T02 | PASS:57 shared vectors, strict boolean/numeric/version checks, runtime 0.2.x/SDK 1, explicit legacy-web rejection and separate native Social Studio protocol. |
+| T02 | PASS at the extraction checkpoint: 57 shared vectors, strict boolean/numeric/version checks, runtime 0.2.x/SDK 1, explicit legacy-web rejection and the then-separate native Social Studio protocol. |
 | T03 | PASS: full/read-only/missing-optional/missing-required cases in contract/mock/native authorization; denied forged calls fail, browser controls explain unavailable capabilities. |
 | T04 | PASS: empty/authoritative projection tests and packaged WK six-agent scene with stable IDs, labels/statuses and no synthetic fallback. |
 | T05 | PASS: mock/projection additions, stable harbor allocation and actual browser roster update; rendering never invokes canonical creation. |
