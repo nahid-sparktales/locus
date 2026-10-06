@@ -472,21 +472,20 @@ enum LocusTheme {
         var diffRemoved: NSColor { danger }
     }
 
-    /// Warm paper and charcoal anchor the interface; restrained content and
-    /// status hues share the same contrast floor on every workspace surface.
+    /// Neutral white, gray, and charcoal anchor the standard workspace. Color
+    /// belongs to the selected accent, content, and meaningful status—not a
+    /// cream or olive cast across every surface. World palettes stay separate.
     static let lightPalette = Palette(
-        ink: rgb(red: 0.086, green: 0.094, blue: 0.078),
-        inkSoft: rgb(red: 0.145, green: 0.157, blue: 0.125),
-        paper: rgb(red: 0.953, green: 0.945, blue: 0.918),
-        paperDeep: rgb(red: 0.925, green: 0.914, blue: 0.878),
-        panel: rgb(red: 0.973, green: 0.965, blue: 0.941),
-        white: rgb(red: 1.0, green: 0.996, blue: 0.98),
-        line: rgb(red: 0.85, green: 0.835, blue: 0.792),
-        lineStrong: rgb(0x77766D),
-        // Secondary copy used to sit between 3.6:1 and 4.4:1 on the paper
-        // surfaces. Keep the warm gray character, but make it readable at the
-        // compact sizes a desktop workspace needs.
-        muted: rgb(0x56594F),
+        ink: rgb(0x181818),
+        inkSoft: rgb(0x3D3D3D),
+        paper: rgb(0xFAFAFA),
+        paperDeep: rgb(0xF1F1F1),
+        panel: rgb(0xFFFFFF),
+        white: rgb(0xFFFFFF),
+        line: rgb(0xDEDEDE),
+        lineStrong: rgb(0x7A7A7A),
+        // Tertiary copy also clears normal-text contrast on tinted badges.
+        muted: rgb(0x5F5F5F),
         signal: rgb(red: 0.788, green: 0.961, blue: 0.29),
         // `signal` remains the bright brand fill. This deeper olive is the
         // accessible foreground/link partner for light surfaces.
@@ -504,15 +503,15 @@ enum LocusTheme {
     )
 
     static let darkPalette = Palette(
-        ink: rgb(0xF2EEE4),
-        inkSoft: rgb(0xD5CFC1),
-        paper: rgb(0x171713),
-        paperDeep: rgb(0x20201B),
-        panel: rgb(0x1B1B17),
-        white: rgb(0x292820),
-        line: rgb(0x3D3B32),
-        lineStrong: rgb(0x858074),
-        muted: rgb(0xADA89A),
+        ink: rgb(0xF5F5F5),
+        inkSoft: rgb(0xD4D4D4),
+        paper: rgb(0x171717),
+        paperDeep: rgb(0x202020),
+        panel: rgb(0x1B1B1B),
+        white: rgb(0x282828),
+        line: rgb(0x3D3D3D),
+        lineStrong: rgb(0x858585),
+        muted: rgb(0xA8A8A8),
         signal: rgb(0xC9F54A),
         signalDeep: rgb(0xB6E33B),
         coral: rgb(0xD39F87),

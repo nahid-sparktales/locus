@@ -20,6 +20,9 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     /// The persistent-agent overview. Session-scoped like Overview, so it is
     /// a rail destination in Agents mode rather than a workspace panel.
     case agent
+    /// A persistent companion conversation has its own rail destination and
+    /// never replaces the last general workspace panel.
+    case companion
     case changes
     case files
     case terminal
@@ -38,7 +41,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     /// The general workspace panels reached from the inspector command. Overview
-    /// and Browser have dedicated rail buttons and open only when explicitly
+    /// and Browser/Companion have dedicated rail buttons and open only when explicitly
     /// requested (or when an active request needs them).
     static let workspaceTabs: [InspectorTab] = [
         .changes, .files, .terminal, .simulator, .notes, .calendar, .board, .runs,
@@ -54,6 +57,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .plan: "Overview"
         case .agent: "Agent"
+        case .companion: "Companion"
         case .changes: "Changes"
         case .files: "Files"
         case .terminal: "Terminal"
@@ -78,6 +82,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .plan: detail = "Open this chat’s plan, outputs, and sources in a popup"
         case .agent: detail = "Selected agent: trigger, access, chats, and activity"
+        case .companion: detail = "Chat with your companion beside your current work"
         case .notes: detail = "Editable notes shared at the scope you choose"
         case .calendar: detail = "Built-in calendar with connected account overlays"
         case .board: detail = "Kanban cards you and your agents plan, move, and discuss"
@@ -100,6 +105,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .plan: "rectangle.grid.2x2"
         case .agent: LocusSymbol.robot
+        case .companion: "bubble.left.and.bubble.right"
         case .changes: "plusminus.circle"
         case .files: "folder"
         case .terminal: "terminal"
@@ -133,7 +139,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .runs: "7"
         case .agents: "8"
         case .notes: "9"
-        case .agent, .simulator, .calendar, .board, .router, .proxies, .context: nil
+        case .agent, .companion, .simulator, .calendar, .board, .router, .proxies, .context: nil
         }
     }
 }

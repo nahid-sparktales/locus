@@ -217,7 +217,7 @@ struct AgentCrewChatView: View {
 
 /// Reuse native chat's scroll-following behavior, including yielding to the
 /// reader when they scroll up or select a passage.
-private struct CrewTranscriptScrollBridge: NSViewRepresentable {
+struct CrewTranscriptScrollBridge: NSViewRepresentable {
     let coordinator: TranscriptScrollCoordinator
     let scrollToBottom: () -> Void
 

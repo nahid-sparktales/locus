@@ -21,16 +21,24 @@ final class CompanionAppearanceTests: XCTestCase {
         }
     }
 
-    func testSurpriseIsDeterministicAndUsesOnlyApprovedChoices() {
-        var characters = Set<CompanionCharacterKind>()
-        for seed in UInt64(0)..<100 {
+    func testSurpriseIsDeterministicAndUsesOnlyTheSixCurrentCustomCharacters() throws {
+        let approved: Set<CompanionBundledSprite> = [.pitou, .scout, .ninja, .clover, .shadow, .pirate]
+        XCTAssertEqual(Set(CompanionBundledSprite.allCases), approved)
+        var characters = Set<CompanionBundledSprite>()
+        for seed in Array(UInt64(0)..<100) + [.max] {
             let choice = CompanionAppearance.surprise(seed: seed)
             XCTAssertEqual(choice, CompanionAppearance.surprise(seed: seed))
-            XCTAssertEqual(choice.variationSeed, seed)
+            XCTAssertEqual(choice.kind, .bundledSprite)
+            XCTAssertNil(choice.builtIn)
+            XCTAssertNil(choice.variationSeed, "A fixed atlas does not invent a generated variation")
+            XCTAssertFalse(choice.supportsAppearanceControls)
             XCTAssertEqual(choice.validated, choice)
-            if let character = choice.builtIn { characters.insert(character) }
+            let character = try XCTUnwrap(choice.bundledSprite)
+            XCTAssertTrue(approved.contains(character))
+            characters.insert(character)
+            XCTAssertEqual(try JSONDecoder().decode(CompanionAppearance.self, from: JSONEncoder().encode(choice)), choice)
         }
-        XCTAssertEqual(characters, Set(CompanionCharacterKind.allCases))
+        XCTAssertEqual(characters, approved)
     }
 
     func testMissingAndFutureAssetsHaveStableVisualFallback() {

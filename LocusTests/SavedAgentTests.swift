@@ -946,6 +946,185 @@ final class SavedAgentTests: XCTestCase {
     }
 
     @MainActor
+    func testCompanionConversationCreationCanPreserveForegroundAgainstCatalogCurrent() async throws {
+        // The catalog's backend-selected ID must not replace an independent
+        // visible foreground while the inspector creates its own empty chat.
+        SavedAgentURLProtocol.reset(current: "different-backend-current")
+        let model = cleanupModel()
+        defer { cancelPendingWork(model) }
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        model.agentProfiles = [profile]
+        model.initialWorkspacePath = "/tmp"
+        model.installTranscriptSession("center", blocks: [ChatBlock(kind: .assistant, text: "Current task")])
+        model.draftText = "Central unsent draft"
+        model.isBusy = true
+        let ownership = model.transcriptPresentation.sessionOwnershipToken
+        let session = try await model.createSavedAgentConversation(profile, workspace: "/tmp", preservingForeground: true)
+        XCTAssertEqual(session.savedAgentProfileID, profile.id)
+        XCTAssertEqual(model.currentSessionID, "center")
+        XCTAssertEqual(model.draftText, "Central unsent draft")
+        XCTAssertEqual(model.blocks.last?.text, "Current task")
+        XCTAssertTrue(model.isBusy)
+        XCTAssertEqual(model.transcriptPresentation.sessionOwnershipToken, ownership)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().count, 1)
+        XCTAssertFalse(SavedAgentURLProtocol.requestedPaths().contains("/api/config"))
+        XCTAssertFalse(SavedAgentURLProtocol.requestedPaths().contains { $0.hasSuffix("/resume") })
+    }
+
+    @MainActor
+    func testMainCompanionEntryRestoresRememberedProjectChatThroughNormalResume() async throws {
+        for remembered in ["remembered", "another-project"] {
+            let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+            let latest = SessionSummary(id: "latest", name: "Latest", preview: "", mtime: 3, size: 0,
+                                        cwd: "/tmp", agentProfileID: profile.id.uuidString)
+            let older = cleanupSession("remembered", owner: profile.id)
+            let other = SessionSummary(id: "another-project", name: "Private", preview: "", mtime: 5, size: 0,
+                                       cwd: "/var/tmp", agentProfileID: profile.id.uuidString)
+            SavedAgentURLProtocol.reset()
+            let model = cleanupModel()
+            defer { model.activeTranscriptLoad?.task.cancel(); cancelPendingWork(model) }
+            model.agentProfiles = [profile]
+            try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+            model.sessions = [latest, older, other]
+            model.initialWorkspacePath = "/tmp"
+            model.installTranscriptSession("work", blocks: [])
+            model.lastSidebarSessionIDs[model.companionSessionKey(workspace: "/tmp")] = remembered
+            let inspector = model.inspectorTab
+            model.openCompanionMainConversation()
+            await model.activeTranscriptLoad?.task.value
+            let expected = remembered == "remembered" ? "remembered" : "latest"
+            XCTAssertEqual(model.currentSessionID, expected)
+            XCTAssertEqual(model.sidebarDestination, .agents)
+            XCTAssertEqual(model.selectedSavedAgentID, profile.id)
+            XCTAssertNil(model.savedAgentOverviewID)
+            XCTAssertEqual(model.inspectorTab, inspector)
+            XCTAssertNil(model.companionPanel.selectedSessionID)
+            XCTAssertTrue(SavedAgentURLProtocol.requestedPaths().contains("/api/sessions/\(expected)/resume"))
+            XCTAssertTrue(SavedAgentURLProtocol.detachedRequests().isEmpty)
+        }
+    }
+
+    @MainActor
+    func testMainCompanionEntryShowsNormalLoadFailureAndRetriesSameChat() async throws {
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        SavedAgentURLProtocol.reset(resumeFailures: 1)
+        let model = cleanupModel()
+        defer { model.activeTranscriptLoad?.task.cancel(); cancelPendingWork(model) }
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        model.sessions = [cleanupSession("companion", owner: profile.id)]
+        model.initialWorkspacePath = "/tmp"
+        model.installTranscriptSession("work", blocks: [])
+        model.agentRuntimePhase = .unavailable("Offline fixture")
+        model.openCompanionMainConversation()
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertEqual(model.currentSessionID, "companion")
+        XCTAssertEqual(model.transcriptInputState, .unavailable)
+        XCTAssertEqual(model.blocks.last?.kind, .error)
+        model.openCompanionMainConversation()
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertEqual(model.transcriptInputState, .ready)
+        XCTAssertEqual(SavedAgentURLProtocol.requestedPaths().filter { $0.hasSuffix("/resume") }.count, 2)
+        XCTAssertTrue(SavedAgentURLProtocol.detachedRequests().isEmpty)
+    }
+
+    @MainActor
+    func testMainCompanionEntryCreatesOneEmptyCanonicalChatOnlyAfterExplicitClick() async throws {
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        defer { model.activeTranscriptLoad?.task.cancel(); cancelPendingWork(model) }
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        model.initialWorkspacePath = "/tmp"
+        model.installTranscriptSession("work", blocks: [])
+        model.agentRuntimePhase = .online
+        model.openCompanionMainConversation()
+        model.openCompanionMainConversation()
+        for _ in 0..<100 {
+            if model.creatingSavedAgentChatIDs.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertTrue(model.creatingSavedAgentChatIDs.isEmpty)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().count, 1)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().first?["agent_profile_id"] as? String, profile.id.uuidString)
+        XCTAssertEqual(model.currentSessionID, "saved-1")
+        XCTAssertEqual(model.sidebarDestination, .agents)
+        XCTAssertEqual(model.savedAgentProfileID(for: "saved-1"), profile.id)
+        XCTAssertFalse(SavedAgentURLProtocol.requestedPaths().contains("/api/runs/queue"))
+        XCTAssertNil(model.companionPanel.selectedSessionID)
+    }
+
+    @MainActor
+    func testMainCompanionEntryCreatesDedicatedHomeWithoutInheritingCenterProject() async throws {
+        let profile = AgentProfile(name: "Pitou", model: "fixture")
+        SavedAgentURLProtocol.reset()
+        let model = cleanupModel()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        model.agentHomesRootOverride = root
+        defer {
+            model.activeTranscriptLoad?.task.cancel()
+            cancelPendingWork(model)
+            try? FileManager.default.removeItem(at: root)
+        }
+        model.agentProfiles = [profile]
+        try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        model.initialWorkspacePath = "/tmp"
+        model.installTranscriptSession("work", blocks: [])
+        model.agentRuntimePhase = .online
+        let home = model.savedAgentHomePath(profile)
+        XCTAssertEqual(model.companionWorkspacePath, home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home))
+        model.openCompanionMainConversation()
+        for _ in 0..<100 {
+            if model.creatingSavedAgentChatIDs.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await model.activeTranscriptLoad?.task.value
+        XCTAssertTrue(model.creatingSavedAgentChatIDs.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home))
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().count, 1)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().first?["cwd"] as? String, home)
+        XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().first?["agent_home"] as? Bool, true)
+        XCTAssertEqual(model.currentSessionID, "saved-1")
+        XCTAssertEqual(model.companionWorkspacePath, home, "Even later center metadata cannot redirect companion scope")
+        XCTAssertEqual(model.sessions.first { $0.id == "saved-1" }?.workspacePath, home)
+        XCTAssertFalse(SavedAgentURLProtocol.requestedPaths().contains("/api/runs/queue"))
+    }
+
+    @MainActor
+    func testLateMainCompanionCreationCannotTakeOverChangedSelectionOrProject() async throws {
+        for change in ["project", "center-project", "transcript", "overview", "busy"] {
+            let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+            SavedAgentURLProtocol.reset()
+            let model = cleanupModel()
+            defer { model.activeTranscriptLoad?.task.cancel(); cancelPendingWork(model) }
+            model.agentProfiles = [profile]
+            try model.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+            model.initialWorkspacePath = "/tmp"
+            model.installTranscriptSession("work", blocks: [])
+            model.draftText = "Keep the selected draft"
+            model.agentRuntimePhase = .online
+            model.openCompanionMainConversation()
+            if change == "project" { model.selectCompanionWorkspace("/var/tmp") }
+            if change == "center-project" { model.initialWorkspacePath = "/var/tmp" }
+            if change == "transcript" { model.installTranscriptSession("other", blocks: []) }
+            if change == "overview" { model.selectSavedAgent(profile) }
+            if change == "busy" { model.isBusy = true }
+            for _ in 0..<100 {
+                if model.creatingSavedAgentChatIDs.isEmpty { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertTrue(model.creatingSavedAgentChatIDs.isEmpty, change)
+            XCTAssertEqual(SavedAgentURLProtocol.detachedRequests().count, 1, change)
+            XCTAssertFalse(SavedAgentURLProtocol.requestedPaths().contains { $0.hasSuffix("/resume") }, change)
+            XCTAssertEqual(model.currentSessionID, change == "transcript" ? "other" : "work", change)
+            XCTAssertEqual(model.savedAgentProfileID(for: "saved-1"), profile.id, change)
+        }
+    }
+
+    @MainActor
     private func cleanupModel() -> AppModel {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SavedAgentURLProtocol.self]
@@ -974,11 +1153,14 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
     private static var actions: [String] = []
     private static var paths: [String] = []
     private static var detachedBodies: [[String: Any]] = []
+    private static var resumeFailures = 0
     static func reset(rows: [[String: Any]] = [], current: String = "foreground", rejectCleanup: Bool = false,
-                      failAfterReplacement: Bool = false, loseCleanupResponse: Bool = false) {
+                      failAfterReplacement: Bool = false, loseCleanupResponse: Bool = false,
+                      resumeFailures: Int = 0) {
         lock.lock(); defer { lock.unlock() }
         self.rows = rows; self.current = current; self.rejectCleanup = rejectCleanup
         self.failAfterReplacement = failAfterReplacement; self.loseCleanupResponse = loseCleanupResponse
+        self.resumeFailures = resumeFailures
         recoveryRows = []; actions = []; paths = []; detachedBodies = []
     }
     static func archivedIDs() -> Set<String> {
@@ -1024,8 +1206,14 @@ private final class SavedAgentURLProtocol: URLProtocol, @unchecked Sendable {
                 "agent_profile_id": body["agent_profile_id"] ?? ""])
             result = ["session_id": id]
         case let path where path.hasPrefix("/api/sessions/") && path.hasSuffix("/resume"):
-            Self.current = request.url!.pathComponents.dropLast().last ?? "foreground"
-            result = ["ok": true, "messages": [], "session_info": Self.sessionInfo()]
+            if Self.resumeFailures > 0 {
+                Self.resumeFailures -= 1
+                statusCode = 503
+                result = ["detail": "Fixture transcript temporarily unavailable"]
+            } else {
+                Self.current = request.url!.pathComponents.dropLast().last ?? "foreground"
+                result = ["ok": true, "messages": [], "session_info": Self.sessionInfo()]
+            }
         case let path where path.hasPrefix("/api/sessions/agent-profile/") && path.hasSuffix("/cleanup"):
             let profileID = UUID(uuidString: request.url!.pathComponents.dropLast().last ?? "")
             let action = body["action"] as? String ?? ""

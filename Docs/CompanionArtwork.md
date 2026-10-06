@@ -14,21 +14,22 @@ EXIF, URL, or local-path metadata.
 Pitou SHA-256:
 `57622683e6c527c1bb3df63aecad27bcca3bc993d512b5632ecd6b2cc02d5257`.
 
-The owner also requested Gon, Ninja, Clover, Shadow, and Pirate variants.
+The owner also requested Gon, Ninja, Clover, Shadow, and Pirate variants, and later
+a My Hero Academia × Hunter x Hunter replacement called Scout in the gallery.
 These are image-generated edits of that reference art, with native sprite-frame
 playback. Any deterministic normalization of their generated output is recorded
 with the verification artifacts. They are not official franchise assets. The
 owner requested inclusion in this repository; no independent third-party
 redistribution license is asserted for the supplied or inspired artwork, and
-this implementation does not publish a release. The procedural-art license
+generation itself does not grant a franchise license. The procedural-art license
 statement below applies to the original six local characters, not these files.
 
 Pitou retains its original v2 eight-column, eleven-row transparent PNG atlas,
-1536 × 2288 pixels, with 73 populated frames. The five generated variants use
-v1 eight-column, nine-row atlases, 1536 × 1872 pixels, with 57 populated frames.
-Their first nine animation rows are normalized into canonical 192 × 208 pixel
-cells. Unverified generated look-direction rows are omitted; no substitute
-look frames are invented. All sheets use the same 192 × 208 pixel cells, and
+1536 × 2288 pixels, with 73 populated frames. Scout uses this same v2 layout.
+Ninja, Clover, Shadow, and Pirate extend their original v1 state art with sixteen
+generated look poses. Their first nine rows remain unchanged pixels. Legacy Gon
+retains its v1 eight-column, nine-row atlas, 1536 × 1872 pixels, with 57 populated
+frames, so existing references remain valid. All sheets use the same 192 × 208 pixel cells, and
 only populated cells are available to playback. ImageIO decodes each bundled resource once, and immutable
 cell crops are shared by visible instances. Atlas files do not pass through the
 256-pixel portrait importer. There are no remote artwork fetches at startup.
@@ -37,8 +38,9 @@ Playback uses idle, greeting, active work, approval waiting, failure, and a
 single jump for a new completion. Queued work uses calm idle plus the queue
 badge; directional running is never substituted for active work. Paused and
 unavailable states use a static frame. Pitou's original look-direction frames
-are preserved. Movement and review frames remain in all atlases without
-fabricating those interactions.
+are preserved and now respond to the window-local cursor, as do the new generated
+look poses. Movement and review frames remain in all atlases without fabricating
+those interactions. See [pointer reactions](CompanionPointerReactions.md).
 Locus uses local playback timing with longer idle rests for occasional blinks; this is not a
 claim about undocumented ChatGPT production timing. Reduced motion, app hiding,
 window occlusion, minimization, closing, and view removal stop playback.
@@ -46,6 +48,45 @@ window occlusion, minimization, closing, and view removal stop playback.
 Pitou is the default for new drafts. Persisted selections keep their explicit
 asset references. Missing or unsupported art shows the procedural robot without
 changing the saved agent identity or selecting a different pet.
+
+Scout's approved full-body atlas is compiled from the built-in image generation
+output using `Tools/PrepareCompanionAtlases.py --version 2`, with actual distinct
+state/direction poses, one uniform transform across the sheet, and alpha-edge
+cleanup. Its source/output hashes and prompt are in
+[generation prompts](CompanionGenerationPrompts.md).
+
+## Consistent displayed size
+
+The shared sprite renderer measures each atlas once when it is decoded. The
+first idle frame's visible silhouette (alpha greater than 32) establishes its
+resting height; every nontransparent pixel across all state and gaze frames
+establishes its safety bounds, including faint shadows and accessories. These
+are source-pixel measurements, not changes to the artwork:
+
+| Character | Resting silhouette height | All-frame alpha bounds, width × height |
+| --- | ---: | ---: |
+| Pitou | 193 | 158 × 198 |
+| Scout | 181 | 160 × 192 |
+| Ninja | 134 | 117 × 146 |
+| Clover | 132 | 125 × 145 |
+| Shadow | 135 | 115 × 146 |
+| Pirate | 124 | 125 × 145 |
+| Gon, retained for saved selections | 128 | 129 × 145 |
+
+All seven now have a resting silhouette height of 78% of their shared square
+view: 21.84 points at 28 points, 34.32 at 44, and 140.4 at 180. This replaces the
+rough 1/1.4 display multipliers. Resting feet share a baseline, with a small
+adjustment where needed to keep the entire animation inside a 4% safety inset.
+The same cached scale and translation apply to every frame. Jumps, bows, and
+head turns retain their original proportions and offsets; individual frames
+are never independently resized or recentered. A future atlas with exceptionally
+wide or tall action poses is fit within that same safety inset.
+
+This layout is used by the hero, gallery, sidebar, picker, conversation header,
+and profile through `CompanionCharacterView`. No PNG bytes, saved appearance,
+identity, or playback timing change. Native tests cover equal resting heights,
+every state/gaze frame's full alpha bounds, stable pose proportions, invalid host
+sizes, empty artwork rejection, and the legacy whole-image pointer margin.
 
 ## Original local characters
 
@@ -62,12 +103,12 @@ neither Agent World nor an image provider. Character appearance references are
 versioned, validated against the bundled catalog, and persisted once. A missing
 reference falls back to the robot visually without changing the saved agent ID.
 
-Built-in faces blink and limbs wave. Imported and generated raster pictures are
-static art: they receive only subtle whole-image movement and real status badges,
+Built-in faces blink and limbs wave. Pictures imported or generated through the
+in-app portrait picker are static art: they receive only subtle whole-image movement and real status badges,
 never simulated face or limb articulation. The cancellable view task respects Reduce
 Motion, the app's animation preference, scene inactivity, per-window occlusion/minimization, app hiding, and view disappearance.
 Window closure and renderer detachment remove all native visibility observers.
-Status labels remain accessible with motion off. Decorative breathing does not
+Status labels remain accessible with motion off. Decorative idle poses do not
 represent agent activity or invoke a model.
 
 Custom art remains in the existing agent portrait data store. Imports accept an

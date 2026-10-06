@@ -103,8 +103,11 @@ struct WorkspaceFileViewerSheet: View {
             .accessibilityIdentifier("fileViewer.close")
         }
             HStack(spacing: 16) {
-                headerAction("Add to Context", symbol: "plus.circle") {
-                    model.addWorkspaceFileToContext(request.relativePath)
+                if request.belongsToWorkspace(model.workspacePath) {
+                    headerAction("Add to Context", symbol: "plus.circle") {
+                        guard request.belongsToWorkspace(model.workspacePath) else { return }
+                        model.addWorkspaceFileToContext(request.relativePath)
+                    }
                 }
                 headerAction("Show in Finder", symbol: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([request.url])

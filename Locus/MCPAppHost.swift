@@ -66,10 +66,15 @@ enum MCPAppSandbox {
 /// Appears with the text result, keeping the conversation visible alongside the app.
 struct MCPAppResultView: View {
     @EnvironmentObject private var extensionsModel: ExtensionsModel
+    @Environment(\.responseOutputContext) private var context
     let callID: String
     var body: some View {
         if let reference = extensionsModel.mcpApps[callID] {
-            MCPAppLauncher(reference: reference)
+            if context.allowsForegroundToolResults {
+                MCPAppLauncher(reference: reference)
+            } else {
+                ForegroundToolResultNotice(title: "Open interactive result in full conversation")
+            }
         }
     }
 }
