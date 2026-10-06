@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-06",
+  "source_revision": "5529004a47235943991f192464001dbc92685c9f",
+  "baseline": "b332e455",
+  "skill_repository": "https://github.com/trailofbits/skills",
+  "skill_revision": "82fe8226252622fa807643bdca1710901198553a",
+  "installed_skills": [
+    "differential-review",
+    "audit-context-building",
+    "fp-check",
+    "variant-analysis",
+    "sharp-edges",
+    "post-patch-validation"
+  ],
+  "python": {
+    "passed": 3095,
+    "subtests_passed": 31,
+    "seconds": 603.13,
+    "environment": "editable development install, Python 3.14.6"
+  },
+  "native": {
+    "passed": 1954,
+    "failures": 0,
+    "xcode": "26.6",
+    "configuration": "Debug",
+    "runtime_bundled": false
+  },
+  "javascript": {
+    "passed": 144,
+    "typecheck": "passed",
+    "node": "25.5.0"
+  },
+  "locked_plugin_product_subset": {
+    "passed": 23
+  },
+  "transport_audit": "passed",
+  "protocol_manifest": "current",
+  "agent_world_package": "passed",
+  "ruff": "passed",
+  "gitleaks": {
+    "leaks": 0,
+    "non_merge_commits": 6
+  },
+  "pip_audit": {
+    "dependencies_checked": 51,
+    "reported_vulnerabilities": 0,
+    "skipped_url_requirement": "locus-memory"
+  },
+  "release": {
+    "build": "passed",
+    "edition_audit": {
+      "edition": "locus",
+      "app": "/private/tmp/locus-audit-native-20261006/Build/Products/Release/Locus.app",
+      "mach_o_files": 10,
+      "source_resources_checked": 9,
+      "bundled_backend": false,
+      "passed": true
+    },
+    "configuration": "Release",
+    "signing": false,
+    "runtime_bundled": false,
+    "log": "/tmp/locus-audit-release.log"
+  },
+  "logs": {
+    "python": "/tmp/locus-audit-pytest.log",
+    "native": "/tmp/locus-audit-native.log",
+    "javascript": "/tmp/locus-audit-node-tests.log"
+  },
+  "findings": {
+    "P1": 1,
+    "P2": 3
+  },
+  "production_code_modified": false
+}

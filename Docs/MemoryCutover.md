@@ -79,6 +79,15 @@ closed when partition data exists; restore/recover the ownership file instead of
 deleting the engine store. A missing host key is never replaced when legacy or
 package data exists.
 
+A valid control database with a missing ownership row also fails closed when its
+ownership log or the surviving partition's cutover marker proves a previous
+transition. This covers restoring an empty pre-cutover control file beside newer
+package data. Legitimate shadow profiles may still have no ownership row, and an
+explicit completed rollback remains usable. This check does not authenticate the
+age of a nonempty ownership row or detect every combination of files restored
+from different migration cycles; keep the current control file with the profile
+and use the offline rollback protocol to change owners.
+
 The Migrator removes its temporary encrypted snapshots at cutover and after
 rollback. The legacy vault remains for reverse-sync and for the separate
 `context_snapshots` and `skill_observations` families, which remain legacy-owned.

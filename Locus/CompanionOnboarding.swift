@@ -1,14 +1,46 @@
 import Foundation
 
-/// Presentation-only draft. No permissions, instructions, routing or memory
-/// are inferred from character choices. A UUID is reserved before committing.
+/// New-profile identity, appearance, and editable communication defaults.
+/// Character choices never infer permissions, routing, or memory settings.
 struct CompanionOnboardingDraft: Codable, Equatable {
     var reservedProfileID = UUID()
-    var name = "Pitou"
-    var appearance = CompanionAppearance.default
+    var name: String
+    var appearance: CompanionAppearance
+    /// Nil on legacy drafts: retain their names rather than guessing authorship.
+    var nameIsCustomized: Bool?
+    /// Nil follows the selected character; even an explicitly empty edit is kept.
+    var customInstructions: String?
     /// Approved raster data uses the existing portrait store after commit.
     var avatarData: Data?
     var existingProfileID: UUID?
+
+    init(reservedProfileID: UUID = UUID(), name: String? = nil,
+         appearance: CompanionAppearance = .default, avatarData: Data? = nil,
+         existingProfileID: UUID? = nil, customInstructions: String? = nil) {
+        self.reservedProfileID = reservedProfileID
+        self.appearance = appearance
+        self.name = name ?? Self.suggestedName(for: appearance)
+        nameIsCustomized = name != nil
+        self.customInstructions = customInstructions
+        self.avatarData = avatarData
+        self.existingProfileID = existingProfileID
+    }
+
+    var personality: CompanionPersonality? { appearance.validated.bundledSprite?.personality }
+    var instructions: String {
+        customInstructions ?? personality?.instructions ?? AgentRole.generalist.defaultInstructions
+    }
+
+    mutating func selectAppearance(_ value: CompanionAppearance, avatarData: Data? = nil) {
+        appearance = value.validated
+        if nameIsCustomized == false { name = Self.suggestedName(for: appearance) }
+        self.avatarData = avatarData
+    }
+
+    private static func suggestedName(for appearance: CompanionAppearance) -> String {
+        appearance.bundledSprite?.personality?.suggestedName
+            ?? (appearance.kind == .portrait ? "Companion" : appearance.displayName)
+    }
 }
 
 struct CompanionOnboardingProgress: Codable, Equatable {

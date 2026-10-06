@@ -1,0 +1,2 @@
+N1 belongsToWorkspace=true companionChats=0 selected=nil
+N2 route=ollama/healthy-local selected=override-chat canSend=false error=The selected account is unavailable. Reconnect it or explicitly choose another profile.

@@ -301,14 +301,20 @@ final class OnboardingModel: ObservableObject {
     func setCompanionName(_ name: String) {
         guard companion.status != .completed else { return }
         progress.companion?.draft.name = name
+        progress.companion?.draft.nameIsCustomized = true
         error = nil
+        persist()
+    }
+
+    func setCompanionInstructions(_ instructions: String) {
+        guard companion.status != .completed else { return }
+        progress.companion?.draft.customInstructions = instructions
         persist()
     }
 
     func selectCompanionAppearance(_ appearance: CompanionAppearance, avatarData: Data? = nil) {
         guard companion.status != .completed else { return }
-        progress.companion?.draft.appearance = appearance.validated
-        progress.companion?.draft.avatarData = avatarData
+        progress.companion?.draft.selectAppearance(appearance, avatarData: avatarData)
         error = nil
         persist()
     }

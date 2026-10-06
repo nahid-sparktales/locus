@@ -41,9 +41,14 @@ agent/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 *.egg-info/
 agent/build/
 agent/dist/
+
+# Regenerable local architecture scans and retired document exports
+/.xray/
+/runtime_rescue_lab_architecture_guide.pdf
 
 # Secrets
 .env

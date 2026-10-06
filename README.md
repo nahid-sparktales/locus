@@ -22,11 +22,12 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 4.0.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v4.0.0/Locus-macOS.zip).
-> This wallet-free release introduces Your companion, with Pitou and five anime-inspired
-> characters, offline setup, and a persistent agent identity. Install this download once if you use 2.6.0 or earlier;
+> [Download Locus 4.1.0 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v4.1.0/Locus-macOS.zip).
+> This wallet-free release brings companion chat to the sidebar, inspector, and menu bar,
+> with six offline characters, a dedicated working folder, and safer plugin and memory recovery.
+> Install this download once if you use 2.6.0 or earlier;
 > existing chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v4.0.0).
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v4.1.0).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 
@@ -207,6 +208,7 @@ and interface checks are defined in the [CI workflow](.github/workflows/ci.yml).
 - [Image generation and interactive answers](Docs/LocusImageAndInteractiveAnswersImplementation.md)
 - [Backend development](agent/README.md) and [wire protocol](agent/PROTOCOL.md)
 - [Locus Mobile](https://github.com/nahid-sparktales/locus-mobile)
+- [Documentation index](Docs/README.md)
 - [Changelog](CHANGELOG.md) and [earlier releases](https://github.com/nahid-sparktales/locus/releases)
 - [Contributing](CONTRIBUTING.md) — commits require a Developer Certificate of Origin sign-off
 - [Security policy](.github/SECURITY.md) — report vulnerabilities privately

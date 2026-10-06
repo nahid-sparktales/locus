@@ -78,7 +78,8 @@ final class CompanionPanelModel: ObservableObject {
         guard scopeIsCurrent else { return "This project changed. Reopen your companion to continue." }
         if isForegroundConversation { return "This conversation is open in the center. Start another conversation to chat alongside it." }
         guard app.isAgentOnline else { return "Your companion is ready. Reconnect Locus to continue." }
-        do { _ = try app.agentProfileProvider(profile); return nil }
+        let effectiveProfile = selectedSessionID.map { app.agentChatProfile(profile, sessionID: $0) } ?? profile
+        do { _ = try app.agentProfileProvider(effectiveProfile); return nil }
         catch { return error.localizedDescription }
     }
     var canSend: Bool {
@@ -262,7 +263,7 @@ final class CompanionPanelModel: ObservableObject {
         // @Published emits before the backing snapshot changes. Validate the
         // incoming value directly, never the previous catalog via `chats`.
         guard let session = snapshot.sessionsByID[id], !session.isArchived,
-              session.savedAgentProfileID == profileID, session.workspacePath == workspace,
+              session.savedAgentProfileID == profileID, session.belongsToWorkspace(workspace),
               !session.isAgentEventChat, session.agentTriggerID?.nilIfEmpty == nil,
               app?.agentCrewChat.boundProfileID(for: id) == nil else {
             invalidateSelection()

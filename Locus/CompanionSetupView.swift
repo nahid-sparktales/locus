@@ -146,6 +146,16 @@ struct CompanionSetupView: View {
                     HStack(spacing: 28) { preview(); gallery }
                     VStack(spacing: 12) { preview(size: 150); gallery }
                 }
+                if let personality = draft.personality {
+                    VStack(spacing: 5) {
+                        Text(personality.role).font(.locus(size: 14, weight: .semibold))
+                        Text(personality.bio).font(.locus(size: 12))
+                        Text(personality.traits.joined(separator: " · "))
+                            .font(.locus(size: 11)).foregroundStyle(colors.textSecondary)
+                    }
+                    .multilineTextAlignment(.center).frame(maxWidth: 440)
+                    .accessibilityIdentifier("companion.personalitySummary")
+                }
                 HStack(spacing: 12) {
                     Button("Surprise me") {
                         onboarding.selectCompanionAppearance(.surprise(seed: UInt64.random(in: .min ... .max)))
@@ -171,7 +181,7 @@ struct CompanionSetupView: View {
                 characterButton(appearance: .init(sprite: sprite), title: sprite.displayName,
                     selected: appearance.bundledSprite == sprite,
                     identifier: "companion.sprite.\(sprite.id)",
-                    hint: sprite.detail) {
+                    hint: sprite.personality.map { "\($0.role). \($0.traits.joined(separator: ", "))." } ?? sprite.detail) {
                     onboarding.selectCompanionAppearance(.init(sprite: sprite))
                 }
             }
@@ -214,6 +224,17 @@ struct CompanionSetupView: View {
                 Text("You can change this anytime from your companion’s profile.")
                     .foregroundStyle(colors.textSecondary)
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Personality").font(.locus(size: 12, weight: .semibold))
+                TextField("How your companion approaches your work", text: Binding(
+                    get: { draft.instructions }, set: { onboarding.setCompanionInstructions($0) }
+                ), axis: .vertical)
+                .lineLimit(3...5).textFieldStyle(.roundedBorder).font(.locus(size: 12))
+                .accessibilityIdentifier("companion.personality")
+                Text("A starting style you can edit. Every character uses the same tools and permissions.")
+                    .font(.locus(size: 11)).foregroundStyle(colors.textSecondary)
+            }
+            .frame(maxWidth: 440)
         }
     }
 
