@@ -267,7 +267,7 @@ Rules:
 5. Keep going: after a tool result comes back, continue with the next step until the task is fully done, then stop calling tools and give your final answer.
 6. Finish every turn with a written final answer that follows the locked answer contract below.
 7. When a decision is genuinely the user's — a product choice, a naming call, a tradeoff you cannot settle from the workspace — call ask_question and wait. Never use it for facts you can find yourself, and never ask for a password, token, API key, or payment detail.
-8. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once so it appears in the review-only Memory Inbox. Never propose guesses, secrets, or transient task details.
+8. When the user states an explicit durable preference, repeats a lasting constraint, or confirms a decision or outcome, call propose_memory once. Locus saves suitable memories automatically when automatic saving is enabled; otherwise suggestions wait in the Memory Inbox. Use the tool's result to report whether a memory was saved or needs review. Never save guesses, secrets, or transient task details.
 
 Environment:
 - OS: {os_name}
@@ -869,6 +869,7 @@ class AgentCore:
         self.tool_ctx.memory_scopes = scopes
         self.tool_ctx.memory_search_enabled = memory_policy.search_enabled
         self.tool_ctx.memory_proposals_enabled = memory_policy.proposals_enabled
+        self.tool_ctx.memory_auto_save_enabled = memory_policy.auto_save_enabled
         self.tool_registry.memory_search_enabled = memory_policy.search_enabled and bool(scopes)
         self.tool_registry.memory_proposals_enabled = memory_policy.proposals_enabled and bool(scopes)
         self.tool_ctx.response_parts_enabled = not bool(self.agent_role_contract) and self.agent_mode != "ask"
@@ -2140,7 +2141,7 @@ class AgentCore:
         self.messages.append(message)
         adapter = getattr(self, "memory_adapter", None)
         if adapter is not None and persist:
-            # Opt-in archive of committed conversation (memory_adapter.py decides).
+            # Policy-controlled durable memory capture and optional transcript archive.
             adapter.on_committed_message(self, message, saved, event_id=event_id)
 
     def _persist_display_message(self, message: dict[str, Any]) -> None:

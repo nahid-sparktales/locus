@@ -40,6 +40,10 @@ PUT /api/knowledge/memories/{memory_id}
 DELETE /api/knowledge/memories/{memory_id}
 DELETE /api/knowledge
 GET /api/memory/status
+GET /api/memory/storage
+POST /api/memory/consolidate
+POST /api/memory/check-sources
+POST /api/memory/{memory_id}/refresh-sources
 GET /api/memory
 POST /api/memory
 DELETE /api/memory

@@ -147,8 +147,9 @@ enum MemoryKind: String, Codable, CaseIterable, Identifiable {
 struct AgentMemoryPolicy: Codable, Hashable {
     var recallEnabled = true
     var proposalsEnabled = true
+    var autoSaveEnabled = true
     var searchEnabled = true
-    var nativeCodexEnabled = false
+    var nativeCodexEnabled = true
     var scopes: [AgentMemoryScope] = [.personal, .workspace, .agent]
     var maxAutomaticMemories = 8
     var maxAutomaticTokens = 1_200
@@ -160,6 +161,7 @@ struct AgentMemoryPolicy: Codable, Hashable {
         case scopes
         case recallEnabled = "recall_enabled"
         case proposalsEnabled = "proposals_enabled"
+        case autoSaveEnabled = "auto_save_enabled"
         case searchEnabled = "search_enabled"
         case nativeCodexEnabled = "native_codex_enabled"
         case maxAutomaticMemories = "max_automatic_memories"
@@ -175,8 +177,9 @@ struct AgentMemoryPolicy: Codable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         recallEnabled = try container.decodeIfPresent(Bool.self, forKey: .recallEnabled) ?? true
         proposalsEnabled = try container.decodeIfPresent(Bool.self, forKey: .proposalsEnabled) ?? true
+        autoSaveEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoSaveEnabled) ?? true
         searchEnabled = try container.decodeIfPresent(Bool.self, forKey: .searchEnabled) ?? true
-        nativeCodexEnabled = try container.decodeIfPresent(Bool.self, forKey: .nativeCodexEnabled) ?? false
+        nativeCodexEnabled = try container.decodeIfPresent(Bool.self, forKey: .nativeCodexEnabled) ?? true
         scopes = try container.decodeIfPresent([AgentMemoryScope].self, forKey: .scopes)
             ?? [.personal, .workspace, .agent]
         maxAutomaticMemories = try container.decodeIfPresent(
@@ -2154,6 +2157,7 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
     var supersedes: [String]?
     var retrievalReason: String?
     var conflicts: [MemoryConflict]?
+    var provenance: [String: JSONValue]?
     let createdAt: Double
     let updatedAt: Double
 
@@ -2164,7 +2168,7 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case expiresAt = "expires_at"
-        case kind, confidence, conflicts, supersedes
+        case kind, confidence, conflicts, supersedes, provenance
         case validFrom = "valid_from"
         case validUntil = "valid_until"
         case lastConfirmedAt = "last_confirmed_at"
@@ -2182,6 +2186,16 @@ struct WorkspaceMemory: Identifiable, Codable, Hashable {
     var resolvedKind: MemoryKind { MemoryKind(rawValue: kind ?? "fact") ?? .fact }
     var resolvedConfidence: Double { min(max(confidence ?? 1, 0), 1) }
     var hasConflicts: Bool { !(conflicts ?? []).isEmpty }
+    var hasSourceFiles: Bool {
+        guard case .object(let sources) = provenance?["locus_sources"],
+              sources["version"]?.integer == 1,
+              case .object(let files) = sources["files"] else { return false }
+        return !files.isEmpty
+    }
+    var canRefreshSources: Bool {
+        stale && supersededBy == nil && resolvedScope == .workspace
+            && resolvedKind != .procedure && hasSourceFiles
+    }
 }
 
 struct MemoryConflict: Identifiable, Codable, Hashable {
@@ -2215,6 +2229,8 @@ struct MemoryVaultStatus: Codable, Hashable {
     let memoryAvailable: Bool?
     let countsAvailable: Bool?
     let restoreProtection: MemoryRestoreProtectionStatus?
+    let storageError: String?
+    let storageRoot: String?
 
     enum CodingKeys: String, CodingKey {
         case encrypted, cipher
@@ -2229,7 +2245,33 @@ struct MemoryVaultStatus: Codable, Hashable {
         case memoryAvailable = "memory_available"
         case countsAvailable = "counts_available"
         case restoreProtection = "restore_protection"
+        case storageError = "storage_error"
+        case storageRoot = "storage_root"
     }
+}
+
+struct MemoryStorageResponse: Codable, Hashable {
+    let format: String
+    let root: String?
+    let files: [MemoryStorageFile]
+
+    var usesMarkdown: Bool { format == "markdown" }
+}
+
+struct MemoryStorageFile: Codable, Hashable, Identifiable {
+    var id: String { path }
+    let path: String
+    let scope: String?
+    let status: String?
+}
+
+struct MemoryConsolidationResponse: Codable, Hashable {
+    let merged: Int
+}
+
+struct MemorySourceCheckResponse: Codable, Hashable {
+    let stale: Int
+    let checked: Int
 }
 
 struct MemoryPipelineEvent: Codable, Hashable, Identifiable {

@@ -37,6 +37,69 @@ final class AgentTeamsModelTests: XCTestCase {
         return model
     }
 
+    func testMemoryDefaultsEnableAutomaticRecallAndSaving() throws {
+        let policies = [
+            AgentMemoryPolicy(),
+            try JSONDecoder().decode(AgentMemoryPolicy.self, from: Data("{}".utf8)),
+            try JSONDecoder().decode(AgentBehavior.self, from: Data("{}".utf8)).memoryPolicy,
+        ]
+        for policy in policies {
+            XCTAssertTrue(policy.recallEnabled)
+            XCTAssertTrue(policy.proposalsEnabled)
+            XCTAssertTrue(policy.autoSaveEnabled)
+            XCTAssertTrue(policy.searchEnabled)
+            XCTAssertTrue(policy.nativeCodexEnabled)
+        }
+    }
+
+    func testLegacyMemoryPolicyPreservesExplicitOptOuts() throws {
+        let policy = try JSONDecoder().decode(
+            AgentMemoryPolicy.self,
+            from: Data(#"{"recall_enabled":false,"proposals_enabled":false,"search_enabled":false,"native_codex_enabled":false}"#.utf8)
+        )
+
+        XCTAssertFalse(policy.recallEnabled)
+        XCTAssertFalse(policy.proposalsEnabled)
+        XCTAssertFalse(policy.searchEnabled)
+        XCTAssertFalse(policy.nativeCodexEnabled)
+        XCTAssertTrue(policy.autoSaveEnabled)
+    }
+
+    func testMemoryReviewModeRoundTripsWithAutomaticRecallEnabled() throws {
+        var policy = AgentMemoryPolicy()
+        policy.autoSaveEnabled = false
+        let data = try JSONEncoder().encode(policy)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(encoded["auto_save_enabled"] as? Bool, false)
+
+        let restored = try JSONDecoder().decode(AgentMemoryPolicy.self, from: data)
+        XCTAssertFalse(restored.autoSaveEnabled)
+        XCTAssertTrue(restored.recallEnabled)
+        XCTAssertTrue(restored.proposalsEnabled)
+    }
+
+    func testAutomaticMemorySettingsPersistForPrimaryAndSpecialist() {
+        let model = makeModel()
+        var primary = model.primaryAgentBehavior
+        primary.memoryPolicy.autoSaveEnabled = false
+        primary.memoryPolicy.recallEnabled = false
+        model.savePrimaryAgentBehavior(primary)
+
+        var profile = AgentProfile(name: "Researcher", model: "llama3")
+        var behavior = profile.resolvedBehavior
+        behavior.memoryPolicy.autoSaveEnabled = false
+        behavior.memoryPolicy.nativeCodexEnabled = false
+        profile.behavior = behavior
+        model.saveAgentProfile(profile)
+
+        let restored = makeModel()
+        XCTAssertFalse(restored.primaryAgentBehavior.memoryPolicy.autoSaveEnabled)
+        XCTAssertFalse(restored.primaryAgentBehavior.memoryPolicy.recallEnabled)
+        XCTAssertFalse(restored.agentProfiles[0].resolvedBehavior.memoryPolicy.autoSaveEnabled)
+        XCTAssertFalse(restored.agentProfiles[0].resolvedBehavior.memoryPolicy.nativeCodexEnabled)
+        XCTAssertTrue(restored.agentProfiles[0].resolvedBehavior.memoryPolicy.recallEnabled)
+    }
+
     func testSelectingATeamDisablesSoloDelegationAndBack() {
         let model = makeModel()
         let profile = AgentProfile(name: "Coder", model: "llama3", role: .dispatcher)

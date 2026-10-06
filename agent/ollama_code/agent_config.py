@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from locus_memory.policies import MemoryPolicy
+from .memory_policy import MemoryPolicy
 
 #: "build" is the retired GSD mode, kept so stored agent configs still parse.
 VALID_MODES = {"ask", "work", "plan", "grill", "build"}

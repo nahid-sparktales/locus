@@ -155,20 +155,29 @@ def memory_status(
     from .. import paths
     from ..memory_adapter import LocusKeyProvider
     from ..memory_guard import restore_protection_status
+    from ..memory_markdown import MarkdownMemoryError, storage_status
+    from ..memory_ownership import ownership_state
     from ..product_build import PRODUCT_NAME
 
     target = memory_workspace(service, workspace)
+    storage = (storage_status(paths.APP_DIR / "memories")
+               if ownership_state(paths.APP_DIR, PRODUCT_NAME) in {"package_authoritative", "legacy_retired"}
+               else {"encrypted": True, "cipher": "AES-256-GCM"})
     protection = restore_protection_status(paths.APP_DIR, PRODUCT_NAME, LocusKeyProvider(paths.APP_DIR))
     if protection["state"] == "recovery_required":
-        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+        return {**storage, "approved_count": 0, "candidate_count": 0,
                 "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
                 "restore_protection": protection}
     try:
         result = memory_vault(target).status(workspace=target, agent_id=agent_id)
     except MemoryError as exc:
+        if isinstance(exc.__cause__, MarkdownMemoryError):
+            return {**storage, "approved_count": 0, "candidate_count": 0,
+                    "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
+                    "storage_error": str(exc), "restore_protection": protection}
         # A healthy external checkpoint can still detect a rolled-back local
         # ledger. Keep recovery status available while canonical reads fail closed.
-        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+        return {**storage, "approved_count": 0, "candidate_count": 0,
                 "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
                 "restore_protection": {**protection, "state": "recovery_required", "message": str(exc),
                                        "offline_recovery": True}}
@@ -182,11 +191,58 @@ def memory_list(
     status: str = Query(default=""),
 ) -> dict[str, Any]:
     target = memory_workspace(service, workspace)
-    return {
-        "memories": memory_vault(target).list(
-            workspace=target, agent_id=agent_id, status=status
-        )
-    }
+    try:
+        with memory_vault(target, agent_id=agent_id) as vault:
+            return {"memories": vault.list(workspace=target, agent_id=agent_id, status=status)}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_storage(service: ServiceDependency, workspace: str = Query(default=""),
+                   agent_id: str = Query(default="primary")) -> dict[str, Any]:
+    target = memory_workspace(service, workspace)
+    try:
+        with memory_vault(target, agent_id=agent_id) as vault:
+            result = vault.synchronize()
+            return {**result, "format": result["storage_format"], "root": result["storage_root"],
+                    "sharing": "shared_host", "transport": "ssh"}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_consolidate(service: ServiceDependency,
+                       body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            return {"ok": True, **vault.consolidate()}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_check_sources(service: ServiceDependency,
+                         body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            result = vault.synchronize()["sources"]
+            return {"ok": True, **result,
+                    "stale": sum(item["state"] == "stale" for item in result["items"])}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_refresh_sources(memory_id: str, service: ServiceDependency,
+                           body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    revision = body.get("expected_revision")
+    if type(revision) is not int or revision < 1:
+        raise HTTPException(422, "expected_revision must identify the reviewed memory revision")
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            return {"ok": True, "memory": vault.refresh_sources(memory_id, expected_revision=revision)}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def memory_create(
@@ -516,6 +572,10 @@ def register_routes(router: APIRouter) -> None:
         methods=["GET"],
     )
     router.add_api_route("/api/memory/status", memory_status, methods=["GET"])
+    router.add_api_route("/api/memory/storage", memory_storage, methods=["GET"])
+    router.add_api_route("/api/memory/consolidate", memory_consolidate, methods=["POST"])
+    router.add_api_route("/api/memory/check-sources", memory_check_sources, methods=["POST"])
+    router.add_api_route("/api/memory/{memory_id}/refresh-sources", memory_refresh_sources, methods=["POST"])
     router.add_api_route("/api/memory", memory_list, methods=["GET"])
     router.add_api_route("/api/memory", memory_create, methods=["POST"])
     router.add_api_route("/api/memory", memory_delete_all, methods=["DELETE"])

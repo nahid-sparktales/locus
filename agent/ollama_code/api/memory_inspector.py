@@ -1,7 +1,8 @@
-"""Turn-scoped memory inspection and human-reviewed helper promotion."""
+"""Turn-scoped memory inspection and policy-controlled helper promotion."""
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -9,10 +10,10 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query
 from locus_memory.errors import MemoryEngineError, NotFound
 from locus_memory.models import Actor, CandidateProposal, Scope, SourceRef
-from locus_memory.policies import MemoryPolicy
 
 from ..agent_profile_runtime import saved_memory_agent, trusted_memory_agent
 from ..memory_adapter import ensure_memory_adapter
+from ..memory_policy import MemoryPolicy
 from .continuity import ServiceDependency
 
 
@@ -192,19 +193,29 @@ def propose_helper_result(service, run_id: str, attempt_id: str, *, agent: bool 
         raise HTTPException(403, "workspace memory is unavailable")
     fingerprint = hashlib.sha256(output.encode()).hexdigest()
     candidate = CandidateProposal(content=output[:16_000], kind="fact", scope=Scope.of(project=project),
-        title="Helper discovery awaiting review", proposer="helper",
-        rationale="Review the helper's evidence before approving workspace recall.",
+        title="Helper discovery", proposer="helper",
+        rationale="Retained helper evidence saved according to the agent's memory setting.",
         sources=(SourceRef(kind="provider", ref="helper-" + hashlib.sha256(attempt_id.encode()).hexdigest(),
             actor=Actor.AGENT, fingerprint=fingerprint,
             locator={"run_id": run_id, "attempt_id": attempt_id, "session_id": run.get("session_id"),
                      "agent_id": attempt.get("agent_id")}),))
+    from ..memory import MemoryError, MemoryVault
+    from ..memory_automation import auto_save_candidate
+
+    workspace = service.core.workspace_root or service.core.cwd
     try:
-        saved = adapter.engine.propose(access, candidate, idempotency_key="helper-" + hashlib.sha256(
-            (run_id + "|" + attempt_id + "|" + fingerprint).encode()).hexdigest())
-    except MemoryEngineError as exc:
+        with MemoryVault(workspace=workspace, agent_id=agent_id, scopes=("workspace",)) as vault:
+            with (vault.mutation() if hasattr(vault, "mutation") else nullcontext()):
+                saved = adapter.engine.propose(access, candidate, idempotency_key="helper-" + hashlib.sha256(
+                    (run_id + "|" + attempt_id + "|" + fingerprint).encode()).hexdigest())
+        memory = auto_save_candidate(
+            {"id": saved.record.id}, policy=policy, workspace=workspace, agent_id=agent_id,
+            session_id=run.get("session_id") or "", run_id=run_id,
+        )
+    except (MemoryEngineError, MemoryError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"ok": True, "memory_id": saved.record.id, "status": saved.record.lifecycle.value,
-            "requires_human_approval": True}
+    return {"ok": True, "memory_id": memory["id"], "status": memory["status"],
+            "requires_human_approval": memory["status"] != "approved"}
 
 
 def helper_proposal(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)):

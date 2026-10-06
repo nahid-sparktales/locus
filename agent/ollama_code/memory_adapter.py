@@ -204,6 +204,26 @@ class MemoryAdapter(RecallRuntime):
             operations=operations, purpose=purpose,
         )
 
+    def _prepare_memory(self, core, scopes, agent_id):
+        if self.mode != "enabled" or not scopes:
+            return
+        from .memory import MemoryError
+        from .memory_canonical import CanonicalMemoryVault
+        from .memory_markdown import MarkdownMemoryError
+        from .memory_ownership import ownership_state
+
+        if ownership_state(self.app_dir, self.edition) not in {"package_authoritative", "legacy_retired"}:
+            return  # Migration shadow copies remain read-only and SQL-owned.
+
+        try:
+            with CanonicalMemoryVault(self.app_dir, edition=self.edition,
+                    workspace=str(core.workspace_root or core.cwd or ""),
+                    agent_id=agent_id, scopes=tuple(scopes)) as vault:
+                vault.synchronize()
+        except MemoryError as exc:
+            # The runtime drops the packet on storage/source-check failures.
+            raise MarkdownMemoryError(str(exc)) from exc
+
     def _packet(self, core: Any, query: str, policy: Any, *, just_chat: bool,
                 agent_id: str) -> tuple[AccessContext, ContextPacket] | None:
         if not policy.automatic_recall_enabled:
@@ -211,6 +231,7 @@ class MemoryAdapter(RecallRuntime):
         scopes = policy.recall_scopes(just_chat=just_chat)
         if not scopes:
             return None
+        self._prepare_memory(core, scopes, agent_id)
         access = self.access(core, "recall", scopes=scopes, just_chat=just_chat, agent_id=agent_id)
         text = str(query or "").replace("\x00", " ")
         built = self.packet(access, strip_prompt_decoration(text) or text,
@@ -258,6 +279,15 @@ class MemoryAdapter(RecallRuntime):
             core._memory_recall_agent = agent_id
             core._memory_recall_just_chat = just_chat
             active = active and policy.automatic_recall_enabled and bool(policy.recall_scopes(just_chat=just_chat))
+            if active:
+                from locus_memory.errors import MemoryEngineError
+                try:
+                    self._prepare_memory(core, policy.recall_scopes(just_chat=just_chat), agent_id)
+                except (MemoryEngineError, OSError) as exc:
+                    self._failed("source_check", exc)
+                    active = False
+                    core._memory_empty_packet = None
+                    core._memory_selected_receipt = None
         replacement = self.revalidate(core, str(getattr(core, "memory_context", "") or ""),
                                       active=active)
         if replacement is not None:
@@ -326,13 +356,23 @@ class MemoryAdapter(RecallRuntime):
 
     def on_committed_message(self, core: Any, message: Mapping[str, Any],
                              persisted: Mapping[str, Any] | None = None, *, event_id: str = "") -> None:
-        if not self.archive or not self.active(core) or getattr(core, "memory_evaluation_disabled", False):
+        if not self.active(core) or getattr(core, "memory_evaluation_disabled", False):
             return
         record = persisted if persisted is not None else message
         if any(message.get(key) or record.get(key) for key in _SYNTHETIC_KEYS):
             return
         role, text = record.get("role"), record.get("content")
         if role not in ("user", "assistant") or not isinstance(text, str):
+            return
+        if role == "user":
+            from .memory_automation import capture_user_memory
+
+            try:
+                capture_user_memory(core, text)
+            except Exception as exc:
+                # Memory capture must not prevent a committed chat from running.
+                self._failed("automatic_capture", exc)
+        if not self.archive:
             return
         self.archive_text(
             self.access(core, "ingest"), session_ref=core.session.session_id, role=role,

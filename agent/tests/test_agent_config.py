@@ -158,7 +158,10 @@ def test_memory_tools_do_not_depend_on_workspace_indexing(monkeypatch):
 
     assert "search_workspace_knowledge" not in names
     assert {"search_memory", "propose_memory"} <= names
-    assert memory_vault().status()["encrypted"] is True
+    status = memory_vault().status()
+    assert status["storage_format"] == "markdown"
+    assert status["encrypted"] is False
+    assert status["lifecycle_index_encrypted"] is True
 
 
 def test_local_runtime_output_limit_composes_with_context_window(tmp_path):

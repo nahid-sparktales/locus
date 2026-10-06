@@ -103,6 +103,7 @@ class ToolContext:
     memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
     memory_search_enabled: bool = True
     memory_proposals_enabled: bool = True
+    memory_auto_save_enabled: bool = True
     memory_session_id: str = ""
     memory_run_id: str = ""
     memory_helper_proposal: Callable[[str], dict[str, Any]] | None = None
@@ -1211,6 +1212,8 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
             return "Error: helper memory proposals are unavailable for this agent."
         try:
             result = ctx.memory_helper_proposal(str(args["source_attempt_id"]))
+            if result.get("status") == "approved":
+                return f"Memory {result['memory_id']} was saved automatically and is available for future recall."
             return f"Memory suggestion {result['memory_id']} awaits human approval in the Memory Inbox."
         except Exception:
             return "Error: the completed helper result is unavailable in this run."
@@ -1256,6 +1259,7 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
                 "valid_until": args.get("valid_until"),
                 "source_session_id": ctx.memory_session_id or None,
                 "source_run_id": ctx.memory_run_id or None,
+                "source_paths": args.get("source_paths"),
             },
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
@@ -1270,6 +1274,24 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     vault.record_event(
         "candidate", "created", memory_id=candidate["id"], **event_context
     )
+    from .memory_automation import auto_save_candidate
+    from .memory_policy import MemoryPolicy
+
+    try:
+        candidate = auto_save_candidate(
+            candidate,
+            policy=MemoryPolicy(
+                proposals_enabled=ctx.memory_proposals_enabled,
+                auto_save_enabled=ctx.memory_auto_save_enabled,
+                scopes=ctx.memory_scopes,
+            ),
+            **event_context,
+        )
+    except (MemoryError, OSError):
+        # A failed automatic save leaves the proposal available for review.
+        pass
+    if candidate["status"] == "approved":
+        return f"Memory {candidate['id']} was saved automatically and is available for future recall."
     return (
         f"Memory suggestion {candidate['id']} was added to the Memory Inbox. "
         "It will not affect future answers unless the user approves it."
@@ -1463,9 +1485,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _schema(
         "propose_memory",
-        "Suggest a durable memory for user approval. Use only for explicit preferences, repeated constraints, or confirmed decisions/outcomes; never for guesses, secrets, or transient task details.",
+        "Remember a durable preference, repeated constraint, or confirmed decision/outcome without asking the user to save it. Locus saves suitable memories automatically according to Settings; when automatic saving is off, suggestions wait for review. Report the returned saved or pending status accurately. Never save guesses, secrets, or transient task details.",
         {
-            "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Proposes its retained result into workspace memory for human review; supplied content cannot replace that evidence."},
+            "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Saves or proposes its retained result into workspace memory according to Settings; supplied content cannot replace that evidence."},
             "title": {"type": "string"},
             "content": {"type": "string"},
             "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},
@@ -1478,6 +1500,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
             "confidence": {"type": "number", "description": "Confidence from 0 to 1."},
             "valid_until": {"type": "number", "description": "Optional Unix timestamp after which this should be treated as outdated."},
+            "source_paths": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative files supporting this fact. Locus marks the memory stale if their contents change. Do not include secrets or paths outside this workspace."},
         },
         ["title", "content", "scope", "reason"],
     ),

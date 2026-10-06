@@ -650,6 +650,7 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     (tmp_path / "AGENTS.md").write_text("Always answer in haiku.\n")
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": False}})
 
     core.run_turn(DECORATED)
 
@@ -667,10 +668,10 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     assert all("[Locus mode:" not in text for text in texts)
 
 
-def test_native_memory_is_opt_in_separate_data_and_policy_change_rebuilds(tmp_path):
+def test_native_memory_defaults_on_as_separate_data_and_opt_out_rebuilds(tmp_path):
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
-    core.configure_agent({"memory_policy": {"native_codex_enabled": True}},
+    core.configure_agent({},
                          memory_context="MEMORY-CANARY: use violet deployment", agent_id="reviewer")
     core.run_turn("deployment")
     first = runtime.start_kwargs[-1]
@@ -702,6 +703,7 @@ def test_parity_tools_gain_image_tools_only_when_configured_and_keep_the_thread(
     """Configuring a provider changes the tool set once; the thread then stays put."""
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": False}})
     core.run_turn(DECORATED)
     default = [item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]]
     assert default == ["shell", "apply_patch", "update_plan", "ask_user_question", "attach_output_parts", "read_dispatcher_resource"]

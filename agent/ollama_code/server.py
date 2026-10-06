@@ -621,9 +621,8 @@ def _run_user_turn(
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
     })
     configuration = AgentConfiguration.parse(agent_config)
-    # A Codex-native parity turn carries no ambient context at all, so the
-    # recall work — vault decryption, embedding calls, snapshot scoring — is
-    # pure pre-model latency there and is skipped outright.
+    # Native Codex memory follows the saved agent policy. Skip memory work
+    # when opted out; workspace continuity remains outside the native contract.
     parity_turn = (
         not just_chat
         and svc.core.provider == "chatgpt"

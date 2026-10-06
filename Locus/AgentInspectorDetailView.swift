@@ -320,6 +320,7 @@ private struct MemorySubmissionInspector: View {
         var id: String { attempt_id }
     }
     private struct Listing: Decodable { let submissions: [Submission]; let helpers: [Helper] }
+    private struct MemorySaveResponse: Decodable { let status: String }
     private struct Item: Decodable, Identifiable {
         let record_id: String
         let scope: [String: String]
@@ -390,9 +391,9 @@ private struct MemorySubmissionInspector: View {
                     if !helpers.isEmpty {
                         Divider()
                         Text("Helper discoveries").font(.headline)
-                        Text("Suggestions enter the Memory Inbox and require human approval before recall.").font(.caption)
+                        Text("Discoveries follow this agent's automatic saving setting. Suggestions that need review appear in the Memory Inbox.").font(.caption)
                         ForEach(helpers) { helper in
-                            Button("Suggest workspace memory · \(helper.agent_id)") { Task { await propose(helper) } }
+                            Button("Remember discovery · \(helper.agent_id)") { Task { await propose(helper) } }
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
@@ -428,9 +429,11 @@ private struct MemorySubmissionInspector: View {
     }
     private func propose(_ helper: Helper) async {
         do {
-            let _: SimpleActionResponse = try await model.orchestrationBackend(for: runID).post("/api/memory/helper-proposals",
-                body: ["run_id": runID, "attempt_id": helper.attempt_id], as: SimpleActionResponse.self)
-            error = "Suggestion added to the Memory Inbox for review."
+            let result: MemorySaveResponse = try await model.orchestrationBackend(for: runID).post("/api/memory/helper-proposals",
+                body: ["run_id": runID, "attempt_id": helper.attempt_id], as: MemorySaveResponse.self)
+            error = result.status == "approved"
+                ? "Memory saved and available for future recall."
+                : "Suggestion added to the Memory Inbox for review."
         } catch { self.error = error.localizedDescription }
     }
 }
