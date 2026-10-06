@@ -44,6 +44,8 @@
 
 ### Fixed
 
+- Files counts and Agent section headings use stronger semantic text colors.
+  The Companion popover close button handles the native Escape shortcut.
 - Opening or closing the Companion side panel preserves the central conversation,
   draft, run, and pending approvals. Companion chat selection and queued work stay
   bound to their saved profile and folder; offline and delayed requests cannot take over
