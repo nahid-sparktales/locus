@@ -1,0 +1,222 @@
+{
+  "name": "locus-adaptive-mixed-evidence",
+  "version": 1,
+  "files": [
+    "src/flux_runtime.py",
+    "docs/beacon-v2.md",
+    "docs/beacon-v3.md",
+    "docs/obsolete.md",
+    "docs/unrelated.md",
+    "operations/pilot.csv"
+  ],
+  "documents": [
+    {
+      "path": "operations/pilot.csv",
+      "format": "csv",
+      "segments": [
+        {
+          "text": "procedure\twind_limit\nPilot boarding\t17 metres per second",
+          "locator": {
+            "kind": "sheet",
+            "sheet": "pilot",
+            "cell_range": "A1:B2"
+          },
+          "method": "embedded"
+        }
+      ]
+    }
+  ],
+  "mutations_after_index": {
+    "docs/obsolete.md": "# Nebula maintenance\nNebula maintenance instructions were withdrawn.\n"
+  },
+  "memories": [
+    {
+      "id": "orchid-pointer",
+      "title": "Orchid recovery",
+      "content": "Orchid recovery is documented under Flux runtime in src/flux_runtime.py.",
+      "scope": "workspace"
+    },
+    {
+      "id": "harbor-pointer",
+      "title": "Harbor dispatch",
+      "content": "Harbor dispatch uses the Pilot boarding procedure in operations/pilot.csv.",
+      "scope": "workspace"
+    },
+    {
+      "id": "release-preference",
+      "title": "Release reporting preference",
+      "content": "For release reporting I prefer concise bullet points with source citations.",
+      "scope": "personal"
+    },
+    {
+      "id": "expired-credential",
+      "title": "Comet bypass",
+      "content": "The Comet bypass code is 992.",
+      "scope": "workspace",
+      "expired": true
+    },
+    {
+      "id": "irrelevant-memory",
+      "title": "Baking preference",
+      "content": "For sourdough baking I prefer rye flour.",
+      "scope": "personal"
+    }
+  ],
+  "queries": [
+    {
+      "id": "memory_to_file",
+      "category": "memory_to_workspace",
+      "query": "How is Orchid recovery configured?",
+      "follow_up": {
+        "query": "Flux retry backoff attempts",
+        "missing_information": "The Orchid mapping names Flux but does not specify its recovery settings.",
+        "sources": [
+          "workspace"
+        ]
+      },
+      "relevance": [
+        {
+          "kind": "memory",
+          "id": "orchid-pointer"
+        },
+        {
+          "kind": "workspace",
+          "path": "src/flux_runtime.py",
+          "line_start": 4,
+          "line_end": 5
+        }
+      ],
+      "answers": [
+        "40 seconds",
+        "four attempts"
+      ]
+    },
+    {
+      "id": "memory_to_document",
+      "category": "memory_to_document",
+      "query": "What limits Harbor dispatch?",
+      "follow_up": {
+        "query": "Pilot boarding wind limit",
+        "missing_information": "The Harbor mapping names a procedure but does not contain its threshold.",
+        "sources": [
+          "documents"
+        ]
+      },
+      "relevance": [
+        {
+          "kind": "memory",
+          "id": "harbor-pointer"
+        },
+        {
+          "kind": "documents",
+          "path": "operations/pilot.csv",
+          "locator": {
+            "kind": "sheet",
+            "sheet": "pilot",
+            "cell_range": "A1:B2"
+          },
+          "contains": "17 metres per second"
+        }
+      ],
+      "answers": [
+        "17 metres per second"
+      ]
+    },
+    {
+      "id": "competing_versions",
+      "category": "contradiction",
+      "query": "What is the Beacon version 3 timeout?",
+      "follow_up": {
+        "query": "Beacon v3 timeout",
+        "missing_information": "Resolve the current version without mixing the v2 timeout.",
+        "sources": [
+          "workspace"
+        ]
+      },
+      "relevance": [
+        {
+          "kind": "workspace",
+          "path": "docs/beacon-v3.md",
+          "line_start": 2,
+          "line_end": 2
+        }
+      ],
+      "answers": [
+        "90 seconds"
+      ],
+      "forbidden_answers": [
+        "30 seconds"
+      ]
+    },
+    {
+      "id": "direct_memory",
+      "category": "direct_memory",
+      "query": "What is my release reporting preference?",
+      "relevance": [
+        {
+          "kind": "memory",
+          "id": "release-preference"
+        }
+      ],
+      "answers": [
+        "concise bullet points",
+        "source citations"
+      ]
+    },
+    {
+      "id": "irrelevant_sources",
+      "category": "irrelevant",
+      "query": "What is the garden watering encryption key?",
+      "follow_up": {
+        "query": "garden encryption credentials",
+        "missing_information": "Watering records do not state an encryption key.",
+        "sources": [
+          "all"
+        ]
+      },
+      "relevance": [],
+      "answers": []
+    },
+    {
+      "id": "stale_workspace",
+      "category": "stale",
+      "query": "What is the Nebula bypass code?",
+      "follow_up": {
+        "query": "Nebula maintenance bypass",
+        "missing_information": "The indexed maintenance instructions changed and no current code is available.",
+        "sources": [
+          "workspace"
+        ]
+      },
+      "relevance": [],
+      "answers": [],
+      "forbidden_answers": [
+        "771"
+      ]
+    },
+    {
+      "id": "expired_memory",
+      "category": "stale",
+      "query": "What is the Comet bypass code?",
+      "relevance": [],
+      "answers": [],
+      "forbidden_answers": [
+        "992"
+      ]
+    },
+    {
+      "id": "unanswerable",
+      "category": "unanswerable",
+      "query": "What is the Qzprk external ledger balance?",
+      "follow_up": {
+        "query": "Qzprk ledger balance",
+        "missing_information": "No source supplies this balance.",
+        "sources": [
+          "all"
+        ]
+      },
+      "relevance": [],
+      "answers": []
+    }
+  ]
+}

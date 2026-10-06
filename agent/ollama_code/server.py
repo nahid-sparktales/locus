@@ -178,7 +178,9 @@ async def lifespan(app: FastAPI):
     # not inspect or resume the user's persisted workspace library.
     if os.environ.get("LOCUS_DOCUMENT_COORDINATOR") == "1":
         from .document_library import restore_document_jobs
+        from .knowledge_embeddings import restore_embedding_jobs
         await asyncio.to_thread(restore_document_jobs)
+        await asyncio.to_thread(restore_embedding_jobs)
     parent_pid = _configured_parent_pid()
     parent_watch = asyncio.create_task(_watch_parent(parent_pid)) if parent_pid else None
     independent = getattr(app.state, "runtime", None)
@@ -190,7 +192,9 @@ async def lifespan(app: FastAPI):
         if independent is not None:
             await independent.close()
         from .document_library import stop_document_jobs
+        from .knowledge_embeddings import stop_embedding_jobs
         await asyncio.to_thread(stop_document_jobs)
+        await asyncio.to_thread(stop_embedding_jobs)
         if parent_watch is not None:
             parent_watch.cancel()
         svc: ChatService | None = getattr(app.state, "service", None)
@@ -321,8 +325,13 @@ def _automatic_memory_context(
     *,
     just_chat: bool,
     agent_id: str = "primary",
+    defer_adaptive: bool = False,
 ) -> str:
     """Automatic recall for service, parallel-writer and helper cores."""
+    if defer_adaptive:
+        from .adaptive_retrieval import enabled_for
+        if enabled_for(core, configuration, just_chat=just_chat):
+            return ""
     if getattr(core, "identity_mode", False):
         return ""
     def legacy() -> LegacyRecall:
@@ -631,7 +640,7 @@ def _run_user_turn(
     )
     # A saved-agent turn recalls as that agent, not as "primary" (D40).
     memory_context = "" if (parity_turn and not configuration.memory_policy.native_codex_enabled) or private_identity else _automatic_memory_context(
-        svc.core, text, configuration, just_chat=just_chat,
+        svc.core, text, configuration, just_chat=just_chat, defer_adaptive=True,
         **({"agent_id": agent_profile.id} if agent_profile is not None else {}),
     )
     continuity_context = "" if parity_turn or private_identity else _automatic_continuity_context(
@@ -668,6 +677,7 @@ def _run_user_turn(
                 return _knowledge_store(workspace).search(query, limit=8)
 
         try:
+            from .helper_retrieval import WorkerDelivery
             swarm = SoloSwarmExecutor(
                 snapshot_route(svc.core, svc.core.codex_manager if svc.core.provider == "claude_plan" else svc.codex),
                 emit=svc.emit,
@@ -690,6 +700,7 @@ def _run_user_turn(
                 goal_runtime=getattr(svc, "goal_runtime", None),
                 task_journal=getattr(svc.core, "task_journal", None),
                 usage_rates=svc.core.config.get("usage_rates"),
+                retrieval_delivery=WorkerDelivery(svc.core, svc.decide),
             )
         except SoloSwarmError as exc:
             # Durable, so the Runs panel can tell "the agent saw no reason to
@@ -2136,7 +2147,7 @@ def _run_team_writer(
                     writer.behavior.structured(),
                     mode="build",
                     memory_context=_automatic_memory_context(
-                        core, prompt, writer.behavior, just_chat=False, agent_id=writer.id,
+                        core, prompt, writer.behavior, just_chat=False, agent_id=writer.id, defer_adaptive=True,
                     ),
                     fallback_name=writer.name,
                     fallback_instructions=writer.instructions,

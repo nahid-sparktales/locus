@@ -293,6 +293,7 @@ class AgentWorkerRuntime:
             "job_id": spec.agent_id,
             "tool_call_id": core.active_tool_call_id,
         }
+        registry.adaptive_retrieval_enabled = source.adaptive_retrieval_enabled
         # Build canonical capabilities independently of the parent's wire aliases.
         schemas, parity_schemas = registry.schemas, registry.parity_schemas
         # The older team ceiling retains only permission-free builtins. Read
@@ -341,6 +342,7 @@ class AgentWorkerRuntime:
                     name,
                     lambda tool, original=original: tool == "send_parent_message" or original(tool),
                 )
+        core.adaptive_retrieval_parent = parent
         core.helper_allowed_tools = available
         registry.schemas = lambda: (
             [s for s in canonical_schemas() if s["function"]["name"] in available]
@@ -624,7 +626,7 @@ class AgentWorkerRuntime:
                 "tool_result",
                 "note",
                 "error",
-                "mcp_input_request",
+                "mcp_input_request", "retrieval_trace",
             }:
                 self.svc.emit({**event, **core.tool_event_context, "run_id": self.spec.run_id})
 
@@ -634,7 +636,7 @@ class AgentWorkerRuntime:
             core._memory_learning_prompt = prompt
             core.memory_context = _automatic_memory_context(
                 core, prompt, core.agent_configuration,
-                just_chat=False, agent_id=self.spec.agent_id,
+                just_chat=False, agent_id=self.spec.agent_id, defer_adaptive=True,
             )
             core.run_turn(
                 prompt,

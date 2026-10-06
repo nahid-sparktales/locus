@@ -36,6 +36,7 @@ from ollama_code.agent_config import AgentConfiguration
 from ollama_code.agent_profile_runtime import parse_solo_profile
 from ollama_code.chat_service import ChatService
 from ollama_code.core import AgentCore
+from ollama_code.knowledge import KnowledgeStore
 from ollama_code.memory import MemoryVault
 from ollama_code.memory_adapter import (
     ARCHIVE_ENV,
@@ -123,6 +124,9 @@ def services(workspace, monkeypatch):
     built: list[ChatService] = []
 
     def make(mode: str, *, archive: bool = False, cwd=None) -> ChatService:
+        # These tests freeze the pre-coordinator rollout and lifecycle contract.
+        # Adaptive retrieval's turn sequencing is covered in its own suite.
+        KnowledgeStore(str(cwd or workspace)).configure(adaptive_rag_enabled=False)
         if mode == "disabled":
             monkeypatch.delenv(MODE_ENV, raising=False)
         else:

@@ -3115,6 +3115,8 @@ struct WorkspaceKnowledgeSettingsView: View {
     @Binding var advancedExpanded: Bool
     @State private var enabled = true
     @State private var embeddingModel = ""
+    @State private var rerankModel = ""
+    @State private var adaptiveRagEnabled = true
     @State private var exclusions = ""
     @State private var memoryDraft: WorkspaceMemoryDraft?
     @State private var confirmDeleteAll = false
@@ -3436,17 +3438,31 @@ struct WorkspaceKnowledgeSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Local semantic search")
                         .fontWeight(.semibold)
-                    Text("Leave the model empty to use fast text search only.")
+                    Text("Embeddings find related meanings. Optional reranking orders the strongest matches.")
                         .font(.caption)
                         .foregroundStyle(viewColors.textTertiary)
                 }
             }
             Toggle("Index this workspace", isOn: $enabled)
+            Toggle("Adaptive retrieval", isOn: $adaptiveRagEnabled)
+                .accessibilityIdentifier("knowledge.adaptiveRetrieval")
+            Text("Combine permitted memory, code, and documents. When evidence is incomplete, allow one focused follow-up search.")
+                .font(.caption)
+                .foregroundStyle(viewColors.textTertiary)
             LocusFormTextField(
                 "Optional Ollama embedding model",
                 text: $embeddingModel,
                 prompt: Text("Text search only")
             )
+            LocusFormTextField(
+                "Reranking",
+                text: $rerankModel,
+                prompt: Text("Off")
+            )
+            .accessibilityIdentifier("knowledge.rerankModel")
+            Text("Enter an installed local Ollama generation model to score result relevance. This can make searches slower. Leave empty to turn it off; no models are downloaded here.")
+                .font(.caption)
+                .foregroundStyle(viewColors.textTertiary)
             LocusFormTextField(
                 "Additional exclusions",
                 text: $exclusions,
@@ -3457,6 +3473,8 @@ struct WorkspaceKnowledgeSettingsView: View {
                     knowledge.configureWorkspaceKnowledge(
                         enabled: enabled,
                         embeddingModel: embeddingModel,
+                        rerankModel: rerankModel,
+                        adaptiveRagEnabled: adaptiveRagEnabled,
                         exclusions: exclusions.split(separator: ",").map {
                             $0.trimmingCharacters(in: .whitespacesAndNewlines)
                         }.filter { !$0.isEmpty }
@@ -3466,11 +3484,26 @@ struct WorkspaceKnowledgeSettingsView: View {
                 .tint(viewColors.ink)
                 Button("Rebuild Index") { knowledge.rebuildWorkspaceKnowledge() }
                     .disabled(!enabled || model.isBusy)
+                Button("Refresh Status") {
+                    Task { await knowledge.refreshKnowledgeStatus() }
+                }
             }
             if let status = knowledge.knowledgeStatus {
                 Text("\(status.documentCount) indexed files · \(status.chunkCount) searchable chunks")
                     .font(.caption)
                     .foregroundStyle(viewColors.textTertiary)
+                if !status.embeddingModel.isEmpty,
+                   let complete = status.embeddingComplete,
+                   let pending = status.embeddingPending {
+                    Text("\(complete) chunks embedded · \(pending) waiting for embeddings")
+                        .font(.caption)
+                        .foregroundStyle(viewColors.textTertiary)
+                }
+                if let error = status.embeddingError, !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(viewColors.warning)
+                }
                 if let error = status.lastError, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -3579,7 +3612,17 @@ struct WorkspaceKnowledgeSettingsView: View {
 
     private var knowledgeSummary: String {
         guard let status = knowledge.knowledgeStatus else { return "Loading index status…" }
-        let method = status.embeddingModel.isEmpty ? "text search" : "text and local semantic search"
+        var method = "text search"
+        if !status.embeddingModel.isEmpty {
+            if status.embeddingComplete == 0 {
+                method += " (semantic indexing pending)"
+            } else if (status.embeddingPending ?? 0) > 0 {
+                method = "text and partial local semantic search"
+            } else {
+                method = "text and local semantic search"
+            }
+        }
+        if !(status.rerankModel ?? "").isEmpty { method += " and local reranking" }
         return status.enabled
             ? "\(status.documentCount) files indexed with \(method)."
             : "Indexing is off. Saved memory still works."
@@ -3648,6 +3691,8 @@ struct WorkspaceKnowledgeSettingsView: View {
         guard let status = knowledge.knowledgeStatus else { return }
         enabled = status.enabled
         embeddingModel = status.embeddingModel
+        rerankModel = status.rerankModel ?? ""
+        adaptiveRagEnabled = status.adaptiveRagEnabled ?? true
         exclusions = (status.exclusions ?? []).joined(separator: ", ")
     }
 }

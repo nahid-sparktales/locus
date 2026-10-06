@@ -91,6 +91,15 @@ def isolated_app_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def stop_embedding_workers(isolated_app_dir):
+    """Stop publication before the profile fixture or its path patches unwind."""
+    from ollama_code.knowledge_embeddings import stop_embedding_jobs
+
+    yield
+    stop_embedding_jobs()
+
+
+@pytest.fixture(autouse=True)
 def no_background_probes(monkeypatch):
     """No test reaches out to discover a context window unless it says so.
 

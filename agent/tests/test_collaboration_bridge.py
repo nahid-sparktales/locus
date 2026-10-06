@@ -4,6 +4,8 @@ import json
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from ollama_code.collaboration import WorkerSpec
 from ollama_code.collaboration_bridge import AgentWorkerRuntime, CollaborationBridge
 from ollama_code.core import AgentCore
@@ -136,6 +138,43 @@ def test_edit_helper_uses_active_execution_path_and_blocks_parent_writes(tmp_pat
         assert not (parent / "bad").exists()
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize("mode", ["research", "edit"])
+@pytest.mark.parametrize("requested,permitted", [(None, True), (["search_context"], True), (["read_file"], False)])
+def test_helper_inherits_adaptive_search_before_tool_grants_freeze(tmp_path, mode, requested, permitted):
+    from ollama_code.adaptive_retrieval import begin_turn
+    from ollama_code.memory_adapter import ensure_memory_adapter
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    svc = service(workspace)
+    svc.core._memory_turn_id = "root-turn"
+    svc.core.tool_ctx.memory_run_id = "run"
+    begin_turn(svc.core, "Find the release procedure")
+    runtime = worker(svc, workspace, mode=mode, tools=requested)
+    try:
+        child = runtime.core
+        child._memory_turn_id = "helper-turn"
+        begin_turn(child, "Find the release validation step")
+        assert child.adaptive_retrieval.allowance is svc.core.adaptive_retrieval.allowance
+        schemas = {schema["function"]["name"] for schema in child.tool_registry.schemas()}
+        assert ("search_context" in schemas) is permitted
+        assert ("search_context" in child.helper_allowed_tools) is permitted
+        result = child._run_tool_call(ToolCall("search_context", {
+            "query": "release validation", "missing_information": "Exact validation step",
+            "sources": ["workspace"],
+        }), svc.decide)
+        if permitted:
+            assert json.loads(result)["rounds"] == 2
+            assert svc.core.adaptive_retrieval.allowance.rounds == 2
+        else:
+            assert "outside this helper's inherited capabilities" in result
+            assert svc.core.adaptive_retrieval.allowance.rounds == 1
+    finally:
+        runtime.close()
+        ensure_memory_adapter(svc.core).close()
+        svc.core.mcp.close()
 
 
 def test_bridge_single_helper_nonblocking_then_collects_before_final(tmp_path, monkeypatch):

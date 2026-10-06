@@ -1,0 +1,765 @@
+{
+  "benchmark_version": 1,
+  "corpus": {
+    "name": "locus-adaptive-mixed-evidence",
+    "version": 1,
+    "sha256": "5a2f464d0e4b2655034c6a98666386862b403d4adcbf865c49c5feb5e08752a5",
+    "queries": 8,
+    "files": 6,
+    "memories": 5
+  },
+  "scope": "Authored mixed-source fixture. Scripted follow-ups measure retrieval coverage, not model decision or answer quality.",
+  "isolation": {
+    "disposable_profile": true,
+    "learning_enabled": false,
+    "canonical_records_unchanged": true,
+    "real_adapter_and_coordinator": true,
+    "host_capabilities": "No providers or Keychain; ephemeral fixture custody"
+  },
+  "models": {
+    "embedding": null,
+    "reranker": null,
+    "live_answer_and_decision": null
+  },
+  "metric_notes": {
+    "citation_validity": "Source identity/revision and exact raw locator text; independent of relevance.",
+    "mrr": "Mean reciprocal rank of first valid judged evidence in actual delivery order: selected memory packet order, then packed workspace/document order; answerable queries only.",
+    "source_mrr": "The same reciprocal-rank calculation restricted to each source type in its delivered order; only queries with judgments for that source type.",
+    "retrieval_abstained": "No evidence returned; irrelevant evidence may be returned for unanswerable questions.",
+    "grounded_authored_claim_rate": "Exact authored answer phrase occurs in claim and valid source quote. Not general semantic entailment.",
+    "live": "Optional explicitly selected installed local model; max one follow-up. No grading model or downloads.",
+    "documents": "Authored CSV extraction segments and exact cell locators; extraction quality is outside this benchmark."
+  },
+  "arms": {
+    "single_pass": {
+      "summary": {
+        "query_count": 8,
+        "evidence_recall": 0.75,
+        "mrr": 1.0,
+        "source_recall": {
+          "memory": 1.0,
+          "workspace": 0.5,
+          "documents": 0.0
+        },
+        "source_mrr": {
+          "memory": 1.0,
+          "workspace": 0.5,
+          "documents": 0
+        },
+        "citation_validity": 1.0,
+        "follow_up_rate": 0.0,
+        "mean_latency_ms": 21.153375,
+        "maximum_packed_bytes": 953,
+        "errors": 0,
+        "answer_checks": "Not run",
+        "answer_summary": null
+      },
+      "queries": [
+        {
+          "id": "memory_to_file",
+          "category": "memory_to_workspace",
+          "query": "How is Orchid recovery configured?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": 0.0,
+            "documents": null
+          },
+          "evidence_recall": 0.5,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": 0,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 1,
+          "selected_memory_ids": [
+            "orchid-pointer"
+          ],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 647,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 32.497
+        },
+        {
+          "id": "memory_to_document",
+          "category": "memory_to_document",
+          "query": "What limits Harbor dispatch?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": 0.0
+          },
+          "evidence_recall": 0.5,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": 0
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 1,
+          "selected_memory_ids": [
+            "harbor-pointer"
+          ],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 649,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 21.374
+        },
+        {
+          "id": "competing_versions",
+          "category": "contradiction",
+          "query": "What is the Beacon version 3 timeout?",
+          "answerable": true,
+          "source_recall": {
+            "memory": null,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": null,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 2,
+          "selected_memory_ids": [],
+          "selected_files": [
+            {
+              "id": "file:1",
+              "path": "docs/beacon-v3.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 2
+              },
+              "content_hash": "44293b9e638167746af04c92587109a9bea26ce33045bc748dd73edf7113d4c1"
+            },
+            {
+              "id": "file:2",
+              "path": "docs/beacon-v2.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 2
+              },
+              "content_hash": "5df4239b80ff3cc86c42b4dc81246f03e447cdc9ef1c0b0621761feff4b0a5c6"
+            }
+          ],
+          "rounds": 1,
+          "packed_bytes": 953,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 20.719
+        },
+        {
+          "id": "direct_memory",
+          "category": "direct_memory",
+          "query": "What is my release reporting preference?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 1,
+          "selected_memory_ids": [
+            "release-preference"
+          ],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 683,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 19.749
+        },
+        {
+          "id": "irrelevant_sources",
+          "category": "irrelevant",
+          "query": "What is the garden watering encryption key?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [],
+          "returned": 1,
+          "selected_memory_ids": [],
+          "selected_files": [
+            {
+              "id": "file:4",
+              "path": "docs/unrelated.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 3
+              },
+              "content_hash": "cc7f8d90a718a057597d753531897056f1bdea2cddbd596814bcfce0f2a378b5"
+            }
+          ],
+          "rounds": 1,
+          "packed_bytes": 709,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 18.303
+        },
+        {
+          "id": "stale_workspace",
+          "category": "stale",
+          "query": "What is the Nebula bypass code?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 352,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 19.307
+        },
+        {
+          "id": "expired_memory",
+          "category": "stale",
+          "query": "What is the Comet bypass code?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 352,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 17.391
+        },
+        {
+          "id": "unanswerable",
+          "category": "unanswerable",
+          "query": "What is the Qzprk external ledger balance?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 352,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 19.887
+        }
+      ]
+    },
+    "scripted_follow_up": {
+      "summary": {
+        "query_count": 8,
+        "evidence_recall": 1.0,
+        "mrr": 1.0,
+        "source_recall": {
+          "memory": 1.0,
+          "workspace": 1.0,
+          "documents": 1.0
+        },
+        "source_mrr": {
+          "memory": 1.0,
+          "workspace": 1.0,
+          "documents": 1.0
+        },
+        "citation_validity": 1.0,
+        "follow_up_rate": 0.75,
+        "mean_latency_ms": 27.43375,
+        "maximum_packed_bytes": 1282,
+        "errors": 0,
+        "answer_checks": "Not run",
+        "answer_summary": null
+      },
+      "queries": [
+        {
+          "id": "memory_to_file",
+          "category": "memory_to_workspace",
+          "query": "How is Orchid recovery configured?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0,
+            1
+          ],
+          "returned": 3,
+          "selected_memory_ids": [
+            "orchid-pointer"
+          ],
+          "selected_files": [
+            {
+              "id": "file:6",
+              "path": "src/flux_runtime.py",
+              "locator": {
+                "kind": "line",
+                "line_start": 3,
+                "line_end": 5
+              },
+              "content_hash": "ade9189215ecccdefb94f34407d56b8703e21fb72ee64edeaecd4b43fbd14f54"
+            },
+            {
+              "id": "file:5",
+              "path": "src/flux_runtime.py",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 2
+              },
+              "content_hash": "ade9189215ecccdefb94f34407d56b8703e21fb72ee64edeaecd4b43fbd14f54"
+            }
+          ],
+          "rounds": 2,
+          "packed_bytes": 1282,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 31.009,
+          "follow_up_decision": {
+            "query": "Flux retry backoff attempts",
+            "missing_information": "The Orchid mapping names Flux but does not specify its recovery settings.",
+            "sources": [
+              "workspace"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\"]}"
+        },
+        {
+          "id": "memory_to_document",
+          "category": "memory_to_document",
+          "query": "What limits Harbor dispatch?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": 1.0
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": 1.0
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0,
+            1
+          ],
+          "returned": 2,
+          "selected_memory_ids": [
+            "harbor-pointer"
+          ],
+          "selected_files": [
+            {
+              "id": "file:7",
+              "path": "operations/pilot.csv",
+              "locator": {
+                "kind": "sheet",
+                "sheet": "pilot",
+                "cell_range": "A1:B2"
+              },
+              "content_hash": "16c3c8d398cbae7d25e2cbade505fa4508c7f7248470634c831bc39f1189536a"
+            }
+          ],
+          "rounds": 2,
+          "packed_bytes": 1155,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 27.909,
+          "follow_up_decision": {
+            "query": "Pilot boarding wind limit",
+            "missing_information": "The Harbor mapping names a procedure but does not contain its threshold.",
+            "sources": [
+              "documents"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\"]}"
+        },
+        {
+          "id": "competing_versions",
+          "category": "contradiction",
+          "query": "What is the Beacon version 3 timeout?",
+          "answerable": true,
+          "source_recall": {
+            "memory": null,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": null,
+            "workspace": 1.0,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 2,
+          "selected_memory_ids": [],
+          "selected_files": [
+            {
+              "id": "file:1",
+              "path": "docs/beacon-v3.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 2
+              },
+              "content_hash": "44293b9e638167746af04c92587109a9bea26ce33045bc748dd73edf7113d4c1"
+            },
+            {
+              "id": "file:2",
+              "path": "docs/beacon-v2.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 2
+              },
+              "content_hash": "5df4239b80ff3cc86c42b4dc81246f03e447cdc9ef1c0b0621761feff4b0a5c6"
+            }
+          ],
+          "rounds": 2,
+          "packed_bytes": 920,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 26.778,
+          "follow_up_decision": {
+            "query": "Beacon v3 timeout",
+            "missing_information": "Resolve the current version without mixing the v2 timeout.",
+            "sources": [
+              "workspace"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\"]}"
+        },
+        {
+          "id": "direct_memory",
+          "category": "direct_memory",
+          "query": "What is my release reporting preference?",
+          "answerable": true,
+          "source_recall": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": 1.0,
+          "first_relevant_rank": 1,
+          "mrr": 1.0,
+          "source_mrr": {
+            "memory": 1.0,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [
+            0
+          ],
+          "returned": 1,
+          "selected_memory_ids": [
+            "release-preference"
+          ],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 683,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 18.302
+        },
+        {
+          "id": "irrelevant_sources",
+          "category": "irrelevant",
+          "query": "What is the garden watering encryption key?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": 1.0,
+          "retrieval_abstained": false,
+          "matched_judgments": [],
+          "returned": 1,
+          "selected_memory_ids": [],
+          "selected_files": [
+            {
+              "id": "file:4",
+              "path": "docs/unrelated.md",
+              "locator": {
+                "kind": "line",
+                "line_start": 1,
+                "line_end": 3
+              },
+              "content_hash": "cc7f8d90a718a057597d753531897056f1bdea2cddbd596814bcfce0f2a378b5"
+            }
+          ],
+          "rounds": 2,
+          "packed_bytes": 696,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 35.366,
+          "follow_up_decision": {
+            "query": "garden encryption credentials",
+            "missing_information": "Watering records do not state an encryption key.",
+            "sources": [
+              "all"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\", \"no_eligible_memory\"]}"
+        },
+        {
+          "id": "stale_workspace",
+          "category": "stale",
+          "query": "What is the Nebula bypass code?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 2,
+          "packed_bytes": 319,
+          "diagnostics": [
+            "embeddings_pending"
+          ],
+          "latency_ms": 28.109,
+          "follow_up_decision": {
+            "query": "Nebula maintenance bypass",
+            "missing_information": "The indexed maintenance instructions changed and no current code is available.",
+            "sources": [
+              "workspace"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\"]}"
+        },
+        {
+          "id": "expired_memory",
+          "category": "stale",
+          "query": "What is the Comet bypass code?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 1,
+          "packed_bytes": 352,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 17.175
+        },
+        {
+          "id": "unanswerable",
+          "category": "unanswerable",
+          "query": "What is the Qzprk external ledger balance?",
+          "answerable": false,
+          "source_recall": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "evidence_recall": null,
+          "first_relevant_rank": null,
+          "mrr": null,
+          "source_mrr": {
+            "memory": null,
+            "workspace": null,
+            "documents": null
+          },
+          "citation_validity": null,
+          "retrieval_abstained": true,
+          "matched_judgments": [],
+          "returned": 0,
+          "selected_memory_ids": [],
+          "selected_files": [],
+          "rounds": 2,
+          "packed_bytes": 339,
+          "diagnostics": [
+            "embeddings_pending",
+            "no_eligible_memory"
+          ],
+          "latency_ms": 34.822,
+          "follow_up_decision": {
+            "query": "Qzprk ledger balance",
+            "missing_information": "No source supplies this balance.",
+            "sources": [
+              "all"
+            ]
+          },
+          "follow_up_status": "{\"retrieval\": \"available\", \"rounds\": 2, \"remaining_follow_ups\": 0, \"evidence\": \"The current, revalidated evidence is supplied as request-only reference data.\", \"fallbacks\": [\"embeddings_pending\", \"no_eligible_memory\"]}"
+        }
+      ]
+    }
+  }
+}

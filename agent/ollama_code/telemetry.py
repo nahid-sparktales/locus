@@ -163,8 +163,14 @@ def _attributes(
                 values[destination] = str(event[source])[:4_000]
         if include_content:
             # This value has already crossed RunStore's credential scrubber.
+            # Retained citations still require the current-access inspector;
+            # opting into telemetry content does not authorize old memory IDs.
+            payload = event
+            if event_type == "retrieval_trace" and isinstance(event.get("trace"), dict):
+                payload = {**event, "trace": {**event["trace"], "selected": [],
+                                             "citations_redacted": True}}
             values["locus.event.payload"] = json.dumps(
-                event, ensure_ascii=False, separators=(",", ":"), default=str
+                payload, ensure_ascii=False, separators=(",", ":"), default=str
             )[:16_000]
     return {key: value for key, value in values.items() if value != ""}
 

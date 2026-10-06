@@ -264,9 +264,27 @@ final class WorkspaceKnowledgeModel: ObservableObject {
         }
     }
 
+    func refreshKnowledgeStatus() async {
+        guard let backend else { return }
+        let workspace = workspacePathProvider()
+        do {
+            let status = try await backend.get(
+                "/api/knowledge/status",
+                query: [URLQueryItem(name: "workspace", value: workspace)],
+                as: WorkspaceKnowledgeStatus.self
+            )
+            guard workspacePathProvider() == workspace else { return }
+            knowledgeStatus = status
+        } catch {
+            toastHandler("Could not refresh index status: \(error.localizedDescription)")
+        }
+    }
+
     func configureWorkspaceKnowledge(
         enabled: Bool,
         embeddingModel: String,
+        rerankModel: String = "",
+        adaptiveRagEnabled: Bool = true,
         exclusions: [String] = []
     ) {
         guard let backend else { return }
@@ -279,6 +297,8 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                         "workspace": self.workspacePathProvider(),
                         "enabled": enabled,
                         "embedding_model": embeddingModel,
+                        "rerank_model": rerankModel,
+                        "adaptive_rag_enabled": adaptiveRagEnabled,
                         "ollama_host": self.ollamaHostProvider(),
                         "exclusions": exclusions,
                     ],

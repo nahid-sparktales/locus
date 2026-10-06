@@ -2021,6 +2021,11 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
     var enabled: Bool
     var documentsEnabled: Bool? = nil
     var embeddingModel: String
+    var adaptiveRagEnabled: Bool? = nil
+    var rerankModel: String? = nil
+    var embeddingPending: Int? = nil
+    var embeddingComplete: Int? = nil
+    var embeddingError: String? = nil
     var ollamaHost: String
     var exclusions: [String]?
     let vectorGeneration: Int
@@ -2036,6 +2041,11 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
         case workspace, enabled, exclusions
         case documentsEnabled = "documents_enabled"
         case embeddingModel = "embedding_model"
+        case adaptiveRagEnabled = "adaptive_rag_enabled"
+        case rerankModel = "rerank_model"
+        case embeddingPending = "embedding_pending"
+        case embeddingComplete = "embedding_complete"
+        case embeddingError = "embedding_error"
         case ollamaHost = "ollama_host"
         case vectorGeneration = "vector_generation"
         case lastIndexed = "last_indexed"
@@ -2046,6 +2056,69 @@ struct WorkspaceKnowledgeStatus: Codable, Hashable {
         case vectorAvailable = "vector_available"
         case vectorBackend = "vector_backend"
     }
+}
+
+struct RetrievalTraceResponse: Decodable {
+    let traces: [RetrievalTrace]
+    let note: String?
+}
+
+struct RetrievalTrace: Decodable, Identifiable {
+    let traceID: String
+    let seq: Int?
+    let turnID: String
+    let agentID: String
+    let round: Int
+    let phase: String
+    let sources: [String]
+    let selected: [RetrievalCitation]
+    let omitted: [RetrievalOmission]
+    let fallbacks: [String]
+    let durationMS: Double
+    let packedBytes: Int
+    let unavailableItems: Int
+    var id: String { "\(traceID):\(seq ?? 0):\(phase)" }
+
+    enum CodingKeys: String, CodingKey {
+        case seq, round, phase, sources, selected, omitted, fallbacks
+        case traceID = "id", turnID = "turn_id", agentID = "agent_id"
+        case durationMS = "duration_ms", packedBytes = "packed_bytes"
+        case unavailableItems = "unavailable_items"
+    }
+}
+
+struct RetrievalCitation: Decodable {
+    let kind: String
+    let sourceID: String
+    let path: String?
+    let contentHash: String?
+    let locator: [String: JSONValue]?
+    let revision: Int?
+
+    var locationLabel: String {
+        if kind == "memory" { return "Memory \(sourceID) · revision \(revision ?? 0)" }
+        var value = path ?? sourceID
+        if let start = locator?["line_start"]?.integer {
+            value += ":\(start)–\(locator?["line_end"]?.integer ?? start)"
+        } else if let page = locator?["page"]?.integer {
+            value += " · page \(page)"
+        } else if let paragraph = locator?["paragraph_start"]?.integer {
+            value += " · paragraphs \(paragraph)–\(locator?["paragraph_end"]?.integer ?? paragraph)"
+        } else if let sheet = locator?["sheet"]?.string {
+            value += " · \(sheet) \(locator?["cell_range"]?.string ?? "")"
+        }
+        return value
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, path, locator, revision
+        case sourceID = "id", contentHash = "content_hash"
+    }
+}
+
+struct RetrievalOmission: Decodable {
+    let reason: String
+    let count: Int
 }
 
 struct ContextSnapshot: Identifiable, Codable, Hashable {

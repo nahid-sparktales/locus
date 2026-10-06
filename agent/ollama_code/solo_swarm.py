@@ -7,6 +7,7 @@ provider credentials never leave this backend object.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
@@ -147,6 +148,7 @@ class SoloSwarmExecutor:
         goal_runtime: Any = None,
         task_journal: Any = None,
         usage_rates: dict | None = None,
+        retrieval_delivery: Any = None,
     ) -> None:
         self.usage_context = None
         self.route = route
@@ -154,6 +156,7 @@ class SoloSwarmExecutor:
         from .task_usage_ledger import UsageLedger
         self.usage_ledger = UsageLedger(task_journal) if task_journal is not None else None
         self.usage_rates = usage_rates or {}
+        self.retrieval_delivery = retrieval_delivery
         self.emit = emit
         self.should_stop = should_stop
         self.workspace_tools = ReadOnlyWorkspaceTools(route.workspace, knowledge_search)
@@ -199,7 +202,8 @@ class SoloSwarmExecutor:
             self._task_ids.update(task["id"] for task in tasks)
             batch_number = self._batches
         started = time.monotonic()
-        use_hosted = self.route.hosted_openai_eligible and self._hosted_compatible(tasks)
+        use_hosted = (self.route.hosted_openai_eligible and self._hosted_compatible(tasks)
+                      and not (self.retrieval_delivery and self.retrieval_delivery.enabled()))
         engine = "openai_responses" if use_hosted else "locus_managed"
         for task in tasks:
             self._emit_task_started(task, engine)
@@ -404,10 +408,18 @@ class SoloSwarmExecutor:
                 goal_call = self.goal_runtime.reserve() if self.goal_runtime is not None else None
                 task_call = self._reserve_task_usage()
                 from .model_usage import tracked_chat
-                response = tracked_chat(None, self.route.client, self.route.model, messages, purpose="worker", context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model, "route": getattr(self.route.client, "base_url", "")},
+                request_messages = copy.deepcopy(messages)
+                if self.retrieval_delivery:
+                    reference = self.retrieval_delivery.before_request(self._task_event_context(task))
+                    if reference:
+                        request_messages.append({"role": "user", "content": reference})
+                response = tracked_chat(None, self.route.client, self.route.model, request_messages, purpose="worker", context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model, "route": getattr(self.route.client, "base_url", "")},
                     tools=schemas,
                     should_stop=self._worker_should_stop,
                 )
+                if (self.retrieval_delivery and response.done_reason != "interrupted"
+                        and not self.should_stop()):
+                    self.retrieval_delivery.after_request(self._task_event_context(task))
                 if goal_call is not None:
                     self.goal_runtime.settle(goal_call, response)
                 if task_call:
@@ -458,6 +470,7 @@ class SoloSwarmExecutor:
             for call in response.tool_calls:
                 output = self._execute_task_tool(
                     task, call.name, call.arguments, call.call_id or call.name,
+                    immediate_retrieval=False,
                 )
                 text, images = split_tool_result(output)
                 messages.append({
@@ -529,15 +542,25 @@ class SoloSwarmExecutor:
         run_native = (lambda **kwargs: self.goal_runtime.run_native(self.route.client.run_turn, **kwargs)) if self.goal_runtime is not None else self.route.client.run_turn
         task_call = self._reserve_task_usage()
         from .model_usage import tracked_native
-        tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model},
+        prompt = self._worker_prompt(task)
+        if self.retrieval_delivery:
+            reference = self.retrieval_delivery.before_request(self._task_event_context(task))
+            if reference:
+                prompt += "\n\n" + reference
+        completed = tracked_native(None, run_native, context=self.usage_context or {"task_id": "solo:" + str(task.get("id", "unknown")), "provider": self.route.provider, "model": self.route.model},
             thread_id=thread_id,
-            text=self._worker_prompt(task),
+            text=prompt,
             model=self.route.model,
             output_schema=self._result_schema(),
             tool_handler=tool_handler,
             event_handler=event_handler,
             should_interrupt=self._worker_should_stop,
         )
+        if (self.retrieval_delivery and not self.should_stop()
+                and (not isinstance(completed, dict) or completed.get("status") != "failed")):
+            self.retrieval_delivery.after_request(self._task_event_context(task))
+        if isinstance(completed, dict) and completed.get("status") == "failed":
+            raise SoloSwarmError("The native worker request failed.")
         last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
         prompt_tokens = max(int(last.get("inputTokens") or 0), 0)
         completion_tokens = max(int(last.get("outputTokens") or 0), 0)
@@ -798,6 +821,7 @@ class SoloSwarmExecutor:
         call_id: str,
         *,
         node_id: str | None = None,
+        immediate_retrieval: bool = True,
     ) -> str | dict[str, Any]:
         allowed = set(task.get("_allowed_tools") or [])
         if name not in allowed or name == "web_search":
@@ -809,17 +833,21 @@ class SoloSwarmExecutor:
                 )
             except OpenAIResponsesMultiAgentError as exc:
                 return f"Error: {exc}"
-        event_context = {
-            "node_id": node_id or f"/root/{task['id']}",
-            "agent_id": task["id"],
-            "agent_name": task["label"],
-            "job_id": task["id"],
-            "label": task["label"],
-        }
+        event_context = self._task_event_context(task, node_id=node_id)
         execution_lock = (
             None if self.tool_is_parallel_safe(name) else self._effectful_tool_guard
         )
+        if self.retrieval_delivery and self.retrieval_delivery.enabled():
+            from .helper_retrieval import RETRIEVAL_TOOLS
+            if name in RETRIEVAL_TOOLS:
+                return self.retrieval_delivery.execute(name, arguments, call_id, event_context,
+                    execution_lock, immediate=immediate_retrieval)
         return self.tool_execute(name, arguments, call_id, event_context, execution_lock)
+
+    @staticmethod
+    def _task_event_context(task, *, node_id=None):
+        return {"node_id": node_id or f"/root/{task['id']}", "agent_id": task["id"],
+                "agent_name": task["label"], "job_id": task["id"], "label": task["label"]}
 
     @staticmethod
     def _result_schema() -> dict[str, Any]:

@@ -1,10 +1,10 @@
-"""Workspace-scoped local search and explicitly approved memory."""
+"""Workspace-scoped local retrieval with source-grounded evidence."""
 from __future__ import annotations
 
 import array
+import copy
 import fnmatch
 import hashlib
-import ipaddress
 import json
 import math
 import os
@@ -15,18 +15,15 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode, urlsplit
-
-import requests
+from urllib.parse import quote, urlencode
 
 from . import paths
+from .knowledge_chunks import CHUNKER_VERSION, extracted_chunks, text_chunks
 from .proxy import sanitized_child_environment
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 20_000
 MAX_CHUNKS = 100_000
-CHUNK_CHARS = 6_000
-CHUNK_OVERLAP_LINES = 8
 ALLOWED_EXTENSIONS = {
     "swift", "ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "kt",
     "css", "scss", "html", "md", "json", "yaml", "yml", "toml", "txt",
@@ -140,12 +137,28 @@ class KnowledgeStore:
                 )
             if "documents_enabled" not in columns:
                 connection.execute("ALTER TABLE settings ADD COLUMN documents_enabled INTEGER NOT NULL DEFAULT 0")
+            for name, declaration in (("embedding_error", "TEXT"), ("rerank_model", "TEXT NOT NULL DEFAULT ''"),
+                                      ("index_version", "TEXT NOT NULL DEFAULT ''"),
+                                      ("adaptive_rag_enabled", "INTEGER NOT NULL DEFAULT 1")):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE settings ADD COLUMN {name} {declaration}")
             document_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(documents)")}
             if "format" not in document_columns:
                 connection.execute("ALTER TABLE documents ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
+            for name, declaration in (("chunker_version", "TEXT NOT NULL DEFAULT ''"), ("source_stat", "TEXT")):
+                if name not in document_columns:
+                    connection.execute(f"ALTER TABLE documents ADD COLUMN {name} {declaration}")
             chunk_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(chunks)")}
             if "locator_json" not in chunk_columns:
                 connection.execute("ALTER TABLE chunks ADD COLUMN locator_json TEXT")
+            for name, declaration in (
+                ("context", "TEXT NOT NULL DEFAULT ''"), ("search_content", "TEXT NOT NULL DEFAULT ''"),
+                ("parent_key", "TEXT NOT NULL DEFAULT ''"), ("parent_content", "TEXT NOT NULL DEFAULT ''"),
+                ("parent_line_start", "INTEGER NOT NULL DEFAULT 0"), ("parent_line_end", "INTEGER NOT NULL DEFAULT 0"),
+                ("parent_locator_json", "TEXT"),
+            ):
+                if name not in chunk_columns:
+                    connection.execute(f"ALTER TABLE chunks ADD COLUMN {name} {declaration}")
             connection.execute(
                 "UPDATE settings SET workspace=? WHERE singleton=1", (str(self.root),)
             )
@@ -160,14 +173,19 @@ class KnowledgeStore:
             document_count = int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
             chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
             memory_count = int(connection.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+            from .knowledge_embeddings import embedding_status
+            progress = embedding_status(self)
         return {
             "workspace": str(self.root), "enabled": bool(row["enabled"]),
             "documents_enabled": bool(row["documents_enabled"]),
+            "adaptive_rag_enabled": bool(row["adaptive_rag_enabled"]),
             "embedding_model": row["embedding_model"], "ollama_host": row["ollama_host"],
             "exclusions": json.loads(row["exclusions_json"] or "[]"),
             "vector_generation": row["vector_generation"], "last_indexed": row["last_indexed"],
             "last_error": row["last_error"], "document_count": document_count,
             "chunk_count": chunk_count, "memory_count": memory_count,
+            "index_version": row["index_version"], "rerank_model": row["rerank_model"],
+            **progress,
             "vector_available": True, "vector_backend": "local_exact",
         }
 
@@ -175,29 +193,28 @@ class KnowledgeStore:
         self, *, enabled: bool | None = None, embedding_model: str | None = None,
         ollama_host: str | None = None, exclusions: list[str] | None = None,
         documents_enabled: bool | None = None,
+        rerank_model: str | None = None,
+        adaptive_rag_enabled: bool | None = None,
     ) -> dict[str, Any]:
         with self._lock, self._connect() as connection:
             row = connection.execute("SELECT * FROM settings WHERE singleton=1").fetchone()
             current_model = str(row["embedding_model"] or "")
             requested_model = current_model if embedding_model is None else embedding_model.strip()[:256]
             generation = int(row["vector_generation"])
-            if requested_model != current_model:
-                generation += 1
-                connection.execute(
-                    "UPDATE chunks SET embedding=NULL, embedding_dimension=0, vector_generation=?",
-                    (generation,),
-                )
             requested_host = str(
                 row["ollama_host"] if ollama_host is None else ollama_host
             ).rstrip("/")
             _validate_local_ollama_host(requested_host)
+            if requested_model != current_model or requested_host != str(row["ollama_host"]).rstrip("/"):
+                generation += 1
+                connection.execute("UPDATE chunks SET embedding=NULL, embedding_dimension=0, vector_generation=?", (generation,))
             requested_exclusions = (
                 json.loads(row["exclusions_json"] or "[]")
                 if exclusions is None else _exclusion_patterns(exclusions)
             )
             connection.execute(
                 """UPDATE settings SET enabled=?, embedding_model=?, ollama_host=?, exclusions_json=?,
-                   vector_generation=?, last_error=NULL WHERE singleton=1""",
+                   vector_generation=?, last_error=NULL, embedding_error=NULL WHERE singleton=1""",
                 (
                     int(bool(row["enabled"]) if enabled is None else enabled),
                     requested_model,
@@ -208,11 +225,17 @@ class KnowledgeStore:
             )
             if documents_enabled is not None:
                 connection.execute("UPDATE settings SET documents_enabled=? WHERE singleton=1", (int(documents_enabled),))
+            if rerank_model is not None:
+                connection.execute("UPDATE settings SET rerank_model=? WHERE singleton=1", (str(rerank_model).strip()[:256],))
+            if adaptive_rag_enabled is not None:
+                connection.execute("UPDATE settings SET adaptive_rag_enabled=? WHERE singleton=1", (int(adaptive_rag_enabled),))
             # A disabled library must stop being searchable immediately, even
             # before an extraction job observes its cancellation.
             if documents_enabled is False or enabled is False:
                 connection.execute("DELETE FROM chunks_fts WHERE path IN (SELECT path FROM documents WHERE format!='text')")
                 connection.execute("DELETE FROM documents WHERE format!='text'")
+        from .knowledge_embeddings import schedule_embeddings
+        schedule_embeddings(self)
         return self.settings()
 
     def reindex(self, changed_paths: list[str] | None = None) -> dict[str, Any]:
@@ -220,14 +243,20 @@ class KnowledgeStore:
         config = self.settings()
         if not config["enabled"]:
             return {**config, "updated": 0, "removed": 0, "duration_ms": 0}
+        if config["index_version"] != CHUNKER_VERSION:
+            changed_paths = None
         candidates = self._candidate_paths(changed_paths)
         document_candidates: list[Path] = []
         seen: set[str] = set()
         updated = 0
-        embedded = 0
         with self._lock, self._connect() as connection:
-            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute("SELECT * FROM settings WHERE singleton=1").fetchone()
+            if not current["enabled"]:
+                return {**self.settings(), "updated": 0, "removed": 0, "duration_ms": 0}
             for path in candidates[:MAX_FILES]:
+                if not self._eligible(path, json.loads(current["exclusions_json"]), bool(current["documents_enabled"])):
+                    continue
                 relative = path.relative_to(self.root).as_posix()
                 seen.add(relative)
                 if path.suffix.lower().lstrip(".") in {"pdf", "docx", "xlsx", "csv", "tsv"}:
@@ -238,6 +267,8 @@ class KnowledgeStore:
                     if stat.st_size > MAX_FILE_BYTES or not path.is_file() or path.is_symlink():
                         continue
                     raw = path.read_bytes()
+                    if _stat_key(path.stat()) != _stat_key(stat):
+                        continue
                     if b"\0" in raw[:8_192]:
                         continue
                     content = raw.decode("utf-8", errors="replace")
@@ -247,33 +278,22 @@ class KnowledgeStore:
                     continue
                 digest = hashlib.sha256(raw).hexdigest()
                 previous = connection.execute(
-                    "SELECT content_hash FROM documents WHERE path=?", (relative,)
+                    "SELECT content_hash,chunker_version FROM documents WHERE path=?", (relative,)
                 ).fetchone()
-                if previous is not None and previous[0] == digest:
+                if previous is not None and previous[0] == digest and previous[1] == CHUNKER_VERSION:
                     continue
                 connection.execute("DELETE FROM chunks_fts WHERE path=?", (relative,))
                 connection.execute("DELETE FROM chunks WHERE path=?", (relative,))
                 connection.execute(
-                    """INSERT INTO documents(path, content_hash, size, mtime, indexed_at)
-                       VALUES(?, ?, ?, ?, ?)
+                    """INSERT INTO documents(path,content_hash,size,mtime,indexed_at,format,chunker_version,source_stat)
+                       VALUES(?,?,?,?,?,'text',?,?)
                        ON CONFLICT(path) DO UPDATE SET content_hash=excluded.content_hash,
-                       size=excluded.size, mtime=excluded.mtime, indexed_at=excluded.indexed_at""",
-                    (relative, digest, len(raw), stat.st_mtime, time.time()),
+                       size=excluded.size,mtime=excluded.mtime,indexed_at=excluded.indexed_at,
+                       format=excluded.format,chunker_version=excluded.chunker_version,source_stat=excluded.source_stat""",
+                    (relative, digest, len(raw), stat.st_mtime, time.time(), CHUNKER_VERSION, _stat_key(stat)),
                 )
-                for line_start, line_end, chunk in _chunks(content):
-                    chunk_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
-                    cursor = connection.execute(
-                        """INSERT INTO chunks(path, line_start, line_end, content, content_hash)
-                           VALUES(?, ?, ?, ?, ?)""",
-                        (relative, line_start, line_end, chunk, chunk_hash),
-                    )
-                    connection.execute(
-                        "INSERT INTO chunks_fts(content, path, chunk_id) VALUES(?, ?, ?)",
-                        (chunk, relative, cursor.lastrowid),
-                    )
+                self._insert_chunks(connection, relative, text_chunks(content, path=relative))
                 updated += 1
-                if int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]) >= MAX_CHUNKS:
-                    break
             removed = 0
             if changed_paths is None:
                 stored = {str(row[0]) for row in connection.execute("SELECT path FROM documents WHERE format='text'")}
@@ -282,20 +302,13 @@ class KnowledgeStore:
                     connection.execute("DELETE FROM documents WHERE path=?", (relative,))
                     removed += 1
             connection.execute(
-                "UPDATE settings SET last_indexed=?, last_error=NULL WHERE singleton=1",
-                (time.time(),),
+                "UPDATE settings SET last_indexed=?, index_version=?, last_error=NULL WHERE singleton=1",
+                (time.time(), CHUNKER_VERSION),
             )
             connection.commit()
-        model = str(config.get("embedding_model") or "")
-        if model:
-            try:
-                embedded = self._embed_missing(model, str(config["ollama_host"]))
-            except Exception as exc:  # local semantic failure leaves FTS available
-                with self._connect() as connection:
-                    connection.execute(
-                        "UPDATE settings SET last_error=? WHERE singleton=1", (str(exc)[:2_000],)
-                    )
-        if config["documents_enabled"]:
+        from .knowledge_embeddings import schedule_embeddings
+        schedule_embeddings(self)
+        if self.settings()["documents_enabled"]:
             from .document_library import DocumentError, DocumentStore
             library = DocumentStore(str(self.root))
             library.reconcile()
@@ -305,19 +318,20 @@ class KnowledgeStore:
                 except (DocumentError, OSError):
                     continue
         return {
-            **self.settings(), "updated": updated, "removed": removed, "embedded": embedded,
+            **self.settings(), "updated": updated, "removed": removed, "embedded": 0,
             "duration_ms": max(int((time.monotonic() - started) * 1_000), 0),
         }
 
     def _candidate_paths(self, changed_paths: list[str] | None) -> list[Path]:
-        exclusions = [str(item) for item in self.settings().get("exclusions") or []]
+        config = self.settings()
+        exclusions = [str(item) for item in config.get("exclusions") or []]
         if changed_paths is not None:
             paths_out = []
             for value in changed_paths[:5_000]:
-                candidate = (self.root / value).resolve()
+                candidate = Path(os.path.abspath(self.root / value))
                 if candidate != self.root and self.root not in candidate.parents:
                     continue
-                if self._eligible(candidate, exclusions):
+                if self._eligible(candidate, exclusions, config["documents_enabled"]):
                     paths_out.append(candidate)
             return paths_out
         try:
@@ -331,7 +345,7 @@ class KnowledgeStore:
                 return [self.root / raw.decode("utf-8", errors="surrogateescape")
                         for raw in result.stdout.split(b"\0") if raw
                         if self._eligible(
-                            self.root / raw.decode("utf-8", errors="surrogateescape"), exclusions
+                            self.root / raw.decode("utf-8", errors="surrogateescape"), exclusions, config["documents_enabled"]
                         )]
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -341,18 +355,21 @@ class KnowledgeStore:
                               if name not in SKIPPED_DIRECTORIES and not name.startswith(".")]
             for name in files:
                 path = Path(current) / name
-                if self._eligible(path, exclusions):
+                if self._eligible(path, exclusions, config["documents_enabled"]):
                     output.append(path)
                     if len(output) >= MAX_FILES:
                         return output
         return output
 
-    def _eligible(self, path: Path, exclusions: list[str]) -> bool:
+    def _eligible(self, path: Path, exclusions: list[str], documents_enabled: bool | None = None) -> bool:
         try:
             relative = path.relative_to(self.root)
         except ValueError:
             return False
-        if path.is_symlink() or any(part in SKIPPED_DIRECTORIES for part in relative.parts):
+        if ".." in relative.parts or any((self.root / Path(*relative.parts[:i])).is_symlink()
+                                        for i in range(1, len(relative.parts) + 1)):
+            return False
+        if any(part in SKIPPED_DIRECTORIES for part in relative.parts):
             return False
         if any(part.startswith(".") for part in relative.parts[:-1]):
             return False
@@ -362,10 +379,14 @@ class KnowledgeStore:
         if any(fnmatch.fnmatchcase(relative_name, pattern) for pattern in exclusions):
             return False
         extension = path.suffix.lower().lstrip(".")
-        return extension in ALLOWED_EXTENSIONS or (
-            extension in {"pdf", "docx", "xlsx", "csv", "tsv"}
-            and self.settings()["documents_enabled"]
-        )
+        if extension in ALLOWED_EXTENSIONS:
+            return True
+        if extension not in {"pdf", "docx", "xlsx", "csv", "tsv"}:
+            return False
+        if documents_enabled is None:
+            with self._connect() as connection:
+                documents_enabled = bool(connection.execute("SELECT documents_enabled FROM settings WHERE singleton=1").fetchone()[0])
+        return documents_enabled
 
     def document_path_allowed(self, path: Path) -> bool:
         return self._eligible(path, self.settings()["exclusions"])
@@ -377,7 +398,7 @@ class KnowledgeStore:
 
     def has_document_hash(self, relative: str, digest: str) -> bool:
         with self._connect() as connection:
-            return connection.execute("SELECT 1 FROM documents WHERE path=? AND content_hash=?", (relative, digest)).fetchone() is not None
+            return connection.execute("SELECT 1 FROM documents WHERE path=? AND content_hash=? AND chunker_version=?", (relative, digest, CHUNKER_VERSION)).fetchone() is not None
 
     def index_extracted_document(self, relative: str, digest: str, segments: list[dict[str, Any]], format: str) -> None:
         config = self.settings()
@@ -392,148 +413,300 @@ class KnowledgeStore:
             # them again under the same lock as publication, so disabling the
             # library cannot be followed by a late re-insertion.
             current = connection.execute("SELECT enabled,documents_enabled,exclusions_json FROM settings WHERE singleton=1").fetchone()
-            if not current["enabled"] or not current["documents_enabled"] or not self._eligible(path, json.loads(current["exclusions_json"])):
+            if not current["enabled"] or not current["documents_enabled"] or not self._eligible(path, json.loads(current["exclusions_json"]), bool(current["documents_enabled"])):
                 raise KnowledgeError("Document knowledge was disabled or this document was excluded.")
             connection.execute("DELETE FROM chunks_fts WHERE path=?", (relative,))
             connection.execute("DELETE FROM documents WHERE path=?", (relative,))
-            connection.execute("INSERT INTO documents(path,content_hash,size,mtime,indexed_at,format) VALUES(?,?,?,?,?,?)", (relative, digest, stat.st_size, stat.st_mtime, time.time(), format))
-            existing_count = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            for segment in segments:
-                # Preserve one semantic locator across bounded text chunks;
-                # line numbers are never invented for a binary source file.
-                content = str(segment["text"])
-                for offset in range(0, len(content), CHUNK_CHARS):
-                    text = content[offset:offset + CHUNK_CHARS]
-                    if existing_count >= MAX_CHUNKS:
-                        raise KnowledgeError("Workspace knowledge reached its 100,000 chunk limit.")
-                    locator = segment["locator"]
-                    cursor = connection.execute("INSERT INTO chunks(path,line_start,line_end,content,content_hash,locator_json) VALUES(?,0,0,?,?,?)", (relative, text, hashlib.sha256(text.encode()).hexdigest(), json.dumps(locator)))
-                    connection.execute("INSERT INTO chunks_fts(content,path,chunk_id) VALUES(?,?,?)", (text, relative, cursor.lastrowid))
-                    existing_count += 1
+            connection.execute(
+                "INSERT INTO documents(path,content_hash,size,mtime,indexed_at,format,chunker_version,source_stat) VALUES(?,?,?,?,?,?,?,?)",
+                (relative, digest, stat.st_size, stat.st_mtime, time.time(), format, CHUNKER_VERSION, None),
+            )
+            self._insert_chunks(connection, relative, extracted_chunks(segments, path=relative))
+
+    @staticmethod
+    def _insert_chunks(connection: sqlite3.Connection, relative: str, chunks: list[dict[str, Any]]) -> None:
+        chunks = [chunk for chunk in chunks if chunk["content"].strip()]
+        count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        if count + len(chunks) > MAX_CHUNKS:
+            raise KnowledgeError("Workspace knowledge reached its 100,000 chunk limit.")
+        for chunk in chunks:
+            search_content = chunk["context"] + "\n" + chunk["content"]
+            cursor = connection.execute(
+                """INSERT INTO chunks(path,line_start,line_end,content,content_hash,locator_json,
+                   context,search_content,parent_key,parent_content,parent_line_start,parent_line_end,parent_locator_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (relative, chunk["line_start"], chunk["line_end"], chunk["content"], chunk["content_hash"],
+                 json.dumps(chunk["locator"]) if chunk.get("locator") else None,
+                 chunk["context"], search_content, chunk["parent_key"], chunk["parent_content"],
+                 chunk["parent_line_start"], chunk["parent_line_end"],
+                 json.dumps(chunk["parent_locator"]) if chunk.get("parent_locator") else None),
+            )
+            connection.execute("INSERT INTO chunks_fts(content,path,chunk_id) VALUES(?,?,?)",
+                               (search_content, relative, cursor.lastrowid))
 
     def _embed_missing(self, model: str, host: str) -> int:
-        with self._connect() as connection:
-            settings = connection.execute("SELECT vector_generation FROM settings").fetchone()
-            generation = int(settings[0])
-            rows = connection.execute(
-                """SELECT id, content FROM chunks WHERE embedding IS NULL
-                   ORDER BY id LIMIT 2000"""
-            ).fetchall()
-        count = 0
-        for offset in range(0, len(rows), 32):
-            batch = rows[offset:offset + 32]
-            embeddings = embed_texts(
-                model, host, [str(row["content"]) for row in batch]
-            )
-            with self._connect() as connection:
-                for row, vector in zip(batch, embeddings, strict=True):
-                    floats = array.array("f", [float(value) for value in vector])
-                    connection.execute(
-                        """UPDATE chunks SET embedding=?, embedding_dimension=?, vector_generation=?
-                           WHERE id=?""",
-                        (floats.tobytes(), len(floats), generation, row["id"]),
-                    )
-                    count += 1
-        return count
+        # Compatibility for callers that explicitly drain the durable queue.
+        from .knowledge_embeddings import drain_embeddings
+        config = self.settings()
+        if model != config["embedding_model"] or host.rstrip("/") != config["ollama_host"].rstrip("/"):
+            return 0
+        return drain_embeddings(self)
 
     def search(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        return self.search_with_diagnostics(query, limit)["results"]
+
+    def search_with_diagnostics(self, query: str, limit: int = 8, *, files_only: bool = False,
+                                sources=None, allow_reindex: bool = True, deadline=None,
+                                should_stop=None, pack: bool = True, on_lexical=None) -> dict[str, Any]:
+        from .knowledge_retrieval import (
+            RERANK_CANDIDATES,
+            fuse_candidates,
+            query_terms,
+            rerank_candidates,
+            stop_reason,
+        )
+        started = time.monotonic()
         query = query.strip()[:2_000]
         if not query:
             raise KnowledgeError("knowledge search requires a query")
         limit = min(max(int(limit), 1), 20)
+        if deadline is not None and not math.isfinite(deadline):
+            raise KnowledgeError("Retrieval deadline must be a finite monotonic time.")
+        if sources is not None and (not isinstance(sources, (tuple, list, set, frozenset))
+                or any(value not in {"workspace", "documents"} for value in sources)):
+            raise KnowledgeError("Knowledge sources must be workspace or documents.")
+        selected = {"workspace", "documents"} if sources is None else set(sources)
+        diagnostics: dict[str, Any] = {"lexical_candidates": 0, "semantic_candidates": 0,
+            "candidate_count": 0, "rejected_sources": 0, "reranked": False, "fallbacks": [],
+            "partial_reasons": []}
+
+        def finish(results, reason=None):
+            reason = reason or stop_reason(deadline, should_stop)
+            if reason and reason not in diagnostics["partial_reasons"]:
+                diagnostics["partial_reasons"].append(reason)
+            diagnostics.update(returned=len(results), duration_ms=round((time.monotonic() - started) * 1_000, 2),
+                               partial=bool(diagnostics["partial_reasons"] or diagnostics["fallbacks"]))
+            if reason in {"deadline_exceeded", "cancelled"}:
+                diagnostics[reason] = True
+            return {"results": results, "diagnostics": diagnostics}
+
+        if reason := stop_reason(deadline, should_stop):
+            return finish([], reason)
         config = self.settings()
+        diagnostics["embedding_pending"] = config["embedding_pending"]
         if not config["enabled"]:
-            return []
-        if not config["last_indexed"]:
+            diagnostics["disabled"] = True
+            return finish([])
+        if not selected:
+            return finish([])
+        if not config["last_indexed"] or config["index_version"] != CHUNKER_VERSION:
+            if not allow_reindex:
+                return finish([], "index_not_ready")
+            if reason := stop_reason(deadline, should_stop):
+                return finish([], reason)
             self.reindex()
             config = self.settings()
-        terms = [term for term in re.findall(r"[\w.-]+", query, flags=re.UNICODE) if len(term) > 1]
-        fts_query = " OR ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms[:16])
-        results: dict[str, dict[str, Any]] = {}
+        text_enabled = "workspace" in selected
+        documents_enabled = "documents" in selected and config["documents_enabled"]
+        terms = query_terms(query)
+        fts_query = " OR ".join(f'"{term}"' for term in terms)
+        lexical: list[dict[str, Any]] = []
         with self._connect() as connection:
-            if fts_query:
-                rows = connection.execute(
-                    """SELECT chunk_id, path, content, bm25(chunks_fts) AS rank
-                       FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT ?""",
-                    (fts_query, limit * 4),
-                ).fetchall()
-                for position, row in enumerate(rows):
-                    chunk = connection.execute(
-                        "SELECT chunks.line_start,chunks.line_end,chunks.locator_json,documents.content_hash,documents.format FROM chunks JOIN documents ON documents.path=chunks.path WHERE chunks.id=?", (row["chunk_id"],)
-                    ).fetchone()
-                    if chunk is None:
-                        continue
-                    if chunk["format"] != "text" and not config["documents_enabled"]:
-                        continue
-                    key = f"file:{row['chunk_id']}"
-                    results[key] = {
-                        "id": key, "kind": "file", "source": "text", "path": row["path"],
-                        "line_start": chunk["line_start"], "line_end": chunk["line_end"],
-                        "snippet": str(row["content"])[:6_000], "score": 1.0 / (position + 1),
-                        "freshness": config["last_indexed"],
-                        "locator": json.loads(chunk["locator_json"]) if chunk["locator_json"] else {"kind": "line", "line_start": chunk["line_start"], "line_end": chunk["line_end"]},
-                        "content_hash": chunk["content_hash"], "format": chunk["format"],
-                    }
-            memories = connection.execute(
-                "SELECT * FROM memories WHERE lower(title || ' ' || content || ' ' || tags_json) LIKE ? "
-                "ORDER BY pinned DESC, updated_at DESC LIMIT ?",
-                (f"%{query.lower()}%", limit),
-            ).fetchall()
-            for position, row in enumerate(memories):
-                results[f"memory:{row['id']}"] = {
-                    "id": f"memory:{row['id']}", "kind": "memory", "source": "approved_memory",
-                    "title": row["title"], "snippet": row["content"], "path": "",
-                    "line_start": 0, "line_end": 0, "score": 1.2 / (position + 1),
-                    "freshness": row["updated_at"], "stale": bool(row["stale"]),
-                }
-        model = str(config.get("embedding_model") or "")
-        if model:
+            if deadline is not None or should_stop is not None:
+                connection.set_progress_handler(lambda: int(stop_reason(deadline, should_stop) is not None), 1000)
             try:
-                for item in self._vector_search(query, model, str(config["ollama_host"]), limit * 3):
-                    key = item["id"]
-                    if key in results:
-                        results[key]["score"] += item["score"]
-                        results[key]["source"] = "hybrid"
-                    else:
-                        results[key] = item
-            except Exception:
-                pass
-        return sorted(results.values(), key=lambda item: (-float(item["score"]), item["id"]))[:limit]
+                if fts_query:
+                    rows = connection.execute(
+                        """SELECT c.*,d.content_hash AS document_hash,d.format,d.source_stat,d.indexed_at,
+                           bm25(chunks_fts) AS rank FROM chunks_fts
+                           JOIN chunks c ON c.id=chunks_fts.chunk_id JOIN documents d ON d.path=c.path
+                           WHERE chunks_fts MATCH ? AND ((d.format='text' AND ?) OR (d.format!='text' AND ?))
+                           ORDER BY rank,c.id LIMIT ?""",
+                        (fts_query, text_enabled, documents_enabled, max(RERANK_CANDIDATES, limit * 4)),
+                    ).fetchall()
+                    lexical = [self._search_item(row, "text") for row in rows]
+                if not files_only and text_enabled:
+                    memories = connection.execute(
+                        "SELECT * FROM memories WHERE stale=0 AND lower(title || ' ' || content || ' ' || tags_json) LIKE ? "
+                        "ORDER BY pinned DESC, updated_at DESC LIMIT ?", (f"%{query.lower()}%", limit),
+                    ).fetchall()
+                    lexical.extend({"id": f"memory:{row['id']}", "kind": "memory", "source": "approved_memory",
+                        "title": row["title"], "snippet": row["content"], "path": "", "line_start": 0,
+                        "line_end": 0, "freshness": row["updated_at"], "stale": False} for row in memories)
+            except sqlite3.OperationalError:
+                if not stop_reason(deadline, should_stop):
+                    raise
+        fresh: dict[tuple[str, str], bool] = {}
+        lexical_count = len(lexical)
+        lexical = self._fresh_candidates(lexical, self.settings(), fresh,
+                                         deadline=deadline, should_stop=should_stop)
+        diagnostics["rejected_sources"] = lexical_count - len(lexical)
+        if on_lexical is not None:
+            # The host may keep this bounded snapshot if its overall wait ends
+            # before a local model responds. It still revalidates at delivery.
+            on_lexical(copy.deepcopy(fuse_candidates(lexical, [], query)[:RERANK_CANDIDATES]))
+        semantic: list[dict[str, Any]] = []
+        controls = {key: value for key, value in (("deadline", deadline), ("should_stop", should_stop)) if value is not None}
+        if config["embedding_model"] and not stop_reason(deadline, should_stop):
+            try:
+                semantic = self._vector_search(query, config["embedding_model"], config["ollama_host"],
+                    max(RERANK_CANDIDATES, limit * 4), sources=selected, **controls)
+            except Exception as exc:
+                diagnostics["fallbacks"].append(f"semantic_unavailable:{type(exc).__name__}")
+        # Filter before fusion and before a model sees evidence. Recheck again
+        # after network calls, since sources/settings may change during retrieval.
+        current = self.settings()
+        retrieved_count = len(lexical) + len(semantic)
+        fresh = {}
+        lexical = self._fresh_candidates(lexical, current, fresh, deadline=deadline, should_stop=should_stop)
+        semantic = self._fresh_candidates(semantic, current, fresh, deadline=deadline, should_stop=should_stop)
+        diagnostics["rejected_sources"] += retrieved_count - len(lexical) - len(semantic)
+        diagnostics.update(lexical_candidates=len(lexical), semantic_candidates=len(semantic))
+        candidates = fuse_candidates(lexical, semantic, query)[:RERANK_CANDIDATES]
+        diagnostics["candidate_count"] = len(candidates)
+        if current["rerank_model"] and candidates and current["enabled"] and not stop_reason(deadline, should_stop):
+            try:
+                candidates = rerank_candidates(query, candidates, model=current["rerank_model"], host=current["ollama_host"], **controls)
+                diagnostics["reranked"] = True
+            except Exception as exc:
+                diagnostics["fallbacks"].append(f"reranker_unavailable:{type(exc).__name__}")
+        current = self.settings()
+        valid = self._fresh_candidates(candidates, current, {}, deadline=deadline, should_stop=should_stop)
+        diagnostics["rejected_sources"] += len(candidates) - len(valid)
+        results = self.pack_results(valid, limit=limit) if pack else valid
+        diagnostics["embedding_pending"] = current["embedding_pending"]
+        return finish(results)
 
-    def _vector_search(self, query: str, model: str, host: str, limit: int) -> list[dict[str, Any]]:
-        vectors = embed_texts(model, host, [query])
-        if not vectors:
+    def revalidate_results(self, results: list[dict[str, Any]], *, deadline=None,
+                           should_stop=None) -> list[dict[str, Any]]:
+        """Recheck retained evidence against current settings, index and source bytes."""
+        config = self.settings()
+        if not config["last_indexed"] or config["index_version"] != CHUNKER_VERSION:
+            return []
+        return self._fresh_candidates([dict(item) for item in results], config, {},
+                                      deadline=deadline, should_stop=should_stop)
+
+    @staticmethod
+    def pack_results(results: list[dict[str, Any]], limit: int = 8, byte_budget: int = 24_000) -> list[dict[str, Any]]:
+        from .knowledge_retrieval import pack_evidence, select_diverse
+
+        packed = pack_evidence(select_diverse(results, min(max(int(limit), 1), 20)), byte_budget=max(0, int(byte_budget)))
+        for item in packed:
+            item.pop("source_stat", None)
+        return packed
+
+    @staticmethod
+    def _search_item(row: sqlite3.Row, source: str) -> dict[str, Any]:
+        return {"id": f"file:{row['id']}", "kind": "file", "source": source, "path": row["path"],
+            "line_start": row["line_start"], "line_end": row["line_end"], "snippet": row["content"],
+            "context": row["context"], "parent_key": row["parent_key"], "parent_content": row["parent_content"],
+            "parent_line_start": row["parent_line_start"], "parent_line_end": row["parent_line_end"],
+            "parent_locator": json.loads(row["parent_locator_json"]) if row["parent_locator_json"] else None,
+            "locator": json.loads(row["locator_json"]) if row["locator_json"] else {
+                "kind": "line", "line_start": row["line_start"], "line_end": row["line_end"]},
+            "content_hash": row["document_hash"], "format": row["format"],
+            "source_stat": row["source_stat"], "freshness": row["indexed_at"]}
+
+    def _fresh_candidates(self, candidates: list[dict[str, Any]], config: dict[str, Any],
+                          cache: dict[tuple[str, str], bool], *, deadline=None, should_stop=None) -> list[dict[str, Any]]:
+        from .knowledge_retrieval import stop_reason
+        if not config["enabled"]:
+            return []
+        output = []
+        identifiers = [item["id"].split(":", 1)[-1] for item in candidates]
+        if not identifiers:
+            return output
+        placeholders = ",".join("?" for _ in identifiers)
+        with self._connect() as connection:
+            indexed = {(f"file:{row[0]}", row[1]) for row in connection.execute(
+                f"SELECT c.id,d.content_hash FROM chunks c JOIN documents d ON d.path=c.path WHERE c.id IN ({placeholders})",
+                identifiers)}
+            memories = {f"memory:{row[0]}" for row in connection.execute(
+                f"SELECT id FROM memories WHERE stale=0 AND id IN ({placeholders})", identifiers)}
+        for item in candidates:
+            if item["kind"] == "memory":
+                if not item.get("stale") and item["id"] in memories:
+                    output.append(item)
+                continue
+            if (item["id"], item["content_hash"]) not in indexed:
+                continue
+            key = (item["path"], item["content_hash"])
+            if key not in cache:
+                path = self.root / item["path"]
+                cache[key] = False
+                if (item["format"] != "text" and not config["documents_enabled"]) or not self._eligible(path, config["exclusions"], config["documents_enabled"]):
+                    continue
+                try:
+                    before = path.stat()
+                    if not path.is_file() or before.st_size > (MAX_FILE_BYTES if item["format"] == "text" else 100 * 1024 * 1024):
+                        continue
+                    if item.get("source_stat") == _stat_key(before):
+                        cache[key] = True
+                    else:
+                        if stop_reason(deadline, should_stop):
+                            continue
+                        digest = hashlib.sha256()
+                        read_bytes = 0
+                        with path.open("rb") as source:
+                            for block in iter(lambda: source.read(65536), b""):
+                                if stop_reason(deadline, should_stop):
+                                    break
+                                read_bytes += len(block)
+                                if read_bytes > before.st_size:
+                                    break
+                                digest.update(block)
+                        cache[key] = (read_bytes == before.st_size and digest.hexdigest() == item["content_hash"]
+                                      and _stat_key(before) == _stat_key(path.stat()))
+                    if cache[key]:
+                        item["source_stat"] = _stat_key(before)
+                except OSError:
+                    pass
+            if cache[key]:
+                output.append(item)
+        return output
+
+    def _vector_search(self, query: str, model: str, host: str, limit: int, *, sources=None,
+                       deadline=None, should_stop=None) -> list[dict[str, Any]]:
+        from .knowledge_retrieval import check_retrieval
+
+        check_retrieval(deadline, should_stop)
+        before = self.settings()
+        controls = {key: value for key, value in (("deadline", deadline), ("should_stop", should_stop)) if value is not None}
+        vectors = embed_texts(model, host, [query], **controls)
+        check_retrieval(deadline, should_stop)
+        config = self.settings()
+        if (not vectors or not config["enabled"] or config["embedding_model"] != model
+                or config["ollama_host"] != host or config["vector_generation"] != before["vector_generation"]):
             return []
         query_vector = vectors[0]
-        config = self.settings()
-        generation = int(config["vector_generation"])
+        if not query_vector or any(not math.isfinite(value) for value in query_vector):
+            raise KnowledgeError("Invalid local query embedding")
         candidates: list[tuple[float, sqlite3.Row]] = []
+        selected = {"workspace", "documents"} if sources is None else set(sources)
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT chunks.id,chunks.path,line_start,line_end,content,embedding,locator_json,
-                   embedding_dimension,documents.content_hash,documents.format FROM chunks JOIN documents ON documents.path=chunks.path WHERE embedding IS NOT NULL
-                   AND vector_generation=? LIMIT ?""",
-                (generation, MAX_CHUNKS),
-            ).fetchall()
-        for row in rows:
-            if row["format"] != "text" and not config["documents_enabled"]:
-                continue
-            vector = array.array("f")
-            vector.frombytes(row["embedding"])
-            if len(vector) != len(query_vector):
-                continue
-            score = cosine_similarity(query_vector, vector)
-            if score > 0:
-                candidates.append((score, row))
-        candidates.sort(key=lambda item: -item[0])
-        return [{
-            "id": f"file:{row['id']}", "kind": "file", "source": "vector",
-            "path": row["path"], "line_start": row["line_start"], "line_end": row["line_end"],
-            "snippet": str(row["content"])[:6_000], "score": float(score),
-            "freshness": config["last_indexed"],
-            "locator": json.loads(row["locator_json"]) if row["locator_json"] else {"kind": "line", "line_start": row["line_start"], "line_end": row["line_end"]},
-            "content_hash": row["content_hash"], "format": row["format"],
-        } for score, row in candidates[:limit]]
+                """SELECT c.*,d.content_hash AS document_hash,d.format,d.source_stat,d.indexed_at
+                   FROM chunks c JOIN documents d ON d.path=c.path WHERE embedding IS NOT NULL
+                   AND vector_generation=? AND ((d.format='text' AND ?) OR (d.format!='text' AND ?)) LIMIT ?""",
+                (config["vector_generation"], "workspace" in selected,
+                 "documents" in selected and config["documents_enabled"], MAX_CHUNKS),
+            )
+            for row in rows:
+                check_retrieval(deadline, should_stop)
+                if row["format"] != "text" and not config["documents_enabled"]:
+                    continue
+                vector = array.array("f")
+                try:
+                    vector.frombytes(row["embedding"])
+                except ValueError:
+                    continue
+                if len(vector) != len(query_vector):
+                    continue
+                score = cosine_similarity(query_vector, vector)
+                if math.isfinite(score) and score > 0:
+                    candidates.append((score, row))
+        candidates.sort(key=lambda item: (-item[0], item[1]["id"]))
+        return [{**self._search_item(row, "vector"), "semantic_score": score} for score, row in candidates[:limit]]
 
     def list_memories(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
@@ -566,25 +739,8 @@ class KnowledgeStore:
             )
 
 
-def _chunks(content: str) -> list[tuple[int, int, str]]:
-    lines = content.splitlines()
-    if not lines:
-        return []
-    output: list[tuple[int, int, str]] = []
-    start = 0
-    while start < len(lines):
-        end = start
-        size = 0
-        while end < len(lines) and (size < CHUNK_CHARS or end == start):
-            size += len(lines[end]) + 1
-            end += 1
-        chunk = "\n".join(lines[start:end]).strip()
-        if chunk:
-            output.append((start + 1, end, chunk))
-        if end >= len(lines):
-            break
-        start = max(start + 1, end - CHUNK_OVERLAP_LINES)
-    return output
+def _stat_key(stat: os.stat_result) -> str:
+    return json.dumps([stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns])
 
 
 def cosine_similarity(left: list[float], right: list[float] | array.array[float]) -> float:
@@ -596,7 +752,8 @@ def cosine_similarity(left: list[float], right: list[float] | array.array[float]
     return dot / (left_norm * right_norm)
 
 
-def embed_texts(model: str, host: str, inputs: list[str]) -> list[list[float]]:
+def embed_texts(model: str, host: str, inputs: list[str], *, deadline=None,
+                should_stop=None) -> list[list[float]]:
     """Embed text using only a loopback Ollama endpoint.
 
     This shared entry point lets the encrypted memory vault use the exact same
@@ -605,41 +762,36 @@ def embed_texts(model: str, host: str, inputs: list[str]) -> list[list[float]]:
     """
     if not model.strip() or not inputs:
         return []
-    _validate_local_ollama_host(host)
-    response = requests.post(
-        host.rstrip("/") + "/api/embed",
-        json={"model": model, "input": inputs},
-        timeout=120,
-    )
-    response.raise_for_status()
-    raw = response.json().get("embeddings")
+    from .knowledge_retrieval import check_retrieval
+    from .memory_embeddings import _LocalTransport
+
+    check_retrieval(deadline, should_stop)
+    end = min(time.monotonic() + (5 if len(inputs) == 1 else 30),
+              deadline if deadline is not None else float("inf"))
+    result = _LocalTransport(host)._json("/api/embed", {"model": model, "input": inputs,
+        "truncate": False, "keep_alive": "5m"}, end)
+    check_retrieval(end, should_stop)
+    raw = result.get("embeddings")
     if not isinstance(raw, list) or len(raw) != len(inputs):
         raise KnowledgeError("Ollama returned an invalid embedding batch")
     try:
         vectors = [[float(value) for value in vector] for vector in raw]
     except (TypeError, ValueError) as exc:
         raise KnowledgeError("Ollama returned an invalid embedding vector") from exc
-    if any(not vector for vector in vectors):
+    if any(not vector or any(not math.isfinite(value) for value in vector) for vector in vectors):
         raise KnowledgeError("Ollama returned an empty embedding vector")
     return vectors
 
 
 def _validate_local_ollama_host(host: str) -> None:
-    """Embeddings are local-only even if other provider routes are hosted."""
-    parsed = urlsplit(host)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise KnowledgeError("the Ollama embedding URL is invalid")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise KnowledgeError("the Ollama embedding URL must not contain credentials or parameters")
-    hostname = parsed.hostname.lower().rstrip(".")
-    if hostname == "localhost":
-        return
+    """Share the same direct, non-redirecting loopback boundary as memory."""
+    from locus_memory.errors import ProviderError
+
+    from .memory_embeddings import local_origin
     try:
-        if ipaddress.ip_address(hostname).is_loopback:
-            return
-    except ValueError:
-        pass
-    raise KnowledgeError("workspace embeddings may connect only to local Ollama")
+        local_origin(host)
+    except (ProviderError, ValueError) as exc:
+        raise KnowledgeError("workspace embeddings may connect only to local Ollama using a plain HTTP origin") from exc
 
 
 def _exclusion_patterns(values: list[str]) -> list[str]:
@@ -679,7 +831,8 @@ def format_search_results(results: list[dict[str, Any]]) -> str:
                 location = f"[{item['path']} · {detail}]({url})"
             else:
                 location = f"{item['path']}:{item['line_start']}-{item['line_end']}"
-        lines.append(f"\n## {location} [{item['source']}]\n{item['snippet']}")
+        context = f"Retrieval context: {item['context']}\n" if item.get("context") else ""
+        lines.append(f"\n## {location} [{item['source']}]\n{context}{item['snippet']}")
     return "\n".join(lines)[:30_000]
 
 

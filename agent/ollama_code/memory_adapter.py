@@ -8,24 +8,29 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from locus_memory.bootstrap import initialize_fresh_profile
 from locus_memory.compat.legacy_vault import legacy_agent_hash, legacy_workspace_hash
 from locus_memory.crypto import derive_subkey
-from locus_memory.errors import VaultLocked
+from locus_memory.errors import MemoryEngineError, VaultLocked
+from locus_memory.host import CancellationToken
 from locus_memory.migrations.legacy import (
     LegacyImporter as LegacyImporter,  # re-export for existing callers
 )
 from locus_memory.models import (
+    DEFAULT_SLICES,
     AccessContext,
     Actor,
     ContextPacket,
+    ContextRequest,
     Operation,
     PartitionRef,
     ScopeGrants,
@@ -69,6 +74,64 @@ _PURPOSES: dict[str, tuple[Actor, frozenset[Operation]]] = {
 #: The importer needs ADMIN only. It authorizes each propagated deletion against that
 #: record's own scope, so the import access carries no grants at all.
 _IMPORT_OPERATIONS = frozenset({Operation.ADMIN})
+
+
+@dataclass(frozen=True)
+class PreparedMemoryRetrieval:
+    """Opaque selection, not an installed prompt layer or a delivery receipt."""
+
+    available: bool
+    diagnostics: tuple[str, ...] = ()
+    byte_count: int = 0
+    receipt_id: str | None = None
+    item_count: int = 0
+    _adapter: Any = field(default=None, repr=False, compare=False)
+    _binding: tuple[Any, ...] = field(default=(), repr=False)
+    _access: AccessContext | None = field(default=None, repr=False)
+    _packet: ContextPacket | None = field(default=None, repr=False)
+    _max_bytes: int = field(default=0, repr=False)
+    _cancel: Any = field(default=None, repr=False, compare=False)
+    _scopes: tuple[str, ...] = field(default=(), repr=False)
+
+
+class _RetrievalCancellation(CancellationToken):
+    """Adapt the turn's cooperative cancellation to the package's public token."""
+
+    def __init__(self, deadline: float, should_stop: Callable[[], bool] | None):
+        super().__init__()
+        self.deadline, self.should_stop = deadline, should_stop
+
+    @property
+    def cancelled(self) -> bool:
+        if not super().cancelled:
+            if time.monotonic() >= self.deadline:
+                self.cancel("deadline_exceeded")
+            elif self.should_stop is not None:
+                try:
+                    if self.should_stop():
+                        self.cancel()
+                except Exception:
+                    self.cancel("cancellation_check_failed")
+        return super().cancelled
+
+
+def _retrieval_slices(include_personal: bool):
+    """Public package slices with the same legacy scope compatibility as recall."""
+    scoped = ("project", "repository", "worktree", "team", "agent", "legacy_target")
+    result = []
+    for spec in DEFAULT_SLICES:
+        if not include_personal and spec.scope_dims == ():
+            continue
+        dims = spec.scope_dims
+        if dims:
+            dims = (*dims, "legacy_target")
+        elif dims is None and not include_personal:
+            dims = scoped
+        kinds, name = spec.kinds, spec.name
+        if name == "project_and_repository":
+            name, kinds = "workspace", (*kinds, MemoryKind.RELATIONSHIP)
+        result.append(replace(spec, name=name, kinds=kinds, scope_dims=dims, query_relevant=True))
+    return tuple(result)
 
 
 class LocusKeyProvider:
@@ -242,8 +305,215 @@ class MemoryAdapter(RecallRuntime):
         core._memory_recall_run_id = str(getattr(getattr(core, "tool_ctx", None), "memory_run_id", "") or "standalone")
         return built
 
+    @staticmethod
+    def _retrieval_binding(core: Any, policy: Any, agent_id: str, just_chat: bool,
+                           automatic: bool = True, scopes: tuple[str, ...] | None = None) -> tuple[Any, ...]:
+        return (
+            id(core), str(core.workspace_root or core.cwd or ""), policy, agent_id, just_chat,
+            str(getattr(getattr(core, "session", None), "session_id", "")),
+            str(getattr(getattr(core, "tool_ctx", None), "memory_run_id", "")
+                or getattr(core, "_memory_turn_id", "") or getattr(core, "_output_run_id", "")),
+            str(getattr(core, "_memory_turn_id", "")),
+            str(getattr(core, "provider", "")), automatic,
+            tuple(policy.recall_scopes(just_chat=just_chat)) if scopes is None else scopes,
+        )
+
+    @staticmethod
+    def _current_retrieval_scopes(core: Any, policy: Any, just_chat: bool) -> tuple[str, ...]:
+        allowed = tuple(policy.recall_scopes(just_chat=just_chat))
+        selected = getattr(core, "_memory_retrieval_scopes", None)
+        if getattr(core, "_memory_retrieval_max_bytes", None) is None or selected is None:
+            return allowed
+        return tuple(scope for scope in allowed if scope in selected)
+
+    def _retrieval_unavailable(self, core: Any, policy: Any, agent_id: str, just_chat: bool,
+                               automatic: bool = True) -> str:
+        if self.mode != "enabled":
+            return "engine_not_enabled"
+        if not self.active(core) or getattr(core, "memory_evaluation_disabled", False):
+            return "memory_disabled"
+        permitted = policy.automatic_recall_enabled if automatic else (
+            policy.search_enabled and policy.max_automatic_tokens > 0 and policy.max_automatic_memories > 0)
+        if not permitted or not policy.recall_scopes(just_chat=just_chat):
+            return "policy_disabled"
+        configuration = getattr(core, "agent_configuration", None)
+        if ((configuration is not None and configuration.memory_policy != policy)
+                or str(getattr(core, "agent_id", agent_id)) != agent_id
+                or (getattr(core, "agent_mode", "ask" if just_chat else "work") == "ask") != just_chat):
+            return "policy_changed"
+        native = getattr(core, "chatgpt_parity_active", None)
+        if callable(native) and native(not just_chat) and not policy.native_codex_enabled:
+            return "native_memory_disabled"
+        return ""
+
+    def prepare_retrieval(
+        self, core: Any, query: str, policy: Any, *, agent_id: str,
+        just_chat: bool = False, max_bytes: int = 6_000, automatic: bool = True,
+        deadline: float | None = None, should_stop: Callable[[], bool] | None = None,
+        scopes: tuple[str, ...] | None = None,
+    ) -> PreparedMemoryRetrieval:
+        """Select a receipt-bound packet without changing the core or its active slot.
+
+        ``deadline`` is an absolute monotonic deadline; selection also retains the
+        runtime's five-second cap. UTF-8 budgets include the entire rendered packet.
+        A smaller public ContextRequest is compiled when necessary; text is never cut.
+        Explicit searches use ``automatic=False``; requested scopes can only narrow
+        the host policy and remain bound through installation and later submissions.
+        """
+        reason = self._retrieval_unavailable(core, policy, agent_id, just_chat, automatic)
+        if reason:
+            return PreparedMemoryRetrieval(False, (reason,))
+        allowed = tuple(policy.recall_scopes(just_chat=just_chat))
+        if scopes is not None:
+            if (not isinstance(scopes, (tuple, list))
+                    or any(not isinstance(scope, str) or scope not in ALL_SCOPES for scope in scopes)):
+                return PreparedMemoryRetrieval(False, ("invalid_scopes",))
+            allowed = tuple(scope for scope in allowed if scope in scopes)
+        if not allowed:
+            return PreparedMemoryRetrieval(False, ("scopes_disabled",))
+        max_bytes = max(0, min(int(max_bytes), 24_000))
+        if not max_bytes:
+            return PreparedMemoryRetrieval(False, ("byte_budget_exhausted",))
+        end = min(time.monotonic() + 5.0, deadline) if deadline is not None else time.monotonic() + 5.0
+        cancel = _RetrievalCancellation(end, should_stop)
+        scopes = allowed
+        binding = self._retrieval_binding(core, policy, agent_id, just_chat, automatic, scopes)
+        access = self.access(core, scopes=scopes, just_chat=just_chat, agent_id=agent_id)
+        text = str(query or "").replace("\x00", " ")
+        query = (strip_prompt_decoration(text) or text).strip()[:2_000]
+        try:
+            if cancel.cancelled:
+                return PreparedMemoryRetrieval(False, (cancel.reason,))
+            self._prepare_memory(core, scopes, agent_id)
+            if cancel.cancelled:
+                return PreparedMemoryRetrieval(False, (cancel.reason,))
+            if not self._sync():
+                return PreparedMemoryRetrieval(False, ("memory_unavailable",))
+            with self._lock:
+                self._embedding_access[repr(access.grants)] = access
+                while len(self._embedding_access) > 8:
+                    self._embedding_access.pop(next(iter(self._embedding_access)))
+            allowance = int(policy.max_automatic_tokens)
+            while True:
+                if cancel.cancelled:
+                    return PreparedMemoryRetrieval(False, (cancel.reason,))
+                request = ContextRequest(
+                    token_allowance=allowance, max_items=int(policy.max_automatic_memories), query=query,
+                    slices=_retrieval_slices("personal" in scopes),
+                    deadline_ms=max(1, int((end - time.monotonic()) * 1000)),
+                    order="relevance", evidence_policy="conservative",
+                )
+                packet = self.engine.build_context(access, request, cancel=cancel)
+                if cancel.cancelled:
+                    return PreparedMemoryRetrieval(False, (cancel.reason,))
+                size = len(packet.text.encode("utf-8")) if packet.items else 0
+                if size <= max_bytes:
+                    return PreparedMemoryRetrieval(
+                        True, () if packet.items else ("no_eligible_memory",), size,
+                        packet.receipt_id, len(packet.items), self, binding, access, packet, max_bytes, cancel, scopes,
+                    )
+                # Geometric reduction bounds compilation attempts, including large
+                # Unicode records and fixed wrapper overhead that token counts miss.
+                allowance = min(allowance - 1, int(allowance * max_bytes / size * 0.75))
+                if allowance <= 0:
+                    return PreparedMemoryRetrieval(False, ("byte_budget_exhausted",))
+        except (MemoryEngineError, sqlite3.Error, OSError) as exc:
+            self._failed("prepare_retrieval", exc)
+            return PreparedMemoryRetrieval(False, (cancel.reason if cancel.cancelled else
+                                                   f"memory_unavailable:{type(exc).__name__}",))
+
+    def install_retrieval(self, core: Any, prepared: PreparedMemoryRetrieval, policy: Any, *,
+                          agent_id: str, just_chat: bool = False, automatic: bool = True) -> str:
+        """Install only a still-current, revalidated selection; stale handles do nothing."""
+        def current() -> bool:
+            if (not isinstance(prepared, PreparedMemoryRetrieval) or not prepared.available
+                    or prepared._adapter is not self or prepared._packet is None or prepared._access is None
+                    or prepared._binding != self._retrieval_binding(core, policy, agent_id, just_chat, automatic, prepared._scopes)
+                    or self._retrieval_unavailable(core, policy, agent_id, just_chat, automatic)):
+                return False
+            # Completed selections remain usable after the search deadline. Turn
+            # cancellation still invalidates them before and after revalidation.
+            stop = prepared._cancel.should_stop if prepared._cancel is not None else None
+            try:
+                return not (stop is not None and stop())
+            except Exception:
+                return False
+
+        if not current():
+            return ""
+        try:
+            self._prepare_memory(core, prepared._scopes, agent_id)
+            if not self._sync():
+                return ""
+            packet = self.engine.revalidate_context(prepared._access, prepared._packet)
+        except (MemoryEngineError, sqlite3.Error, OSError) as exc:
+            self._failed("install_retrieval", exc)
+            return ""
+        if (not current() or (packet.items and len(packet.text.encode("utf-8")) > prepared._max_bytes)
+                or not self._single_layer("install_retrieval", packet.text)):
+            return ""
+        core._memory_recall_policy = policy
+        core._memory_recall_agent = agent_id
+        core._memory_recall_just_chat = just_chat
+        core._memory_empty_packet = (prepared._access, packet) if not packet.items else None
+        core._memory_selected_receipt = packet.receipt_id
+        core._memory_recall_run_id = str(getattr(getattr(core, "tool_ctx", None), "memory_run_id", "") or "standalone")
+        core._memory_retrieval_max_bytes = prepared._max_bytes
+        core._memory_retrieval_automatic = automatic
+        core._memory_retrieval_binding = prepared._binding
+        core._memory_retrieval_scopes = prepared._scopes
+        core._memory_retrieval_diagnostics = () if packet.items else ("no_eligible_memory",)
+        core.memory_context = super().recall(core, legacy=lambda: LegacyRecall(""),
+                                           build_packet=lambda: (prepared._access, packet))
+        core.reset_system_message()
+        return core.memory_context
+
+    def retrieval_details(self, core: Any, *, revalidate: bool = True) -> dict[str, Any]:
+        """Current layer metadata; False reads a previously validated snapshot only."""
+        if revalidate:
+            self.revalidate_before_use(core)
+        with self._lock:
+            pending = self._pending.get(id(core))
+        packet = pending[2] if pending is not None and pending[0] is core else None
+        text = str(getattr(core, "memory_context", "") or "")
+        if packet is not None and text != packet.text:
+            packet = None
+        empty = getattr(core, "_memory_empty_packet", None)
+        run_id = str(getattr(getattr(core, "tool_ctx", None), "memory_run_id", "") or "standalone")
+        if packet is None and not text and empty and getattr(core, "_memory_recall_run_id", None) == run_id:
+            try:
+                fresh = self.engine.revalidate_context(empty[0], empty[1]) if revalidate else empty[1]
+                if not fresh.items:
+                    packet = fresh
+                    if revalidate:
+                        core._memory_empty_packet = (empty[0], fresh)
+            except (MemoryEngineError, sqlite3.Error, OSError) as exc:
+                self._failed("retrieval_details", exc)
+        details = {
+            "available": packet is not None,
+            "diagnostics": list(getattr(core, "_memory_retrieval_diagnostics", ())),
+            "items": [], "receipt_id": None,
+            "selected_receipt_id": getattr(core, "_memory_selected_receipt", None),
+            "flags": [], "byte_count": 0, "token_count": 0, "token_allowance": 0,
+            "status": "unavailable", "coverage": {},
+        }
+        if packet is not None:
+            details.update(
+                items=[{"id": item.record_id, "revision": item.revision, "scope": item.scope.to_dict(),
+                        "kind": item.kind.value, "slice": item.slice} for item in packet.items],
+                receipt_id=packet.receipt_id, flags=list(packet.flags), byte_count=len(text.encode("utf-8")),
+                token_count=packet.token_count, token_allowance=packet.token_allowance,
+                status=packet.status.value, coverage=packet.coverage.to_dict(),
+            )
+        return details
+
     def recall(self, core: Any, query: str, policy: Any, *, just_chat: bool, agent_id: str,
                legacy: Callable[[], LegacyRecall]) -> str:
+        core._memory_retrieval_max_bytes = None
+        core._memory_retrieval_automatic = True
+        core._memory_retrieval_binding = None
+        core._memory_retrieval_scopes = None
+        core._memory_retrieval_diagnostics = ()
         core._memory_recall_policy = policy
         core._memory_recall_agent = agent_id
         core._memory_recall_just_chat = just_chat
@@ -269,7 +539,8 @@ class MemoryAdapter(RecallRuntime):
                 active = False
                 core._memory_empty_packet = None
                 core._memory_selected_receipt = None
-            current = self.access(core, scopes=policy.recall_scopes(just_chat=just_chat),
+            scopes = self._current_retrieval_scopes(core, policy, just_chat)
+            current = self.access(core, scopes=scopes,
                                   just_chat=just_chat, agent_id=agent_id)
             with self._lock:
                 pending = self._pending.get(id(core))
@@ -278,18 +549,41 @@ class MemoryAdapter(RecallRuntime):
             core._memory_recall_policy = policy
             core._memory_recall_agent = agent_id
             core._memory_recall_just_chat = just_chat
-            active = active and policy.automatic_recall_enabled and bool(policy.recall_scopes(just_chat=just_chat))
+            if getattr(core, "_memory_retrieval_max_bytes", None) is not None:
+                automatic = getattr(core, "_memory_retrieval_automatic", True)
+                active = active and not self._retrieval_unavailable(core, policy, agent_id, just_chat,
+                    automatic)
+                active = active and getattr(core, "_memory_retrieval_binding", None) == self._retrieval_binding(
+                    core, policy, agent_id, just_chat, automatic, scopes)
+            else:
+                active = active and policy.automatic_recall_enabled and bool(policy.recall_scopes(just_chat=just_chat))
             if active:
                 from locus_memory.errors import MemoryEngineError
                 try:
-                    self._prepare_memory(core, policy.recall_scopes(just_chat=just_chat), agent_id)
+                    self._prepare_memory(core, scopes, agent_id)
                 except (MemoryEngineError, OSError) as exc:
                     self._failed("source_check", exc)
                     active = False
                     core._memory_empty_packet = None
                     core._memory_selected_receipt = None
+        if not active and getattr(core, "_memory_retrieval_max_bytes", None) is not None:
+            core._memory_empty_packet = None
+            core._memory_selected_receipt = None
+            core._memory_retrieval_diagnostics = ("retrieval_changed",)
         replacement = self.revalidate(core, str(getattr(core, "memory_context", "") or ""),
                                       active=active)
+        byte_limit = getattr(core, "_memory_retrieval_max_bytes", None)
+        if byte_limit is not None:
+            with self._lock:
+                pending = self._pending.get(id(core))
+                packet = pending[2] if pending is not None and pending[0] is core else None
+                text = replacement if replacement is not None else str(getattr(core, "memory_context", "") or "")
+                if packet is not None and packet.items and (text != packet.text
+                        or len(packet.text.encode("utf-8")) > byte_limit):
+                    self._pending.pop(id(core), None)
+                    replacement = ""
+                    core._memory_empty_packet = None
+                    core._memory_retrieval_diagnostics = ("packet_exceeds_budget_or_changed",)
         if replacement is not None:
             core.memory_context = replacement
             core.reset_system_message()
@@ -305,7 +599,7 @@ class MemoryAdapter(RecallRuntime):
                 policy = core.agent_configuration.memory_policy
             agent_id = str(getattr(core, "_memory_recall_agent", getattr(core, "agent_id", "primary")))
             just_chat = bool(getattr(core, "_memory_recall_just_chat", False))
-            access = self.access(core, scopes=policy.recall_scopes(just_chat=just_chat),
+            access = self.access(core, scopes=self._current_retrieval_scopes(core, policy, just_chat),
                                  just_chat=just_chat, agent_id=agent_id)
             with self._lock:
                 pending = self._pending.get(id(core))
@@ -384,6 +678,13 @@ class MemoryAdapter(RecallRuntime):
     def _clear_prompt_context(core: Any) -> None:
         # Dropping the runtime slot must also drop the text the host already copied
         # into its prompt, including legacy and continuity layers in rollout modes.
+        core._memory_retrieval_max_bytes = None
+        core._memory_retrieval_automatic = True
+        core._memory_retrieval_binding = None
+        core._memory_retrieval_scopes = None
+        core._memory_retrieval_diagnostics = ()
+        core._memory_empty_packet = None
+        core._memory_selected_receipt = None
         if getattr(core, "memory_context", "") or getattr(core, "continuity_context", ""):
             core.memory_context = core.continuity_context = ""
             core.reset_system_message()
@@ -428,6 +729,6 @@ def ensure_memory_adapter(core: Any) -> MemoryAdapter:
 
 __all__ = [
     "ARCHIVE_ENV", "ENGINE_DIR", "ENGINE_KEY_ID", "ENGINE_KEY_INFO", "MODE_ENV", "MODES",
-    "LegacyRecall", "LocusKeyProvider", "MemoryAdapter", "assert_single_memory_layer", "project_id",
+    "LegacyRecall", "LocusKeyProvider", "MemoryAdapter", "PreparedMemoryRetrieval", "assert_single_memory_layer", "project_id",
     "ensure_memory_adapter", "ensure_memory_profile",
 ]

@@ -12,6 +12,7 @@ from locus_memory.errors import MemoryEngineError, NotFound
 from locus_memory.models import Actor, CandidateProposal, Scope, SourceRef
 
 from ..agent_profile_runtime import saved_memory_agent, trusted_memory_agent
+from ..helper_retrieval import helper_identity
 from ..memory_adapter import ensure_memory_adapter
 from ..memory_policy import MemoryPolicy
 from .continuity import ServiceDependency
@@ -37,6 +38,7 @@ def _agents(service, run):
         identity = str(attempt.get("agent_id") or "")
         if identity:
             identities.setdefault(identity, MemoryPolicy.parse(manifest.get("memory_policy")))
+            identities.setdefault(helper_identity(run["id"], identity), MemoryPolicy.parse(manifest.get("memory_policy")))
     return identities
 
 
@@ -48,11 +50,13 @@ def _saved_owner(run, agent_id):
     root_id = str(manifest.get("memory_agent_id") or "primary")
     if root_id != "primary":
         profiles.add(root_id)
-    if agent_id in profiles:
-        return agent_id
     attempts = run.get("attempts") or []
+    derived = next((item for item in attempts if item.get("agent_id")
+                    and helper_identity(run["id"], item["agent_id"]) == agent_id), None)
+    if derived is None and agent_id in profiles:
+        return agent_id
     by_node = {str(item.get("node_id") or item.get("job_id") or ""): item for item in attempts}
-    child = next((item for item in attempts if item.get("agent_id") == agent_id), None)
+    child = derived or next((item for item in attempts if item.get("agent_id") == agent_id), None)
     visited = set()
     while child:
         node = str(child.get("parent_node_id") or "")

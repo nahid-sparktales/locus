@@ -239,6 +239,9 @@ class StructuredManagedRuntime(FakeManagedRuntime):
 
 
 def _managed_core(tmp_path, runtime):
+    # Freeze pre-adaptive wire/event contracts; dedicated adaptive tests cover the default.
+    from ollama_code.knowledge import KnowledgeStore
+    KnowledgeStore(str(tmp_path)).configure(adaptive_rag_enabled=False)
     core = AgentCore(cwd=str(tmp_path), config={})
     core.use_chatgpt(
         account_id="managed-account",

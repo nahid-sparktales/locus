@@ -3610,6 +3610,9 @@ class FakeClient:
 
 
 def _core(tmp_path, responses):
+    # Freeze pre-adaptive wire/event contracts; dedicated adaptive tests cover the default.
+    from ollama_code.knowledge import KnowledgeStore
+    KnowledgeStore(str(tmp_path)).configure(adaptive_rag_enabled=False)
     core = AgentCore(cwd=str(tmp_path), config={"model": "test-model", "max_iterations": 5})
     core.model = "test-model"
     core.client = FakeClient(responses)

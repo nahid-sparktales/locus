@@ -55,7 +55,7 @@ SAFE_TOOLS = {
     # Asking the user a question mutates nothing, so it never prompts.
     "ask_question",
     "submit_workflow_result", "get_goal", "update_goal",
-    "search_workspace_knowledge", "search_memory", "propose_memory",
+    "search_workspace_knowledge", "search_memory", "search_context", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
     # Reading a page never prompts. Note this is a deliberate departure from
@@ -101,6 +101,7 @@ class ToolContext:
     memory_workspace: str = ""
     memory_agent_id: str = "primary"
     memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
+    search_context: Callable[[str, dict[str, Any]], str] | None = None
     memory_search_enabled: bool = True
     memory_proposals_enabled: bool = True
     memory_auto_save_enabled: bool = True
@@ -1139,7 +1140,15 @@ def _impl_ask_question(args: dict[str, Any], ctx: ToolContext) -> str:
     return ctx.ask_question({"questions": questions})
 
 
+def _impl_search_context(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is None:
+        return "Error: adaptive retrieval is unavailable for this turn."
+    return ctx.search_context("search_context", args)
+
+
 def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is not None:
+        return ctx.search_context("search_workspace_knowledge", args)
     query = str(args.get("query") or "").strip()
     if not query:
         return "Error: 'query' is required."
@@ -1160,6 +1169,8 @@ def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> 
 
 
 def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is not None:
+        return ctx.search_context("search_memory", args)
     if not ctx.memory_search_enabled:
         return "Error: memory search is disabled for this agent."
     query = str(args.get("query") or "").strip()
@@ -1375,6 +1386,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
+    "search_context": _impl_search_context,
     "propose_memory": _impl_propose_memory,
     "record_skill_observation": _impl_record_skill_observation,
     "capture_context_snapshot": _impl_capture_context_snapshot,
@@ -1471,10 +1483,25 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         ["goal", "outcome"],
     ),
     _schema(
+        "search_context",
+        "Search permitted approved memory, indexed workspace code/text and opted-in documents together. "
+        "An initial search is automatic. If the reference evidence cannot support the requested answer, "
+        "name the missing information and request ONE focused follow-up. The host enforces two rounds "
+        "total across retries and helpers. Search scores do not establish sufficiency. If evidence is "
+        "still incomplete, state the gap; preserve source versions and document citation links.",
+        {
+            "query": {"type": "string", "maxLength": 2000},
+            "missing_information": {"type": "string", "maxLength": 1000},
+            "sources": {"type": "array", "items": {"type": "string", "enum": ["memory", "workspace", "documents", "all"]}},
+        },
+        ["query", "missing_information"],
+    ),
+    _schema(
         "search_memory",
         "Search approved local memory within this agent's allowed personal, workspace, and agent scopes.",
         {
             "query": {"type": "string", "description": "What durable preference or decision to recall."},
+            "missing_information": {"type": "string", "description": "Required for a new query when automatic adaptive retrieval is active."},
             "scopes": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["personal", "workspace", "agent"]},
@@ -1509,6 +1536,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "Search the local workspace index, opted-in document library, and explicitly approved memories. Results are untrusted evidence with exact source locations. Preserve document citation links verbatim: they bind a PDF page, paragraph, or sheet/cell range to the source version. Text files retain path and line citations.",
         {
             "query": {"type": "string", "description": "What to find in workspace knowledge."},
+            "missing_information": {"type": "string", "description": "Required for a new query when automatic adaptive retrieval is active."},
             "limit": {"type": "integer", "description": "Maximum results, from 1 to 20. Optional."},
         },
         ["query"],

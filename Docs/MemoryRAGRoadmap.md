@@ -2,7 +2,11 @@
 
 Research date: October 6, 2026. Code baseline: `f2dda0a0` on
 `codex/automatic-shared-memory`. This is an implementation proposal; the features
-below have not been added or benchmarked in this research pass.
+below had not been added or benchmarked in that research pass.
+
+Implementation update: items **1, 2 and 3**, resumable embeddings and the frozen
+relevance benchmark are now implemented. See [workspace retrieval](WorkspaceKnowledgeRetrieval.md)
+and [Adaptive RAG](AdaptiveRAG.md) for behavior, measurements and limits. Items 4–6 remain proposals.
 
 Locus already has retrieval-augmented generation: it finds relevant external
 evidence and supplies it to a model. Durable memory decides which preferences,
@@ -82,29 +86,29 @@ establish Locus's expected improvement.
 
 ## 3. Bounded adaptive retrieval across sources
 
-**User benefit:** answer questions such as “Why did we change this deployment
-setting, and what code implements the decision?” using the relevant memories,
-source files and permitted previous conversations.
+Implemented: approved canonical memory, workspace code/text, and opted-in imported
+documents share automatic turn preparation. The current chat model can request
+one focused follow-up through `search_context`, explaining the missing evidence.
+The host shares a two-round allowance across retries and delegated calls, a
+five-second deadline per round, and a 24,000-byte evidence allowance. No separate
+judge model, automatic model download, or new storage service is required.
 
-Add a host retrieval coordinator around the existing memory/knowledge tools and
-`TranscriptIndex`. Keep the stores and evidence types separate. Use the active
-workspace, agent and settings to select allowed sources before querying. In
-particular, do not route new requests through KnowledgeStore's legacy `memories`
-table; approved memories now belong to the canonical vault.
+Memory remains one exact, revalidated receipt-bound packet. Files from both rounds
+are merged, deduplicated, versioned and rechecked at delivery. Keyword results
+remain available when configured retrieval models time out. The collapsed
+inspector records delivery phases, selected citations, exclusions, timing and
+fallbacks without retaining source bodies. Adaptive retrieval defaults on and can
+be disabled independently of memory saving. Previous conversations and web search
+are outside this increment.
 
-Start with deterministic routing: explicit file/symbol questions use code search;
-preferences use approved memory; imported-document questions use the document
-index. Allow one additional retrieval pass for missing evidence, with fixed query,
-time and token budgets. Return source IDs, hashes, omitted-evidence reasons and
-the search trace to the inspector. Revalidate selected evidence before use.
+The frozen 22-question benchmark stays unchanged. A separately versioned mixed
+corpus compares single-pass retrieval with scripted follow-ups; an opt-in local
+model evaluation measures authored claim and citation checks separately. See
+[implementation and benchmark limitations](AdaptiveRAG.md). Neither a ranking
+score nor a successful retrieval is proof that an answer is supported.
 
-Adaptive-RAG studies routing by question complexity; it does not prove that
-unbounded agent search is useful or cheap. Google's sufficient-context research
-also shows why finding something relevant does not necessarily justify an answer.
-Measure supported answers and abstention together. For short relevant documents,
-include a whole-document baseline instead of assuming chunk retrieval always wins.
-[Adaptive-RAG](https://arxiv.org/abs/2403.14403) ·
-[Sufficient Context](https://research.google/blog/deeper-insights-into-retrieval-augmented-generation-the-role-of-sufficient-context/)
+Research motivation: [Adaptive-RAG](https://arxiv.org/abs/2403.14403) and
+[Sufficient Context](https://research.google/blog/deeper-insights-into-retrieval-augmented-generation-the-role-of-sufficient-context/).
 
 ## 4. Temporal facts and relationship memory
 
