@@ -311,3 +311,39 @@ the isolated app and rerun the command above. A separate Developer ID signing
 environment and explicit registration authorization are still required for
 the signed helper gate. The task did not modify or stop the production runtime
 to try to repair the test runner.
+
+## CI rollback fixture correction (2026-10-05)
+
+[Runtime package candidates run 37369851189](https://github.com/nahid-sparktales/locus/actions/runs/37369851189)
+failed on both ARM targets with `The startup failure fixture unexpectedly installed`.
+The fixture changed the compatibility module `ollama_code.runtime`, while the
+installed service launches `locus_runtime.cli`. The package therefore never failed
+at startup. Commit `576d44a5` injects the failure into the actual packaged CLI,
+retains successful import preflight, and rejects a missing fixture entry point.
+The process-mode smoke also now launches the same CLI as the service definition.
+
+Four new regressions verify import succeeds but execution fails, the manifest is
+rehash-correct, and missing entry points cannot silently produce a valid candidate.
+The focused runtime/package/process/acceptance suite passed **53 tests** after
+merging current main (`7a117945`). The design-system source audit passed after
+applying the shared Companion button-style correction (`d4ea311b`), with its
+existing baseline unchanged.
+
+The real macOS ARM64 user-service smoke passed using the exact previously built
+archive SHA-256 `a12ce6adf643afbb4fa64c91a0e94cb0cdf1722cfced38cc0dd047b2c0a69ce4`
+and the fixed tool. This repeats installer behavior against the existing pinned
+package, not a claim that every remote target has already rerun green.
+
+```sh
+VERIFY_ROOT=/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-runtime-composition-w2qanfa9
+"$VERIFY_ROOT/smoke-env/bin/python" Tools/SmokeRemoteRuntime.py \
+  --package "$VERIFY_ROOT/locus-runtime-macos-arm64.tar.gz" \
+  --sha256 a12ce6adf643afbb4fa64c91a0e94cb0cdf1722cfced38cc0dd047b2c0a69ce4 \
+  --output /tmp/locus-runtime-ci-fixed-service-smoke.json \
+  --service-manager --exercise-rollback
+```
+
+All nine checks passed, including service restart, failed-update rollback, saved
+results and usage preservation, and removal of the isolated validation service.
+Three deterministic fixture runs recorded 84 tokens; no provider account was used.
+The compact [machine result](ci-fixed-service-smoke.json) is retained here.
