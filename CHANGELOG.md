@@ -4,6 +4,9 @@
 
 ### Added
 
+- Locus now bundles the independently maintained, hash-pinned Locus Runtime
+  package for process supervision, remote transport, reviewed results, and
+  service recovery, while preserving existing profiles and public protocols.
 - Standard light and dark appearances use neutral white, gray, and charcoal
   surfaces with clearer text and boundaries, replacing the earlier cream/olive
   base. Saved accents, logos, semantic colours, and optional World/deck themes
@@ -37,6 +40,8 @@
 
 ### Fixed
 
+- Independent runtime shutdown now cleans up owned worker descendants and
+  failed model starts, and reused private-command IDs cannot hide changed input.
 - Opening or closing the Companion side panel preserves the central conversation,
   draft, run, and pending approvals. Companion chat selection and queued work stay
   bound to their saved profile and folder; offline and delayed requests cannot take over

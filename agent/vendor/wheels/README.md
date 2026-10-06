@@ -33,8 +33,9 @@ duplicating backend source in the runtime wheel.
 The candidate was built twice from clean `git archive` exports of the local
 `locus-runtime` commit `db1955b106d747ff715885ff6d68c834e2d3129d`; both wheels have
 SHA-256 `8c7cdbc0d623f9c1cde600c2dd49af8460f3b558bd26d4576f794a759b292c36`.
-The repository has no remote and no release has been published. Reproduce it
-with Python 3.14.6, build 1.5.0, setuptools 83.0.0 and wheel 0.47.0:
+The source is public at [nahid-sparktales/locus-runtime](https://github.com/nahid-sparktales/locus-runtime);
+no runtime wheel release has been published. Reproduce the pinned wheel with
+Python 3.14.6, build 1.5.0, setuptools 83.0.0 and wheel 0.47.0:
 
 ```sh
 git -C /path/to/locus-runtime archive db1955b106d747ff715885ff6d68c834e2d3129d \

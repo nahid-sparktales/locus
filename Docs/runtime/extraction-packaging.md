@@ -1,14 +1,16 @@
 # Extraction packaging verification
 
-This records the local macOS ARM64 checks on 2026-10-05. No runtime repository
-was published, service registered, account used, or production installation changed.
+This records the initial local macOS ARM64 packaging checks on 2026-10-05.
+Those checks used no accounts and changed no production installation. The source
+was subsequently published, and a later isolated launchd install/restart/rollback
+check passed; see [updated verification](extraction-verification.md).
 
 ## Immutable runtime input
 
-The unpublished `locus-runtime` source commit is
-`db1955b106d747ff715885ff6d68c834e2d3129d` on `codex/extract-runtime`, in the
-local sibling repository `/Users/nahid/.codex/worktrees/b6b6/locus-runtime`.
-There is no remote. The committed product wheel is
+The reviewed `locus-runtime` source commit is
+`db1955b106d747ff715885ff6d68c834e2d3129d`, now available in the public
+[standalone repository](https://github.com/nahid-sparktales/locus-runtime). Its
+local checkout is `/Users/nahid/Documents/locus-runtime`. The committed product wheel is
 `agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl`, SHA-256
 `8c7cdbc0d623f9c1cde600c2dd49af8460f3b558bd26d4576f794a759b292c36`.
 
@@ -16,7 +18,8 @@ Two independent `git archive` exports built byte-identical wheels with Python
 3.14.6, build 1.5.0, setuptools 83.0.0, wheel 0.47.0 and
 `SOURCE_DATE_EPOCH=1791228931`. Exact reproduction commands are in
 `agent/vendor/wheels/README.md`; `runtime-release.json` binds the artifact to
-this actual source revision and explicitly records its unpublished local state.
+this actual source revision and records its public source URL. The artifact
+remains a vendored, hash-pinned wheel; no remote runtime wheel release is implied.
 
 `pip-compile --generate-hashes --find-links=agent/vendor/wheels
 --no-emit-find-links --output-file=agent/requirements-runtime.lock

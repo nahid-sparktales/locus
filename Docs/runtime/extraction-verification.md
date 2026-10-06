@@ -347,3 +347,16 @@ All nine checks passed, including service restart, failed-update rollback, saved
 results and usage preservation, and removal of the isolated validation service.
 Three deterministic fixture runs recorded 84 tokens; no provider account was used.
 The compact [machine result](ci-fixed-service-smoke.json) is retained here.
+
+## Subsequent remote native CI evidence
+
+The [Wallet-free Locus job](https://github.com/nahid-sparktales/locus/actions/runs/37369851555/job/111964012240)
+on the original runtime PR's merged revision
+`4a71e5b86f7ba851f5159eea3294b595df00efe3` executed **1,966 native tests with
+zero failures in 415.870 seconds** and reported `TEST SUCCEEDED`. This resolves
+the earlier blanket lack of native execution evidence for Locus, while preserving
+the historical local LaunchServices limitation above. LocusX's native unit job
+was blocked at the design-system audit, and the current CI correction head still
+requires a new complete remote run. The separate UI matrix had the contrast and
+Companion Escape failures documented in the PR; its failures are not native-unit
+failures and are not counted as passing here.
