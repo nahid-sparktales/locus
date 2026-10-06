@@ -49,6 +49,7 @@ jobs:
           path: |
             ${{ runner.temp }}/agent-worlds-review.json
             ${{ runner.temp }}/agent-worlds-installer.json
-            ${{ runner.temp }}/agent-worlds-native-tests/*.log
-            ${{ runner.temp }}/agent-worlds-native-tests/*.png
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.log
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.png
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.xcresult/**
           if-no-files-found: error

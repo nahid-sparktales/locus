@@ -168,7 +168,7 @@ private struct AgentWorldSurface: View {
                     Text(error).font(.locus(size: 12)).textSelection(.enabled)
                     Spacer(minLength: 8)
                     Button { model.error = nil } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain).accessibilityLabel("Dismiss message")
+                        .buttonStyle(.locus(.icon)).accessibilityLabel("Dismiss message")
                 }.padding(12).foregroundStyle(palette.ink).background(palette.paper)
                     .accessibilityIdentifier("agentWorld.message")
             }

@@ -30,7 +30,7 @@ jobs:
           python3 - <<'PYCODE'
           import hashlib, json, pathlib
           root = pathlib.Path('ProtocolFixtures/agent-worlds')
-          pin = json.loads((root / 'PIN.json').read_text())
+          pin = json.loads((root / 'pin.json').read_text())
           assert pin['protocol'] == 2 and pin['sdk'] == 1
           assert hashlib.sha256((root / 'wire-v2.json').read_bytes()).hexdigest() == pin['fixturesSHA256']
           PYCODE
