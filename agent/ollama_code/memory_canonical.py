@@ -47,7 +47,9 @@ class CanonicalMemoryVault(PackageCanonicalMemoryVault):
                  scopes: tuple[str, ...] | list[str] | None = None) -> None:
         from .memory_adapter import LocusKeyProvider
         from .memory_capabilities import memory_capabilities
+        from .memory_ownership import ownership_state
 
+        ownership_state(app_dir, edition)
         keys = LocusKeyProvider(Path(app_dir))
 
         super().__init__(

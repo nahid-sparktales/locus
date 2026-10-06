@@ -475,9 +475,9 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
                 handoffs.bind(run: job.runID, agent: job.agentID, session: sessionID!)
             }
             guard let sessionID else { throw PluginPanelHandoffs.Refusal.unavailable }
-            if appModel.agentWorldConversationState(sessionID).busy { throw PluginPanelHandoffs.Refusal.busy }
+            if appModel.savedAgentConversationState(sessionID).busy { throw PluginPanelHandoffs.Refusal.busy }
             let framed = "From the \(pluginName) plugin, run \(job.runID), step “\(job.title)”:\n\n\(job.text)"
-            try await appModel.sendAgentWorldTurn(sessionID: sessionID, workspace: workspace,
+            try await appModel.sendSavedAgentTurn(sessionID: sessionID, workspace: workspace,
                                                   profileID: profile.id, text: framed, mode: .work)
             return ["sessionID": sessionID]
         }

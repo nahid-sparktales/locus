@@ -1,0 +1,339 @@
+- main "Agent World":
+  - generic "3D Local Line ocean world. Each agent has their own ship. Click a ship to interact. Click Elbaf, Marineford, Water 7, Wano or Drum Island to visit Captain’s Quarters. Island visits are also available in Settings. Drag to rotate the view, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the Residents tab to select agents with the keyboard."
+  - generic: LOCUS / AGENT WORLD
+  - heading "The Local Line DEMO" [level=1]:
+    - text: The Local Line
+    - generic: DEMO
+  - paragraph: Every agent. Their own adventure.
+  - generic "Captain’s Quarters settings": Settings
+  - button "Captain’s Quarters"
+  - button "Residents" [expanded]:
+    - generic: ♙
+    - text: Residents
+  - button "Choose world theme":
+    - generic: The Local Line
+    - generic: ⌄
+  - text: ✓
+  - complementary "Fleet manifest":
+    - heading "Residents 12" [level=2]:
+      - text: Residents
+      - generic: "12"
+    - button "New Agent": + New Agent
+    - button "Collapse fleet" [expanded]: −
+    - paragraph: Demo workspace
+    - generic: ⌕
+    - searchbox "Search fleet" [active]
+    - group "Agent profiles":
+      - button "Atlas aboard Moby Disk, home island Twin Cache, Research & discovery, Working. Example status · no task is running":
+        - generic: Atlas
+        - generic: Moby Disk · Twin Cache
+      - generic: Boat
+      - combobox "Boat style for Atlas":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Nova aboard Polar Tensor, home island Little Gradient, Design & experience, Available":
+        - generic: Nova
+        - generic: Polar Tensor · Little Gradient
+      - generic: Boat
+      - combobox "Boat style for Nova":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Orion aboard Thousand Funny, home island DRAM Island, Engineering, Available":
+        - generic: Orion
+        - generic: Thousand Funny · DRAM Island
+      - generic: Boat
+      - combobox "Boat style for Orion":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Echo aboard Perfume CUDA, home island Alabatcha, Writing & storytelling, Needs you. Example attention state":
+        - generic: Echo
+        - generic: Perfume CUDA · Alabatcha
+      - generic: Boat
+      - combobox "Boat style for Echo":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Sage aboard Going Sherry, home island Water 7B, Planning & strategy, Completed":
+        - generic: Sage
+        - generic: Going Sherry · Water 7B
+      - generic: Boat
+      - combobox "Boat style for Sage":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Pip aboard Spade Prompters’ Ship, home island Enies LoRA, Quality & testing, Available":
+        - generic: Pip
+        - generic: Spade Prompters’ Ship · Enies LoRA
+      - generic: Boat
+      - combobox "Boat style for Pip":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Lyra aboard Oro JSON, home island Sabaudio, Ideas & exploration, Available":
+        - generic: Lyra
+        - generic: Oro JSON · Sabaudio
+      - generic: Boat
+      - combobox "Boat style for Lyra":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Finn aboard Queen Llama Chanter, home island Machineford, Data & insights, Available":
+        - generic: Finn
+        - generic: Queen Llama Chanter · Machineford
+      - generic: Boat
+      - combobox "Boat style for Finn":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Cleo aboard BaratAI, home island Wano Weights, Product & direction, Queued. Example queued state":
+        - generic: Cleo
+        - generic: BaratAI · Wano Weights
+      - generic: Boat
+      - combobox "Boat style for Cleo":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Sol aboard Thread Force, home island Whole Cache, Code & craft, Available":
+        - generic: Sol
+        - generic: Thread Force · Whole Cache
+      - generic: Boat
+      - combobox "Boat style for Sol":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Mika aboard Navy Q4, home island LoRA Tale, Words & stories, Completed":
+        - generic: Mika
+        - generic: Navy Q4 · LoRA Tale
+      - generic: Boat
+      - combobox "Boat style for Mika":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+      - button "Rune aboard Dragon’s Chip, home island JAXa, Systems & operations, Available":
+        - generic: Rune
+        - generic: Dragon’s Chip · JAXa
+      - generic: Boat
+      - combobox "Boat style for Rune":
+        - option "Automatic assignment" [selected]
+        - option "Thousand Funny"
+        - option "Going Sherry"
+        - option "BaratAI"
+        - option "Navy Q4"
+        - option "Polar Tensor"
+        - option "Spade Prompters’ Ship"
+        - option "Thread Force"
+        - option "Moby Disk"
+        - option "Perfume CUDA"
+        - option "Oro JSON"
+        - option "Queen Llama Chanter"
+        - option "Dragon’s Chip"
+        - option "Mihawk’s Coffin Boat"
+        - option "Garp’s Battleship"
+        - option "Marine Patrol"
+    - generic "Agent workspace actions":
+      - button "Crew Chat"
+      - button "Captain’s Quarters Choose a captain or manage your fleet":
+        - strong: Captain’s Quarters
+        - generic: Choose a captain or manage your fleet
+    - generic: Demo fleet · no model calls
+    - generic: 01 / 01
+  - generic: Ships sail
+  - combobox "Ship sailing area":
+    - option "Whole map" [selected]
+    - option "Left side"
+    - option "Right side"
+  - button: DEMO · Ping Ping · Approval
+  - generic: THE AGE OF LOCAL MINDS FLEET 01 · LOCAL LINE
+  - complementary "Local Line route chart":
+    - generic: LOG POSE
+    - generic: N ↑
+    - img "Island positions and relative sizes across the Local Line archipelago.":
+      - generic "Twin Cache"
+      - generic "Little Gradient"
+      - generic "DRAM Island"
+      - generic "Alabatcha"
+      - generic "Water 7B"
+      - generic "Enies LoRA"
+      - generic "Sabaudio"
+      - generic "Machineford"
+      - generic "Wano Weights"
+      - generic "Whole Cache"
+      - generic "LoRA Tale"
+      - generic "JAXa"
+      - generic "Elbatch"
+      - generic "Egghead"
+      - generic "Impel Down"
+      - generic "Amazon Lily"
+      - generic "Dressrosa"
+      - generic "Punk Hazard"
+      - generic "Hachinosu"
+      - generic "Long Ring Long Land"
+      - generic "Mary Geoise"
+    - paragraph: A sea of possibilities.
+  - complementary "Den Den Dispatch communicator":
+    - button "Open Activity Center. Demo. 1 needs your attention.":
+      - generic: DEMO · DEN DEN DISPATCH
+      - strong: Activity Center
+      - generic: 1 needs your attention
+      - generic: "1"
+      - generic: ⌄
+    - status: Demo. 1 needs your attention.
+  - group "Map drag behavior":
+    - button "Rotate" [pressed]:
+      - text: Rotate
+    - button "Move map":
+      - text: Move map
+  - generic: Choose a ship to open its agent
+  - generic: Drag to rotate
+  - generic: Scroll to zoom
+  - button "Reset camera to the whole map":
+    - text: Reset view
+  - generic: 1 agent at work
+  - generic: SET SAIL
+  - status

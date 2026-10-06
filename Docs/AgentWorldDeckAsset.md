@@ -1,6 +1,6 @@
 # Captain’s Quarters backdrop
 
-Asset: `Locus/Resources/Assets.xcassets/CaptainDeck.imageset/captain-deck.png`
+Historical source asset: `Locus/Resources/Assets.xcassets/CaptainDeck.imageset/captain-deck.png`. Removed from Locus after extraction; preserved in the independent `agent-worlds` source assets and the verified external recovery archive. See [current integration](AgentWorld.md) and [recovery](agent-worlds-recovery.md).
 
 Generated on September 22, 2026 using the built-in image generation tool (not the CLI).
 The authorized 9-credit Meshy image request returned HTTP 402 (insufficient funds),

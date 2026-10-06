@@ -91,8 +91,8 @@ final class AgentCrewChatModel: ObservableObject {
     private var profilesProvider: () -> [AgentProfile] = { [] }
     private var workspaceProvider: () -> String = { "" }
     private var availabilityProvider: (AgentProfile) -> String? = { _ in nil }
-    private var stateProvider: (String) -> AgentWorldConversationState = { _ in .init() }
-    private var createConversation: (String, AgentProfile) async throws -> String = { _, _ in throw AgentWorldError.unavailable("Connect the agent first.") }
+    private var stateProvider: (String) -> SavedAgentConversationState = { _ in .init() }
+    private var createConversation: (String, AgentProfile) async throws -> String = { _, _ in throw SavedAgentConversationError.unavailable("Connect the agent first.") }
     private var loadConversation: (String) async throws -> Void = { _ in }
     private var dispatch: (String, String, UUID, String, WorkMode) async throws -> Void = { _, _, _, _, _ in }
     private var stopConversation: (String) -> Void = { _ in }
@@ -127,7 +127,7 @@ final class AgentCrewChatModel: ObservableObject {
     func configure(
         profiles: @escaping () -> [AgentProfile], workspace: @escaping () -> String,
         availability: @escaping (AgentProfile) -> String?,
-        state: @escaping (String) -> AgentWorldConversationState,
+        state: @escaping (String) -> SavedAgentConversationState,
         create: @escaping (String, AgentProfile) async throws -> String,
         load: @escaping (String) async throws -> Void,
         dispatch: @escaping (String, String, UUID, String, WorkMode) async throws -> Void,
@@ -229,7 +229,7 @@ final class AgentCrewChatModel: ObservableObject {
         ledgers[SessionSummary.canonicalWorkspacePath(workspace)]?.handoffs ?? []
     }
 
-    func activity(for profileID: UUID, workspace: String) -> AgentWorldConversationState? {
+    func activity(for profileID: UUID, workspace: String) -> SavedAgentConversationState? {
         guard let ledger = ledgers[SessionSummary.canonicalWorkspacePath(workspace)] else { return nil }
         let pending = ledger.messages.filter { $0.profileID == profileID && $0.status.isPending }
         for message in pending where message.accepted {
@@ -307,23 +307,23 @@ final class AgentCrewChatModel: ObservableObject {
     private func run(_ message: AgentCrewChatMessage, workspace path: String) async {
         guard let profileID = message.profileID, let requestID = message.requestID else { return }
         do {
-            guard let profile = profilesProvider().first(where: { $0.id == profileID }) else { throw AgentWorldError.unavailable("This saved agent was removed.") }
-            if let reason = availabilityProvider(profile) { throw AgentWorldError.unavailable(reason) }
+            guard let profile = profilesProvider().first(where: { $0.id == profileID }) else { throw SavedAgentConversationError.unavailable("This saved agent was removed.") }
+            if let reason = availabilityProvider(profile) { throw SavedAgentConversationError.unavailable(reason) }
             let session = try await conversation(workspace: path, profile: profile)
             guard isPending(message.id, workspace: path) else { return }
             update(message.id, workspace: path) { $0.sessionID = session }
             while stateProvider(session).busy {
                 guard isPending(message.id, workspace: path), !Task.isCancelled else { return }
-                guard let waitingProfile = profilesProvider().first(where: { $0.id == profileID }) else { throw AgentWorldError.unavailable("This saved agent was removed.") }
-                if let reason = availabilityProvider(waitingProfile) { throw AgentWorldError.unavailable(reason) }
+                guard let waitingProfile = profilesProvider().first(where: { $0.id == profileID }) else { throw SavedAgentConversationError.unavailable("This saved agent was removed.") }
+                if let reason = availabilityProvider(waitingProfile) { throw SavedAgentConversationError.unavailable(reason) }
                 try await Task.sleep(for: .milliseconds(300))
             }
             guard isPending(message.id, workspace: path), !Task.isCancelled else { return }
             try await loadConversation(session)
             guard isPending(message.id, workspace: path), !Task.isCancelled else { return }
             // Re-read identity and availability after waiting; never substitute a profile.
-            guard let current = profilesProvider().first(where: { $0.id == profileID }) else { throw AgentWorldError.unavailable("This saved agent was removed.") }
-            if let reason = availabilityProvider(current) { throw AgentWorldError.unavailable(reason) }
+            guard let current = profilesProvider().first(where: { $0.id == profileID }) else { throw SavedAgentConversationError.unavailable("This saved agent was removed.") }
+            if let reason = availabilityProvider(current) { throw SavedAgentConversationError.unavailable(reason) }
             guard let ledger = ledgers[path], let request = ledger.messages.first(where: { $0.id == requestID }) else { return }
             let context = Self.context(ledger.messages, requestID: requestID, excluding: profileID)
             let prompt = Self.prompt(profile: current, messageID: message.id, request: request.text, context: context.text)
@@ -361,7 +361,7 @@ final class AgentCrewChatModel: ObservableObject {
         let session = try await task.value
         guard !session.isEmpty,
               !ledgers.values.contains(where: { $0.bindings.values.contains(session) }) else {
-            throw AgentWorldError.unavailable("This conversation is already owned by another crew binding.")
+            throw SavedAgentConversationError.unavailable("This conversation is already owned by another crew binding.")
         }
         ledgers[path]?.bindings[profile.id.uuidString] = session
         persist(path)

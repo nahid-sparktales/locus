@@ -701,17 +701,20 @@ class MemoryAdapter(RecallRuntime):
 def ensure_memory_profile(app_dir: Path | str, edition: str) -> str:
     """Give a new profile package ownership; preserve every existing ownership state."""
     from .memory_capabilities import memory_capabilities
-    from .memory_ownership import profile_lease
+    from .memory_ownership import ownership_state, profile_lease
 
     app_dir = Path(app_dir)
     keys = LocusKeyProvider(app_dir)
-    return initialize_fresh_profile(
+    initialize_fresh_profile(
         app_dir / ENGINE_DIR, app_dir / "memory" / "memory.sqlite3", keys,
         host=memory_capabilities(app_dir, edition, keys),
         partition=PartitionRef(edition.lower(), PROFILE),
         initialization_lock=app_dir / ".memory-initialize.lock",
         lease=lambda: profile_lease(app_dir, exclusive=True),
     )
+    # Bootstrap preserves existing profiles, including ambiguous restored control
+    # files. Apply the host ownership check before any caller selects a vault.
+    return ownership_state(app_dir, edition)
 
 
 def ensure_memory_adapter(core: Any) -> MemoryAdapter:

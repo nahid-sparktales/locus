@@ -7,23 +7,23 @@ import XCTest
 
 @MainActor
 final class AgentWorldTests: XCTestCase {
-    private let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 1,
+    private let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 2,
                                                capabilities: ["agents.read", "agents.interact", "world.preferences"])
 
-    func testSailingAreaPreferencesRequireAnAllowedValueAndCapability() {
-        let screen = ExtensionPluginScreen(id: "agent-world", title: "World", entrypoint: "ui/index.html", version: 1,
-                                          capabilities: ["agents.read", "world.preferences"])
-        for area in ["whole", "left", "right"] {
-            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["sailingArea": area]], screen: screen), .sailingArea(area))
+    func testVisualPreferencesRequireExactBoundedArgumentsAndCapability() {
+        let arguments: [String: Any] = ["key": "camera-region", "value": "right"]
+        XCTAssertTrue(AgentWorldBridgeContract.validArguments(command: "preferences.set", value: arguments))
+        XCTAssertEqual(bridgeResponse("preferences.set", arguments, capabilities: ["world.preferences"])["ok"] as? Bool, true)
+        XCTAssertEqual(bridgeResponse("preferences.set", arguments, capabilities: ["agents.read"])["ok"] as? Bool, false)
+        for invalid: [String: Any] in [[:], ["key": "../private", "value": "right"], ["key": "Camera", "value": "right"],
+                                      ["key": "camera-region", "value": "right", "sessionID": "private"],
+                                      ["key": "camera-region", "value": String(repeating: "x", count: 32_769)]] {
+            XCTAssertFalse(AgentWorldBridgeContract.validArguments(command: "preferences.set", value: invalid))
         }
-        for preferences: [String: Any] in [["sailingArea": "north"], ["sailingArea": true], ["sailingArea": "left", "theme": "grand-line"]] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": preferences], screen: screen))
-        }
-        let readOnly = ExtensionPluginScreen(id: "world", title: "World", entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read"])
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["sailingArea": "left"]], screen: readOnly))
         let model = AgentWorldModel()
-        model.setSailingArea("left")
-        XCTAssertEqual(model.sailingArea, "whole", "Closed worlds cannot change saved preferences")
+        XCTAssertThrowsError(try model.updateWorldPreference(key: "camera-region", value: "right"))
+        XCTAssertThrowsError(try model.resetWorldPreferences())
+        XCTAssertTrue(model.worldPreferences.isEmpty, "Closed worlds cannot change saved preferences")
     }
 
     func testIsolatedProjectIdentityKeepsSelectedSubfolderWithoutChangingExecutionContext() throws {
@@ -58,50 +58,53 @@ final class AgentWorldTests: XCTestCase {
     }
 
     func testBridgeRejectsUnknownCapabilitiesVersionsAndPayloads() {
-        XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "ready"], screen: screen), .ready)
-        XCTAssertNil(PluginScreenMessage.decode(["version": true, "type": "ready"], screen: screen))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 2, "type": "ready"], screen: screen))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "ready", "api_key": "never"], screen: screen))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "send", "text": "Execute code"], screen: screen))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "selectAgent", "agentID": "bad"], screen: screen))
-        let id = UUID().uuidString
-        XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "selectAgent", "agentID": id.lowercased()], screen: screen), .selectAgent(id))
-        XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "clearSelection"], screen: screen), .clearSelection)
-        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 1, capabilities: ["agents.read"])
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "selectAgent", "agentID": id], screen: readOnly))
-        let unknown = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 1, capabilities: ["credentials.read"])
+        let id = UUID().uuidString.lowercased()
+        XCTAssertNotNil(AgentWorldBridgeContract.decode(wireRequest("agents.open", ["agentID": id])))
+        XCTAssertNotNil(AgentWorldBridgeContract.decode(wireRequest("selection.clear", [:])))
+        for version: Any in [true, 1, 3, "2", 2.5] {
+            var payload = wireRequest("agents.open", ["agentID": id]); payload["version"] = version
+            XCTAssertNil(AgentWorldBridgeContract.decode(payload))
+        }
+        for legacy: [String: Any] in [["version": 1, "type": "ready"], ["version": 1, "type": "send", "text": "Execute code"]] {
+            XCTAssertNil(AgentWorldBridgeContract.decode(legacy))
+        }
+        var extra = wireRequest("agents.open", ["agentID": id]); extra["api_key"] = "never"
+        XCTAssertNil(AgentWorldBridgeContract.decode(extra))
+        XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("agents.open", ["agentID": "bad"])))
+        XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("send", ["text": "Execute code"])))
+        let unknown = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 2, capabilities: ["credentials.read"])
         XCTAssertFalse(unknown.isSupported)
+        let legacy = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 1, capabilities: ["agents.read"])
+        XCTAssertFalse(legacy.isSupported, "The web host requires an explicit v2 artifact upgrade")
     }
 
     func testResidentPlacementsAreBoundedDisplayMetadata() {
         let id = UUID().uuidString
-        let row: [String: Any] = ["agentID": id.lowercased(), "ship": "Going Sherry", "home": "Twin Cache"]
-        let payload: [String: Any] = ["version": 1, "type": "residentPlacements", "placements": [row]]
-        XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen),
-                       .residentPlacements([.init(agentID: id, ship: "Going Sherry", home: "Twin Cache")]))
-        let noRoster = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
-                                            version: 1, capabilities: ["world.preferences"])
-        XCTAssertNil(PluginScreenMessage.decode(payload, screen: noRoster))
-        for rows in [[row, row], Array(repeating: row, count: 501)] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "residentPlacements", "placements": rows], screen: screen))
+        let row: [String: Any] = ["agentID": id.lowercased(), "primary": "Studio A", "secondary": "North wing"]
+        let arguments: [String: Any] = ["placements": [row]]
+        XCTAssertNotNil(AgentWorldBridgeContract.decode(wireRequest("placements.set", arguments)))
+        XCTAssertEqual(bridgeResponse("placements.set", arguments, capabilities: ["agents.read"])["ok"] as? Bool, true)
+        XCTAssertEqual(bridgeResponse("placements.set", arguments, capabilities: ["world.preferences"])["ok"] as? Bool, false)
+        let upperRow: [String: Any] = ["agentID": id.uppercased(), "primary": "Studio B", "secondary": "West wing"]
+        for rows in [[row, upperRow], Array(repeating: row, count: 501)] {
+            XCTAssertFalse(AgentWorldBridgeContract.validArguments(command: "placements.set", value: ["placements": rows]))
         }
         for replacement: [String: Any] in [
-            ["agentID": "not-an-agent", "ship": "Ship", "home": "Port"],
-            ["agentID": id, "ship": "Ship", "home": "Port", "sessionID": "private"],
-            ["agentID": id, "ship": String(repeating: "a", count: 101), "home": "Port"],
-            ["agentID": id, "ship": "Ship", "home": "Port\nspoofed"],
+            ["agentID": "not-an-agent", "primary": "Studio", "secondary": "Wing"],
+            ["agentID": id, "primary": "Studio", "secondary": "Wing", "sessionID": "private"],
+            ["agentID": id, "primary": String(repeating: "a", count: 101), "secondary": "Wing"],
+            ["agentID": id, "primary": "Studio", "secondary": "Wing\nspoofed"],
         ] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "residentPlacements", "placements": [replacement]], screen: screen))
+            XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("placements.set", ["placements": [replacement]])))
         }
     }
 
-    func testWorldActivityBridgeRequiresReadAccessAndNoExtraPayload() {
-        let payload: [String: Any] = ["version": 1, "type": "openActivityCenter"]
-        XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .openActivityCenter)
-        let noRead = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
-                                          version: 1, capabilities: ["world.preferences"])
-        XCTAssertNil(PluginScreenMessage.decode(payload, screen: noRead))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "openActivityCenter", "sessionID": "untrusted"], screen: screen))
+    func testWorldActivityBridgeRequiresInteractionAndExactNavigationArguments() {
+        let arguments: [String: Any] = ["surface": "activity"]
+        XCTAssertEqual(bridgeResponse("navigation.open", arguments, capabilities: ["agents.interact"])["ok"] as? Bool, true)
+        XCTAssertEqual(bridgeResponse("navigation.open", arguments, capabilities: ["agents.read"])["ok"] as? Bool, false)
+        XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("navigation.open", ["surface": "activity", "sessionID": "untrusted"])))
+        XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("navigation.open", ["surface": "credentials"])))
     }
 
     func testWorldFindsWorkStartedInOtherSavedChatsWithoutCrossingAgentOrProject() {
@@ -117,11 +120,11 @@ final class AgentWorldTests: XCTestCase {
         ]
         app.taskConversationStates["earlier-chat"] = TaskConversationState(sessionID: "earlier-chat", taskID: nil, teamID: nil,
             workerID: nil, runID: "queued-run", state: .queued, updatedAt: Date())
-        XCTAssertEqual(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world")?.status, "queued")
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: other.id, workspace: "/tmp/world"))
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/another-world"))
+        XCTAssertEqual(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/world")?.status, "queued")
+        XCTAssertNil(app.savedAgentChatActivity(profileID: other.id, workspace: "/tmp/world"))
+        XCTAssertNil(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/another-world"))
         app.taskConversationStates["earlier-chat"] = nil
-        XCTAssertNil(app.agentWorldSavedChatActivity(profileID: profile.id, workspace: "/tmp/world"))
+        XCTAssertNil(app.savedAgentChatActivity(profileID: profile.id, workspace: "/tmp/world"))
     }
 
     func testWorldOverviewAndActivityUseNativeControlsWithoutStartingAChat() async throws {
@@ -140,7 +143,7 @@ final class AgentWorldTests: XCTestCase {
         world.open(pluginID: fixture.pluginID)
         world.openAgentControls()
         XCTAssertTrue(world.quartersPresented)
-        XCTAssertNil(world.selection, "The fleet hub opens without choosing or running an agent")
+        XCTAssertNil(world.selection, "The overview opens without choosing or running an agent")
         world.openAgentControls(fixture.profiles[1].id.uuidString)
         XCTAssertTrue(world.profilePresented)
         XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
@@ -154,7 +157,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(world.selectedProfile?.id, fixture.profiles[1].id)
     }
 
-    func testShipSelectionOpensMapChatWithoutEnteringQuartersOrCreatingAConversation() async throws {
+    func testResidentSelectionOpensMapChatWithoutOpeningOverviewOrCreatingAConversation() async throws {
         let fixture = try conversationFixture()
         defer { fixture.close() }
         let app = AppModel(startImmediately: false)
@@ -163,31 +166,31 @@ final class AgentWorldTests: XCTestCase {
         let world = app.agentWorld
         world.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { fixture.root.path },
                         availability: { _ in nil }, state: { _ in .init() },
-                        create: { _, _ in XCTFail("Selecting a ship must not create a chat"); return "unexpected" },
-                        load: { _ in XCTFail("A ship with no chat must not load one") },
-                        dispatch: { _, _, _, _, _ in XCTFail("Selecting a ship must not run an agent") },
-                        stop: { _ in XCTFail("Selecting a ship must not stop an agent") }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+                        create: { _, _ in XCTFail("Selecting an agent must not create a chat"); return "unexpected" },
+                        load: { _ in XCTFail("An agent with no chat must not load one") },
+                        dispatch: { _, _, _, _, _ in XCTFail("Selecting an agent must not run an agent") },
+                        stop: { _ in XCTFail("Selecting an agent must not stop an agent") }, open: { _ in }, manage: {}, defaults: fixture.defaults)
         world.open(pluginID: fixture.pluginID)
         let id = fixture.profiles[0].id.uuidString
         let firstFocus = world.focusRequest
         world.chooseResident(id)
         XCTAssertEqual(world.selection, id)
-        XCTAssertFalse(world.quartersPresented, "The map must remain visible when selecting a ship")
+        XCTAssertFalse(world.quartersPresented, "The map must remain visible when selecting an agent")
         XCTAssertTrue(world.conversationPresented)
         XCTAssertFalse(world.profilePresented)
         XCTAssertFalse(world.preparingConversation)
         XCTAssertEqual(world.focusRequest, firstFocus + 1)
         world.chooseResident(id)
         XCTAssertEqual(world.focusRequest, firstFocus + 2)
-        XCTAssertFalse(world.profilePresented, "Selecting the same ship keeps its small chat open")
+        XCTAssertFalse(world.profilePresented, "Selecting the same agent keeps its small chat open")
         XCTAssertFalse(world.quartersPresented)
         world.chooseResident(UUID().uuidString)
-        XCTAssertEqual(world.selection, id, "Unknown ships cannot change selection")
+        XCTAssertEqual(world.selection, id, "Unknown agents cannot change selection")
         XCTAssertEqual(world.focusRequest, firstFocus + 2)
         world.chooseResident(fixture.profiles[1].id.uuidString)
         XCTAssertEqual(world.selection, fixture.profiles[1].id.uuidString)
         XCTAssertFalse(world.profilePresented)
-        XCTAssertFalse(world.quartersPresented, "Switching ships must stay on the map")
+        XCTAssertFalse(world.quartersPresented, "Switching agents must stay on the map")
         XCTAssertTrue(world.conversationPresented)
         world.openAgentControls()
         XCTAssertTrue(world.quartersPresented, "Only an explicit workspace action opens quarters")
@@ -255,6 +258,12 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertNil(properties?[kCGImagePropertyGPSDictionary])
         XCTAssertThrowsError(try AgentAvatarImage.normalized(Data("not an image".utf8)))
         XCTAssertThrowsError(try AgentAvatarImage.normalized(Data(count: AgentAvatarImage.maximumSourceBytes + 1)))
+    }
+
+    func testNativeAppContainsNoPluginOwnedBackdrops() {
+        for name in ["CaptainDeck", "Quarters-drum", "Quarters-elbaf", "Quarters-marineford", "Quarters-wano", "Quarters-water-seven"] {
+            XCTAssertNil(NSImage(named: NSImage.Name(name)), "Plugin artwork must be loaded from the reviewed package, not the native app: \(name)")
+        }
     }
 
     func testBundledAgentPortraitsLoadAndFitTheAvatarStore() throws {
@@ -329,74 +338,148 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertTrue(world.profilePresented)
     }
 
-    func testNativeWorldCatalogReadsOnlyBoundedConfinedMetadata() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui/themes"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let source = AgentWorldModel.AvailableScreen(pluginID: "test", pluginName: "Test", digest: nil, root: root.path, screen: screen)
-        let file = root.appendingPathComponent("ui/themes/catalog.json")
-        XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), AgentWorldThemeOption.builtIn)
-        try Data(#"{"version":1,"themes":[{"id":"forest","name":"The Forest"}]}"#.utf8).write(to: file)
-        XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), [.init(id: "forest", name: "The Forest")])
-        for text in [
-            #"{"version":1,"themes":[{"id":"../escape","name":"Forest"}]}"#,
-            #"{"version":1,"themes":[{"id":"forest","name":"Forest"},{"id":"forest","name":"Duplicate"}]}"#,
-            String(repeating: " ", count: 32_769),
+    func testWorldBoardHandoffUsesCanonicalChatAndLeavesWorkAsAnEditableDraft() async throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close(); BackendStub.reset() }
+        BackendStub.reset()
+        let profile = fixture.profiles[0]
+        let sessionID = "board-fixture-chat"
+        func info(_ id: String) throws -> [String: Any] {
+            let value = SessionInfo(model: "fixture", host: "http://127.0.0.1:9", cwd: fixture.root.path,
+                session: id, sessionID: id, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+                maxIterations: 10, hasProjectContext: false, permissions: .init(skipAll: false, allowed: []))
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        }
+        let originalInfo = try info("foreground")
+        let boardInfo = try info(sessionID)
+        BackendStub.respond(toPath: "/api/sessions/detached") { _ in ["session_id": sessionID] }
+        BackendStub.respond(toPath: "/api/sessions") { _ in ["current": "foreground", "sessions": [
+            ["id": sessionID, "name": "Board draft", "preview": "", "mtime": 1, "size": 0,
+             "cwd": fixture.root.path, "agent_profile_id": profile.id.uuidString]
+        ]] }
+        BackendStub.respond(toPath: "/api/config") { _ in ["model": "fixture", "host": "http://127.0.0.1:9",
+            "cwd": fixture.root.path, "max_iterations": 10, "session_info": originalInfo] }
+        BackendStub.respond(toPath: "/api/models") { _ in ["models": ["fixture"]] }
+        BackendStub.respond(toPath: "/api/chat-folders") { _ in ["folders": []] }
+        BackendStub.respond(toPath: "/api/sessions/\(sessionID)/resume") { _ in
+            ["ok": true, "messages": [], "session_info": boardInfo]
+        }
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        defer {
+            app.activeTranscriptLoad?.task.cancel()
+            app.pendingChatTurns.values.forEach { $0.cancel() }
+            app.knowledge.cancelAll(); app.agentInstructions.cancelAll(); app.toastCenter.cancelPendingDismissal()
+        }
+        app.agentProfiles = fixture.profiles
+        app.initialWorkspacePath = fixture.root.path
+        app.installTranscriptSession("foreground", blocks: [])
+        app.draftText = "Keep my earlier draft"
+        let world = app.agentWorld
+        world.configure(extensions: fixture.extensions, conversations: app.savedAgentConversations,
+            profiles: { fixture.profiles }, workspace: { fixture.root.path }, availability: { _ in nil },
+            state: { app.savedAgentConversationState($0) },
+            create: { _, _ in XCTFail("The handoff must use the canonical app service"); return "unused" },
+            load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("A card draft must not submit work") },
+            stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        world.open(pluginID: fixture.pluginID)
+        world.openAgentProfile(profile.id.uuidString)
+        // The production route obtains the canonical shared store. A fresh UUID
+        // workspace guarantees this is a new test-owned file, never a user board.
+        let store = BoardStore.shared(workspacePath: fixture.root.path)
+        let file = try XCTUnwrap(store.fileURL)
+        try XCTUnwrap(FileManager.default.fileExists(atPath: file.path) ? nil : file, "The unique test board must not already exist")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let card = try store.createCard(title: "Review the draft", details: "Wait for explicit Send")
+        let originalCard = store.cards.first
+        try await world.openBoardCard(card, profileID: profile.id.uuidString)
+        XCTAssertEqual(app.currentSessionID, sessionID)
+        XCTAssertEqual(app.savedAgentProfileID(for: sessionID), profile.id)
+        XCTAssertEqual(world.selectedSessionID, sessionID)
+        XCTAssertEqual(app.draftText, store.chatPrompt(for: card))
+        XCTAssertEqual(app.paneDraft(for: "foreground"), "Keep my earlier draft")
+        XCTAssertEqual(store.cards.first, originalCard)
+        XCTAssertTrue(app.blocks.isEmpty)
+        XCTAssertFalse(app.isBusy)
+        XCTAssertTrue(world.conversationPresented)
+        XCTAssertFalse(world.profilePresented)
+        XCTAssertEqual(BackendStub.requestPaths.filter { $0 == "/api/sessions/detached" }.count, 1)
+        XCTAssertFalse(BackendStub.requestPaths.contains { $0 == "/api/chat" || $0.hasPrefix("/api/chat/") || $0.hasPrefix("/api/runs/") || $0.hasSuffix("/send") })
+    }
+
+    func testNativeWorldPresentationReadsOnlyBoundedConfinedMetadata() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = base.appendingPathComponent("plugin")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        func source() -> AgentWorldModel.AvailableScreen {
+            .init(pluginID: "fixture", pluginName: "Fixture", digest: UUID().uuidString, root: root.path, screen: screen)
+        }
+        XCTAssertNil(PluginWorldPresentation.load(screen: source()))
+        try writePresentationFixture(root)
+        XCTAssertEqual(PluginWorldPresentation.load(screen: source())?.worldID, "fixture-world")
+        let file = root.appendingPathComponent("ui/presentations.json")
+        var extra = presentationFixture(); extra["script"] = "untrusted"
+        var traversal = presentationFixture(); traversal["presentations"] = ["main": ["title": "Main", "backgroundAsset": "../outside.png"]]
+        var unknownLabel = presentationFixture(); unknownLabel["labels"] = ["script": "untrusted"]
+        var oversizedLabel = presentationFixture(); oversizedLabel["labels"] = ["welcomeTitle": String(repeating: "x", count: 161)]
+        for document in [extra, traversal, unknownLabel, oversizedLabel] {
+            try JSONSerialization.data(withJSONObject: document).write(to: file)
+            XCTAssertNil(PluginWorldPresentation.load(screen: source()))
+        }
+        try Data(repeating: 32, count: 65_537).write(to: file)
+        XCTAssertNil(PluginWorldPresentation.load(screen: source()))
+        try writePresentationFixture(root)
+        let image = root.appendingPathComponent("ui/fixture.png")
+        try FileManager.default.removeItem(at: image)
+        XCTAssertNil(PluginWorldPresentation.load(screen: source()), "Missing decorative assets cannot produce a valid descriptor")
+        let outside = base.appendingPathComponent("outside.png")
+        try Data("private".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: image, withDestinationURL: outside)
+        XCTAssertNil(PluginWorldPresentation.load(screen: source()), "Presentation assets must remain inside the installed plugin")
+    }
+
+    func testPresentationStylesValidateIdentifiersPathsAndExactRows() throws {
+        let valid = presentationFixture()
+        XCTAssertEqual(PluginWorldPresentation.decode(try JSONSerialization.data(withJSONObject: valid))?.styles.first?.id, "style_a")
+        for row: [String: Any] in [
+            ["id": "../style", "name": "Style", "previewAsset": "fixture.png"],
+            ["id": "style_a", "name": "Style", "previewAsset": "https://example.com/private.png"],
+            ["id": "style_a", "name": "Style", "previewAsset": "fixture.png", "script": "execute"],
         ] {
-            try Data(text.utf8).write(to: file)
-            XCTAssertEqual(AgentWorldModel.loadThemeCatalog(for: source), AgentWorldThemeOption.builtIn)
+            var document = valid; document["styles"] = [row]
+            XCTAssertNil(PluginWorldPresentation.decode(try JSONSerialization.data(withJSONObject: document)))
         }
+        var duplicates = valid
+        duplicates["styles"] = Array(repeating: ["id": "style_a", "name": "Style", "previewAsset": "fixture.png"], count: 2)
+        XCTAssertNil(PluginWorldPresentation.decode(try JSONSerialization.data(withJSONObject: duplicates)))
     }
 
-    func testShipStyleBridgeAcceptsKnownShipsAndExplicitAutomaticOnly() {
-        let id = UUID().uuidString
-        for style in AgentWorldShipStyle.all {
-            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id.lowercased(), "shipStyle": style.id], screen: screen),
-                           .setShipStyle(agentID: id, style: style.id))
-        }
-        XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": NSNull()], screen: screen),
-                       .setShipStyle(agentID: id, style: nil))
-        for invalid: Any in ["automatic", "../ship.glb", "ship_unknown", true, 1] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": invalid], screen: screen))
-        }
-        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
-                                            version: 1, capabilities: ["agents.read"])
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id, "shipStyle": "ship_going_merry"], screen: readOnly))
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "setShipStyle", "agentID": id], screen: screen))
-    }
-
-    func testThemeIDsPermitPluginUpdatesWithoutPathsOrScripts() {
-        for value in ["outpost", "forest-v2", "underwater"] {
-            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["theme": value]], screen: screen), .preferences(value))
+    func testPresentationIDsPermitPluginUpdatesWithoutPathsOrScripts() {
+        for value in ["main", "forest-v2", "underwater"] {
+            XCTAssertNotNil(AgentWorldBridgeContract.decode(wireRequest("presentation.open", ["presentationID": value])))
         }
         for value in ["", "../secret", "data:alert(1)", "<script>", "UpperCase", String(repeating: "a", count: 65)] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["theme": value]], screen: screen))
+            XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("presentation.open", ["presentationID": value])))
         }
     }
 
     func testWorldActivityActionsRequireInteractiveCapabilityAndExactOpaqueIDs() {
         let id = UUID().uuidString
-        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
-                                             version: 1, capabilities: ["agents.read"])
-        let actions: [([String: Any], PluginScreenMessage)] = [
-            (["version": 1, "type": "openAttention", "requestID": id.lowercased()], .openAttention(id)),
-            (["version": 1, "type": "openTransfer", "transferID": id], .openTransfer(id)),
-            (["version": 1, "type": "openSharedChat"], .openSharedChat),
-            (["version": 1, "type": "createAgent"], .createAgent),
-            (["version": 1, "type": "openAgentControls"], .openAgentControls(nil)),
-            (["version": 1, "type": "openAgentControls", "agentID": id], .openAgentControls(id)),
+        let actions: [(String, [String: Any])] = [
+            ("attention.open", ["requestID": id.lowercased()]), ("transfers.open", ["transferID": id]),
+            ("chats.openShared", [:]), ("agents.create", [:]), ("agents.open", ["agentID": id]),
+            ("navigation.open", ["surface": "agents"]), ("navigation.open", ["surface": "agents", "agentID": id]),
         ]
-        for (payload, expected) in actions {
-            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), expected)
-            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
-            var extra = payload; extra["sessionID"] = "another-conversation"
-            XCTAssertNil(PluginScreenMessage.decode(extra, screen: screen))
-            var badVersion = payload; badVersion["version"] = true
-            XCTAssertNil(PluginScreenMessage.decode(badVersion, screen: screen))
+        for (command, arguments) in actions {
+            XCTAssertEqual(bridgeResponse(command, arguments, capabilities: ["agents.interact"])["ok"] as? Bool, true)
+            XCTAssertEqual(bridgeResponse(command, arguments, capabilities: ["agents.read"])["ok"] as? Bool, false)
+            var extra = arguments; extra["sessionID"] = "another-conversation"
+            XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest(command, extra)))
+            var badVersion = wireRequest(command, arguments); badVersion["version"] = true
+            XCTAssertNil(AgentWorldBridgeContract.decode(badVersion))
         }
-        for type in ["openAttention", "openTransfer", "openAgentControls"] {
-            let key = type == "openAttention" ? "requestID" : type == "openTransfer" ? "transferID" : "agentID"
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": type, key: "../private"], screen: screen))
+        for (command, key) in [("attention.open", "requestID"), ("transfers.open", "transferID"), ("agents.open", "agentID")] {
+            XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest(command, [key: "../private"])))
         }
     }
 
@@ -421,9 +504,9 @@ final class AgentWorldTests: XCTestCase {
                         state: { _ in .init() }, create: { _, _ in conversationsCreated += 1; return "unused" },
                         load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("Creating an agent must not dispatch work") },
                         stop: { _ in }, open: { _ in }, manage: {}, defaults: nil)
-        let interactive = ExtensionPluginScreen(id: "interactive", title: title, entrypoint: "ui/index.html", version: 1,
+        let interactive = ExtensionPluginScreen(id: "interactive", title: title, entrypoint: "ui/index.html", version: 2,
                                                 capabilities: ["agents.read", "agents.interact"])
-        let readOnly = ExtensionPluginScreen(id: "read-only", title: title, entrypoint: "ui/index.html", version: 1,
+        let readOnly = ExtensionPluginScreen(id: "read-only", title: title, entrypoint: "ui/index.html", version: 2,
                                              capabilities: ["agents.read"])
         var plugin = ExtensionPlugin(id: "creation-fixture", name: "creation-fixture", displayName: title, description: nil,
                                      version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
@@ -438,7 +521,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertNil(world.newAgentDraft, "A closed world cannot open the editor")
         world.open(pluginID: plugin.id, screenID: interactive.id)
         XCTAssertTrue(world.canCreateAgent)
-        XCTAssertEqual(world.snapshot["canCreateAgent"] as? Bool, true)
+        XCTAssertEqual(displayState(world)["canCreateAgent"] as? Bool, true)
         world.createAgent()
         let cancelledID = try XCTUnwrap(world.newAgentDraft?.id)
         world.createAgent()
@@ -461,17 +544,22 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertNil(world.newAgentDraft)
         XCTAssertEqual(app.agentProfiles.map(\.id), [draft.id])
         XCTAssertEqual(app.agentProfiles.first?.model, "exact-local:7b")
-        XCTAssertEqual(world.residents.map(\.id), [draft.id.uuidString])
-        XCTAssertEqual((world.snapshot["agents"] as? [[String: Any]])?.first?["name"] as? String, "New Captain")
+        XCTAssertEqual(app.agentProfiles.first?.name, "New Captain")
+        XCTAssertNil(world.activeScreen, "Switching the app workspace revokes the previous world connection after the native save")
+        XCTAssertFalse(world.canCreateAgent)
+        XCTAssertEqual((displayState(world)["agents"] as? [[String: Any]])?.count, 0, "A revoked connection cannot receive the saved agent")
         XCTAssertEqual(world.workspace, pinnedWorkspace)
         XCTAssertEqual(app.currentSessionID, foregroundSession)
         XCTAssertFalse(world.conversationPresented)
         XCTAssertEqual(conversationsCreated, 0)
 
         world.open(pluginID: plugin.id, screenID: readOnly.id)
+        XCTAssertEqual(world.residents.map(\.id), [draft.id.uuidString])
+        XCTAssertEqual((displayState(world)["agents"] as? [[String: Any]])?.first?["name"] as? String, "New Captain",
+                       "Reopening under a current read grant publishes the canonical saved profile")
         world.createAgent()
         XCTAssertFalse(world.canCreateAgent)
-        XCTAssertEqual(world.snapshot["canCreateAgent"] as? Bool, false)
+        XCTAssertEqual(displayState(world)["canCreateAgent"] as? Bool, false)
         XCTAssertNil(world.newAgentDraft)
 
         world.open(pluginID: plugin.id, screenID: interactive.id)
@@ -485,120 +573,85 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(app.agentProfiles.map(\.id), [draft.id], "Revoking the world must revoke an open editor's save")
     }
 
-    func testResidentAppearanceBridgeAcceptsOnlySupportedStylesAndOnePreferenceAtATime() {
-        for style in ["mixed", "pandas", "explorers"] {
-            XCTAssertEqual(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": style]], screen: screen), .residentStyle(style))
+    func testVisualPreferencesAcceptBoundedJSONWithoutWorldSpecificEnums() {
+        for value: Any in ["custom-style", true, 7, NSNull(), ["layout": "compact"], ["north", "south"]] {
+            XCTAssertNotNil(AgentWorldBridgeContract.decode(wireRequest("preferences.set", ["key": "appearance", "value": value])))
         }
-        for style in ["", "Pandas", "Mixed", "panda", "../pandas", "<script>", "outpost"] {
-            XCTAssertFalse(AgentWorldModel.isSafeResidentStyle(style))
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": style]], screen: screen))
+        for key in ["", "UpperCase", "../private", "<script>", String(repeating: "a", count: 81)] {
+            XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("preferences.set", ["key": key, "value": "custom"])))
         }
-        for preferences: [String: Any] in [[:], ["residentStyle": true], ["residentStyle": ["pandas"]],
-                                          ["residentStyle": "pandas", "theme": "outpost"],
-                                          ["residentStyle": "pandas", "unknown": "value"]] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": preferences], screen: screen))
-        }
-        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint, version: 1, capabilities: ["agents.read"])
-        XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["residentStyle": "pandas"]], screen: readOnly))
+        var nested: Any = "leaf"
+        for _ in 0..<10 { nested = ["nested": nested] }
+        XCTAssertFalse(AgentWorldBridgeContract.validPreferences(["appearance": nested]))
+        XCTAssertFalse(AgentWorldBridgeContract.validPreferences(Dictionary(uniqueKeysWithValues: (0..<33).map { ("key-\($0)", "value") })))
+        XCTAssertFalse(AgentWorldBridgeContract.validPreferences(["appearance": Double.infinity]))
     }
 
-    func testResidentAppearanceDefaultsToMixedInTheEmptySnapshot() {
+    func testClosedWorldProjectionContainsNoSyntheticResidentsOrWorldSpecificFields() {
         let model = AgentWorldModel()
-        XCTAssertEqual(model.residentStyle, "mixed")
-        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "mixed")
-        model.setResidentStyle("pandas")
-        XCTAssertEqual(model.residentStyle, "mixed", "A closed or revoked world cannot change preferences")
+        let state = model.worldDisplayState(capabilities: [])
+        XCTAssertTrue(AgentWorldBridgeContract.validDisplayState(state))
+        XCTAssertEqual((state["agents"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual((state["preferences"] as? [String: Any])?.count, 0)
+        XCTAssertEqual(state["canCreateAgent"] as? Bool, false)
+        XCTAssertNil(state["theme"])
+        XCTAssertNil(state["residentStyle"])
     }
 
-    func testResidentAppearancePersistsPerScreenAndRestoresWithoutChangingTheTheme() throws {
-        let suiteName = "AgentWorldAppearanceTests." + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let titlePrefix = "Agent World Appearance Test " + UUID().uuidString
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("ui"), withIntermediateDirectories: true)
-        try Data("<!doctype html><html><body>Local appearance fixture</body></html>".utf8).write(to: root.appendingPathComponent("ui/index.html"))
-        defer {
-            for window in NSApp.windows where window.title.hasPrefix(titlePrefix) { window.close() }
-            defaults.removePersistentDomain(forName: suiteName)
-            try? FileManager.default.removeItem(at: root)
-        }
-        let first = ExtensionPluginScreen(id: "first", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read", "world.preferences"])
-        let second = ExtensionPluginScreen(id: "second", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read", "world.preferences"])
-        let readOnly = ExtensionPluginScreen(id: "read-only", title: titlePrefix, entrypoint: "ui/index.html", version: 1, capabilities: ["agents.read"])
-        let pluginID = "appearance-fixture"
-        var plugin = ExtensionPlugin(id: pluginID, name: pluginID, displayName: "Appearance fixture", description: nil,
-                                     version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
-                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
-                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
-        plugin.root = root.path; plugin.screens = [first, second, readOnly]
-        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
-        let extensions = ExtensionsModel()
-        extensions.extensions = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
-                                                   mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
-        let areaKey = "Locus.AgentWorld.sailingArea.v1." + pluginID + ":" + first.id
-        defaults.set("invalid", forKey: areaKey)
-        let key = "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + first.id
-        defaults.set("unrecognized-style", forKey: key)
-        let captain = AgentProfile(name: "Ship Captain", model: "Fixture model")
+    func testVisualPreferencesPersistPerScreenAndWorkspaceWithoutChangingConversations() throws {
+        let fixture = try conversationFixture()
+        defer { fixture.close() }
+        let title = fixture.title
+        let first = ExtensionPluginScreen(id: "first", title: title, entrypoint: "ui/index.html", version: 2, capabilities: ["agents.read", "world.preferences"])
+        let second = ExtensionPluginScreen(id: "second", title: title, entrypoint: "ui/index.html", version: 2, capabilities: ["agents.read", "world.preferences"])
+        let readOnly = ExtensionPluginScreen(id: "read-only", title: title, entrypoint: "ui/index.html", version: 2, capabilities: ["agents.read"])
+        let current = fixture.extensions.extensions
+        var plugin = current.plugins[0]; plugin.screens = [first, second, readOnly]
+        fixture.extensions.extensions = ExtensionsResponse(capabilities: current.capabilities, marketplaces: current.marketplaces,
+            plugins: [plugin], skills: current.skills, mcpServers: current.mcpServers, mcpPresets: current.mcpPresets,
+            errors: current.errors, pendingUpdates: current.pendingUpdates)
+        var workspace = fixture.root.path
         let model = AgentWorldModel()
-        model.configure(extensions: extensions, profiles: { [captain] }, workspace: { root.path }, availability: { _ in nil },
-                        state: { _ in .init() }, create: { _, _ in XCTFail("Appearance changes must not create a conversation"); return "unused" },
-                        load: { _ in }, dispatch: { _, _, _, _, _ in XCTFail("Appearance changes must not dispatch work") },
-                        stop: { _ in }, open: { _ in }, manage: {}, defaults: defaults)
-        model.open(pluginID: pluginID, screenID: first.id)
-        XCTAssertEqual(model.residentStyle, "mixed", "Unrecognized saved styles must use the mixed crew default")
-        XCTAssertEqual(model.sailingArea, "whole")
-        model.setSailingArea("right")
-        model.setSailingArea("invalid")
-        XCTAssertEqual(model.sailingArea, "right")
-        XCTAssertEqual(defaults.string(forKey: areaKey), "right")
-        XCTAssertEqual(model.snapshot["sailingArea"] as? String, "right")
-        model.setShipStyle(agentID: UUID().uuidString, style: "ship_garp_battleship")
-        XCTAssertTrue(model.shipStyles.isEmpty, "Unknown captains cannot acquire style preferences")
-        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_garp_battleship")
-        model.setShipStyle(agentID: captain.id.uuidString, style: "../invalid.glb")
-        XCTAssertEqual(model.shipStyles[captain.id.uuidString], "ship_garp_battleship")
-        XCTAssertEqual((model.snapshot["shipStyles"] as? [String: String])?[captain.id.uuidString], "ship_garp_battleship")
-        model.setResidentStyle("pandas")
-        XCTAssertEqual(model.residentStyle, "pandas")
-        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "pandas")
-        XCTAssertEqual(defaults.string(forKey: key), "pandas")
-        model.setResidentStyle("invalid")
-        XCTAssertEqual(model.residentStyle, "pandas")
-        model.setTheme("grand-line")
-        XCTAssertEqual(model.residentStyle, "pandas", "Changing worlds must preserve the campus appearance preference")
-        model.open(pluginID: pluginID, screenID: second.id)
-        XCTAssertTrue(model.shipStyles.isEmpty, "Ship styles are scoped to their world screen")
-        XCTAssertEqual(model.sailingArea, "whole", "A new screen has an independent sailing area")
-        model.setSailingArea("left")
-        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_mihawk_coffin")
-        XCTAssertEqual(model.residentStyle, "mixed", "An unconfigured screen uses the mixed crew default")
-        model.setResidentStyle("explorers")
-        XCTAssertEqual(defaults.string(forKey: key), "pandas")
-        model.open(pluginID: pluginID, screenID: first.id)
-        XCTAssertEqual(model.residentStyle, "pandas")
-        XCTAssertEqual(model.theme, "grand-line")
-        XCTAssertEqual(model.sailingArea, "right", "Reopening restores the saved sea")
-        XCTAssertEqual(model.shipStyles[captain.id.uuidString], "ship_garp_battleship", "Each captain’s ship survives closing and reopening the world")
-        model.setShipStyle(agentID: captain.id.uuidString, style: nil)
-        XCTAssertNil(model.shipStyles[captain.id.uuidString], "Automatic clears the explicit override")
-        model.open(pluginID: pluginID, screenID: second.id)
-        XCTAssertEqual(model.residentStyle, "explorers", "Explicit saved explorer choices survive the new mixed default")
-        model.setResidentStyle("mixed")
-        XCTAssertEqual(model.snapshot["residentStyle"] as? String, "mixed")
-        XCTAssertEqual(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + second.id), "mixed")
-        model.open(pluginID: pluginID, screenID: first.id)
-        XCTAssertEqual(model.residentStyle, "pandas", "Explicit saved panda choices remain independent of other screens")
-        model.open(pluginID: pluginID, screenID: second.id)
-        XCTAssertEqual(model.residentStyle, "mixed", "Mixed crew choices restore through the same preference bridge")
-        model.open(pluginID: pluginID, screenID: readOnly.id)
-        model.setShipStyle(agentID: captain.id.uuidString, style: "ship_garp_battleship")
-        XCTAssertTrue(model.shipStyles.isEmpty, "A screen without world preferences cannot change ship styles")
-        model.setResidentStyle("pandas")
-        XCTAssertEqual(model.residentStyle, "mixed")
-        XCTAssertNil(defaults.string(forKey: "Locus.AgentWorld.residentStyle.v1." + pluginID + ":" + readOnly.id))
-        model.setSailingArea("right")
-        XCTAssertEqual(model.sailingArea, "whole", "Read-only screens cannot change sailing bounds")
+        model.configure(extensions: fixture.extensions, profiles: { fixture.profiles }, workspace: { workspace }, availability: { _ in nil },
+                        state: { _ in .init() }, create: { _, _ in XCTFail("Visual changes must not create a conversation"); return "unused" },
+                        load: { _ in XCTFail("Visual changes must not load a conversation") },
+                        dispatch: { _, _, _, _, _ in XCTFail("Visual changes must not dispatch work") },
+                        stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
+        model.open(pluginID: fixture.pluginID, screenID: first.id)
+        try model.resetWorldPreferences()
+        try model.updateWorldPreference(key: "appearance", value: "warm")
+        try model.updateWorldPreference(key: "camera-region", value: "right")
+        try model.updateWorldPreference(key: "styles", value: [fixture.profiles[0].id.uuidString: "style_a"])
+        let storedKey = AgentWorldModel.worldPreferenceStorageKey(screenID: fixture.pluginID + ":" + first.id, workspace: workspace)
+        let saved = try XCTUnwrap(fixture.defaults.data(forKey: storedKey))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: saved) as? [String: Any])?["appearance"] as? String, "warm")
+        XCTAssertThrowsError(try model.updateWorldPreference(key: "../invalid", value: true))
+        XCTAssertEqual(fixture.defaults.data(forKey: storedKey), saved, "An invalid update must preserve the previous preference document")
+        model.open(pluginID: fixture.pluginID, screenID: second.id)
+        XCTAssertNil(model.worldPreferences["appearance"])
+        try model.updateWorldPreference(key: "appearance", value: "neutral")
+        model.open(pluginID: fixture.pluginID, screenID: first.id)
+        XCTAssertEqual(model.worldPreferences["appearance"] as? String, "warm")
+        XCTAssertEqual(model.worldPreferences["camera-region"] as? String, "right")
+        XCTAssertEqual((model.worldPreferences["styles"] as? [String: String])?[fixture.profiles[0].id.uuidString], "style_a")
+        workspace = fixture.root.appendingPathComponent("another-project").path
+        model.open(pluginID: fixture.pluginID, screenID: first.id)
+        XCTAssertNil(model.worldPreferences["appearance"], "A new project cannot observe another project's visual dictionary")
+        try model.updateWorldPreference(key: "appearance", value: "cool")
+        workspace = fixture.root.path
+        model.open(pluginID: fixture.pluginID, screenID: first.id)
+        XCTAssertEqual(model.worldPreferences["appearance"] as? String, "warm")
+        try model.resetWorldPreferences()
+        XCTAssertTrue(model.worldPreferences.isEmpty)
+        model.open(pluginID: fixture.pluginID, screenID: first.id)
+        XCTAssertTrue(model.worldPreferences.isEmpty, "Explicit reset must remain empty on reopen")
+        model.open(pluginID: fixture.pluginID, screenID: second.id)
+        XCTAssertEqual(model.worldPreferences["appearance"] as? String, "neutral", "Reset affects only the active scope")
+        model.open(pluginID: fixture.pluginID, screenID: readOnly.id)
+        let before = model.worldPreferences as NSDictionary
+        XCTAssertThrowsError(try model.updateWorldPreference(key: "appearance", value: "warm"))
+        XCTAssertThrowsError(try model.resetWorldPreferences())
+        XCTAssertEqual(model.worldPreferences as NSDictionary, before)
     }
 
     func testFilesRejectTraversalAbsolutePathsAndEscapingSymlinks() throws {
@@ -664,17 +717,17 @@ final class AgentWorldTests: XCTestCase {
         let model = AppModel(startImmediately: false)
         let profile = AgentProfile(name: "Atlas", model: "exact-local:7b", instructions: "Review carefully", tokenLimit: 4096)
         model.agentProfiles = [profile]
-        let dispatch = try model.agentWorldProfileDispatch(profileID: profile.id, mode: .ask)
+        let dispatch = try model.savedAgentProfileDispatch(profileID: profile.id, mode: .ask)
         XCTAssertTrue(dispatch.profileOnly)
         XCTAssertEqual(dispatch.profile.model, "exact-local:7b")
         XCTAssertEqual(dispatch.mode, .ask)
         XCTAssertEqual(dispatch.provider, "ollama")
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: UUID(), mode: .work))
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: UUID(), mode: .work))
         var disconnected = profile
         disconnected.route = .providerAccount(UUID())
         model.agentProfiles = [disconnected]
-        XCTAssertThrowsError(try model.agentWorldProfileDispatch(profileID: disconnected.id, mode: .work))
-        let payload = AppModel.agentWorldProfileBody(profile)
+        XCTAssertThrowsError(try model.savedAgentProfileDispatch(profileID: disconnected.id, mode: .work))
+        let payload = AppModel.savedAgentProfileBody(profile)
         XCTAssertEqual(payload["token_limit"] as? Int, 4096)
         XCTAssertEqual(payload["access_ceiling"] as? String, profile.accessCeiling.rawValue)
         XCTAssertEqual(payload["instructions"] as? String, "Review carefully")
@@ -688,7 +741,7 @@ final class AgentWorldTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("<!doctype html><html><head></head><body>Local world</body></html>".utf8)
             .write(to: root.appendingPathComponent("ui/index.html"))
-        try Data(#"{"theme":"outpost"}"#.utf8).write(to: root.appendingPathComponent("ui/theme.json"))
+        try Data(#"{"theme":"fixture-world"}"#.utf8).write(to: root.appendingPathComponent("ui/theme.json"))
         try Data([0x67, 0x6c, 0x54, 0x46]).write(to: root.appendingPathComponent("ui/resident.glb"))
         let handler = PluginScreenSchemeHandler(root: root)
         let configuration = WKWebViewConfiguration()
@@ -721,7 +774,7 @@ final class AgentWorldTests: XCTestCase {
         let result = try XCTUnwrap(raw as? [String: Any])
         XCTAssertEqual(result["jsonOK"] as? Bool, true)
         XCTAssertEqual(result["jsonStatus"] as? Int, 200)
-        XCTAssertEqual(result["theme"] as? String, "outpost")
+        XCTAssertEqual(result["theme"] as? String, "fixture-world")
         XCTAssertEqual(result["binaryOK"] as? Bool, true)
         XCTAssertEqual(result["binaryStatus"] as? Int, 200)
         XCTAssertEqual(result["bytes"] as? [Int], [0x67, 0x6c, 0x54, 0x46])
@@ -844,7 +897,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(world.focusRequest, firstFocus + 1)
         world.openAgentProfile()
         XCTAssertEqual(world.focusRequest, firstFocus + 2, "Clicking the selected resident focuses it again")
-        XCTAssertEqual(world.snapshot["focusRequest"] as? Int, world.focusRequest)
+        XCTAssertEqual(displayState(world)["focusRequest"] as? Int, world.focusRequest)
         world.adoptForegroundConversation()
         XCTAssertTrue(world.profilePresented)
         XCTAssertEqual(world.selectedProfile?.name, "Jinbei")
@@ -873,7 +926,7 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(untouched, "luffy-foreground")
     }
 
-    func testOpeningVivreCardCancelsStaleRecoveryAndProtectsBusyResident() async throws {
+    func testOpeningNativeProfileCancelsStaleRecoveryAndProtectsBusyResident() async throws {
         let fixture = try conversationFixture()
         defer { fixture.close() }
         let world = AgentWorldModel()
@@ -908,76 +961,109 @@ final class AgentWorldTests: XCTestCase {
         XCTAssertEqual(previous, "missing-jinbei", "Cancelled loads do not invalidate unseen bindings")
     }
 
-    func testIslandQuartersBridgeValidatesDestinationsPermissionsAndBooleanPreference() {
-        let readOnly = ExtensionPluginScreen(id: screen.id, title: screen.title, entrypoint: screen.entrypoint,
-                                             version: 1, capabilities: ["agents.read"])
-        for island in AgentWorldQuartersIsland.allCases {
-            let payload: [String: Any] = ["version": 1, "type": "openIslandQuarters", "islandID": island.rawValue]
-            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .openIslandQuarters(island))
-            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
-            var extra = payload; extra["agentID"] = UUID().uuidString
-            XCTAssertNil(PluginScreenMessage.decode(extra, screen: screen))
-            XCTAssertNotNil(NSImage(named: island.backgroundAsset), "Every destination needs packaged artwork")
-        }
-        for invalid in ["alabasta", "water7", "../wano", "Wano", ""] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "openIslandQuarters", "islandID": invalid], screen: screen))
-        }
+    func testPresentationBridgeRequiresCapabilityAndExactMetadataIdentifier() {
+        let arguments: [String: Any] = ["presentationID": "garden"]
+        XCTAssertEqual(bridgeResponse("presentation.open", arguments, capabilities: ["agents.interact"])["ok"] as? Bool, true)
+        XCTAssertEqual(bridgeResponse("presentation.open", arguments, capabilities: ["agents.read"])["ok"] as? Bool, false)
+        XCTAssertNil(AgentWorldBridgeContract.decode(wireRequest("presentation.open", ["presentationID": "garden", "agentID": UUID().uuidString])))
         for enabled in [true, false] {
-            let payload: [String: Any] = ["version": 1, "type": "preferences", "preferences": ["islandQuartersEnabled": enabled]]
-            XCTAssertEqual(PluginScreenMessage.decode(payload, screen: screen), .islandQuartersEnabled(enabled))
-            XCTAssertNil(PluginScreenMessage.decode(payload, screen: readOnly))
-        }
-        for invalid: Any in [0, 1, "false", NSNull()] {
-            XCTAssertNil(PluginScreenMessage.decode(["version": 1, "type": "preferences", "preferences": ["islandQuartersEnabled": invalid]], screen: screen))
+            let preferences: [String: Any] = ["key": "context-enabled", "value": enabled]
+            XCTAssertEqual(bridgeResponse("preferences.set", preferences, capabilities: ["world.preferences"])["ok"] as? Bool, true)
+            XCTAssertEqual(bridgeResponse("preferences.set", preferences, capabilities: ["agents.read"])["ok"] as? Bool, false)
         }
     }
 
-    func testIslandQuartersVisitsAreTemporaryAndDisabledPreferencePersists() throws {
+    func testPluginPresentationVisitsAreTemporaryAndScopedPreferencePersists() throws {
         let fixture = try conversationFixture()
         defer { fixture.close() }
+        try writePresentationFixture(fixture.root)
         func makeWorld() -> AgentWorldModel {
             let world = AgentWorldModel()
             world.configure(extensions: fixture.extensions, profiles: { [] }, workspace: { fixture.root.path },
                             availability: { _ in nil }, state: { _ in .init() },
-                            create: { _, _ in XCTFail("Island visits must not create conversations"); return "unused" },
-                            load: { _ in XCTFail("Island visits must not load conversations") },
-                            dispatch: { _, _, _, _, _ in XCTFail("Island visits must not dispatch work") },
+                            create: { _, _ in XCTFail("Presentation visits must not create conversations"); return "unused" },
+                            load: { _ in XCTFail("Presentation visits must not load conversations") },
+                            dispatch: { _, _, _, _, _ in XCTFail("Presentation visits must not dispatch work") },
                             stop: { _ in }, open: { _ in }, manage: {}, defaults: fixture.defaults)
             return world
         }
         let world = makeWorld()
-        XCTAssertTrue(world.islandQuartersEnabled)
+        XCTAssertFalse(world.openPluginPresentation("garden"), "Closed worlds cannot open native presentations")
         world.open(pluginID: fixture.pluginID)
-        world.setTheme("grand-line")
-        world.setQuartersAppearance(.ocean)
-        for island in AgentWorldQuartersIsland.allCases {
-            world.openIslandQuarters(island)
+        XCTAssertEqual(world.pluginPresentation?.worldID, "fixture-world")
+        try world.updateWorldPreference(key: "appearance", value: "warm")
+        XCTAssertFalse(world.openPluginPresentation("unknown"), "Only descriptor-owned destinations may be opened")
+        for id in ["garden", "studio"] {
+            XCTAssertTrue(world.openPluginPresentation(id))
             XCTAssertTrue(world.quartersPresented)
-            XCTAssertEqual(world.activeQuartersIsland, island)
-            XCTAssertEqual(world.quartersAppearance, .ocean)
+            XCTAssertEqual(world.selectedPresentationID, id)
+            XCTAssertEqual(world.worldPreferences["appearance"] as? String, "warm")
             XCTAssertFalse(world.conversationPresented)
             world.quartersPresented = false
-            XCTAssertNil(world.quartersIsland)
+            XCTAssertNil(world.selectedPresentationID)
         }
-        world.openIslandQuarters(.wano)
+        XCTAssertTrue(world.openPluginPresentation("garden"))
         world.openAgentControls()
-        XCTAssertNil(world.quartersIsland)
-        XCTAssertEqual(world.quartersAppearance, .ocean)
-        world.openIslandQuarters(.elbaf)
-        world.setIslandQuartersEnabled(false)
-        XCTAssertNil(world.quartersIsland)
+        XCTAssertNil(world.selectedPresentationID)
+        XCTAssertEqual(world.worldPreferences["appearance"] as? String, "warm")
+        XCTAssertTrue(world.openPluginPresentation("studio"))
+        try world.updateWorldPreference(key: "context-enabled", value: false)
+        XCTAssertNil(world.selectedPresentationID)
         world.quartersPresented = false
-        world.openIslandQuarters(.drum)
+        XCTAssertFalse(world.openPluginPresentation("garden"))
         XCTAssertFalse(world.quartersPresented)
-        XCTAssertEqual(world.snapshot["islandQuartersEnabled"] as? Bool, false)
-        XCTAssertFalse(makeWorld().islandQuartersEnabled)
-        world.setIslandQuartersEnabled(true)
-        XCTAssertTrue(makeWorld().islandQuartersEnabled)
-        world.setTheme("outpost")
-        world.openIslandQuarters(.marineford)
-        XCTAssertFalse(world.quartersPresented)
-        XCTAssertNil(world.quartersIsland)
-        XCTAssertNil(AgentWorldModel().activeQuartersIsland)
+        XCTAssertTrue(world.openPluginPresentation("main"), "The default native surface remains available when shortcuts are disabled")
+        XCTAssertNil(world.selectedPresentationID)
+        let reopened = makeWorld()
+        reopened.open(pluginID: fixture.pluginID)
+        XCTAssertEqual(reopened.worldPreferences["context-enabled"] as? Bool, false)
+        XCTAssertFalse(reopened.openPluginPresentation("garden"))
+        try reopened.updateWorldPreference(key: "context-enabled", value: true)
+        XCTAssertTrue(reopened.openPluginPresentation("garden"))
+        try reopened.resetWorldPreferences()
+        XCTAssertNil(reopened.selectedPresentationID)
+        XCTAssertTrue(reopened.worldPreferences.isEmpty)
+    }
+
+
+    private func wireRequest(_ command: String, _ arguments: [String: Any]) -> [String: Any] {
+        ["version": 2, "type": "request", "requestID": "fixture-request", "sessionID": "fixture-session",
+         "scopeID": "fixture-scope", "command": command, "arguments": arguments]
+    }
+
+    private func bridgeResponse(_ command: String, _ arguments: [String: Any], capabilities: Set<String>) -> [String: Any] {
+        let identity = AgentWorldBridgeSession.Identity(pluginID: "fixture", digest: "fixture-digest", root: "/fixture", workspace: "/workspace", capabilities: capabilities)
+        let session = AgentWorldBridgeSession(identity: identity)
+        _ = session.handle(.hello(.init(requestID: "hello", protocols: [2], runtimeVersion: "0.2.0", sdkVersion: 1,
+                                       required: [], optional: capabilities)), current: identity, hostVersion: "fixture") { _ in [:] }
+        return session.handle(.request(.init(requestID: "action", sessionID: session.sessionID, scopeID: session.scopeID,
+                                            command: command, arguments: arguments)), current: identity, hostVersion: "fixture") { _ in [:] }
+    }
+
+    private func displayState(_ world: AgentWorldModel) -> [String: Any] {
+        world.worldDisplayState(capabilities: Set(world.activeScreen?.screen.capabilities ?? []))
+    }
+
+    private func presentationFixture() -> [String: Any] {
+        let palette: [String: Any] = ["colors": ["paper": "#122334", "white": "#233445", "signalDeep": "#cc8800"]]
+        return ["schemaVersion": 1, "worldID": "fixture-world", "name": "Fixture World", "defaultPresentationID": "main",
+                "presentations": ["main": ["title": "Main", "backgroundAsset": "fixture.png"],
+                                  "garden": ["title": "Garden", "backgroundAsset": "fixture.png", "palette": palette],
+                                  "studio": ["title": "Studio", "backgroundAsset": "fixture.png", "palette": palette]],
+                "mapPalette": palette,
+                "appearances": [["id": "neutral", "title": "Neutral", "palette": palette], ["id": "warm", "title": "Warm", "palette": palette]],
+                "styles": [["id": "style_a", "name": "Style A", "previewAsset": "fixture.png"]],
+                "labels": ["workspace": "Project", "style": "Appearance", "contextShortcut": "Visits", "visit": "Visit",
+                           "emptyTitle": "Start here", "welcomeLabel": "WELCOME", "welcomeTitle": "Your workspace",
+                           "emptyWorkspaceTitle": "No agents yet", "emptyDescription": "Create an agent to begin."],
+                "appearancePreferenceKey": "appearance", "stylePreferenceKey": "styles", "contextEnabledPreferenceKey": "context-enabled"]
+    }
+
+    private func writePresentationFixture(_ root: URL) throws {
+        try JSONSerialization.data(withJSONObject: presentationFixture()).write(to: root.appendingPathComponent("ui/presentations.json"))
+        let image = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
+                                                  samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent("ui/fixture.png"))
     }
 
     private func waitForConversationPreparation(_ world: AgentWorldModel) async {
@@ -1020,7 +1106,7 @@ final class AgentWorldTests: XCTestCase {
                                      enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
                                      skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
         plugin.root = root.path
-        plugin.screens = [ExtensionPluginScreen(id: "recovery", title: title, entrypoint: "ui/index.html", version: 1,
+        plugin.screens = [ExtensionPluginScreen(id: "recovery", title: title, entrypoint: "ui/index.html", version: 2,
                                                capabilities: ["agents.read", "agents.interact", "world.preferences"])]
         var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
         let extensions = ExtensionsModel()

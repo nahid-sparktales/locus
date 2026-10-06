@@ -4,12 +4,12 @@ extension AppModel {
     func startAgentWork(_ source: AgentWorkSource, profileID: UUID, prompt: String, at date: Date?) async throws {
         let ledger = AgentWorkLedger.shared
         guard ledger.latest(for: source)?.canStartAgain != false else {
-            throw AgentWorldError.unavailable("This task already has an assignment. Open its progress before starting another.")
+            throw SavedAgentConversationError.unavailable("This task already has an assignment. Open its progress before starting another.")
         }
         guard let profile = agentProfiles.first(where: { $0.id == profileID }),
               !removingSavedAgentIDs.contains(profileID),
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentWorldError.unavailable("Choose an agent and describe the work.")
+            throw SavedAgentConversationError.unavailable("Choose an agent and describe the work.")
         }
         savedAgentConversationCreationCounts[profileID, default: 0] += 1
         defer { savedAgentConversationCreationCounts[profileID, default: 0] -= 1 }
@@ -18,13 +18,13 @@ extension AppModel {
         try prepareSavedAgentWorkspace(profile, workspace: workspace)
         var scheduledDraft: ScheduleEditorDraft?
         if let date {
-            guard date > Date() else { throw AgentWorldError.unavailable("Choose a start time in the future.") }
+            guard date > Date() else { throw SavedAgentConversationError.unavailable("Choose a start time in the future.") }
             var draft = ScheduleEditorDraft()
             draft.name = source.title; draft.prompt = prompt; draft.workspaceRoot = workspace
             draft.agentProfileID = profileID.uuidString; draft.mode = profile.defaultMode == .ask ? .ask : .work
             draft.provider = route.provider; draft.providerAccountID = route.accountID; draft.model = profile.model
             draft.oneTimeDate = date; draft.workflow = .singleAgent(instruction: prompt, mode: draft.mode)
-            if let issue = scheduleConfigurationIssue(for: draft) { throw AgentWorldError.unavailable(issue) }
+            if let issue = scheduleConfigurationIssue(for: draft) { throw SavedAgentConversationError.unavailable(issue) }
             scheduledDraft = draft
         }
         var record = AgentWorkRecord(sourceID: source.sourceID, kind: source.kind, workspace: workspace,
@@ -36,7 +36,7 @@ extension AppModel {
         do {
             if let draft = scheduledDraft {
                 guard let id = await schedule.saveScheduleWithID(draft, creationID: record.scheduleID) else {
-                    throw AgentWorldError.unavailable("The schedule could not be confirmed. Check Automations before trying again.")
+                    throw SavedAgentConversationError.unavailable("The schedule could not be confirmed. Check Automations before trying again.")
                 }
                 record.scheduleID = id; record.scheduledAt = draft.oneTimeDate; record.state = "scheduled"
                 try ledger.save(record)
@@ -49,7 +49,7 @@ extension AppModel {
                 record.sessionID = session.session_id; record.runID = UUID().uuidString
                 try ledger.save(record)
                 await refreshMetadata()
-                try await sendAgentWorldTurn(sessionID: session.session_id, workspace: workspace, profileID: profileID,
+                try await sendSavedAgentTurn(sessionID: session.session_id, workspace: workspace, profileID: profileID,
                                             text: prompt, mode: profile.defaultMode == .ask ? .ask : .work, runID: record.runID!)
                 record.state = "queued"
                 try ledger.save(record)
@@ -69,14 +69,14 @@ extension AppModel {
                 ?? run.manifest?["agent_profile_id"]?.string.flatMap(UUID.init(uuidString:)),
               let workspace = run.workspaceRoot?.nilIfEmpty,
               !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AgentWorldError.unavailable("Open the original chat to revise this result; its saved agent is unavailable.")
+            throw SavedAgentConversationError.unavailable("Open the original chat to revise this result; its saved agent is unavailable.")
         }
         guard run.state == "completed", pendingChatTurns[sessionID] == nil,
-              !agentWorldConversationState(sessionID).busy, goals.goal(for: sessionID)?.status != .active else {
-            throw AgentWorldError.unavailable("Wait for this agent’s current work to finish before requesting changes.")
+              !savedAgentConversationState(sessionID).busy, goals.goal(for: sessionID)?.status != .active else {
+            throw SavedAgentConversationError.unavailable("Wait for this agent’s current work to finish before requesting changes.")
         }
         let mode: WorkMode = agentProfiles.first { $0.id == profileID }?.defaultMode == .ask ? .ask : .work
-        _ = try agentWorldProfileDispatch(profileID: profileID, mode: mode, sessionID: sessionID)
+        _ = try savedAgentProfileDispatch(profileID: profileID, mode: mode, sessionID: sessionID)
         let runID = UUID().uuidString
         let ledger = AgentWorkLedger.shared
         var linked = ledger.records.last { $0.runID == run.id }
@@ -85,7 +85,7 @@ extension AppModel {
             try ledger.save(linked!)
         }
         do {
-            try await sendAgentWorldTurn(sessionID: sessionID, workspace: workspace, profileID: profileID,
+            try await sendSavedAgentTurn(sessionID: sessionID, workspace: workspace, profileID: profileID,
                 text: "Revise the result of task \(run.id).\n\nRequested changes:\n\(instructions)", mode: mode, runID: runID)
             if var record = linked { record.state = "queued"; try ledger.save(record) }
             await activity.refreshActivityRuns(announceFailure: false)

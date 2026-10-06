@@ -14,6 +14,8 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+from RuntimePackage import verify_installed_runtime
+
 TARGETS = ("linux-x86_64", "linux-arm64", "macos-arm64")
 CODEX_VERSION = "0.147.0"
 CLAUDE_VERSION = "2.1.259"
@@ -51,13 +53,15 @@ def runtime_files(runtime: Path) -> dict[str, Path]:
         if name.split("/")[0] not in {"python", "source", "site-packages", "licenses", "provenance.json"}:
             raise ValueError("Unexpected file in prepared runtime: " + name)
         files[name] = path
-    for name in ("python/bin/python3", "source/ollama_code/runtime.py"):
+    for name in ("python/bin/python3", "source/ollama_code/runtime.py", "source/ollama_code/runtime_host.py",
+                 "site-packages/locus_runtime/__init__.py"):
         if name not in files:
             raise ValueError("The portable runtime layout is incomplete: " + name)
     return files
 
 
 def check_runtime(runtime: Path, helper: Path) -> None:
+    release = verify_installed_runtime(Path(__file__).resolve().parents[1] / "agent", runtime / "site-packages")
     result = subprocess.run([str(helper.resolve()), "--version"], capture_output=True, text=True, timeout=20, check=False)
     if result.returncode or result.stdout.strip() != "codex-cli " + CODEX_VERSION:
         raise ValueError("The ChatGPT helper must be pinned to version " + CODEX_VERSION)
@@ -66,7 +70,14 @@ def check_runtime(runtime: Path, helper: Path) -> None:
                        "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                        "OLLAMA_CODE_HOME": str(Path(temporary) / "profile"), "LOCUS_CODEX_HOME": str(Path(temporary) / "accounts")}
         result = subprocess.run([str(runtime / "python/bin/python3"), "-s", "-c",
-                                 ("import ssl, sqlite3, ollama_code.runtime, ollama_code.server; import fastapi, uvicorn; "
+                                 ("import ssl, sqlite3, ollama_code.runtime, ollama_code.runtime_host, ollama_code.server; import fastapi, uvicorn; "
+                                 "import locus_runtime; from importlib.metadata import distribution, version; "
+                                 f"assert version('locus-runtime') == {release['version']!r}; "
+                                 f"assert locus_runtime.__file__.startswith({str(runtime / 'site-packages')!r}); "
+                                 f"assert ollama_code.runtime_host.__file__.startswith({str(runtime / 'source')!r}); "
+                                 "host = distribution('ollama-code'); "
+                                 "assert [(e.name, e.value) for e in host.entry_points if e.group == 'locus_runtime.host'] == [('locus', 'ollama_code.runtime_host:main')]; "
+                                 "assert all(e.name != 'locus-runtime' for e in host.entry_points if e.group == 'console_scripts'); "
                                  "from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; "
                                  "from locus_memory.models import ContextRequest; "
                                  "assert ContextRequest(token_allowance=1, max_items=1).max_items == 1; print('ready')")],

@@ -143,8 +143,7 @@ extension Data {
 /// Accepts Finder files and raw image drags anywhere the modifier is applied,
 /// with a visible target highlight while a drag hovers.
 struct ChatAttachmentDropTarget: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

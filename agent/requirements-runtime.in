@@ -6,6 +6,7 @@ fastapi==0.141.1
 uvicorn==0.52.0
 websockets==17.0
 cryptography==50.0.0
+locus-runtime==0.1.0
 locus-memory @ https://github.com/nahid-sparktales/locus-memory/releases/download/v0.3.0/locus_memory-0.3.0-py3-none-any.whl#sha256=aafdbdf72b04aa2e83589cf0b88f1f9c8493b6ab9e97b65b6deac6dd5802d4b6
 mcp==2.0.0
 jsonschema==4.26.0

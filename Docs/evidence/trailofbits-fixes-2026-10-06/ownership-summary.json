@@ -1,0 +1,132 @@
+{
+  "case": "ownership",
+  "base_commit": "5529004a47235943991f192464001dbc92685c9f",
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "checks": [
+    {
+      "id": "01-shadow-control",
+      "kind": "control",
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "02-stale-control-vault",
+      "kind": "exploit",
+      "runs": {
+        "base": {
+          "exit_code": 1,
+          "marker": true,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": true,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "03-retained-legacy-writer",
+      "kind": "variant",
+      "runs": {
+        "base": {
+          "exit_code": 1,
+          "marker": true,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": true,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "04-explicit-rollback",
+      "kind": "behavior",
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "05-existing-migration",
+      "kind": "regression",
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "06-scope-and-key-security",
+      "kind": "security",
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        },
+        "patched": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "id": "07-ownership-suite",
+      "kind": "suite",
+      "runs": {
+        "patched": {
+          "exit_code": 0,
+          "marker": null,
+          "matched": true,
+          "status": "completed"
+        }
+      }
+    }
+  ]
+}

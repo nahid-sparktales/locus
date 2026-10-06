@@ -28,7 +28,7 @@ final class CompanionPanelModel: ObservableObject {
         self.app = app
         self.dispatch = dispatch ?? { [weak app] id, workspace, profileID, text, mode in
             guard let app else { throw CancellationError() }
-            try await app.sendAgentWorldTurn(sessionID: id, workspace: workspace, profileID: profileID,
+            try await app.sendSavedAgentTurn(sessionID: id, workspace: workspace, profileID: profileID,
                                             text: text, mode: mode, preservingForeground: true)
         }
         // Catalog changes intentionally do not invalidate the entire AppModel.
@@ -58,9 +58,9 @@ final class CompanionPanelModel: ObservableObject {
         guard selectionIsCurrent, let id = selectedSessionID, loadedSessionID == id else { return [] }
         return app?.paneBlocks(for: id) ?? []
     }
-    var state: AgentWorldConversationState {
+    var state: SavedAgentConversationState {
         guard selectionIsCurrent, let id = selectedSessionID else { return .init() }
-        return app?.agentWorldConversationState(id) ?? .init()
+        return app?.savedAgentConversationState(id) ?? .init()
     }
     var draft: String {
         get {
@@ -78,7 +78,8 @@ final class CompanionPanelModel: ObservableObject {
         guard scopeIsCurrent else { return "This project changed. Reopen your companion to continue." }
         if isForegroundConversation { return "This conversation is open in the center. Start another conversation to chat alongside it." }
         guard app.isAgentOnline else { return "Your companion is ready. Reconnect Locus to continue." }
-        do { _ = try app.agentProfileProvider(profile); return nil }
+        let effectiveProfile = selectedSessionID.map { app.agentChatProfile(profile, sessionID: $0) } ?? profile
+        do { _ = try app.agentProfileProvider(effectiveProfile); return nil }
         catch { return error.localizedDescription }
     }
     var canSend: Bool {
@@ -150,7 +151,7 @@ final class CompanionPanelModel: ObservableObject {
                       selectedSessionID == session.id else { return }
                 guard response.identity.matches(sessionID: session.id, profileID: profileID, workspace: requestedWorkspace),
                       response.detail.archived != true else {
-                    throw AgentWorldError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
+                    throw SavedAgentConversationError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
                 }
                 // A read of a center conversation must not overwrite its live
                 // transcript or draft. Its normal full view remains authoritative.
@@ -222,7 +223,7 @@ final class CompanionPanelModel: ObservableObject {
                       id != app.currentSessionID else { throw CancellationError() }
                 guard response.identity.matches(sessionID: id, profileID: profileID, workspace: requestedWorkspace),
                       response.detail.archived != true else {
-                    throw AgentWorldError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
+                    throw SavedAgentConversationError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
                 }
                 try await dispatch(id, requestedWorkspace, profileID, text, requestedMode)
                 // Acceptance only clears the exact submitted draft. Later edits
@@ -262,7 +263,7 @@ final class CompanionPanelModel: ObservableObject {
         // @Published emits before the backing snapshot changes. Validate the
         // incoming value directly, never the previous catalog via `chats`.
         guard let session = snapshot.sessionsByID[id], !session.isArchived,
-              session.savedAgentProfileID == profileID, session.workspacePath == workspace,
+              session.savedAgentProfileID == profileID, session.belongsToWorkspace(workspace),
               !session.isAgentEventChat, session.agentTriggerID?.nilIfEmpty == nil,
               app?.agentCrewChat.boundProfileID(for: id) == nil else {
             invalidateSelection()

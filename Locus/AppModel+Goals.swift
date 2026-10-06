@@ -57,7 +57,7 @@ extension AppModel {
         if let behavior = encodedJSONObject(primaryAgentBehavior) { execution["agent_config"] = behavior }
         if let profileID = savedAgentProfileID(for: currentSessionID) {
             do {
-                let dispatch = try agentWorldProfileDispatch(profileID: profileID, mode: .work, sessionID: currentSessionID)
+                let dispatch = try savedAgentProfileDispatch(profileID: profileID, mode: .work, sessionID: currentSessionID)
                 execution["provider"] = dispatch.provider
                 execution["provider_account_id"] = dispatch.accountID
                 execution["model"] = dispatch.profile.model

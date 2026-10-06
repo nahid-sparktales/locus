@@ -1,0 +1,2 @@
+N1 belongsToWorkspace=true companionChats=1 selected=isolated-chat
+N2 route=ollama/healthy-local selected=override-chat canSend=true error=nil

@@ -1,0 +1,16 @@
+{
+  "bare": true,
+  "versions": {
+    "fastapi": "0.141.1",
+    "starlette": "1.3.1",
+    "anyio": "4.14.2",
+    "uvicorn": "0.52.0",
+    "mcp": "2.0.0"
+  },
+  "http_auth": "synthetic valid token",
+  "closed_after_seconds": 2.3740985830081627,
+  "validation_started": true,
+  "published_after_disconnect": false,
+  "cancelled": true,
+  "fixture_root": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-panel-tcp-audit-01n9hibw"
+}

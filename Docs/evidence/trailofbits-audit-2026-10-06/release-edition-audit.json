@@ -1,0 +1,8 @@
+{
+  "edition": "locus",
+  "app": "/private/tmp/locus-audit-native-20261006/Build/Products/Release/Locus.app",
+  "mach_o_files": 10,
+  "source_resources_checked": 9,
+  "bundled_backend": false,
+  "passed": true
+}

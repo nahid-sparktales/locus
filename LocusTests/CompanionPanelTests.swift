@@ -116,6 +116,142 @@ final class CompanionPanelTests: XCTestCase {
                        SessionSummary.canonicalWorkspacePath("/var/tmp"), "Stale execution paths cannot escape the selected scope")
     }
 
+    func testGitSubfolderSelectionSurvivesCatalogRefreshAndRejectsSiblingAlias() async throws {
+        let root = "/tmp/companion-repository"
+        let source = root + "/subproject"
+        let execution = "/tmp/companion-checkout"
+        let (app, profile, chat) = try fixture(workspace: source, workspaceRoot: root, executionPath: execution)
+        defer { cleanup(app) }
+        let sibling = SessionSummary(id: "sibling", name: "Sibling", preview: "", mtime: 2, size: 0,
+            cwd: execution, workspaceRoot: root, executionPath: execution,
+            environment: ["type": "worktree", "source_workspace": root + "/other"],
+            agentProfileID: profile.id.uuidString)
+        app.sessions.append(sibling)
+        XCTAssertEqual(app.companionChats().map(\.id), [chat.id])
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertNil(app.companionPanel.error)
+        app.companionPanel.draft = "Keep this subproject draft"
+
+        try await app.refreshCompanionConversationCatalog()
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertEqual(app.companionPanel.draft, "Keep this subproject draft")
+        XCTAssertEqual(app.companionPanel.workspace, SessionSummary.canonicalWorkspacePath(source))
+        XCTAssertEqual(app.companionPanel.conversationWorkspacePath, execution)
+        XCTAssertEqual(app.sessions.first { $0.id == chat.id }?.workspacePath,
+                       SessionSummary.canonicalWorkspacePath(root))
+        app.companionPanel.select(sibling)
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+
+        // A catalog update moving this same session to a sibling must revoke it.
+        app.sessions = [SessionSummary(id: chat.id, name: chat.name, preview: "", mtime: 3, size: 0,
+            cwd: execution, workspaceRoot: root, executionPath: execution,
+            environment: sibling.environment, agentProfileID: profile.id.uuidString)]
+        XCTAssertNil(app.companionPanel.selectedSessionID)
+        XCTAssertTrue(app.companionPanel.blocks.isEmpty)
+        XCTAssertEqual(app.currentSessionID, "center")
+        XCTAssertEqual(app.draftText, "Central draft")
+    }
+
+    func testGitSubfolderNewConversationSelectsCreatedWorktreeWithoutChangingCenter() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let source = directory.appendingPathComponent("subproject")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let execution = directory.appendingPathComponent("checkout").path
+        let (app, _, _) = try fixture(workspace: source.path, workspaceRoot: directory.path, executionPath: execution)
+        defer { cleanup(app) }
+        app.sessions = app.sessions.filter { $0.id == "center" }
+        app.companionPanel.createConversation()
+        await app.companionPanel.creationTask?.value
+        await app.companionPanel.loadTask?.value
+
+        XCTAssertEqual(app.companionPanel.selectedSessionID, "companion-created")
+        XCTAssertNil(app.companionPanel.error)
+        XCTAssertEqual(app.companionPanel.conversationWorkspacePath, execution)
+        XCTAssertEqual(app.sessions.first { $0.id == "companion-created" }?.workspacePath,
+                       SessionSummary.canonicalWorkspacePath(directory.path))
+        XCTAssertEqual(app.currentSessionID, "center")
+        XCTAssertEqual(app.draftText, "Central draft")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
+    }
+
+    func testMainCompanionEntryCreatesAndReusesGitSubfolderConversation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let source = directory.appendingPathComponent("subproject")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let execution = directory.appendingPathComponent("checkout").path
+        let (app, _, _) = try fixture(workspace: source.path, workspaceRoot: directory.path, executionPath: execution)
+        defer { app.activeTranscriptLoad?.task.cancel(); cleanup(app) }
+        app.sessions = app.sessions.filter { $0.id == "center" }
+        app.openCompanionMainConversation()
+        for _ in 0..<100 {
+            if app.creatingSavedAgentChatIDs.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await app.activeTranscriptLoad?.task.value
+        XCTAssertTrue(app.creatingSavedAgentChatIDs.isEmpty)
+        XCTAssertEqual(app.currentSessionID, "companion-created")
+        XCTAssertEqual(app.transcriptInputState, .ready)
+        XCTAssertEqual(app.companionWorkspacePath, SessionSummary.canonicalWorkspacePath(source.path))
+        XCTAssertEqual(app.sessionInfo?.executionPath, execution)
+
+        app.installTranscriptSession("center", blocks: [])
+        app.lastSidebarSessionIDs[app.companionSessionKey(workspace: source.path)] = "companion-created"
+        app.openCompanionMainConversation()
+        await app.activeTranscriptLoad?.task.value
+        XCTAssertEqual(app.currentSessionID, "companion-created")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0.hasSuffix("/resume") }.count, 2)
+    }
+
+    func testHealthyConversationOverrideCanSendWithUnavailableDefaultAccount() async throws {
+        let (app, original, chat) = try fixture()
+        defer { cleanup(app) }
+        var profile = original
+        profile.route = .providerAccount(UUID())
+        app.agentProfiles = [profile]
+        app.settings.agentChatModelSelections[chat.id] = .init(profileID: profile.id, accountID: nil, model: "healthy-local")
+        var dispatchedModel: String?
+        app.companionPanel.configure(app: app) { id, _, owner, _, mode in
+            dispatchedModel = try app.savedAgentProfileDispatch(profileID: owner, mode: mode, sessionID: id).profile.model
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Use this conversation's model"
+        XCTAssertThrowsError(try app.agentProfileProvider(profile))
+        XCTAssertNil(app.companionPanel.availabilityIssue)
+        XCTAssertTrue(app.companionPanel.canSend)
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(dispatchedModel, "healthy-local")
+        XCTAssertEqual(app.companionPanel.draft, "")
+        XCTAssertEqual(app.agentProfiles.first, profile, "The per-chat override must not replace the owner's default")
+        XCTAssertEqual(app.draftText, "Central draft")
+    }
+
+    func testUnavailableConversationOverrideCannotFallBackToHealthyDefault() async throws {
+        let (app, profile, chat) = try fixture()
+        defer { cleanup(app) }
+        app.settings.agentChatModelSelections[chat.id] = .init(profileID: profile.id, accountID: UUID(), model: "unavailable-model")
+        var dispatched = false
+        app.companionPanel.configure(app: app) { _, _, _, _, _ in dispatched = true }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Keep this draft"
+        XCTAssertNoThrow(try app.agentProfileProvider(profile))
+        XCTAssertThrowsError(try app.savedAgentProfileDispatch(profileID: profile.id, mode: .ask, sessionID: chat.id))
+        XCTAssertNotNil(app.companionPanel.availabilityIssue)
+        XCTAssertFalse(app.companionPanel.canSend)
+        app.companionPanel.send()
+        XCTAssertNil(app.companionPanel.sendingTask)
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(app.companionPanel.draft, "Keep this draft")
+        XCTAssertEqual(app.draftText, "Central draft")
+    }
+
     func testExplicitFolderChangeCancelsStaleSendPreflightWithoutLosingDraft() async throws {
         let (app, _, chat) = try fixture()
         defer { cleanup(app) }
@@ -168,7 +304,7 @@ final class CompanionPanelTests: XCTestCase {
         let (app, _, _) = try fixture()
         defer { cleanup(app) }
         app.companionPanel.configure(app: app) { _, _, _, _, _ in
-            throw AgentWorldError.unavailable("Fixture provider unavailable")
+            throw SavedAgentConversationError.unavailable("Fixture provider unavailable")
         }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
@@ -387,11 +523,19 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertNil(app.companionPanel.sendingTask)
     }
 
-    private func fixture(failures: Int = 0, mismatch: String? = nil) throws -> (AppModel, AgentProfile, SessionSummary) {
-        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+    private func fixture(failures: Int = 0, mismatch: String? = nil, workspace: String = "/tmp",
+                         workspaceRoot: String? = nil, executionPath: String? = nil) throws -> (AppModel, AgentProfile, SessionSummary) {
+        let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: workspace))
+        let environment = workspaceRoot.map { _ in ["type": "worktree", "source_workspace": workspace] }
         let chat = SessionSummary(id: "companion", name: "Companion", preview: "", mtime: 1, size: 0,
-                                  cwd: "/tmp", agentProfileID: profile.id.uuidString)
-        CompanionPanelURLProtocol.reset(profileID: profile.id, failures: failures, mismatch: mismatch)
+                                  cwd: executionPath ?? workspace, workspaceRoot: workspaceRoot,
+                                  executionPath: executionPath, environment: environment,
+                                  agentProfileID: profile.id.uuidString)
+        var context: [String: Any] = ["cwd": executionPath ?? workspace]
+        context["workspace_root"] = workspaceRoot
+        context["execution_path"] = executionPath
+        context["environment"] = environment
+        CompanionPanelURLProtocol.reset(profileID: profile.id, failures: failures, mismatch: mismatch, context: context)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CompanionPanelURLProtocol.self]
         let backend = BackendService(baseURL: URL(string: "http://127.0.0.1:9")!, session: URLSession(configuration: config))
@@ -423,9 +567,11 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     private static var mismatch: String?
     private static var requestedPaths: [String] = []
     private static var created = false
-    static func reset(profileID: UUID, failures: Int, mismatch: String?) {
+    private static var sessionContext: [String: Any] = [:]
+    static func reset(profileID: UUID, failures: Int, mismatch: String?, context: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         self.profileID = profileID; self.failures = failures; self.mismatch = mismatch; requestedPaths = []; created = false
+        sessionContext = context
     }
     static func paths() -> [String] { lock.lock(); defer { lock.unlock() }; return requestedPaths }
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -438,7 +584,6 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         let status = Self.failures > 0 ? 503 : 200
         Self.failures = max(0, Self.failures - 1)
         let owner = Self.mismatch == "owner" ? UUID() : Self.profileID
-        let workspace = Self.mismatch == "workspace" ? "/var/tmp" : "/tmp"
         let archived = Self.mismatch == "archive"
         let payload: [String: Any]
         if status == 503 {
@@ -450,13 +595,24 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
             let ids = Self.created ? ["companion", "companion-created"] : ["companion"]
             let rows = ids.map { id -> [String: Any] in
                 ["id": id, "name": id, "preview": "", "mtime": 1, "size": 0,
-                 "cwd": "/tmp", "agent_profile_id": Self.profileID.uuidString]
+                 "agent_profile_id": Self.profileID.uuidString].merging(Self.sessionContext) { _, new in new }
             }
             payload = ["sessions": rows, "current": "must-not-replace-center"]
+        } else if path.hasSuffix("/resume") {
+            let id = request.url!.pathComponents.dropLast().last!
+            var info: [String: Any] = ["model": "fixture", "host": "localhost", "session": id,
+                "session_id": id, "messages": 0, "approx_tokens": 0, "prompt_tokens": 0,
+                "completion_tokens": 0, "max_iterations": 10, "has_project_context": false,
+                "permissions": ["skip_all": false, "allowed": []] as [String: Any]]
+            info.merge(Self.sessionContext) { _, new in new }
+            payload = ["ok": true, "messages": [], "session_info": info]
         } else {
-            payload = ["id": request.url!.lastPathComponent, "preview": "", "cwd": workspace,
-                       "archived": archived, "agent_profile_id": owner.uuidString,
-                       "messages": [["role": "assistant", "content": "Saved companion answer"]]]
+            var detail: [String: Any] = ["id": request.url!.lastPathComponent, "preview": "",
+                "archived": archived, "agent_profile_id": owner.uuidString,
+                "messages": [["role": "assistant", "content": "Saved companion answer"]]]
+            detail.merge(Self.sessionContext) { _, new in new }
+            if Self.mismatch == "workspace" { detail["cwd"] = "/var/tmp" }
+            payload = detail
         }
         Self.lock.unlock()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,

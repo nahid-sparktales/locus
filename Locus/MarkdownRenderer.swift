@@ -1016,8 +1016,7 @@ final class StreamingRenderCoordinator: ObservableObject {
 /// append-only native text view, so provider deltas never synchronously reparse
 /// the accumulated response.
 struct StreamingMarkdownBodyView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let text: String
@@ -1101,8 +1100,7 @@ struct StreamingMarkdownBodyView: View {
 
 @MainActor
 private struct MarkdownBlocksView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.responseRegisteredSources) private var registeredSources
@@ -1788,8 +1786,7 @@ enum MarkdownLinkPolicy {
 }
 
 private struct MarkdownTableRenderer: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.responseRegisteredSources) private var registeredSources

@@ -1,0 +1,50 @@
+{
+  "sourceCommit": "ec9416679a5f4929d78ae2f19acb6e4d572eb234",
+  "cloneLocation": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/agent-worlds-ec94166-clean-6cy469t2/agent-worlds",
+  "cloneParentContents": [
+    "agent-worlds"
+  ],
+  "platform": "macOS arm64",
+  "node": "v25.5.0",
+  "npm": "11.8.0",
+  "npmCi": "passed",
+  "typecheck": "passed",
+  "tests": {
+    "passed": 222,
+    "failed": 0,
+    "skipped": 0
+  },
+  "sourceAssetsVerified": 114,
+  "packageFiles": 113,
+  "installedBytes": 221540432,
+  "zipBytes": 221559432,
+  "artifactSHA256": "4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8",
+  "repeatBuildEqual": true,
+  "zipCRC": "passed",
+  "actualBundleInputs": 1170,
+  "forbiddenBundleInputs": [],
+  "workingTreeAfterBuild": "clean",
+  "installer": {
+    "artifact_sha256": "4a4ca458bd1e0391e2ead1b52a58977329e85c30280218e605e992808f99eff8",
+    "plugin_digest": "71588bfd345d2ed1090385b393111f54cf6bf355d9ff00f7f0c494714c183c81",
+    "installation_id": "locus/agent-world",
+    "version": "0.2.0",
+    "protocol": 2,
+    "install": "passed",
+    "disable_uninstall": "passed",
+    "upgrade_rollback": "passed",
+    "native_integration": "not-tested"
+  },
+  "nativeAcceptance": "recorded separately by native integration owner",
+  "publication": "not published; asset redistribution rights unverified",
+  "supersedes": {
+    "sourceCommit": "68a60d4492cae2414ba765202b71248d038e41e6",
+    "artifactSHA256": "090c697ed4c4c16f7bb0a4c284fe1cfead62cb7e7b335862c6e5da483c5c3421",
+    "reason": "Final bounded plugin labels move native world-specific wording into declarative metadata. Renderer/core behavior remains verified by earlier browser and native captures."
+  },
+  "previousPluginSource": "/var/folders/8s/h68vzwb10yg081d3vgblcx7c0000gn/T/locus-outpost-restoration-mie2eox1/plugins/agent-world",
+  "previousPluginRecoveryArchiveSHA256": "d6694fb2258e5de2e85d8b0d4cf0a2865680d4dc9af9169c5554cc3bcb9297a3",
+  "deliveredRepository": "/Users/nahid/Documents/agent-worlds",
+  "deliveredArtifact": "/Users/nahid/Documents/agent-worlds/release/agent-worlds-0.2.0.zip",
+  "deliveredCommitAndHashVerified": true
+}

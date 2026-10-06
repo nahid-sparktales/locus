@@ -108,7 +108,7 @@ struct AgentWorkPanel: View {
                 let segment = id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id
                 let saved = try await model.backend.get("/api/runs/\(segment)", as: OrchestrationRun.self)
                 guard saved.id == id, saved.workspaceRoot.map(BoardStore.canonicalWorkspace) == BoardStore.canonicalWorkspace(source.workspace) else {
-                    throw AgentWorldError.unavailable("This saved work belongs to another project.")
+                    throw SavedAgentConversationError.unavailable("This saved work belongs to another project.")
                 }
                 ledger.reconcile(runs: [saved], schedules: schedules.scheduledTasks)
                 if saved.state == "completed" { result = saved }

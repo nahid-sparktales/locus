@@ -51,7 +51,7 @@ CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
 The Python agent has its own suite:
 
 ```bash
-cd agent && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+cd agent && python3 -m venv .venv && .venv/bin/pip install --find-links vendor/wheels -e '.[dev]'
 .venv/bin/python -m pytest -q
 ```
 

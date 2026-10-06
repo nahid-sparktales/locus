@@ -1,0 +1,55 @@
+name: Agent Worlds pinned artifact acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_url:
+        description: 'Reviewed immutable HTTPS URL for the Agent Worlds ZIP'
+        required: true
+        type: string
+      artifact_sha256:
+        description: 'Reviewed complete SHA-256 of that exact ZIP'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  native-artifact:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14'
+      - run: python -m pip install -e './agent[dev]'
+      - run: brew install xcodegen
+      - name: Download and review the explicitly pinned artifact
+        env:
+          CANDIDATE_URL: ${{ inputs.artifact_url }}
+          CANDIDATE_SHA256: ${{ inputs.artifact_sha256 }}
+        run: |
+          case "$CANDIDATE_URL" in https://*) ;; *) exit 2 ;; esac
+          curl --fail --location --proto '=https' --proto-redir '=https' --max-filesize 272629760 \
+            "$CANDIDATE_URL" -o "$RUNNER_TEMP/agent-worlds.zip"
+          python Tools/InstallAgentWorldsArtifact.py review \
+            --artifact "$RUNNER_TEMP/agent-worlds.zip" --sha256 "$CANDIDATE_SHA256" \
+            --extract-to "$RUNNER_TEMP/agent-worlds-reviewed-plugin" > "$RUNNER_TEMP/agent-worlds-review.json"
+          python Tools/VerifyAgentWorldsArtifact.py \
+            --artifact "$RUNNER_TEMP/agent-worlds.zip" --sha256 "$CANDIDATE_SHA256" \
+            > "$RUNNER_TEMP/agent-worlds-installer.json"
+      - name: Full native tests and actual secured WebKit artifact
+        env:
+          LOCUS_AGENT_WORLDS_TEST_PLUGIN: ${{ runner.temp }}/agent-worlds-reviewed-plugin
+          LOCUS_NATIVE_TEST_BUILD_ROOT: ${{ runner.temp }}/agent-worlds-native-tests
+        run: Tools/RunAgentWorldsNativeTests.sh
+      - name: Retain acceptance evidence, including failed native gates
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: agent-worlds-native-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/agent-worlds-review.json
+            ${{ runner.temp }}/agent-worlds-installer.json
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.log
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.png
+            ${{ runner.temp }}/agent-worlds-native-tests/**/*.xcresult/**
+          if-no-files-found: error

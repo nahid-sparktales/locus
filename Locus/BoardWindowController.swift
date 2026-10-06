@@ -12,14 +12,12 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         windows[BoardStore.storageIdentity(workspacePath: workspacePath)]
     }
 
-    func open(store: BoardStore, model: AppModel, ocean: Bool = false, deck: Bool = false, island: AgentWorldQuartersIsland? = nil) {
+    func open(store: BoardStore, model: AppModel, palette: PluginSurfacePalette? = nil) {
         guard store.isAvailable else { return }
         let identity = BoardStore.storageIdentity(workspacePath: store.workspacePath)
         if let window = windows[identity] {
-            appearances[identity]?.ocean = ocean
-            appearances[identity]?.deck = deck
-            appearances[identity]?.island = island
-            window.appearance = ocean ? NSAppearance(named: .darkAqua) : nil
+            appearances[identity]?.palette = palette
+            window.appearance = palette != nil ? NSAppearance(named: .darkAqua) : nil
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -36,8 +34,8 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: 620, height: 440)
         window.isReleasedWhenClosed = false
         window.delegate = self
-        if ocean { window.appearance = NSAppearance(named: .darkAqua) }
-        let appearance = BoardWindowAppearance(ocean: ocean, deck: deck, island: island)
+        if palette != nil { window.appearance = NSAppearance(named: .darkAqua) }
+        let appearance = BoardWindowAppearance(palette: palette)
         appearances[identity] = appearance
         window.contentView = NSHostingView(rootView: BoardWindowContent(appearance: appearance, store: store, model: model))
         windows[identity] = window
@@ -64,17 +62,13 @@ final class BoardWindowController: NSObject, NSWindowDelegate {
 }
 
 private final class BoardWindowAppearance: ObservableObject {
-    @Published var ocean: Bool
-    @Published var deck: Bool
-    @Published var island: AgentWorldQuartersIsland?
-    init(ocean: Bool, deck: Bool, island: AgentWorldQuartersIsland?) {
-        self.ocean = ocean; self.deck = deck; self.island = island
-    }
+    @Published var palette: PluginSurfacePalette?
+    init(palette: PluginSurfacePalette?) { self.palette = palette }
 }
 
 private struct BoardWindowContent: View {
     @ObservedObject var appearance: BoardWindowAppearance
-    private var viewColors: LocusViewColors { .init(ocean: appearance.ocean, deck: appearance.deck, island: appearance.island) }
+    private var viewColors: LocusViewColors { .init(custom: appearance.palette) }
 
     @ObservedObject var store: BoardStore
     @ObservedObject var model: AppModel
@@ -83,12 +77,10 @@ private struct BoardWindowContent: View {
         InspectorBoardTab(store: store, isDetached: true)
             .environmentObject(model)
             .appFeatureEnvironment(from: model)
-            .preferredColorScheme(appearance.ocean ? .dark : model.effectiveAppearance.colorScheme)
-            .tint(appearance.ocean ? viewColors.signalDeep : model.accentActionColor)
+            .preferredColorScheme(appearance.palette != nil ? .dark : model.effectiveAppearance.colorScheme)
+            .tint(appearance.palette != nil ? viewColors.signalDeep : model.accentActionColor)
             .background(viewColors.surfaceCanvas)
-            .environment(\.locusOceanTheme, appearance.ocean)
-            .environment(\.locusCaptainDeckTheme, appearance.deck)
-            .environment(\.locusQuartersIsland, appearance.island)
+            .environment(\.locusPluginPalette, appearance.palette)
             .accessibilityIdentifier("board.window")
     }
 }

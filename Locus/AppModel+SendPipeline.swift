@@ -37,7 +37,7 @@ extension AppModel {
         let residentProfileID = savedAgentProfileID(for: currentSessionID)
         var residentDispatch: TaskCapsuleDispatch?
         if let residentProfileID {
-            do { residentDispatch = try agentWorldProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
+            do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
             catch { showToast(error.localizedDescription); return }
         }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
@@ -421,7 +421,7 @@ extension AppModel {
             if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
             if let residentProfileID { request["conversation_profile_id"] = residentProfileID.uuidString }
             if let capsuleDispatch {
-                if dispatchedTeam == nil { request["agent_profile"] = Self.agentWorldProfileBody(capsuleDispatch.profile) }
+                if dispatchedTeam == nil { request["agent_profile"] = Self.savedAgentProfileBody(capsuleDispatch.profile) }
                 if !capsuleDispatch.profileOnly { request["capsule_context"] = capsuleDispatch.context }
             }
             if let savedConfig = savedGoal?.execution["agent_config"],

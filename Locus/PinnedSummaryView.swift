@@ -31,8 +31,7 @@ enum SummaryDetail: Hashable {
 /// only while it has something to say (Outputs and Sources always show so
 /// their "+" actions stay discoverable).
 struct PinnedSummaryCard: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -418,8 +417,7 @@ struct PinnedSummaryCard: View {
 /// collapsed, chevron shows on hover, trailing action stays put, and a
 /// hairline separates it from the next section.
 struct SummarySection<Trailing: View, Content: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -578,8 +576,7 @@ extension SummarySection where Trailing == EmptyView {
 
 /// The 27×27 "+" in a section header that drops a menu.
 struct SummaryHeaderMenu<Items: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
@@ -607,8 +604,7 @@ struct SummaryHeaderMenu<Items: View>: View {
 }
 
 struct SummaryHeaderButton: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
@@ -636,8 +632,7 @@ struct SummaryHeaderButton: View {
 /// Codex's `q.List`: the first six rows, then "Show N more" (up to 50 at a
 /// time) that turns into "Show less" once everything is out.
 struct SummaryList<Item: Identifiable, Row: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -706,8 +701,7 @@ struct SummaryList<Item: Identifiable, Row: View>: View {
 /// Leading glyph, label, optional trailing meta, optional chevron; the whole
 /// row is one button when it has an action.
 struct SummaryRow: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let icon: SummaryIcon
@@ -801,8 +795,7 @@ struct SummaryRow: View {
 /// Codex's empty state is the section's own action rendered as a full-width
 /// row — a `Menu` styled like `SummaryRow`.
 struct SummaryEmptyRow<Items: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -912,8 +905,7 @@ enum SummaryIcon {
 // MARK: - Card chrome
 
 private struct SummaryCardChrome: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     /// Cards fill their column; a chrome-wrapped control that sits in a row

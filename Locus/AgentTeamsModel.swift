@@ -267,7 +267,7 @@ final class AgentTeamsModel: ObservableObject {
         persistCompanionPresentation()
     }
 
-    /// Explicit setup commits only identity and presentation. An offline profile
+    /// Explicit setup seeds a new identity and its communication defaults. An offline profile
     /// intentionally has no model; execution still requires the normal routing
     /// and readiness checks. Existing-profile selection never edits that profile.
     @discardableResult
@@ -307,7 +307,12 @@ final class AgentTeamsModel: ObservableObject {
         // A reserved UUID, never a name match, reconciles interrupted creation.
         // Presentation can use repeated human names; IDs remain authoritative.
         let profile = agentProfiles.first(where: { $0.id == draft.reservedProfileID })
-            ?? AgentProfile(id: draft.reservedProfileID, name: name, route: route, model: model)
+            ?? AgentProfile(id: draft.reservedProfileID, name: name, route: route, model: model,
+                instructions: draft.instructions,
+                behavior: AgentBehavior(displayName: name,
+                    selfDescription: draft.personality.map { "Your \($0.role.lowercased())." }
+                        ?? "A practical companion.",
+                    customInstructions: draft.instructions))
         companionPresentation.primaryProfileID = profile.id
         companionPresentation.appearances[profile.id] = appearance
         companionPresentation.pendingCreation = profile

@@ -1,0 +1,40 @@
+{
+  "base_commit": "5529004a47235943991f192464001dbc92685c9f",
+  "branch": "codex/fix-audit-findings-20261006",
+  "native": {
+    "passed": 1959,
+    "failed": 0,
+    "configuration": "Debug",
+    "runtime_bundling": "skipped",
+    "log": "/tmp/locus-fixes-native.log"
+  },
+  "python": {
+    "status": "passed",
+    "interpreter": "/tmp/locus-audit-pinned-20261006/bin/python",
+    "log": "/tmp/locus-fixes-pytest.log",
+    "passed": 3118,
+    "subtests_passed": 31,
+    "failed": 0,
+    "seconds": 394.23
+  },
+  "focused_memory_passed": 210,
+  "focused_plugin_portrait_guards_passed": 118,
+  "ruff": "passed",
+  "transport_audit": "passed",
+  "protocol_manifest": "passed",
+  "isolated_validation": {
+    "F1": {
+      "assessment": "complete",
+      "findings": [],
+      "gaps": [],
+      "patch_sha256": "3234df4333e611ecfb3c6afea22fce97d7c2b6a05aa6c5f229220afa77f94af9"
+    },
+    "F4": {
+      "assessment": "complete",
+      "findings": [],
+      "gaps": [],
+      "patch_sha256": "88db3fb83c6ca66f63719729f3f3cba49e6c90f78f324da77246ced42d5cb0c7"
+    }
+  },
+  "full_evidence_archive": "/tmp/locus-post-patch-validation-20261006.tar.gz"
+}

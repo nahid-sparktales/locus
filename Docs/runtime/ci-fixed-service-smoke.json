@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "target": "macos-arm64",
+  "package_sha256": "a12ce6adf643afbb4fa64c91a0e94cb0cdf1722cfced38cc0dd047b2c0a69ce4",
+  "provider": "deterministic-fixture",
+  "mode": "user-service",
+  "passed": true,
+  "checks": {
+    "authenticated_loopback": true,
+    "helper_handshake_without_accounts": true,
+    "detached_schedule": true,
+    "verified_result": true,
+    "usage_coverage": true,
+    "approved_correction_enforced": true,
+    "service_restart_preserves_results_and_usage": true,
+    "failed_update_restores_service_and_usage": true,
+    "isolated_cleanup": true
+  },
+  "run_ids": [
+    "99e2ccfcb2a051b29bd09fde6bd37e6d",
+    "c9a5343cc53c4bfbb7eb8df68249e70f",
+    "cdab0f5748134c3eafa42305b881700f"
+  ],
+  "total_tokens": 84
+}

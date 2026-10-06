@@ -7,10 +7,10 @@ import threading
 import uuid
 
 import pytest
-from fastapi import HTTPException
 from test_backend import FakeResponse
 from test_image_generation import PNG, ProviderStub, _ok, _provider_config
 from test_image_generation import client as client
+from test_plugin_panel_disconnect import _exchange, _wait_for
 
 from ollama_code.api import portrait_preview
 from ollama_code.capabilities import CAPABILITY_ENV
@@ -100,23 +100,29 @@ def test_cancel_unknown_request_is_idempotent(client):
     assert client.post("/api/images/portrait/cancel", json=request).json() == {"ok": True}
 
 
-def test_disconnect_stops_existing_provider_context(client, monkeypatch):
+@pytest.mark.parametrize("disconnect", [True, False], ids=["disconnect", "handler-cancel"])
+def test_request_cancellation_stops_existing_provider_context(client, monkeypatch, disconnect):
     service = configured(client)
-    stopped = threading.Event()
+    started, stopped = threading.Event(), threading.Event()
     def blocking(prompt, account_id, ctx):
+        started.set()
         while not ctx.stopped():
             stopped.wait(0.005)
         stopped.set()
         raise ImageProviderError("interrupted")
     monkeypatch.setattr(service.image_generation, "portrait_preview", blocking)
-    class Request:
-        app = client.app
-        async def is_disconnected(self): return True
     async def run():
-        with pytest.raises(HTTPException) as error:
-            await portrait_preview.generate_portrait(Request(), body())
-        assert error.value.status_code == 499
-        await asyncio.sleep(0.05)
+        task, events, sent = await _exchange(client.app, body(), path="/api/images/portrait")
+        await _wait_for(started.is_set)
+        if disconnect:
+            await events.put({"type": "http.disconnect"})
+            await asyncio.wait_for(task, 2)
+            assert sent[0]["status"] == 499
+        else:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await _wait_for(stopped.is_set)
+        await _wait_for(lambda: not portrait_preview._pending)
     asyncio.run(run())
     assert stopped.wait(1)
     assert not portrait_preview._pending

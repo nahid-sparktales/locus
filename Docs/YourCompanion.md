@@ -4,8 +4,11 @@ See [verification and changed-file inventory](YourCompanionVerification.md) for
 the original launch checks, and [Companion panel verification](CompanionTabVerification.md)
 for the right-panel correction, Scout, cursor reactions, and remaining manual checks.
 The full run passed 1,966 native tests and seven companion UI cases, with one
-explicit notch-related UI skip and zero failures. Actual menu-popover interaction
-remains unverified locally. A later pointer guard's focused rerun had 13 passes
+explicit notch-related UI skip and zero failures. The subsequent
+[combined extraction CI](https://github.com/nahid-sparktales/locus/actions/runs/37501986653)
+passed all 432 Locus and LocusX UI tests, including actual menu-popover dismissal,
+reopening, draft preservation, and opening the main window, with no skips or retries.
+A later pointer guard's focused rerun had 13 passes
 and one explicit hosted-window skip, with zero failures; the full-suite result
 predates that guard change. The verification record includes fresh light/dark
 captures of the latest local build using isolated fixture data.
@@ -14,8 +17,12 @@ Your companion is a saved Locus agent with a recognizable character. First-launc
 Getting Started introduces it, offers six bundled animated characters, and asks
 for its name. **Surprise me** locally selects one of those same six characters;
 it does not generate new artwork or make a model request.
-Fresh drafts start with **Pitou** as both character and editable name. Existing drafts
-and agents retain their saved name and appearance. Setup and the profile's
+Fresh drafts start with **Pitou** as both character and editable name. Each new
+character choice offers its own suggested name and starting communication style.
+Untouched suggestions follow your choice; a name or personality you edit stays
+yours, including after reopening setup. Existing drafts retain saved names when
+their original authorship is unknown, and saved agents keep their name and appearance.
+Setup and the profile's
 **Characters** gallery offer only Pitou, Scout, Ninja, Clover, Shadow, and Pirate.
 There is no Originals collection or accent/accessory control. Older procedural and
 Gon appearances still load, and a saved custom picture stays selected until an
@@ -23,6 +30,21 @@ explicit change. The separate static portrait library, image import, and generat
 remain available through the existing picture picker.
 Names accept Unicode, trim surrounding whitespace,
 and reject control characters and names longer than 64 characters without truncation.
+
+| Companion | Starting personality | Traits |
+| --- | --- | --- |
+| Pitou | Thoughtful companion | Warm, curious, attentive |
+| Scout | Curious explorer | Upbeat, observant, inquisitive |
+| Ninja | Focused problem-solver | Precise, composed, methodical |
+| Clover | Resourceful builder | Optimistic, inventive, persistent |
+| Shadow | Calm strategist | Analytical, patient, deliberate |
+| Pirate | Adventurous collaborator | Playful, bold, adaptable |
+
+The **Personality** field on the naming step contains editable instructions that
+are saved in the normal agent profile when you finish setup. These are starting
+styles, not different models or tool permissions. Linking an existing agent or
+changing a saved agent's picture leaves its instructions intact. Edit that saved
+personality through the existing profile controls whenever you want to change it.
 
 **Start with [Name]** saves the identity and opens the normal companion conversation
 in the main composer when the runtime is available. Offline setup still saves the
@@ -91,8 +113,9 @@ introduce another notification store or enable system notifications. Profile,
 approval/recovery, and full-conversation actions reveal the main window and use
 their existing surfaces. **Open Locus** only reveals that window; it does not
 switch its conversation or discard either draft. Native activity/filtering tests
-passed; actual popover clicking, typing, Escape, and reopening after closing the
-main window still need verification on an unobstructed display or CI.
+and hosted CI checks for popover clicking, typing, Escape, Close, draft preservation,
+and reopening after closing the main window passed. Local XCTest automation could
+not initialize on the development host; the interaction evidence comes from CI.
 
 ## Your companion's folder
 
@@ -155,7 +178,7 @@ model instances using the same defaults cannot automatically offer it twice.
 | Stable identity, name, instructions, model, access, memory policies | Existing `AgentProfile` in `AgentTeamsModel`, saved by `AgentTeamStore` under `Locus.agentProfiles` |
 | Primary companion binding, versioned appearance references, animation preference | `AgentTeamsModel` presentation record, `Locus.AgentProfiles.companionPresentation.v1` |
 | Approved custom raster pixels | Existing `AgentTeamsModel.agentAvatarData`, `Locus.AgentProfiles.avatars.v1` |
-| Draft name, reserved UUID, chosen appearance, temporary approved draft pixels, step and completion link | Existing `OnboardingModel.Progress`, `Locus.onboarding.v1`; the payload version is now 2 |
+| Draft name, name-edit tracking, optional custom personality, reserved UUID, chosen appearance, temporary approved draft pixels, step and completion link | Existing `OnboardingModel.Progress`, `Locus.onboarding.v1`; the payload version is 2 with backward-compatible optional draft fields |
 | Explicit companion folder choice | Existing `AgentProfile.workspacePreferences.defaultProjectPath`; absent means the stable edition-scoped Agent home |
 | Panel selection, loading, error, and presentation mode | `CompanionPanelModel`; presentation only, with no profile or execution database |
 | Companion drafts and loaded transcript blocks | Existing `paneDraft`/`setPaneDraft` and `splitPaneBlocks`, keyed by the normal session identity |

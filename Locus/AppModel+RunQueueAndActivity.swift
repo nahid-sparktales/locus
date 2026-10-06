@@ -248,7 +248,7 @@ extension AppModel {
             $0.agentTriggerID == task.id && $0.agentKind == "schedule"
         })?.savedAgentProfileID {
             do {
-                _ = try agentWorldProfileDispatch(profileID: profileID, mode: task.mode)
+                _ = try savedAgentProfileDispatch(profileID: profileID, mode: task.mode)
                 return task.runner == .solo ? nil : "This saved agent’s schedule requires its solo runner"
             } catch { return error.localizedDescription }
         }
@@ -574,12 +574,12 @@ extension AppModel {
             let owner = try await backend.get("/api/sessions/\(sessionID)", as: Owner.self)
             if let rawProfileID = owner.agent_profile_id {
                 guard let profileID = UUID(uuidString: rawProfileID) else {
-                    throw AgentWorldError.unavailable("This conversation’s saved agent identity is invalid. Review its agent before retrying.")
+                    throw SavedAgentConversationError.unavailable("This conversation’s saved agent identity is invalid. Review its agent before retrying.")
                 }
                 let queuedRoute: [String: JSONValue]?
                 if case .object(let route) = run.manifest?["agent_chat_route"] { queuedRoute = route }
                 else { queuedRoute = nil }
-                profileDispatch = try agentWorldProfileDispatch(profileID: profileID,
+                profileDispatch = try savedAgentProfileDispatch(profileID: profileID,
                     mode: run.manifest?["mode"]?.string.flatMap(WorkMode.canonical) ?? .work,
                     sessionID: sessionID, queuedRoute: queuedRoute)
             } else { profileDispatch = nil }
@@ -679,7 +679,7 @@ extension AppModel {
             if let profileDispatch {
                 request["conversation_profile_id"] = profileDispatch.profile.id.uuidString
                 if run.runKind != "team" {
-                    request["agent_profile"] = Self.agentWorldProfileBody(profileDispatch.profile)
+                    request["agent_profile"] = Self.savedAgentProfileBody(profileDispatch.profile)
                 }
                 request["agent_config"] = encodedJSONObject(profileDispatch.profile.resolvedBehavior)
             }

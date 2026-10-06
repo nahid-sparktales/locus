@@ -132,3 +132,26 @@ API/Ollama/independent ChatGPT login, model-call and expiration/recovery checks.
 The isolated user-service check exercises launchd/systemd directly; it does not
 test the desktop SMAppService registration flow. No live SSH host or provider
 account is required for the fixture build pipeline, and none is provisioned by it.
+
+## Extracted runtime package composition
+
+The extraction branch builds the product distribution with the immutable
+`locus-runtime==0.1.0` wheel under `agent/vendor/wheels`. The runtime source
+repository is separate from this product archive. `Tools/RuntimePackage.py`
+verifies the wheel hash, metadata and source commit before preparation, including
+cache reuse. Provenance records both runtime and product source identities.
+Build tooling uses Python 3.11+, or Python 3.10 with the `tomli` development
+dependency; the installed runtime retains Python 3.10+.
+A fresh build tooling environment must install the reviewed runtime before the
+smoke runner imports the canonical installer:
+
+```sh
+python3 Tools/RuntimePackage.py verify --agent agent
+python3 -m pip install --no-deps agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl
+```
+
+Run the prepare/smoke commands above from a clean product checkout. The sibling
+runtime source checkout is not a build input. No new runtime repository, package
+release, service registration or user migration is published by this extraction.
+See [extraction verification](extraction-verification.md) for current evidence;
+historical results earlier in this document are not evidence for a new wheel.
