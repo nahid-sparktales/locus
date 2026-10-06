@@ -4,12 +4,12 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import stat
 import struct
 import subprocess
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
