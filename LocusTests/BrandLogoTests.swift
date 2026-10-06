@@ -12,7 +12,7 @@ final class BrandLogoTests: XCTestCase {
             XCTAssertGreaterThan(image.size.height, 0, name)
             XCTAssertNotNil(image.tiffRepresentation, name)
         }
-        for plugin in ["agent-world", "social-studio", "langgraph-workflow"] {
+        for plugin in ["agent-world", "langgraph-workflow"] {
             let name = try XCTUnwrap(PluginLogo.bundledAsset(for: plugin))
             XCTAssertNotNil(NSImage(named: name)?.tiffRepresentation, name)
         }

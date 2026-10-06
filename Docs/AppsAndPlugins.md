@@ -105,6 +105,38 @@ presentation metadata, with `.codex-plugin/plugin.json` as compatibility fallbac
 continue to use their `.codex-plugin/plugin.json` paths. Hooks and other unsupported
 components are reported in review, not executed implicitly.
 
+### Plugin-owned windows
+
+Declare local HTML through `extensions.com.locus.panels`. A panel can use
+`plugin.tools` to call its plugin's MCP tools and `chat.compose` to prepare an
+editable chat. Its `tools` list identifies operations hidden from agents; public
+tools from the same plugin remain callable. Hidden tools belonging only to
+another panel cannot be called. Panel networking is blocked; the MCP backend
+owns remote requests.
+
+For Python tools, `${LOCUS_PYTHON}` resolves to Locus's running interpreter.
+`${PLUGIN_ROOT}` and `${PLUGIN_DATA}` locate installed code and retained data.
+Use `env_vars: ["PYTHONPATH"]` when importing Locus's bundled MCP SDK, whose
+site-packages directory is separate from the interpreter. Run with `-B` to avoid
+modifying the reviewed package with bytecode files.
+
+The panel hello includes `toolContextVersion: 1`. Native tool requests attach
+the opening project's canonical workspace, panel ID, and installed digest;
+Locus validates these and passes them in MCP request metadata:
+
+```json
+{"com.locus/panel": {"version": 1, "workspace": "/project", "pluginId": "catalog/plugin", "panelId": "desk", "digest": "reviewed-package-digest"}}
+```
+
+Project-aware backends should use this metadata for each request, rather than
+process cwd or startup environment. Changing the selected chat does not change
+an existing panel's project. Legacy callers without context retain their
+previous current-project behavior. Requests are revoked when the installed
+digest or project enablement changes; remote actions already accepted may still
+complete. Closing a panel cancels its pending requests without retrying writes.
+Panels support bounded responses up to 1,000,000 characters and
+arguments up to 256 KiB; paginate content rather than return whole data stores.
+
 ## Interactive MCP Apps
 
 Tools may declare `_meta.ui.resourceUri` referencing an HTML `ui://` resource with

@@ -213,6 +213,6 @@ Claude, Sentry and Jira vector marks are distributed by
 [Simple Icons](https://github.com/simple-icons/simple-icons) under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 Other provider artwork comes from the providers' own websites and brand assets.
-Agent World, LangGraph Workflows, and Social Studio use original Locus artwork,
-licensed under Apache-2.0. The workflow and studio marks identify Locus plugins,
-not the external LangGraph framework or OpenPost service.
+Agent World and LangGraph Workflows use original Locus artwork, licensed under
+Apache-2.0. The workflow mark identifies the Locus plugin, not the external
+LangGraph framework.
