@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path, PurePosixPath
 
 from PackageRemoteRuntime import TARGETS, digest, host_target, package_runtime
+from RuntimePackage import runtime_release, stage_host_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
 PINS = Path(__file__).with_name("RemoteRuntimeArtifacts.json")
@@ -109,6 +110,7 @@ def copy_source(repo: Path, output: Path) -> str:
         target = output / "source/ollama_code" / path.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
+    stage_host_metadata(repo / "agent", output / "source")
     return subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
 
 
@@ -138,6 +140,7 @@ def prepare(target: str, cache: Path, output: Path, *, require_clean: bool = Fal
     if target != host_target():
         raise ValueError("Build on the selected target operating system and architecture")
     pins = json.loads(PINS.read_text())
+    release = runtime_release(ROOT / "agent")
     dirty = bool(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True))
     if require_clean and dirty:
         raise ValueError("Release builds require a clean committed checkout")
@@ -161,6 +164,7 @@ def prepare(target: str, cache: Path, output: Path, *, require_clean: bool = Fal
         # verify it here so remote installations need no package downloads.
         subprocess.run([str(python), "-s", "-m", "pip", "--isolated", "install", "--disable-pip-version-check", *platforms,
                         "--require-hashes", "--only-binary=:all:", "--no-compile", "--target", str(runtime / "site-packages"),
+                        "--find-links", str(ROOT / "agent/vendor/wheels"),
                         "--requirement", str(lock)], check=True, timeout=900)
         revision = copy_source(ROOT, runtime)
         helper_paths = {}
@@ -185,6 +189,7 @@ def prepare(target: str, cache: Path, output: Path, *, require_clean: bool = Fal
                 (helper_licenses / name).write_bytes(archive.extractfile(matches[0]).read())
         prune_python(runtime)
         provenance = {"version": 1, "target": target, "source_revision": revision, "source_dirty": dirty,
+                      "source_repository": "https://github.com/nahid-sparktales/locus", "runtime": release,
                       "dependency_lock_sha256": digest(lock), "artifact_pins_sha256": digest(PINS),
                       "python_version": pins["python_version"], "codex_version": pins["codex_version"],
                       "wheel_platforms": wheel_platforms(target),

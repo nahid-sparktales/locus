@@ -570,10 +570,12 @@ final class LocusUITests: XCTestCase {
     private func auditCurrentSurface(within scope: XCUIElement? = nil) throws {
         // Keep transient Help tags out of the audit. AppKit exposes a visible
         // Help tag as a separate, undescribed accessibility element even when
-        // the control that owns it has a complete label.
-        app.windows.firstMatch.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01)
-        ).hover()
+        // the control that owns it has a complete label. Moving into the
+        // window's title bar can leave a content tooltip visible; use the
+        // app's menu-bar title to move completely outside the window.
+        let neutralTarget = app.menuBars.menuBarItems[productName].firstMatch
+        XCTAssertTrue(neutralTarget.waitForExistence(timeout: 3))
+        neutralTarget.hover()
         let helpTags = app.descendants(matching: .helpTag)
         let tooltipsDismissed = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in helpTags.count == 0 },

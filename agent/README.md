@@ -14,7 +14,7 @@ ChatGPT-plan route — see *Model providers*.
 ```bash
 cd ~/Documents/locus/agent
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install --find-links vendor/wheels -e ".[dev]"
 ```
 
 This is only for working on the agent — the Locus app
@@ -29,6 +29,17 @@ automatically and verifies its SHA-256. Desktop and remote release builders use
 the same wheel through the hashed runtime lock, then bundle it before signing or
 packaging. Installing Locus needs no Python setup, separate memory repository, or
 first-launch dependency download.
+
+The execution package `locus-runtime==0.1.0` is vendored as a reviewed wheel in
+`vendor/wheels`; the wheel and `runtime-release.json` are immutable build inputs.
+The `--find-links` argument above is required while this candidate has no remote
+release. A fresh clone includes the wheel and needs no sibling checkout. Release
+builders verify its SHA-256 before installing the hashed dependency lock.
+`locus-runtime` is owned only by that wheel; this product registers the trusted
+`locus_runtime.host` entry point `locus` to retain existing service flags and
+Locus worker behavior. Build composition uses Python 3.11+, or Python 3.10 with
+the `tomli` development dependency; installed product and runtime packages retain
+Python 3.10+ support.
 
 ## Locus and LocusX builds
 

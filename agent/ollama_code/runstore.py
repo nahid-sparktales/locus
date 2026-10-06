@@ -203,6 +203,14 @@ class RunStore(AgentInspectorStore):
         except (OSError, sqlite3.DatabaseError, ValueError, TypeError):
             return None
 
+    def runtime_connection(self, *, readonly: bool = False) -> sqlite3.Connection:
+        """Public transaction boundary for runtime-owned tables in this database.
+
+        The connection commits/rolls back and closes on context exit, preserving
+        the existing schema, read-only gates and busy timeout.
+        """
+        return self._connect(readonly=readonly)
+
     def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
         if readonly or self.read_only:
             uri = self.path.resolve().as_uri() + "?mode=ro"
