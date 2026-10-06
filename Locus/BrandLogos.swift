@@ -124,7 +124,6 @@ struct PluginLogo: View {
     static func bundledAsset(for name: String) -> String? {
         switch name.lowercased() {
         case "agent-world", "agent-worlds": "Plugin-agent-world"
-        case "social-studio", "openpost": "Plugin-social-studio"
         case "langgraph-workflow", "langgraph-workflows", "langgraph": "Plugin-langgraph-workflow"
         default: nil
         }

@@ -11,6 +11,10 @@
   fails. The old bundled renderer and Outpost are removed; the verified recovery
   archive and scoped preference migration preserve rollback. Legacy world plugins
   require the reviewed 0.2.x artifact or their matching older host.
+- The optional publishing workspace is downloaded through the plugin marketplace
+  and opens from Work. Its package owns its interface, accounts, and project data.
+- Plugins can launch Python services with Locus's bundled interpreter and receive
+  verified panel context without adding arguments to their tools.
 - Standard light and dark appearances use neutral white, gray, and charcoal
   surfaces with clearer text and boundaries, replacing the earlier cream/olive
   base. Saved accents, logos, semantic colours, and optional World/deck themes
@@ -46,6 +50,9 @@
 
 - Files counts and Agent section headings use stronger semantic text colors.
   The Companion popover close button handles the native Escape shortcut.
+- Plugin windows keep the project they opened in when the selected chat changes.
+  Revoking access cancels pending calls, uncertain writes are not retried, and
+  oversized responses return an explicit error.
 - Opening or closing the Companion side panel preserves the central conversation,
   draft, run, and pending approvals. Companion chat selection and queued work stay
   bound to their saved profile and folder; offline and delayed requests cannot take over

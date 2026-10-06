@@ -158,6 +158,17 @@ struct PluginPanelBridge {
     }
     var openChat: (_ runID: String, _ agentID: UUID) -> Void = { _, _ in }
 
+    static func toolRequest(target: PluginPanelWindowController.Target, workspace: String,
+                            tool: String, arguments: [String: Any]) throws -> [String: Any] {
+        guard let digest = target.digest, !digest.isEmpty else {
+            throw NSError(domain: "Locus.PluginPanel", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Reinstall this plugin after reviewing its contents."])
+        }
+        return ["plugin_id": target.pluginID, "panel_id": target.panel.id, "digest": digest,
+                "workspace": SessionSummary.canonicalWorkspacePath(workspace),
+                "tool": tool, "arguments": arguments]
+    }
+
     static func foundation(_ value: JSONValue) -> Any {
         switch value {
         case .string(let text): text
@@ -216,6 +227,7 @@ struct PluginPanelHost: NSViewRepresentable {
         let bridge: PluginPanelBridge
         let files: PluginScreenSchemeHandler
         private var ready = false
+        private var pending: [UUID: Task<Void, Never>] = [:]
 
         init(target: PluginPanelWindowController.Target, project: String, workspace: String, bridge: PluginPanelBridge) {
             self.target = target; self.project = project; self.workspace = workspace; self.bridge = bridge
@@ -224,6 +236,8 @@ struct PluginPanelHost: NSViewRepresentable {
 
         func revoke() {
             files.revoked = true; ready = false
+            pending.values.forEach { $0.cancel() }
+            pending.removeAll()
             web?.stopLoading()
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "locusPanel")
             web?.navigationDelegate = nil; web?.uiDelegate = nil
@@ -246,7 +260,8 @@ struct PluginPanelHost: NSViewRepresentable {
             case .ready:
                 ready = true
                 send(["version": 1, "type": "hello", "project": project, "workspace": workspace,
-                      "panel": target.panel.id, "capabilities": target.panel.capabilities])
+                      "panel": target.panel.id, "capabilities": target.panel.capabilities,
+                      "toolContextVersion": 1])
             case .getSettings(let id):
                 answer(id) { try await self.bridge.settings() }
             case .saveSettings(let id, let values, let revision):
@@ -270,11 +285,20 @@ struct PluginPanelHost: NSViewRepresentable {
             (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         }
 
-        private func answer(_ requestID: String, _ work: @escaping () async throws -> Any) {
-            Task { @MainActor in
+        func answer(_ requestID: String, _ work: @escaping () async throws -> Any) {
+            guard !files.revoked else { return }
+            let operationID = UUID()
+            pending[operationID] = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.pending.removeValue(forKey: operationID) }
                 do {
+                    try Task.checkCancellation()
+                    guard !self.files.revoked else { return }
                     let result = try await work()
+                    try Task.checkCancellation()
                     send(["version": 1, "type": "response", "requestID": requestID, "ok": true, "result": result])
+                } catch is CancellationError {
+                    return
                 } catch {
                     send(["version": 1, "type": "response", "requestID": requestID, "ok": false,
                           "error": error.localizedDescription])
@@ -302,7 +326,7 @@ struct PluginPanelHost: NSViewRepresentable {
 }
 
 /// One window per project and panel, closed as soon as the plugin is
-/// disabled, removed or changed (same rule as Social Studio windows).
+/// disabled, removed or changed.
 @MainActor
 final class PluginPanelWindowController: NSObject, NSWindowDelegate {
     struct Target: Identifiable, Equatable {
@@ -392,7 +416,8 @@ final class PluginPanelWindowController: NSObject, NSWindowDelegate {
             callTool: { tool, arguments in
                 PluginPanelBridge.foundation(try await backend.post(
                     "/api/extensions/plugins/panel-tool",
-                    body: ["plugin_id": pluginID, "tool": tool, "arguments": arguments],
+                    body: try PluginPanelBridge.toolRequest(target: target, workspace: workspace,
+                                                            tool: tool, arguments: arguments),
                     timeout: 120, as: JSONValue.self))
             },
             compose: { [weak appModel] text in
