@@ -95,7 +95,7 @@ struct CompanionMenuBarView: View {
                 Button { windowHandle.hide() } label: {
                     Image(systemName: "xmark").frame(width: 28, height: 28)
                 }
-                .buttonStyle(.locus(.icon)).help("Close companion")
+                .buttonStyle(.locus(.icon)).keyboardShortcut(.cancelAction).help("Close companion")
                 .accessibilityLabel("Close companion").accessibilityIdentifier("companion.menubar.close")
             }
             .padding(12)

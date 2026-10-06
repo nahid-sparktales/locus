@@ -1224,7 +1224,7 @@ private struct AgentEyebrow: View {
         Text(count.map { "\(title.uppercased()) · \($0)" } ?? title.uppercased())
             .font(.locus(size: 10, weight: .bold))
             .tracking(0.5)
-            .foregroundStyle(viewColors.muted)
+            .foregroundStyle(viewColors.textPrimary)
             .lineLimit(1)
     }
 }
