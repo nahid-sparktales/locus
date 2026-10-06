@@ -15,6 +15,7 @@ from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError, parse_plugin
 from .dependencies import get_service
+from .disconnect import watch_disconnect
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
 T = TypeVar("T")
@@ -652,16 +653,14 @@ async def call_extension_plugin_panel_tool_http(
     request: Request, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
 ) -> dict[str, Any]:
     """Closing a native panel also cancels its still-running MCP request."""
-    if await request.is_disconnected():
-        raise HTTPException(499, "The plugin panel closed before the request was dispatched.")
     stopped = threading.Event()
+    disconnect = asyncio.create_task(watch_disconnect(request, stopped))
     task = asyncio.create_task(asyncio.to_thread(
         call_extension_plugin_panel_tool, service, body, should_stop=stopped.is_set,
     ))
     try:
         while not task.done():
-            if await request.is_disconnected():
-                stopped.set()
+            if stopped.is_set():
                 raise HTTPException(499, "The plugin panel closed. The pending request was cancelled without retrying; an operation already sent may still finish.")
             await asyncio.wait({task}, timeout=0.05)
         return await task
@@ -669,6 +668,7 @@ async def call_extension_plugin_panel_tool_http(
         # This also covers cancellation of the HTTP handler itself. The worker
         # observes the flag, cancels the MCP future, and never retries a write.
         stopped.set()
+        disconnect.cancel()
 
         def finish(done: asyncio.Task) -> None:
             if not done.cancelled():
@@ -678,6 +678,7 @@ async def call_extension_plugin_panel_tool_http(
             finish(task)
         else:
             task.add_done_callback(finish)
+        await asyncio.gather(disconnect, return_exceptions=True)
 
 
 def open_mcp_app(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:

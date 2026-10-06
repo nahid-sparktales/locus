@@ -1,5 +1,4 @@
-# Architecture reports are generated; preserve PDF byte streams as binary.
-.xray/** linguist-generated=true
+# Preserve any intentionally included PDF byte streams as binary.
 *.pdf binary
 # Historical source patches retain exact context whitespace and recorded hashes.
 agent/vendor/wheels/patches/*.patch -whitespace

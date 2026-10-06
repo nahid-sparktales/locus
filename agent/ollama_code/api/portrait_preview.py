@@ -18,6 +18,7 @@ from ..capabilities import enabled as capability_enabled
 from ..image_generation import ImageProviderError, ImageToolError
 from ..tools import ToolContext
 from .dependencies import get_service
+from .disconnect import watch_disconnect
 
 # In-flight cancellation handles only: no agent identity or persistent store.
 _pending: dict[tuple[int, str], threading.Event] = {}
@@ -53,12 +54,12 @@ async def generate_portrait(request: Request, body: dict[str, Any] = Body(defaul
                 prompt, account_id, ToolContext(cwd=root, should_stop=stopped.is_set)
             )
 
+    disconnect = asyncio.create_task(watch_disconnect(request, stopped))
     task = asyncio.create_task(asyncio.to_thread(perform))
     try:
         deadline = asyncio.get_running_loop().time() + PREVIEW_TIMEOUT_SECONDS
         while not task.done():
-            if stopped.is_set() or await request.is_disconnected():
-                stopped.set()
+            if stopped.is_set():
                 raise HTTPException(499, "Image generation cancelled. The provider may already have charged for work started.")
             if asyncio.get_running_loop().time() >= deadline:
                 stopped.set()
@@ -72,6 +73,7 @@ async def generate_portrait(request: Request, body: dict[str, Any] = Body(defaul
         raise HTTPException(499 if str(error) == "interrupted" else 502, str(error)) from None
     finally:
         stopped.set()
+        disconnect.cancel()
         # The existing provider client observes stop while awaiting headers and
         # closes late responses. Consume its result without delaying the UI.
         def finish(done: asyncio.Task) -> None:
@@ -82,6 +84,7 @@ async def generate_portrait(request: Request, body: dict[str, Any] = Body(defaul
             finish(task)
         else:
             task.add_done_callback(finish)
+        await asyncio.gather(disconnect, return_exceptions=True)
 
 
 async def cancel_portrait(request: Request, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, bool]:

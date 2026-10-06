@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+## 4.1.0 — 2026-10-06
+
 ### Added
 
+- Each of the six companions has a suggested name and its own starting
+  personality. New-companion setup previews their traits and lets you edit the
+  communication instructions. Your edits survive character changes and restart;
+  existing saved agents keep their names, instructions, and permissions.
 - Agent Worlds is now an optional, independently built plugin from
   [agent-worlds](https://github.com/nahid-sparktales/agent-worlds). Local Line keeps
   its map, ships and native workspaces through the version-2 host bridge. Locus
@@ -51,6 +57,13 @@
 
 ### Fixed
 
+- Closing a plugin panel or portrait preview stops pending cooperative work after
+  the client disconnects, including requests through the production middleware.
+- Companion history retains chats created in Git subfolders, and per-chat model
+  overrides use the selected account's availability without silently falling back.
+- Restoring an empty legacy memory control record cannot reopen legacy writes
+  after memory has moved to the canonical store.
+- Companion menu-bar chat reopens after Escape or Close with its draft intact.
 - Files counts and Agent section headings use stronger semantic text colors.
   The Companion popover close button handles the native Escape shortcut.
 - Independent runtime shutdown now cleans up owned worker descendants and
@@ -69,6 +82,12 @@
 - Companion status and activity follow its selected folder independently of the
   central project. Canonical session ownership takes precedence over conflicting
   run metadata, and completion reactions reset their baseline when that scope changes.
+
+### Maintenance
+
+- Removed the retired runtime-rescue PDF and generated architecture-scan exports.
+  Maintained guides, release procedures, and scoped verification evidence are
+  organized through the [documentation index](Docs/README.md).
 
 ## 4.0.0 — 2026-10-05
 

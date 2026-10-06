@@ -69,12 +69,19 @@ class HostMemoryMigration(LegacyMigrationSession):
         database = self.app_dir / "memory" / "memory.sqlite3"
         keys = LocusKeyProvider(self.app_dir)
         from .memory_capabilities import memory_capabilities
+
+        def check_profile() -> None:
+            assert_quiescent(self.app_dir)
+            # Run under the exclusive lease, before the package opens or alters
+            # ownership control. A new snapshot must not adopt a stale control file.
+            ownership_state(self.app_dir, self.edition)
+
         super().__init__(
             self.app_dir / "memory-engine", database, keys,
             partition=PartitionRef(self.edition, "default"), legacy_key=keys.legacy_key,
             mapping=lambda: host_mapping(database),
             lease=lambda: profile_lease(self.app_dir, exclusive=True),
-            assert_quiescent=lambda: assert_quiescent(self.app_dir),
+            assert_quiescent=check_profile,
             principal="locus-memory-migration",
             host=memory_capabilities(self.app_dir, self.edition, keys),
         )

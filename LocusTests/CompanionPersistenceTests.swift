@@ -46,6 +46,98 @@ final class CompanionPersistenceTests: XCTestCase {
         XCTAssertNil(profiles.primaryCompanionID)
     }
 
+    func testCurrentCharactersOfferDistinctCommunicationDefaults() throws {
+        let personalities = try CompanionBundledSprite.allCases.map { try XCTUnwrap($0.personality) }
+        XCTAssertEqual(personalities.map(\.suggestedName), ["Pitou", "Scout", "Ninja", "Clover", "Shadow", "Pirate"])
+        XCTAssertEqual(Set(personalities.map(\.instructions)).count, 6)
+        XCTAssertTrue(personalities.allSatisfy { !$0.bio.isEmpty && $0.traits.count == 3 && $0.strengths.count == 3 })
+        XCTAssertNil(CompanionBundledSprite.gon.personality, "Legacy artwork must not acquire a new personality")
+    }
+
+    func testSelectedCharacterSeedsNewProfileBehaviorAndPersistsWithoutChangingAccess() throws {
+        let profiles = store()
+        let model = onboarding(store: profiles)
+        model.selectCompanionAppearance(.init(sprite: .shadow))
+        let preset = try XCTUnwrap(CompanionBundledSprite.shadow.personality)
+        XCTAssertEqual(model.companion.draft.name, preset.suggestedName)
+        XCTAssertTrue(profiles.agentProfiles.isEmpty)
+        let id = try XCTUnwrap(model.completeCompanion())
+        let profile = try XCTUnwrap(profiles.agentProfiles.first)
+        XCTAssertEqual(profile.id, id)
+        XCTAssertEqual(profile.name, "Shadow")
+        XCTAssertEqual(profile.instructions, preset.instructions)
+        XCTAssertEqual(profile.behavior?.customInstructions, preset.instructions)
+        XCTAssertEqual(profile.behavior?.selfDescription, "Your calm strategist.")
+        XCTAssertEqual(profile.accessCeiling, .readOnly)
+        XCTAssertEqual(profile.role, .generalist)
+        XCTAssertEqual(profile.model, "")
+        XCTAssertNil(profile.mcpPolicy)
+        XCTAssertTrue(profile.capabilityTags.isEmpty)
+        XCTAssertEqual(store().agentProfiles, [profile])
+    }
+
+    func testUntouchedDefaultsFollowCharacterSelectionAfterDraftRestore() throws {
+        let first = onboarding()
+        first.selectCompanionAppearance(.init(sprite: .scout))
+        first.dismiss()
+        let restored = onboarding(existing: true)
+        XCTAssertEqual(restored.companion.draft.name, "Scout")
+        XCTAssertEqual(restored.companion.draft.instructions, CompanionBundledSprite.scout.personality?.instructions)
+        restored.selectCompanionAppearance(.init(sprite: .ninja))
+        XCTAssertEqual(restored.companion.draft.name, "Ninja")
+        XCTAssertEqual(restored.companion.draft.instructions, CompanionBundledSprite.ninja.personality?.instructions)
+        XCTAssertEqual(restored.companion.draft.reservedProfileID, first.companion.draft.reservedProfileID)
+    }
+
+    func testExplicitNameAndInstructionsSurviveCharacterSelectionAndRestart() throws {
+        let profiles = store()
+        let first = onboarding(store: profiles)
+        // Even a user-entered name identical to the old suggestion is an edit.
+        first.setCompanionName("Pitou")
+        first.setCompanionInstructions("Use short answers in French. Ask before choosing a direction.")
+        first.selectCompanionAppearance(.init(sprite: .pirate))
+        first.dismiss()
+        let restored = onboarding(existing: true, store: profiles)
+        restored.beginCompanionSetup()
+        restored.selectCompanionAppearance(.init(sprite: .clover))
+        XCTAssertEqual(restored.companion.draft.name, "Pitou")
+        XCTAssertEqual(restored.companion.draft.instructions, first.companion.draft.instructions)
+        let id = try XCTUnwrap(restored.completeCompanion())
+        let profile = try XCTUnwrap(store().agentProfiles.first { $0.id == id })
+        XCTAssertEqual(profile.name, "Pitou")
+        XCTAssertEqual(profile.instructions, "Use short answers in French. Ask before choosing a direction.")
+        XCTAssertEqual(profile.behavior?.customInstructions, profile.instructions)
+        profiles.setAgentAppearance(.init(sprite: .ninja), profileID: id)
+        XCTAssertEqual(store().agentProfiles, [profile], "Appearance edits must not reset a saved personality")
+    }
+
+    func testExplicitlyClearedInstructionsDoNotReappearOnCharacterSelection() throws {
+        let profiles = store()
+        let model = onboarding(store: profiles)
+        model.setCompanionInstructions("")
+        model.selectCompanionAppearance(.init(sprite: .scout))
+        XCTAssertEqual(model.companion.draft.name, "Scout")
+        XCTAssertEqual(model.companion.draft.instructions, "")
+        _ = try XCTUnwrap(model.completeCompanion())
+        XCTAssertEqual(profiles.agentProfiles.first?.instructions, "")
+        XCTAssertEqual(profiles.agentProfiles.first?.behavior?.customInstructions, "")
+    }
+
+    func testLegacyDraftWithoutDefaultTrackingKeepsItsNameAndIdentity() throws {
+        let original = CompanionOnboardingDraft(name: "Pitou", appearance: .init(sprite: .gon))
+        var value = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        value.removeValue(forKey: "nameIsCustomized")
+        value.removeValue(forKey: "customInstructions")
+        var legacy = try JSONDecoder().decode(CompanionOnboardingDraft.self,
+            from: JSONSerialization.data(withJSONObject: value))
+        XCTAssertEqual(legacy.reservedProfileID, original.reservedProfileID)
+        XCTAssertEqual(legacy.appearance.bundledSprite, .gon)
+        XCTAssertEqual(legacy.instructions, AgentRole.generalist.defaultInstructions)
+        legacy.selectAppearance(.init(sprite: .scout))
+        XCTAssertEqual(legacy.name, "Pitou", "A legacy name's authorship is unknown and must not be guessed")
+        XCTAssertEqual(legacy.reservedProfileID, original.reservedProfileID)
+    }
+
     func testRestoredLocusDraftKeepsItsNameAppearanceAndReservedIdentity() throws {
         let draft = CompanionOnboardingDraft(name: "Locus", appearance: .robot)
         var saved = OnboardingModel.Progress()

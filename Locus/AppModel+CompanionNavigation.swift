@@ -47,7 +47,7 @@ extension AppModel {
         let root = SessionSummary.canonicalWorkspacePath(workspace ?? companionWorkspacePath)
         return savedAgentChats(profile.id).filter {
             !$0.isAgentEventChat && $0.agentTriggerID?.nilIfEmpty == nil
-                && $0.workspacePath == root
+                && $0.belongsToWorkspace(root)
         }.sorted {
             if $0.isPinned != $1.isPinned { return $0.isPinned }
             if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
