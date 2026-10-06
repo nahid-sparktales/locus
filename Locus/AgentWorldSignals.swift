@@ -269,7 +269,10 @@ extension AppModel {
         guard !ids.isEmpty else { return }
         agentWorldSignalsRefreshTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.agentWorldSignalsRefreshTask = nil }
+            defer {
+                self.agentWorldSignalsRefreshTask = nil
+                self.agentWorld.scheduleProjectionRefresh()
+            }
             var seen = Set<String>()
             for id in ids.filter({ seen.insert($0).inserted }).prefix(8) {
                 guard !Task.isCancelled else { return }

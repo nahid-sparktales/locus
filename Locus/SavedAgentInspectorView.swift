@@ -64,12 +64,11 @@ enum AgentAvatarImage {
 
 struct AgentAvatarView: View {
     @Environment(\.companionActivityPresentation) private var companionActivity
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var agentTeams: AgentTeamsModel
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     let profileID: UUID
     let name: String
     var size: CGFloat = 40
@@ -154,12 +153,11 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
 /// Shared editing controls for the overview and the unsaved profile draft.
 /// Linking a project stores its location; it does not move or copy that project.
 struct AgentWorkspacePreferencesEditor: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     @Binding var profile: AgentProfile
     var compact = false
     @State private var showingDetails = false
@@ -294,8 +292,7 @@ struct SavedAgentInspectorView: View {
 }
 
 private struct SavedAgentResultExcerptView: View {
-    @Environment(\.locusOceanTheme) private var ocean
-    @Environment(\.locusCaptainDeckTheme) private var deck
+    @Environment(\.locusHostedSurface) private var ocean
     @Environment(\.locusViewColors) private var colors
     let source: String
 
@@ -339,8 +336,7 @@ private struct SavedAgentResultExcerptView: View {
 /// answers room without turning its card into a nested scroll view.
 private struct SavedAgentResultReader: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.locusOceanTheme) private var ocean
-    @Environment(\.locusCaptainDeckTheme) private var deck
+    @Environment(\.locusHostedSurface) private var ocean
     @State private var copied = false
     @Environment(\.locusViewColors) private var colors
     let result: SavedAgentOverviewSnapshot.LatestResult
@@ -404,8 +400,7 @@ private struct SavedAgentResultReader: View {
 }
 
 private struct SavedAgentOverviewContent: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -414,7 +409,7 @@ private struct SavedAgentOverviewContent: View {
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var accounts: ProviderAccountsModel
     @EnvironmentObject private var activity: ActivityCenterModel
-    @Environment(\.locusOceanTheme) private var ocean
+    @Environment(\.locusHostedSurface) private var ocean
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let initialProfile: AgentProfile
     let workspace: String?

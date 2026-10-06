@@ -61,7 +61,7 @@ extension AppModel {
 
     func prepareSavedAgentWorkspace(_ profile: AgentProfile, workspace: String) throws {
         guard workspace.hasPrefix("/"), !workspace.contains("\0") else {
-            throw AgentWorldError.unavailable("Choose an absolute workspace folder.")
+            throw SavedAgentConversationError.unavailable("Choose an absolute workspace folder.")
         }
         let expectedHome = savedAgentHomePath(profile)
         let canonical = SessionSummary.canonicalWorkspacePath(workspace)
@@ -70,16 +70,16 @@ extension AppModel {
             // App-created homes must not be redirected into a project or another
             // agent's files by a directory symlink.
             guard URL(fileURLWithPath: expectedHome).resolvingSymlinksInPath().path == expectedHome else {
-                throw AgentWorldError.unavailable("This agent’s home points to another folder. Restore its original folder before continuing.")
+                throw SavedAgentConversationError.unavailable("This agent’s home points to another folder. Restore its original folder before continuing.")
             }
             try FileManager.default.createDirectory(atPath: expectedHome, withIntermediateDirectories: true)
         } else {
             guard canonical != root, !canonical.hasPrefix(root + "/") else {
-                throw AgentWorldError.unavailable("Choose a shared project or this agent’s own home.")
+                throw SavedAgentConversationError.unavailable("Choose a shared project or this agent’s own home.")
             }
             var directory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: canonical, isDirectory: &directory), directory.boolValue else {
-                throw AgentWorldError.unavailable("This project folder is unavailable. Choose its new location or use Agent home.")
+                throw SavedAgentConversationError.unavailable("This project folder is unavailable. Choose its new location or use Agent home.")
             }
         }
     }
@@ -124,13 +124,13 @@ extension AppModel {
     /// archived chats and chats outside the sidebar's search and result limit.
     func removeSavedAgent(_ profile: AgentProfile) async throws {
         guard agentProfiles.contains(where: { $0.id == profile.id }) else {
-            throw AgentWorldError.unavailable("This saved agent was already removed.")
+            throw SavedAgentConversationError.unavailable("This saved agent was already removed.")
         }
         try beginSavedAgentRemoval(profile.id)
         defer { removingSavedAgentIDs.remove(profile.id) }
         _ = try await cleanupSavedAgentConversations(profileID: profile.id, action: "archive")
         guard agentTeamsModel.removeAgentProfile(profile) else {
-            throw AgentWorldError.unavailable("The chats were archived, but a run started before the agent could be removed. Stop the run and try again.")
+            throw SavedAgentConversationError.unavailable("The chats were archived, but a run started before the agent could be removed. Stop the run and try again.")
         }
         clearRemovedSavedAgentSelection(profile.id)
         await refreshMetadata()
@@ -141,7 +141,7 @@ extension AppModel {
     /// chats as one recovery batch, preserving their identity for Undo.
     func deleteUnavailableSavedAgent(profileID: UUID) async throws {
         guard !agentProfiles.contains(where: { $0.id == profileID }) else {
-            throw AgentWorldError.unavailable("This agent is available again. Remove it from its agent menu.")
+            throw SavedAgentConversationError.unavailable("This agent is available again. Remove it from its agent menu.")
         }
         try beginSavedAgentRemoval(profileID)
         defer { removingSavedAgentIDs.remove(profileID) }
@@ -162,33 +162,33 @@ extension AppModel {
 
     private func beginSavedAgentRemoval(_ profileID: UUID) throws {
         guard removingSavedAgentIDs.isEmpty else {
-            throw AgentWorldError.unavailable("Wait for the current agent removal to finish.")
+            throw SavedAgentConversationError.unavailable("Wait for the current agent removal to finish.")
         }
         guard !isBusy, !hasPendingPermission, !pendingSessionReset else {
-            throw AgentWorldError.unavailable("Finish or stop the active run before removing an agent.")
+            throw SavedAgentConversationError.unavailable("Finish or stop the active run before removing an agent.")
         }
         guard !creatingSavedAgentChatIDs.contains(profileID),
               savedAgentConversationCreationCounts[profileID, default: 0] == 0,
-              !agentWorld.hasPendingWork(profileID: profileID),
+              !savedAgentConversations.hasPendingWork(profileID: profileID),
               !agentCrewChat.hasPendingReplies(profileID: profileID) else {
-            throw AgentWorldError.unavailable("Wait for this agent's chat or queued reply to finish before removing it.")
+            throw SavedAgentConversationError.unavailable("Wait for this agent's chat or queued reply to finish before removing it.")
         }
         let ownedIDs = Set(sessions.filter { $0.savedAgentProfileID == profileID }.map(\.id))
             .union(taskWorkers.keys.filter { savedAgentProfileID(for: $0) == profileID })
             .union(pendingChatTurns.keys.filter { savedAgentProfileID(for: $0) == profileID })
             .union(taskConversationStates.keys.filter { savedAgentProfileID(for: $0) == profileID })
         guard !ownedIDs.contains(where: {
-                  agentWorldConversationState($0).busy || taskConversationStates[$0].map { !$0.state.isTerminal } == true
+                  savedAgentConversationState($0).busy || taskConversationStates[$0].map { !$0.state.isTerminal } == true
               }),
               !teamRunLive.agentActivities.contains(where: {
                   UUID(uuidString: $0.id) == profileID && !$0.state.isTerminal
               }) else {
-            throw AgentWorldError.unavailable("Finish or stop this agent's runs before removing it.")
+            throw SavedAgentConversationError.unavailable("Finish or stop this agent's runs before removing it.")
         }
         if let session = sessions.first(where: {
             $0.savedAgentProfileID == profileID && agentOwningEventChat($0) != nil
         }), let owner = agentOwningEventChat(session) {
-            throw AgentWorldError.unavailable("This agent has a chat that receives \(owner.name)'s runs. Remove that automation first.")
+            throw SavedAgentConversationError.unavailable("This agent has a chat that receives \(owner.name)'s runs. Remove that automation first.")
         }
         removingSavedAgentIDs.insert(profileID)
     }
@@ -215,7 +215,7 @@ extension AppModel {
                 invalidatePendingTranscriptTransition()
             }
             guard response.ok else {
-                throw AgentWorldError.unavailable(response.error ?? "The agent's chats could not all be removed. Try again.")
+                throw SavedAgentConversationError.unavailable(response.error ?? "The agent's chats could not all be removed. Try again.")
             }
             let removedIDs = Set(response.sessionIDs)
             sessions.removeAll { removedIDs.contains($0.id) }
@@ -261,7 +261,7 @@ extension AppModel {
         while savedAgentRuntimeSyncPending {
             savedAgentRuntimeSyncPending = false
             let profiles: [[String: Any]] = agentProfiles.map { profile in
-                var item: [String: Any] = ["profile": Self.agentWorldProfileBody(profile)]
+                var item: [String: Any] = ["profile": Self.savedAgentProfileBody(profile)]
                 do {
                     let route = try agentProfileProvider(profile)
                     var provider = route.body
@@ -294,7 +294,7 @@ extension AppModel {
 
     func savedAgentProfileID(for sessionID: String) -> UUID? {
         sessionCatalog.snapshot.sessionsByID[sessionID]?.savedAgentProfileID
-            ?? agentWorld.boundProfileID(for: sessionID)
+            ?? savedAgentConversations.boundProfileID(for: sessionID)
             ?? agentCrewChat.boundProfileID(for: sessionID)
     }
 
@@ -383,7 +383,7 @@ extension AppModel {
                                       preservingForeground: Bool = false) async throws -> SessionSummary {
         guard agentProfiles.contains(where: { $0.id == profile.id }),
               !removingSavedAgentIDs.contains(profile.id) else {
-            throw AgentWorldError.unavailable("This saved agent was removed.")
+            throw SavedAgentConversationError.unavailable("This saved agent was removed.")
         }
         savedAgentConversationCreationCounts[profile.id, default: 0] += 1
         defer { savedAgentConversationCreationCounts[profile.id, default: 0] -= 1 }
@@ -398,11 +398,11 @@ extension AppModel {
             "mode": (profile.defaultMode ?? .work).rawValue,
         ], as: Created.self)
         splitPaneModes[response.session_id] = profile.defaultMode ?? .work
-        agentWorld.bindConversation(response.session_id, workspace: workspace, profileID: profile.id)
+        savedAgentConversations.bind(response.session_id, workspace: workspace, profileID: profile.id)
         if preservingForeground { try await refreshCompanionConversationCatalog() }
         else { await refreshMetadata() }
         guard let session = sessionCatalog.snapshot.sessionsByID[response.session_id] else {
-            throw AgentWorldError.unavailable("The saved conversation could not be loaded. Refresh the agent list to reopen it.")
+            throw SavedAgentConversationError.unavailable("The saved conversation could not be loaded. Refresh the agent list to reopen it.")
         }
         return session
     }

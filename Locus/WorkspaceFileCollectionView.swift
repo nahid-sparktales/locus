@@ -12,8 +12,7 @@ struct WorkspaceFileCollectionEntry: Identifiable {
 /// A file inventory owns one container. Text remains selectable and the
 /// original Markdown selection spans keep their original order and content.
 struct WorkspaceFileCollectionView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let entries: [WorkspaceFileCollectionEntry]

@@ -66,7 +66,7 @@ def _marketplace(root: Path, plugin: Path) -> Path:
     return root
 
 
-def _screen_plugin(root: Path, *, capabilities: list[str] | None = None) -> Path:
+def _screen_plugin(root: Path, *, capabilities: list[str] | None = None, screen_version: int = 1) -> Path:
     _plugin(root)
     (root / "ui").mkdir()
     (root / "ui/index.html").write_text("<!doctype html><title>Agent World</title>")
@@ -74,22 +74,23 @@ def _screen_plugin(root: Path, *, capabilities: list[str] | None = None) -> Path
     manifest = json.loads(manifest_path.read_text())
     manifest["locus"] = {"screens": [{
         "id": "agent-world", "title": "Agent World", "entrypoint": "ui/index.html",
-        "version": 1, "capabilities": capabilities if capabilities is not None else ["agents.read"],
+        "version": screen_version, "capabilities": capabilities if capabilities is not None else ["agents.read"],
     }]}
     manifest_path.write_text(json.dumps(manifest))
     return root
 
 
-def test_screen_plugin_is_opt_in_and_exposed_through_install_contract(tmp_path):
+@pytest.mark.parametrize("screen_version", [1, 2])
+def test_screen_plugin_is_opt_in_and_exposed_through_install_contract(tmp_path, screen_version):
     assert parse_plugin(_plugin(tmp_path / "legacy"))["screens"] == []
     market = tmp_path / "market"
-    plugin = _screen_plugin(market / "plugins/fixture")
+    plugin = _screen_plugin(market / "plugins/fixture", screen_version=screen_version)
     _marketplace(market, plugin)
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     marketplace = manager.add_marketplace(str(market))
     expected = [{
         "id": "agent-world", "title": "Agent World", "entrypoint": "ui/index.html",
-        "version": 1, "capabilities": ["agents.read"],
+        "version": screen_version, "capabilities": ["agents.read"],
     }]
     assert manager.catalog()[0]["screens"] == expected
     inspection = manager.inspect_catalog_plugin(marketplace["id"], "fixture")
@@ -115,7 +116,9 @@ def test_screen_plugin_is_opt_in_and_exposed_through_install_contract(tmp_path):
     ("title", "x" * 121, "title"),
     ("title", "World\nWindow", "title"),
     ("version", True, "version"),
-    ("version", 2, "version"),
+    ("version", 3, "version"),
+    ("version", 0, "version"),
+    ("version", 2.0, "version"),
     ("version", "1", "version"),
     ("capabilities", "agents.read", "capabilities"),
     ("capabilities", ["credentials.read"], "capabilities"),
@@ -131,8 +134,9 @@ def test_screen_plugin_is_opt_in_and_exposed_through_install_contract(tmp_path):
     ("entrypoint", "ui/index.js", "HTML"),
     ("entrypoint", "ui/missing.html", "missing"),
 ])
-def test_screen_manifest_rejects_invalid_contract(tmp_path, field, value, error):
-    plugin = _screen_plugin(tmp_path / "plugin")
+@pytest.mark.parametrize("screen_version", [1, 2])
+def test_screen_manifest_rejects_invalid_contract(tmp_path, field, value, error, screen_version):
+    plugin = _screen_plugin(tmp_path / "plugin", screen_version=screen_version)
     manifest_path = plugin / ".codex-plugin/plugin.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["locus"]["screens"][0][field] = value
@@ -168,8 +172,9 @@ def test_screen_manifest_rejects_duplicates_and_excess_screens(tmp_path):
 
 
 @pytest.mark.parametrize("directory_link", [False, True])
-def test_screen_entrypoint_rejects_symlink_escape(tmp_path, directory_link):
-    plugin = _screen_plugin(tmp_path / "plugin")
+@pytest.mark.parametrize("screen_version", [1, 2])
+def test_screen_entrypoint_rejects_symlink_escape(tmp_path, directory_link, screen_version):
+    plugin = _screen_plugin(tmp_path / "plugin", screen_version=screen_version)
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "index.html").write_text("outside")
@@ -183,7 +188,8 @@ def test_screen_entrypoint_rejects_symlink_escape(tmp_path, directory_link):
         parse_plugin(plugin)
 
 
-def test_screen_update_reviews_permissions_and_rollback_preserves_scope(tmp_path):
+@pytest.mark.parametrize("next_screen_version", [1, 2])
+def test_screen_update_reviews_permissions_and_rollback_preserves_scope(tmp_path, next_screen_version):
     market = tmp_path / "market"
     plugin = _screen_plugin(market / "plugins/fixture")
     _marketplace(market, plugin)
@@ -200,6 +206,7 @@ def test_screen_update_reviews_permissions_and_rollback_preserves_scope(tmp_path
     manifest_path = plugin / ".codex-plugin/plugin.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["version"] = "2.0.0"
+    manifest["locus"]["screens"][0]["version"] = next_screen_version
     manifest["locus"]["screens"][0]["capabilities"].append("agents.interact")
     manifest_path.write_text(json.dumps(manifest))
     next_review = manager.inspect_catalog_plugin(source["id"], "fixture")
@@ -208,9 +215,11 @@ def test_screen_update_reviews_permissions_and_rollback_preserves_scope(tmp_path
     with pytest.raises(ExtensionError, match="changed after trust review"):
         manager.update_plugin(installed["id"], expected_digest=first["digest"])
     updated = manager.update_plugin(installed["id"], expected_digest=next_review["digest"])
+    assert updated["screens"][0]["version"] == next_screen_version
     assert updated["screens"][0]["capabilities"] == ["agents.interact", "agents.read"]
     assert updated["disabled_workspaces"] == [str(tmp_path.resolve())]
     rolled_back = manager.rollback_plugin(installed["id"])
+    assert rolled_back["screens"][0]["version"] == 1
     assert rolled_back["screens"][0]["capabilities"] == ["agents.read"]
     assert rolled_back["disabled_workspaces"] == [str(tmp_path.resolve())]
     disabled = manager.set_plugin_enabled(installed["id"], False)

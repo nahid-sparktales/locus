@@ -10,12 +10,12 @@ import XCTest
 /// customer, looks like "the icons only change once I switch chats".
 @MainActor
 final class AccentPropagationTests: XCTestCase {
-    private final class QuartersBox: ObservableObject {
-        @Published var island: AgentWorldQuartersIsland?
-        init(_ island: AgentWorldQuartersIsland? = nil) { self.island = island }
+    private final class SurfacePaletteBox: ObservableObject {
+        @Published var palette: PluginSurfacePalette?
+        init(_ palette: PluginSurfacePalette? = nil) { self.palette = palette }
     }
 
-    private struct QuartersColors: View {
+    private struct SurfaceColors: View {
         @Environment(\.locusViewColors) private var colors
         var body: some View {
             HStack(spacing: 0) {
@@ -26,47 +26,47 @@ final class AccentPropagationTests: XCTestCase {
         }
     }
 
-    private struct StableQuartersHost: View {
-        @ObservedObject var quarters: QuartersBox
+    private struct StableSurfaceHost: View {
+        @ObservedObject var surface: SurfacePaletteBox
         var body: some View {
-            QuartersColors()
-                .environment(\.locusOceanTheme, true)
-                .environment(\.locusCaptainDeckTheme, true)
-                .environment(\.locusQuartersIsland, quarters.island)
+            SurfaceColors().environment(\.locusPluginPalette, surface.palette)
         }
     }
 
-    func testEveryIslandOverridesLegacyWoodAndOceanColors() {
+    private var fixturePalettes: [PluginSurfacePalette] {
+        [PluginSurfacePalette(colors: ["paper": "#123456", "white": "#345678", "signalDeep": "#ff8800"]),
+         PluginSurfacePalette(colors: ["paper": "#554433", "white": "#ddccbb", "signalDeep": "#118855"]),
+         PluginSurfacePalette(colors: ["paper": "#221144", "white": "#8877aa", "signalDeep": "#eecc33"])]
+    }
+
+    func testPluginPaletteOverridesNativeColorsAndNilRestoresNativeTheme() {
         var environment = EnvironmentValues()
-        environment.locusOceanTheme = true
-        environment.locusCaptainDeckTheme = true
-        XCTAssertEqual(environment.locusViewColors.paper, Color(nsColor: LocusTheme.deckPalette.paper))
-        for island in AgentWorldQuartersIsland.allCases {
-            environment.locusQuartersIsland = island
-            let palette = LocusTheme.islandPalette(island)
-            XCTAssertEqual(environment.locusViewColors.surfaceCanvas, Color(nsColor: palette.paper))
-            XCTAssertEqual(environment.locusViewColors.surfaceCard, Color(nsColor: palette.white))
-            XCTAssertEqual(environment.locusViewColors.accentAction, Color(nsColor: palette.signalDeep))
+        XCTAssertFalse(environment.locusHostedSurface)
+        XCTAssertEqual(environment.locusViewColors.paper, LocusTheme.paper)
+        for palette in fixturePalettes {
+            environment.locusPluginPalette = palette
+            XCTAssertTrue(environment.locusHostedSurface)
+            XCTAssertEqual(environment.locusViewColors.surfaceCanvas, Color(nsColor: palette.native.paper))
+            XCTAssertEqual(environment.locusViewColors.surfaceCard, Color(nsColor: palette.native.white))
+            XCTAssertEqual(environment.locusViewColors.accentAction, Color(nsColor: palette.native.signalDeep))
         }
-        environment.locusQuartersIsland = nil
-        environment.locusCaptainDeckTheme = false
-        XCTAssertEqual(environment.locusViewColors.paper, Color(nsColor: LocusTheme.oceanPalette.paper))
-        environment.locusOceanTheme = false
+        environment.locusPluginPalette = nil
+        XCTAssertFalse(environment.locusHostedSurface)
         XCTAssertEqual(environment.locusViewColors.paper, LocusTheme.paper)
     }
 
-    func testMountedOverviewColorsFollowIslandChangesWithoutReopening() throws {
-        let quarters = QuartersBox()
-        let host = mount(StableQuartersHost(quarters: quarters))
+    func testMountedOverviewColorsFollowPluginPaletteChangesWithoutReopening() throws {
+        let surface = SurfacePaletteBox()
+        let host = mount(StableSurfaceHost(surface: surface))
         var previous = try XCTUnwrap(snapshot(host))
-        for island in AgentWorldQuartersIsland.allCases {
-            quarters.island = island
+        for palette in fixturePalettes {
+            surface.palette = palette
             pump()
             let current = try XCTUnwrap(snapshot(host))
-            XCTAssertGreaterThan(differingPixels(previous, current), 100, "Switching to \(island) must update mounted overview surfaces")
-            let rebuilt = mount(StableQuartersHost(quarters: QuartersBox(island)))
+            XCTAssertGreaterThan(differingPixels(previous, current), 100, "Changing a plugin palette must update mounted overview surfaces")
+            let rebuilt = mount(StableSurfaceHost(surface: SurfacePaletteBox(palette)))
             XCTAssertEqual(differingPixels(current, try XCTUnwrap(snapshot(rebuilt))), 0,
-                           "Existing content must use the same island palette as newly opened content")
+                           "Mounted content must use the same plugin palette as newly opened content")
             previous = current
         }
     }

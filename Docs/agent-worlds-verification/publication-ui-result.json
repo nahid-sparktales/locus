@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUTC": "2026-10-06T03:45:46.604694+00:00",
+  "scope": "Local targeted macOS UI verification; not evidence of macOS 15 GitHub Actions success",
+  "environment": {
+    "macOS": "26.4.1",
+    "macOSBuild": "25E253",
+    "Xcode": "26.6",
+    "XcodeBuild": "17F113",
+    "architecture": "arm64"
+  },
+  "isolation": {
+    "freshCopiedAppAndRunnerPerRun": true,
+    "uniqueBundleIdentifiers": true,
+    "launchPathsAndDependenciesAssertedInsideDisposableContainer": true,
+    "originalEntitlementsPreservedWithIdentityReplacement": true,
+    "fixtureEnvironment": "LOCUS_UI_TESTING=1",
+    "normalInstalledLocusTargeted": false
+  },
+  "runs": [
+    {
+      "id": "four-targeted-cases",
+      "sourceState": "Initial stronger caption colors and companion cancel shortcut",
+      "xcresult": "/tmp/locus-ci-isolated-ui/run.y9b2yu2i/tests.xcresult",
+      "log": "/tmp/locus-ci-isolated-ui/tests.log",
+      "buildLog": "/tmp/locus-ci-isolated-ui/build.log",
+      "xctestrun": "/private/tmp/locus-ci-isolated-ui/run.y9b2yu2i/IsolatedUI.xctestrun",
+      "appPath": "/private/tmp/locus-ci-isolated-ui/run.y9b2yu2i/LocusIsolatedUI.app",
+      "appIdentifier": "io.sparktales.locus-ui-verification.5659bae288b84d58a01d35d7481248fe",
+      "runnerIdentifier": "io.sparktales.locus-ui-verification.5659bae288b84d58a01d35d7481248fe.runner",
+      "cases": [
+        {
+          "test": "LocusUITests/CompanionOnboardingUITests/testMenuBarCompanionPreservesDraftAcrossDismissalAndOpensLocus",
+          "outcome": "SKIPPED",
+          "durationSeconds": 18.296,
+          "reason": "Existing hardware guard: display notch obscures the status item. Test stopped before opening the companion popup or exercising Escape."
+        },
+        {
+          "test": "LocusUITests/LocusUITests/testAgentConfigurationPassesAccessibilityAudit",
+          "outcome": "FAILED",
+          "durationSeconds": 50.853
+        },
+        {
+          "test": "LocusUITests/LocusUITests/testCollapsedCodexActivityFitsLightAndDarkWindowSizes",
+          "outcome": "PASSED",
+          "durationSeconds": 36.914
+        },
+        {
+          "test": "LocusUITests/LocusUITests/testPrimaryWorkspacePassesAccessibilityAudit",
+          "outcome": "PASSED",
+          "durationSeconds": 12.072
+        }
+      ],
+      "accessHeading": {
+        "frame": [
+          1011,
+          89.5,
+          155,
+          14
+        ],
+        "viewport": [
+          997,
+          143,
+          340,
+          708
+        ],
+        "outcome": "FAILED_CONTRAST_SAMPLING_CLIPPED_BACKGROUND",
+        "capturedElementContainsGlyphs": false
+      }
+    },
+    {
+      "id": "stronger-agent-eyebrow",
+      "sourceState": "AgentEyebrow textPrimary; no clipping correction",
+      "xcresult": "/tmp/locus-ci-isolated-ui/run.wuj9jd4g/tests.xcresult",
+      "log": "/tmp/locus-ci-isolated-ui/strong-heading-tests.log",
+      "buildLog": "/tmp/locus-ci-isolated-ui/build-strong-heading.log",
+      "xctestrun": "/private/tmp/locus-ci-isolated-ui/run.wuj9jd4g/IsolatedUI.xctestrun",
+      "appPath": "/private/tmp/locus-ci-isolated-ui/run.wuj9jd4g/LocusIsolatedUI.app",
+      "appIdentifier": "io.sparktales.locus-ui-verification.d1a09d1fb75243779435f2936894b631",
+      "runnerIdentifier": "io.sparktales.locus-ui-verification.d1a09d1fb75243779435f2936894b631.runner",
+      "cases": [
+        {
+          "test": "LocusUITests/LocusUITests/testAgentConfigurationPassesAccessibilityAudit",
+          "outcome": "FAILED",
+          "durationSeconds": 52.105
+        }
+      ],
+      "accessHeading": {
+        "frame": [
+          1011,
+          89.5,
+          155,
+          14
+        ],
+        "viewport": [
+          997,
+          143,
+          340,
+          708
+        ],
+        "outcome": "FAILED_CONTRAST_SAMPLING_CLIPPED_BACKGROUND",
+        "capturedElementContainsGlyphs": false
+      }
+    },
+    {
+      "id": "strict-wholly-clipped-geometry",
+      "sourceState": "AgentEyebrow textPrimary plus uniquely matched wholly clipped agentOverview static-text contrast deferral",
+      "xcresult": "/tmp/locus-ci-isolated-ui/run.h3z2ikek/tests.xcresult",
+      "log": "/tmp/locus-ci-isolated-ui/viewport-tests.log",
+      "buildLog": "/tmp/locus-ci-isolated-ui/build-viewport-audit.log",
+      "xctestrun": "/private/tmp/locus-ci-isolated-ui/run.h3z2ikek/IsolatedUI.xctestrun",
+      "appPath": "/private/tmp/locus-ci-isolated-ui/run.h3z2ikek/LocusIsolatedUI.app",
+      "appIdentifier": "io.sparktales.locus-ui-verification.5631d3f0563445b6b11ef26c5326a492",
+      "runnerIdentifier": "io.sparktales.locus-ui-verification.5631d3f0563445b6b11ef26c5326a492.runner",
+      "cases": [
+        {
+          "test": "LocusUITests/LocusUITests/testAgentConfigurationPassesAccessibilityAudit",
+          "outcome": "FAILED",
+          "durationSeconds": 96.445
+        }
+      ],
+      "accessHeading": {
+        "frame": [
+          1011,
+          89.5,
+          155,
+          14
+        ],
+        "viewport": [
+          997,
+          143,
+          340,
+          708
+        ],
+        "outcome": "DEFERRED_WHOLE_FRAME_OUTSIDE_OWN_SCROLL_VIEW",
+        "capturedElementContainsGlyphs": false
+      },
+      "remainingFailure": {
+        "text": "Skipped this time",
+        "frame": [
+          1043,
+          849,
+          101,
+          15
+        ],
+        "viewport": [
+          997,
+          143,
+          340,
+          708
+        ],
+        "verticalOverlapPoints": 2,
+        "renderedDarkest": "222222",
+        "renderedLightest": "5A5A5A",
+        "capturedElementContainsGlyphs": false,
+        "interpretation": "Strict helper retained this partially overlapping frame. Crop shows only bottom panel border/background; test scroll placement requires correction, not broader exclusion."
+      }
+    }
+  ],
+  "manualCompanionEscape": {
+    "outcome": "UNVERIFIED",
+    "reason": "Native CUA exposed no accessible status-item toggle. No guessed notch click was used; the synthetic main-window draft remained intact. Disposable fixture was quit before subsequent XCUITest.",
+    "appIdentifier": "io.sparktales.locus-ui-verification.companion.081964a52fd34de58a2e1f8c07661057",
+    "axLog": "/tmp/locus-ci-isolated-ui/manual-companion-ax.txt"
+  },
+  "artifactsPolicy": "Compact text evidence only. Screenshots, screen recordings, full accessibility trees, hardware identifiers and full xcresult bundles remain local and are not included.",
+  "finalDisposition": {
+    "productionChanges": "Retain stronger AgentEyebrow textPrimary, file-count textSecondary, and Companion close-button cancel shortcut; remote GitHub Actions verification pending.",
+    "agentConfigurationLocalOutcome": "UNRESOLVED: captured contrast failures sample clipped scroll content with no rendered glyphs on local macOS 26.4.1 / Xcode 26.6.",
+    "experimentalGeometryHelper": "DISCARDED: narrow whole-frame deferral exposed a second text frame overlapping the viewport by 2 points; no partial-frame exclusion or broader test exception is being shipped. Original test assertions are retained.",
+    "remoteCIOutcome": "PENDING; local results do not establish remote macOS 15 outcomes.",
+    "furtherLocalUIRuns": "No further local UI runs; original assertions remain unchanged."
+  },
+  "disposableProcessCheck": {
+    "checkedAtUTC": "2026-10-06T03:46:01.013743+00:00",
+    "matchingAppOrRunnerProcesses": 0,
+    "allStoppedNaturally": true,
+    "method": "Exact disposable bundle executable-path match in process inventory; no process-name sweep or global termination."
+  }
+}

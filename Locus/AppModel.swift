@@ -110,6 +110,7 @@ final class AppModel: ObservableObject {
     @Published var companionPairingError: String?  // internal(for: AppModel+MobileCompanion)
     let backgroundServicesModel = BackgroundServicesModel()
     let extensionsModel: ExtensionsModel
+    let savedAgentConversations = SavedAgentConversationService()
     let agentWorld = AgentWorldModel()
     let boardWindows = BoardWindowController()
     let agentCrewChat: AgentCrewChatModel
@@ -1320,6 +1321,7 @@ final class AppModel: ObservableObject {
             executionRouteWillChange: { [weak self] in self?.pauseGoalForRouteChange() }
         )
         configureTaskCapsules()
+        configureSavedAgentRuntime()
         configureAgentWorld()
         activity.runsDidRefresh = { [weak self] runs in
             AgentWorkLedger.shared.reconcile(runs: runs, schedules: self?.schedule.scheduledTasks ?? [])

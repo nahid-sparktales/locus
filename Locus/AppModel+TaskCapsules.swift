@@ -178,17 +178,17 @@ extension AppModel {
     }
 
     func agentProfileProvider(_ profile: AgentProfile) throws -> (provider: String, accountID: String?, body: [String: Any]) {
-        guard profile.isConfigured else { throw AgentWorldError.unavailable("Configure an exact model for \(profile.name).") }
+        guard profile.isConfigured else { throw SavedAgentConversationError.unavailable("Configure an exact model for \(profile.name).") }
         if case .localOllama = profile.route {
             return ("ollama", nil, ["provider": "ollama", "context_window": settings.localContextWindow ?? 0])
         }
         guard let account = Self.capsuleAccount(profile: profile, accounts: providerAccounts),
               account.isCredentialReady(in: credentialStore) else {
-            throw AgentWorldError.unavailable("The selected account is unavailable. Reconnect it or explicitly choose another profile.")
+            throw SavedAgentConversationError.unavailable("The selected account is unavailable. Reconnect it or explicitly choose another profile.")
         }
         if account.kind.listsModels, let catalog = accountModels[account.id], !catalog.isEmpty,
            !catalog.contains(where: { $0.caseInsensitiveCompare(profile.model) == .orderedSame }) {
-            throw AgentWorldError.unavailable("\(account.displayName) does not report \(profile.model). Choose an available model.")
+            throw SavedAgentConversationError.unavailable("\(account.displayName) does not report \(profile.model). Choose an available model.")
         }
         if account.kind.isManagedPlan {
             return (account.kind.backendProvider, account.id.uuidString, ["provider": account.kind.backendProvider, "account_id": account.id.uuidString,

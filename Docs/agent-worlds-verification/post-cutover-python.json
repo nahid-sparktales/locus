@@ -1,0 +1,12 @@
+{
+  "command": "/Users/nahid/Documents/locus/agent/.venv/bin/python -m pytest -q",
+  "result": "passed",
+  "testsPassed": 3138,
+  "subtestsPassed": 31,
+  "durationSeconds": 564.46,
+  "failures": 0,
+  "resourceInventory": "host-resources.json",
+  "focusedChecks": "125 passed; new boundary tool/test ruff passed",
+  "sourceRemovalCommit": "f53fc4e5",
+  "note": "No plugin is required by ordinary backend tests; temporary plugin fixtures and the separately verified artifact exercise installation."
+}

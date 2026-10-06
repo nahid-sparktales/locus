@@ -323,7 +323,7 @@ final class AgentCrewChatTests: XCTestCase {
         struct Dispatch { let sessionID: String; let profileID: UUID; let prompt: String; let mode: WorkMode }
         var profiles: [AgentProfile]
         let path = "/tmp/crew-chat-fixture"
-        var states: [String: AgentWorldConversationState] = [:]
+        var states: [String: SavedAgentConversationState] = [:]
         var dispatched: [Dispatch] = []
         var stopped: [String] = []
         var hold = false
@@ -338,7 +338,7 @@ final class AgentCrewChatTests: XCTestCase {
                             state: { self.states[$0] ?? .init() },
                             create: { workspace, profile in workspace + "/session-" + profile.id.uuidString }, load: { _ in },
                             dispatch: { session, _, profileID, text, mode in
-                if self.reject { throw AgentWorldError.unavailable("Fixture rejected this dispatch") }
+                if self.reject { throw SavedAgentConversationError.unavailable("Fixture rejected this dispatch") }
                 self.dispatched.append(.init(sessionID: session, profileID: profileID, prompt: text, mode: mode))
                 var blocks = self.states[session]?.blocks ?? []
                 let displayed: String

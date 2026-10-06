@@ -6,8 +6,7 @@ import SwiftUI
 /// preference — the accounts page has no Save bar — and the status row shows
 /// what the agent accepted after each push.
 struct ImageGenerationSettingsView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

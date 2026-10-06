@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 struct LibraryWorkspaceView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -147,8 +146,7 @@ struct LibraryWorkspaceView: View {
 }
 
 struct OutputsLibraryView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -347,8 +345,7 @@ struct OutputsLibraryView: View {
 }
 
 struct LibrarySearchField: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let prompt: String
@@ -370,8 +367,7 @@ struct LibrarySearchField: View {
 }
 
 private struct OutputLibraryThumbnail: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let item: LibraryOutput
@@ -415,8 +411,7 @@ struct OutputComparisonRequest: Identifiable {
     let rightLabel: String
 }
 struct OutputComparisonView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let request: OutputComparisonRequest

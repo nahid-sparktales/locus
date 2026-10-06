@@ -4,8 +4,7 @@ import SwiftUI
 /// Agents own their instructions, trigger and conversations. Connections are
 /// shared infrastructure; runtime limits apply across the whole application.
 struct ConfigureAgentView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var app: AppModel
@@ -911,8 +910,7 @@ private struct AgentConfigurationReference: Identifiable, Hashable {
 }
 
 private struct ConnectorSetupView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1140,8 +1138,7 @@ private struct AutomationDisclosureGroupStyle: DisclosureGroupStyle {
 }
 
 private struct EventTriggerEditorView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1452,7 +1449,7 @@ private struct EventTriggerEditorView: View {
                                           "provider_account_id": route.accountID ?? ""]
                 }
                 if draft.targetSessionID == EventTriggerEditorDraft.newOwnedAgentChat {
-                    guard let owner else { throw AgentWorldError.unavailable("This saved agent is no longer available.") }
+                    guard let owner else { throw SavedAgentConversationError.unavailable("This saved agent is no longer available.") }
                     try app.prepareSavedAgentWorkspace(owner, workspace: draft.workspaceRoot)
                     let chat = try await app.createSavedAgentConversation(owner, workspace: draft.workspaceRoot)
                     createdReceivingChats.append(chat)
@@ -1721,8 +1718,7 @@ private struct CSVField: View {
 }
 
 private struct WebhookSecretView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

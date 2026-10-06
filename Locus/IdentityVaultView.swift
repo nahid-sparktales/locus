@@ -30,8 +30,7 @@ private struct IdentityPrivateSurface: ViewModifier {
 }
 
 struct IdentityVaultApprovalView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let request: IdentityVaultReview
@@ -79,8 +78,7 @@ struct IdentityVaultApprovalView: View {
 }
 
 struct IdentityVaultView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: IdentityVaultModel
@@ -486,8 +484,7 @@ struct IdentityVaultView: View {
 }
 
 private struct IdentityProfileEditor: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @State var profile: IdentityVaultProfile
@@ -572,8 +569,7 @@ private struct IdentityImportRequest: Identifiable {
 }
 
 private struct IdentityDocumentImportView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let request: IdentityImportRequest
@@ -609,8 +605,7 @@ private struct IdentityDocumentImportView: View {
 }
 
 private struct IdentityDocumentPreview: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let document: IdentityVaultDocument
@@ -654,8 +649,7 @@ private struct IdentityDocumentPreview: View {
 }
 
 private struct IdentityDraftEditor: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @State var draft: IdentityVaultDraft

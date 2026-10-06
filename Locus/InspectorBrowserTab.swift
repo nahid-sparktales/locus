@@ -34,8 +34,7 @@ struct InspectorBrowserTab: View {
 }
 
 struct BrowserPanel: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -880,8 +879,7 @@ struct BorrowedWebView: NSViewRepresentable {
 }
 
 private struct BrowserQuickHistory: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BrowserActivityStore
@@ -917,8 +915,7 @@ private struct BrowserQuickHistory: View {
 }
 
 private struct BrowserQuickDownloads: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -954,8 +951,7 @@ private struct BrowserQuickDownloads: View {
 }
 
 private struct BrowserAutofillSuggestionBar: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -1027,8 +1023,7 @@ private struct BrowserAutofillSuggestionBar: View {
 // MARK: - Console / network drawer
 
 struct CaptureDrawer: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var log: BrowserCaptureLog

@@ -106,7 +106,7 @@ struct ExtensionPluginScreen: Codable, Identifiable, Hashable {
     }
 
     var isSupported: Bool {
-        version == 1 && !id.isEmpty && !title.isEmpty
+        version == 2 && !id.isEmpty && !title.isEmpty
             && Set(capabilities).isSubset(of: ["agents.read", "agents.interact", "world.preferences"])
             && PluginScreenFiles.isSafeRelativePath(entrypoint)
             && ["html", "htm"].contains(URL(fileURLWithPath: entrypoint).pathExtension.lowercased())

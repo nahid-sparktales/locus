@@ -7,8 +7,7 @@ import SwiftUI
 /// side by side. Every change goes through `BoardStore`, which saves before
 /// it publishes, so this view only renders and reports errors.
 struct InspectorBoardTab: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
@@ -137,7 +136,7 @@ struct InspectorBoardTab: View {
                     .accessibilityLabel("Opening a new chat for this card")
             }
             if !isDetached {
-                Button { model.boardWindows.open(store: store, model: model, ocean: usesWorldTheme, deck: usesDeckTheme, island: viewColors.island) } label: {
+                Button { model.boardWindows.open(store: store, model: model, palette: viewColors.custom) } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.locus(size: 12, weight: .medium))
                         .frame(width: 26, height: 26)

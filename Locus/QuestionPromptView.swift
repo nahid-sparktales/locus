@@ -5,8 +5,7 @@ import SwiftUI
 /// the decision replaces the input. Options are keyboard-driven; a free-text
 /// row is always present, and `esc` hands the answer back to the composer.
 struct QuestionPromptView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

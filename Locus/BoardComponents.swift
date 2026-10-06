@@ -7,8 +7,7 @@ import SwiftUI
 // MARK: - Card tile
 
 struct BoardCardTile: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let card: BoardCard
@@ -168,8 +167,7 @@ struct BoardCardTile: View {
 }
 
 private struct BoardDragPreview: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let key: String
@@ -194,8 +192,7 @@ private struct BoardDragPreview: View {
 /// Highlights a drop target: a capsule in the gap above a card, or an
 /// outline around a column or picker chip.
 struct BoardDropTarget: ViewModifier {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     enum Indicator {
@@ -247,8 +244,7 @@ struct BoardDropTarget: ViewModifier {
 // MARK: - Timeline
 
 struct BoardAuthorAvatar: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let author: BoardAuthor
@@ -268,8 +264,7 @@ struct BoardAuthorAvatar: View {
 /// Comments read as messages; activity is a single quieter line. Agent
 /// entries say so in text and to VoiceOver, never only through the glyph.
 struct BoardTimelineRow: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let entry: BoardTimelineEntry
@@ -368,8 +363,7 @@ struct BoardTimelineRow: View {
 /// Type-ahead card creation at the bottom of a column. Focus stays in the
 /// field after a card is added, so a list can be typed out in one go.
 struct BoardQuickAddField: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let column: BoardColumn
@@ -422,8 +416,7 @@ struct BoardQuickAddField: View {
 }
 
 struct BoardCountBadge: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let count: Int
@@ -442,8 +435,7 @@ struct BoardCountBadge: View {
 }
 
 struct BoardPriorityBadge: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let priority: BoardPriority
@@ -470,8 +462,7 @@ struct BoardPriorityBadge: View {
 }
 
 struct BoardLabelPill: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let label: String
@@ -505,8 +496,7 @@ struct BoardLabelPill: View {
 
 /// Small primary or secondary button face for board actions.
 struct BoardButtonLabel: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -547,8 +537,7 @@ struct BoardButtonLabel: View {
 /// Empty and unavailable states. Small copy uses `textSecondary` so it
 /// passes the 1x contrast audit, unlike `InspectorPlaceholder`.
 struct BoardMessage<Actions: View>: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String

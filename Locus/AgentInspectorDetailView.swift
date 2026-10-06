@@ -438,8 +438,7 @@ private struct MemorySubmissionInspector: View {
 /// Exact event/task/run detail. Opening this inspector does not change the
 /// transcript; Open chat is a separate, explicit action.
 struct AgentInspectorDetailView: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -889,8 +888,7 @@ struct AgentInspectorDetailView: View {
 }
 
 struct AgentInspectorLoadStatus: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1040,8 +1038,7 @@ extension AgentInspectorCopy {
 /// Each row resolves a saved version from the selected run's provenance. The
 /// workspace library may contain newer versions from unrelated conversations.
 struct AgentInspectorRunOutputs: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

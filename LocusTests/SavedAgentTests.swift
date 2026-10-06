@@ -276,7 +276,7 @@ final class SavedAgentTests: XCTestCase {
         model.sessions = [session]
         model.installTranscriptSession(session.id, blocks: [])
         model.selectSavedAgent(profile)
-        try await model.activateAgentWorldConversation(session.id, workspace: "/tmp", expectedProfileID: profile.id)
+        try await model.activateSavedAgentConversation(session.id, workspace: "/tmp", expectedProfileID: profile.id)
         XCTAssertNil(model.savedAgentOverviewID)
         XCTAssertEqual(model.currentSessionID, session.id)
         XCTAssertNil(model.activeTranscriptLoad)

@@ -1,0 +1,70 @@
+- main "Agent World":
+  - generic "3D Local Line ocean world. Each agent has their own ship. Click a ship to interact. Click Elbaf, Marineford, Water 7, Wano or Drum Island to visit Captain’s Quarters. Island visits are also available in Settings. Drag to rotate the view, and scroll to zoom. Use arrow keys or W A S D to move the map. Use the Residents tab to select agents with the keyboard."
+  - generic: LOCUS / AGENT WORLD
+  - heading "The Local Line DEMO" [level=1]:
+    - text: The Local Line
+    - generic: DEMO
+  - paragraph: Every agent. Their own adventure.
+  - generic "Captain’s Quarters settings": Settings
+  - button "Captain’s Quarters"
+  - button "Residents":
+    - generic: ♙
+    - text: Residents
+  - button "Choose world theme":
+    - generic: The Local Line
+    - generic: ⌄
+  - text: ✓
+  - generic: Ships sail
+  - combobox "Ship sailing area":
+    - option "Whole map" [selected]
+    - option "Left side"
+    - option "Right side"
+  - button: DEMO · Ping Ping · Approval
+  - complementary "Den Den Dispatch communicator":
+    - button "Close Activity Center. Demo. 1 needs your attention." [expanded]:
+      - generic: DEMO · DEN DEN DISPATCH
+      - strong: Activity Center
+      - generic: 1 needs your attention
+      - generic: "1"
+      - generic: ⌃
+    - status: Demo. 1 needs your attention.
+  - complementary "Activity Center":
+    - generic: THE CREW’S COMMUNICATIONS
+    - heading "Activity Center" [level=2]
+    - button "Close Activity Center": ×
+    - paragraph: Sample crew activity. No tasks are running.
+    - generic "Crew status":
+      - strong: "1"
+      - generic: working
+      - strong: "7"
+      - generic: available
+      - generic: Demo
+    - tablist "Activity Center view":
+      - tab "Attention 1" [active] [selected]:
+        - text: Attention
+        - generic: "1"
+      - tab "Activity 6":
+        - text: Activity
+        - generic: "6"
+    - tabpanel "Attention 1":
+      - button "Approval needed. Sample approval · no real request is pending. Echo. Open request.":
+        - generic: "!"
+        - generic: Approval needed
+        - strong: Sample approval · no real request is pending
+        - generic: Echo
+        - generic: ↗
+    - generic: DEMO FREQUENCY
+    - generic: Pururururu…
+  - group "Map drag behavior":
+    - button "Rotate" [pressed]:
+      - text: Rotate
+    - button "Move map":
+      - text: Move map
+  - generic: Choose a ship to open its agent
+  - generic: Drag to rotate
+  - generic: Scroll to zoom
+  - button "Reset camera to the whole map":
+    - text: Reset view
+  - generic: 1 agent at work
+  - generic: SET SAIL
+  - status

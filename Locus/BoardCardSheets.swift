@@ -10,8 +10,7 @@ import SwiftUI
 /// reached. If the sheet goes away without Done or Cancel, edits are saved
 /// and a typed comment waits for the card's next opening.
 struct BoardCardDetailSheet: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
@@ -491,8 +490,7 @@ struct BoardCardDetailSheet: View {
 
 /// Creates a card with every field the board supports.
 struct BoardNewCardSheet: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore
@@ -624,8 +622,7 @@ struct BoardNewCardSheet: View {
 // MARK: - Sheet components
 
 private struct BoardFieldLabel: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -664,8 +661,7 @@ private struct BoardPriorityPicker: View {
 /// Multi-line description input. A text editor keeps Return as a newline;
 /// the placeholder is drawn beneath it because `TextEditor` has none.
 private struct BoardDescriptionEditor: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var text: String
@@ -704,8 +700,7 @@ private struct BoardDescriptionEditor: View {
 /// The same agent picker is used on cards and events. IDs survive renames;
 /// names and photos always come from the current shared agent profiles.
 struct AgentMentionPicker: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var teams: AgentTeamsModel
@@ -768,8 +763,7 @@ struct AgentMentionPicker: View {
 }
 
 struct AgentTagLabels: View {
-    @Environment(\.locusOceanTheme) private var usesWorldTheme
-    @Environment(\.locusCaptainDeckTheme) private var usesDeckTheme
+    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var teams: AgentTeamsModel

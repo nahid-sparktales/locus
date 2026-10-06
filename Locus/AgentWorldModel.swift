@@ -1,15 +1,8 @@
 import AppKit
 import Combine
+import CryptoKit
 import Foundation
 import SwiftUI
-
-enum AgentWorldError: LocalizedError {
-    case unavailable(String)
-    case conversationUnavailable(String)
-    var errorDescription: String? {
-        switch self { case .unavailable(let message), .conversationUnavailable(let message): message }
-    }
-}
 
 struct AgentWorldResident: Identifiable, Equatable, Encodable {
     let id: String
@@ -19,103 +12,25 @@ struct AgentWorldResident: Identifiable, Equatable, Encodable {
     var detail: String?
 }
 
-struct AgentWorldThemeOption: Identifiable, Decodable, Equatable {
-    let id: String
-    let name: String
-
-    static let builtIn: [AgentWorldThemeOption] = [
-        .init(id: "outpost", name: "Orbital Locus Outpost"),
-        .init(id: "grand-line", name: "The Local Line"),
-    ]
-}
-
-enum AgentWorldQuartersAppearance: String, CaseIterable, Identifiable {
-    case wood, ocean
-    var id: String { rawValue }
-    var title: String { self == .wood ? "Wood · default" : "Ocean blue" }
-}
-
-/// A visit only overrides the current quarters; it never replaces the saved appearance.
-enum AgentWorldQuartersIsland: String, CaseIterable, Identifiable {
-    case elbaf, marineford, waterSeven = "water-seven", wano, drum
-    var id: String { rawValue }
-    var title: String {
-        switch self { case .elbaf: "Elbaf"; case .marineford: "Marineford"; case .waterSeven: "Water 7"; case .wano: "Wano"; case .drum: "Drum Island" }
-    }
-    var backgroundAsset: String { "Quarters-" + rawValue }
-}
-
-struct AgentWorldShipStyle: Identifiable, Equatable {
-    let id: String
-    let name: String
-    static let all: [AgentWorldShipStyle] = [
-        .init(id: "ship_thousand_sunny", name: "Thousand Funny"),
-        .init(id: "ship_going_merry", name: "Going Sherry"),
-        .init(id: "ship_baratie", name: "BaratAI"),
-        .init(id: "ship_navy_h03", name: "Navy Q4"),
-        .init(id: "ship_polar_tang", name: "Polar Tensor"),
-        .init(id: "ship_spade_pirates", name: "Spade Prompters’ Ship"),
-        .init(id: "ship_red_force", name: "Thread Force"),
-        .init(id: "ship_moby_dick", name: "Moby Disk"),
-        .init(id: "ship_perfume_yuda", name: "Perfume CUDA"),
-        .init(id: "ship_oro_jackson", name: "Oro JSON"),
-        .init(id: "ship_queen_mama_chanter", name: "Queen Llama Chanter"),
-        .init(id: "ship_dragons_ship", name: "Dragon’s Chip"),
-        .init(id: "ship_mihawk_coffin", name: "Mihawk’s Coffin Boat"),
-        .init(id: "ship_garp_battleship", name: "Garp’s Battleship"),
-        .init(id: "ship_marine_patrol", name: "Marine Patrol Ship"),
-    ]
-    static func isSupported(_ id: String) -> Bool { all.contains { $0.id == id } }
-}
-
-/// Display-only names supplied by the renderer after it assigns ships and ports.
+/// Display-only placement descriptions supplied by the installed renderer.
 struct AgentWorldResidentPlacement: Equatable {
     let agentID: String
-    let ship: String
-    let home: String
+    let primary: String
+    let secondary: String
 }
 
-struct AgentWorldConversationState {
-    var status = "idle"
-    var detail: String?
-    var busy = false
-    var blocks: [ChatBlock] = []
-}
-
-/// Window, roster and conversation bindings belong to this feature. Only the
-/// native conversation panel has execution authority; plugin JavaScript sees
+/// Optional plugin window and display projection. Canonical conversation identity
+/// and queued work belong to SavedAgentConversationService; plugin JavaScript sees
 /// names, roles and activity labels, never transcripts or provider material.
 @MainActor
 final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     weak var appModel: AppModel?
     @Published var conversationPresented = false
     @Published var quartersPresented = false {
-        didSet { if !quartersPresented { quartersIsland = nil } }
+        didSet { if !quartersPresented { selectedPresentationID = nil } }
     }
-    @Published private(set) var quartersIsland: AgentWorldQuartersIsland?
-    @Published private(set) var islandQuartersEnabled = true
-    var activeQuartersIsland: AgentWorldQuartersIsland? { quartersPresented && theme == "grand-line" ? quartersIsland : nil }
-
-    func setIslandQuartersEnabled(_ enabled: Bool) {
-        guard activeScreen?.screen.capabilities.contains("world.preferences") == true else { return }
-        islandQuartersEnabled = enabled
-        if !enabled { quartersIsland = nil }
-        defaults?.set(enabled, forKey: "Locus.AgentWorld.islandQuartersEnabled.v1")
-    }
-
-    func openIslandQuarters(_ island: AgentWorldQuartersIsland) {
-        guard canInteract, islandQuartersEnabled, theme == "grand-line" else { return }
-        quartersIsland = island
-        quartersPresented = true
-    }
-    @Published private(set) var quartersAppearance: AgentWorldQuartersAppearance = .wood
-    var usesWoodQuarters: Bool { quartersPresented && theme == "grand-line" && quartersAppearance == .wood }
-
-    func setQuartersAppearance(_ value: AgentWorldQuartersAppearance) {
-        quartersIsland = nil
-        quartersAppearance = value
-        defaults?.set(value.rawValue, forKey: "Locus.AgentWorld.quartersAppearance.v1")
-    }
+    @Published var selectedPresentationID: String?
+    var pluginPresentation: PluginWorldPresentation? { PluginWorldPresentation.load(screen: activeScreen) }
     @Published var sharedChatPresented = false
     @Published private(set) var profilePresented = false
     @Published private(set) var preparingConversation = false
@@ -136,19 +51,27 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var pendingCount = 0
     @Published var draft = ""
     @Published var error: String?
-    @Published private(set) var theme = "outpost"
-    @Published private(set) var availableThemes = AgentWorldThemeOption.builtIn
     @Published private(set) var residentPlacements: [String: AgentWorldResidentPlacement] = [:]
     @Published private(set) var activityCenterRequest = 0
     @Published private(set) var focusRequest = 0
     @Published var workspaceToolsRequest = 0
-    @Published private(set) var shipStyles: [String: String] = [:]
-    @Published private(set) var residentStyle = "mixed"
-    @Published private(set) var sailingArea = "whole"
     @Published var graphicsError: String?
+    @Published private(set) var renderEpoch = 0
+    private var rendererRetryCount = 0
+    var canRetryWorldScreen: Bool { activeScreen?.screen.version == 2 && graphicsError != nil && rendererRetryCount < 3 }
+
+    func retryWorldScreen() {
+        guard canRetryWorldScreen else { return }
+        rendererRetryCount += 1
+        graphicsError = nil
+        renderEpoch += 1
+    }
+    @Published private(set) var worldPreferences: [String: Any] = [:]
+    @Published private(set) var nativeNavigationRequest = 0
+    private(set) var requestedNativeSurface = "agents"
     var projectName: String { URL(fileURLWithPath: workspace).lastPathComponent }
     var selectedProfile: AgentProfile? { profilesProvider().first { $0.id.uuidString == selection } }
-    var selectedSessionID: String? { selectedSessionOverride ?? selection.flatMap { bindings[Self.bindingKey(workspace: workspace, profileID: $0)] } }
+    var selectedSessionID: String? { selectedSessionOverride ?? selection.flatMap { conversations.currentSessionID(for: Self.bindingKey(workspace: workspace, profileID: $0)) } }
     var canInteract: Bool { activeScreen?.screen.capabilities.contains("agents.interact") == true }
     var canCreateAgent: Bool { canInteract && appModel != nil && !isVisualFixture }
 
@@ -160,119 +83,87 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         let screen: ExtensionPluginScreen
         var id: String { pluginID + ":" + screen.id }
     }
-    private struct QueuedTurn {
-        let text: String
-        let mode: WorkMode
-    }
+    private var conversations = SavedAgentConversationService()
     private var profilesProvider: () -> [AgentProfile] = { [] }
     private var workspaceProvider: () -> String = { "" }
     private var availabilityProvider: (AgentProfile) -> String? = { _ in nil }
-    private var stateProvider: (String) -> AgentWorldConversationState = { _ in .init() }
-    private var createConversation: (String, AgentProfile) async throws -> String = { _, _ in throw AgentWorldError.unavailable("Connect the agent first.") }
+    private var stateProvider: (String) -> SavedAgentConversationState = { _ in .init() }
     private var loadConversation: (String) async throws -> Void = { _ in }
-    private var creationTasks: [String: Task<String, Error>] = [:]
-    private var activityProvider: (AgentProfile, String) -> AgentWorldConversationState? = { _, _ in nil }
-    private var dispatch: (String, String, UUID, String, WorkMode) async throws -> Void = { _, _, _, _, _ in }
-    private var stopConversation: (String) -> Void = { _ in }
-    private var openConversation: (String) -> Void = { _ in }
-    private var manageProfiles: () -> Void = {}
+    private var activityProvider: (AgentProfile, String) -> SavedAgentConversationState? = { _, _ in nil }
     private var subscriptions = Set<AnyCancellable>()
     private var catalog = ExtensionsResponse.empty
-    private var bindings: [String: String] = [:]
-    /// The current resident conversation can be replaced without converting
-    /// its saved history into an ordinary, unrestricted model-picker chat.
-    private var profileHistory: [String: String] = [:]
     private var defaults: UserDefaults?
     private var window: NSWindow?
     private let pluginPanelWindows = PluginPanelWindowController()
-    private var refreshTask: Task<Void, Never>?
+    private var projectionRefreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
     private var selectionToken = UUID()
     private var activationTask: Task<Void, Never>?
     private var activationToken = UUID()
     private var selectedSessionOverride: String?
-    private var queues: [String: [QueuedTurn]] = [:]
-    private var runners: [String: Task<Void, Never>] = [:]
-    private var runnerTokens: [String: UUID] = [:]
-    private var queueErrors: [String: String] = [:]
     private var windowWorkspace = ""
     private var isVisualFixture = false
     var visibilityChanged: ((Bool) -> Void)?
 
     func configure(
-        extensions: ExtensionsModel,
+        extensions: ExtensionsModel, conversations: SavedAgentConversationService? = nil,
         profiles: @escaping () -> [AgentProfile], workspace: @escaping () -> String,
         availability: @escaping (AgentProfile) -> String?,
-        state: @escaping (String) -> AgentWorldConversationState,
+        state: @escaping (String) -> SavedAgentConversationState,
         create: @escaping (String, AgentProfile) async throws -> String,
         load: @escaping (String) async throws -> Void,
-        activity: @escaping (AgentProfile, String) -> AgentWorldConversationState? = { _, _ in nil },
+        activity: @escaping (AgentProfile, String) -> SavedAgentConversationState? = { _, _ in nil },
         dispatch: @escaping (String, String, UUID, String, WorkMode) async throws -> Void,
         stop: @escaping (String) -> Void, open: @escaping (String) -> Void,
         manage: @escaping () -> Void, defaults: UserDefaults?
     ) {
         profilesProvider = profiles; workspaceProvider = workspace; availabilityProvider = availability
-        stateProvider = state; createConversation = create; loadConversation = load; activityProvider = activity
-        self.dispatch = dispatch; stopConversation = stop; openConversation = open
-        manageProfiles = manage; self.defaults = defaults
-        quartersAppearance = defaults?.string(forKey: "Locus.AgentWorld.quartersAppearance.v1")
-            .flatMap(AgentWorldQuartersAppearance.init(rawValue:)) ?? .wood
-        islandQuartersEnabled = defaults?.object(forKey: "Locus.AgentWorld.islandQuartersEnabled.v1") as? Bool ?? true
-        if let data = defaults?.data(forKey: "Locus.AgentWorld.conversations.v1"),
-           let saved = try? JSONDecoder().decode([String: String].self, from: data) { bindings = saved }
-        if let data = defaults?.data(forKey: "Locus.AgentWorld.profileHistory.v1"),
-           let saved = try? JSONDecoder().decode([String: String].self, from: data) {
-            profileHistory = saved.filter { UUID(uuidString: $0.value) != nil }
+        stateProvider = state; loadConversation = load; activityProvider = activity
+        self.defaults = defaults
+        if let conversations { self.conversations = conversations }
+        else { self.conversations.configure(defaults: defaults, state: state, create: create, dispatch: dispatch) }
+        self.conversations.queueFailed = { [weak self] workspace, profileID, text, message in
+            guard let self, self.selection == profileID.uuidString, self.windowWorkspace == workspace else { return }
+            self.error = message; self.draft = text
         }
-        // Migrate existing current bindings before any replacement can remove
-        // their only native profile reference. Existing history is authoritative.
-        for (key, sessionID) in bindings where profileHistory[sessionID] == nil {
-            if let profileID = UUID(uuidString: String(key.split(separator: "\n").last ?? "")) {
-                profileHistory[sessionID] = profileID.uuidString
-            }
-        }
-        persistConversationBindings()
         subscriptions.removeAll()
+        self.conversations.objectWillChange.sink { [weak self] in self?.refresh() }.store(in: &subscriptions)
+        if let appModel {
+            appModel.objectWillChange.sink { [weak self] in self?.scheduleProjectionRefresh() }.store(in: &subscriptions)
+            appModel.agentCrewChat.objectWillChange.sink { [weak self] in self?.scheduleProjectionRefresh() }.store(in: &subscriptions)
+            appModel.runs.objectWillChange.sink { [weak self] in self?.scheduleProjectionRefresh() }.store(in: &subscriptions)
+        }
         extensions.$extensions.sink { [weak self] value in
             self?.catalog = value
             self?.refresh()
         }.store(in: &subscriptions)
     }
 
-    func boundProfileID(for sessionID: String) -> UUID? {
-        profileHistory[sessionID].flatMap(UUID.init(uuidString:))
-    }
-
-    func hasPendingWork(profileID: UUID) -> Bool {
-        let suffix = "\n" + profileID.uuidString.lowercased()
-        return creationTasks.keys.contains { $0.hasSuffix(suffix) }
-            || runners.keys.contains { $0.hasSuffix(suffix) }
-            || queues.contains { $0.key.hasSuffix(suffix) && !$0.value.isEmpty }
-    }
-
+    func boundProfileID(for sessionID: String) -> UUID? { conversations.boundProfileID(for: sessionID) }
+    func hasPendingWork(profileID: UUID) -> Bool { conversations.hasPendingWork(profileID: profileID) }
     func bindConversation(_ sessionID: String, workspace: String, profileID: UUID) {
-        guard boundProfileID(for: sessionID).map({ $0 == profileID }) ?? true else { return }
-        profileHistory[sessionID] = profileID.uuidString
-        bindings[Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)] = sessionID
-        persistConversationBindings()
-        refresh()
+        conversations.bind(sessionID, workspace: workspace, profileID: profileID)
     }
-
-    private func persistConversationBindings() {
-        // Persist identity before selection: an interrupted save must never
-        // leave a known agent conversation without its profile restrictions.
-        if let data = try? JSONEncoder().encode(profileHistory) { defaults?.set(data, forKey: "Locus.AgentWorld.profileHistory.v1") }
-        if let data = try? JSONEncoder().encode(bindings) { defaults?.set(data, forKey: "Locus.AgentWorld.conversations.v1") }
-    }
-
     static func bindingKey(workspace: String, profileID: String) -> String {
-        SessionSummary.canonicalWorkspacePath(workspace) + "\n" + profileID.lowercased()
+        SavedAgentConversationService.bindingKey(workspace: workspace, profileID: profileID)
     }
 
     static func enabled(_ plugin: ExtensionPlugin, workspace: String) -> Bool {
         let canonical = SessionSummary.canonicalWorkspacePath(workspace)
         guard !plugin.disabledWorkspaces.contains(where: { SessionSummary.canonicalWorkspacePath($0) == canonical }) else { return false }
         return plugin.enabledGlobal || plugin.enabledWorkspaces.contains(where: { SessionSummary.canonicalWorkspacePath($0) == canonical })
+    }
+
+    /// Version 2 projects existing native change notifications into a bounded,
+    /// coalesced display update. The renderer never polls canonical state.
+    func scheduleProjectionRefresh() {
+        guard activeScreen?.screen.version == 2, projectionRefreshTask == nil else { return }
+        projectionRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(75))
+            guard let self, !Task.isCancelled else { return }
+            self.projectionRefreshTask = nil
+            self.refresh()
+        }
     }
 
     func refresh() {
@@ -301,11 +192,11 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
                 Self.enabled($0, workspace: windowWorkspace) && $0.error == nil && $0.root == activeScreen.root
                     && $0.digest == activeScreen.digest && ($0.screens ?? []).contains(activeScreen.screen)
             } ?? false
-            if !stillEnabled || catalog.capabilities.pluginScreens != true {
+            if !stillEnabled || catalog.capabilities.pluginScreens != true
+                || (activeScreen.screen.version == 2 && currentWorkspace != windowWorkspace) {
                 // Revoke access synchronously before WebKit is torn down.
                 self.activeScreen = nil
                 selectionTask?.cancel()
-                for key in Array(queues.keys) where key.hasPrefix(windowWorkspace + "\n") { queues[key] = [] }
                 window?.close()
                 return
             }
@@ -314,12 +205,12 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         if workspace != targetWorkspace { workspace = targetWorkspace }
         let updated = profilesProvider().map { profile -> AgentWorldResident in
             let key = Self.bindingKey(workspace: targetWorkspace, profileID: profile.id.uuidString)
-            let conversation = bindings[key].map(stateProvider) ?? .init()
+            let conversation = conversations.currentSessionID(for: key).map(stateProvider) ?? .init()
             let state = conversation.busy ? conversation : activityProvider(profile, targetWorkspace) ?? conversation
             let issue = availabilityProvider(profile)
             return AgentWorldResident(id: profile.id.uuidString, name: profile.name, role: profile.role.rawValue,
-                                      status: issue != nil || (queueErrors[key] != nil && !state.busy) ? "failed" : state.status,
-                                      detail: issue ?? queueErrors[key] ?? state.detail)
+                                      status: issue != nil || (conversations.queueError(for: key) != nil && !state.busy) ? "failed" : state.status,
+                                      detail: issue ?? conversations.queueError(for: key) ?? state.detail)
         }
         if Set(residents.map(\.id)) != Set(updated.map(\.id)) { residentPlacements = [:] }
         if residents != updated { residents = updated }
@@ -337,7 +228,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
             if blocks != state.blocks { blocks = state.blocks }
             conversationBusy = state.busy
             let key = Self.bindingKey(workspace: targetWorkspace, profileID: selection ?? "")
-            pendingCount = queues[key]?.count ?? 0
+            pendingCount = conversations.pendingCount(for: key)
         } else {
             conversationBusy = false; pendingCount = 0
         }
@@ -364,41 +255,27 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         workspace = windowWorkspace; activeScreen = choice; selection = nil; blocks = []; error = nil
         selectedSessionOverride = nil; conversationPresented = false; quartersPresented = false; sharedChatPresented = false; selectedTransfer = nil
         profilePresented = false; preparingConversation = false; selectionToken = UUID()
-        availableThemes = Self.loadThemeCatalog(for: choice)
-        theme = defaults?.string(forKey: "Locus.AgentWorld.theme.v1." + choice.id).flatMap { saved in
-            availableThemes.contains(where: { $0.id == saved }) ? saved : nil
-        } ?? availableThemes.first?.id ?? "outpost"
         residentPlacements = [:]; activityCenterRequest = 0
-        let savedStyles = defaults?.dictionary(forKey: "Locus.AgentWorld.shipStyles.v1." + choice.id) as? [String: String] ?? [:]
-        shipStyles = Dictionary(savedStyles.compactMap { rawID, style -> (String, String)? in
-            guard let id = UUID(uuidString: rawID)?.uuidString, AgentWorldShipStyle.isSupported(style) else { return nil }
-            return (id, style)
-        }, uniquingKeysWith: { first, _ in first })
-        residentStyle = defaults?.string(forKey: "Locus.AgentWorld.residentStyle.v1." + choice.id).flatMap { Self.isSafeResidentStyle($0) ? $0 : nil } ?? "mixed"
-        sailingArea = defaults?.string(forKey: "Locus.AgentWorld.sailingArea.v1." + choice.id).flatMap { Self.isSafeSailingArea($0) ? $0 : nil } ?? "whole"
-        graphicsError = nil; draft = ""
+        loadWorldPreferences(for: choice)
+        graphicsError = nil; rendererRetryCount = 0; renderEpoch += 1; draft = ""
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "\(choice.screen.title) · \(projectName)"
         window.minSize = NSSize(width: 900, height: 620)
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.appearance = theme == "grand-line" ? NSAppearance(named: .darkAqua) : nil
+        window.appearance = pluginPresentation == nil ? nil : NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: AgentWorldView(model: self))
         self.window = window
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         refresh()
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.refresh()
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
+
     }
 
     func windowWillClose(_ notification: Notification) {
         visibilityChanged?(false); visibilityChanged = nil
-        refreshTask?.cancel(); refreshTask = nil; selectionTask?.cancel(); activationTask?.cancel()
+        projectionRefreshTask?.cancel(); projectionRefreshTask = nil
+        selectionTask?.cancel(); activationTask?.cancel()
         selectionToken = UUID(); activationToken = UUID(); preparingConversation = false; activatingConversation = false
         appModel?.agentWorldOwnsPresentations = false
         newAgentDraft = nil
@@ -407,8 +284,12 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     }
     func windowDidBecomeKey(_ notification: Notification) { appModel?.agentWorldOwnsPresentations = true }
     func windowDidMiniaturize(_ notification: Notification) { visibilityChanged?(false) }
-    func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true) }
-    func windowDidChangeOcclusionState(_ notification: Notification) { visibilityChanged?(window?.occlusionState.contains(.visible) == true) }
+    func windowDidDeminiaturize(_ notification: Notification) { visibilityChanged?(true); scheduleProjectionRefresh() }
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        let visible = window?.occlusionState.contains(.visible) == true
+        visibilityChanged?(visible)
+        if visible { scheduleProjectionRefresh() }
+    }
 
     /// Focus the map camera and close any open conversation panel.
     func focusResident(_ agentID: String) {
@@ -488,28 +369,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     /// A cancelled selection does not cancel session creation. All selections
     /// for this resident await one operation and persist its result exactly once.
     func conversation(workspace: String, profile: AgentProfile) async throws -> String {
-        let key = Self.bindingKey(workspace: workspace, profileID: profile.id.uuidString)
-        if let id = bindings[key] {
-            guard boundProfileID(for: id).map({ $0 == profile.id }) ?? true else {
-                throw AgentWorldError.unavailable("This stored chat belongs to another agent. Start a new chat for \(profile.name).")
-            }
-            return id
-        }
-        if let task = creationTasks[key] { return try await task.value }
-        let task = Task { @MainActor [weak self] () throws -> String in
-            guard let self else { throw CancellationError() }
-            let id = try await createConversation(workspace, profile)
-            if let existing = boundProfileID(for: id), existing != profile.id {
-                throw AgentWorldError.unavailable("This saved conversation belongs to another agent profile.")
-            }
-            profileHistory[id] = profile.id.uuidString
-            bindings[key] = id
-            persistConversationBindings()
-            return id
-        }
-        creationTasks[key] = task
-        defer { creationTasks[key] = nil }
-        return try await task.value
+        try await conversations.conversation(workspace: workspace, profile: profile)
     }
 
     func dismissConversation() {
@@ -527,7 +387,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard canInteract, let profile = profilesProvider().first(where: { $0.id.uuidString == agentID }) else { return false }
         let key = Self.bindingKey(workspace: windowWorkspace, profileID: profile.id.uuidString)
         return !hasPendingWork(profileID: profile.id)
-            && bindings[key].map({ stateProvider($0).busy }) != true
+            && conversations.currentSessionID(for: key).map({ stateProvider($0).busy }) != true
             && (selection != agentID || selectedSessionID.map({ stateProvider($0).busy }) != true)
     }
 
@@ -543,18 +403,18 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard canInteract, quartersPresented, !isVisualFixture, let appModel,
               canStartConversation(for: profileID),
               let profile = profilesProvider().first(where: { $0.id.uuidString == profileID }) else {
-            throw AgentWorldError.unavailable("Choose an available agent before opening this card.")
+            throw SavedAgentConversationError.unavailable("Choose an available agent before opening this card.")
         }
         let project = workspace
         let store = BoardStore.shared(workspacePath: project)
         guard let current = store.cards.first(where: { $0.id == card.id }) else {
-            throw AgentWorldError.unavailable("This card is no longer on the project’s board.")
+            throw SavedAgentConversationError.unavailable("This card is no longer on the project’s board.")
         }
         guard !appModel.chatNavigationDisabled else {
-            throw AgentWorldError.unavailable("Finish the current chat change before opening this card.")
+            throw SavedAgentConversationError.unavailable("Finish the current chat change before opening this card.")
         }
         let session = try await appModel.createSavedAgentConversation(profile, workspace: project)
-        try await appModel.activateAgentWorldConversation(session.id, workspace: project,
+        try await appModel.activateSavedAgentConversation(session.id, workspace: project,
             expectedProfileID: profile.id, stillCurrent: { [weak self] in
                 self?.workspace == project && self?.quartersPresented == true && self?.canInteract == true
             })
@@ -607,14 +467,12 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         guard selection == profileID.uuidString, self.workspace == SessionSummary.canonicalWorkspacePath(workspace),
               sessionID == nil || selectedSessionID == sessionID else { return }
         let missing: Bool
-        if case AgentWorldError.conversationUnavailable = failure { missing = true }
+        if case SavedAgentConversationError.conversationUnavailable = failure { missing = true }
         else { let value = failure as NSError; missing = value.domain == "Locus.Backend" && value.code == 404 }
         if missing, let sessionID {
-            let key = Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)
-            if bindings[key] == sessionID { bindings[key] = nil }
+            conversations.clearMissingBinding(sessionID: sessionID, workspace: workspace, profileID: profileID)
             if selectedSessionOverride == sessionID { selectedSessionOverride = nil }
-            persistConversationBindings()
-            error = "This chat is no longer available. Start a new chat for \(selectedProfile?.name ?? "this resident"), or choose an existing chat from their \(theme == "grand-line" ? "Vivre card" : "agent details")."
+            error = "This chat is no longer available. Start a new chat for \(selectedProfile?.name ?? "this resident"), or choose an existing chat from their agent details."
         } else { error = failure.localizedDescription }
         refresh()
     }
@@ -623,53 +481,17 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     /// original profile when opened from normal Locus history.
     @discardableResult
     func resetCurrentConversation(workspace: String, profileID: UUID) -> Bool {
-        let key = Self.bindingKey(workspace: workspace, profileID: profileID.uuidString)
-        guard creationTasks[key] == nil, runners[key] == nil,
-              bindings[key].map({ stateProvider($0).busy }) != true else { return false }
-        bindings[key] = nil
-        persistConversationBindings()
-        return true
+        conversations.resetCurrentConversation(workspace: workspace, profileID: profileID)
     }
 
     func submit(mode: WorkMode) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canInteract, !text.isEmpty, let profile = selectedProfile, let sessionID = selectedSessionID else { return }
-        guard availabilityProvider(profile) == nil else {
-            error = "Reconnect this agent's exact account and model before sending."; return
-        }
-        let selectedWorkspace = windowWorkspace
-        let key = Self.bindingKey(workspace: selectedWorkspace, profileID: profile.id.uuidString)
-        guard (queues[key]?.count ?? 0) < 20 else { error = "This resident already has 20 queued messages."; return }
-        draft = ""; error = nil; queueErrors[key] = nil
-        queues[key, default: []].append(QueuedTurn(text: text, mode: mode))
-        refresh()
-        guard runners[key] == nil else { return }
-        let token = UUID()
-        runnerTokens[key] = token
-        runners[key] = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if runnerTokens[key] == token { runners[key] = nil; runnerTokens[key] = nil }
-                refresh()
-            }
-            while !Task.isCancelled, let next = queues[key]?.first {
-                while stateProvider(sessionID).busy && !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(400))
-                }
-                guard !Task.isCancelled, runnerTokens[key] == token, queues[key]?.isEmpty == false else { return }
-                do {
-                    try await dispatch(sessionID, selectedWorkspace, profile.id, next.text, next.mode)
-                    if runnerTokens[key] == token, queues[key]?.isEmpty == false { queues[key]?.removeFirst() }
-                } catch {
-                    guard runnerTokens[key] == token, !Task.isCancelled else { return }
-                    queueErrors[key] = error.localizedDescription
-                    if selection == profile.id.uuidString, windowWorkspace == selectedWorkspace { self.error = error.localizedDescription; draft = next.text }
-                    queues[key] = []
-                    return
-                }
-                refresh()
-            }
-        }
+        guard availabilityProvider(profile) == nil else { error = "Reconnect this agent's exact account and model before sending."; return }
+        do {
+            try conversations.enqueue(text: text, mode: mode, sessionID: sessionID, workspace: windowWorkspace, profileID: profile.id)
+            draft = ""; error = nil; refresh()
+        } catch { self.error = error.localizedDescription }
     }
 
     /// The web world can request the editor, but profile data and saving stay
@@ -700,7 +522,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
             guard let self else { return }
             defer { if self.activationToken == token { self.activatingConversation = false } }
             do {
-                try await appModel.activateAgentWorldConversation(sessionID, workspace: expectedWorkspace, expectedProfileID: expectedProfileID, stillCurrent: { [weak self] in
+                try await appModel.activateSavedAgentConversation(sessionID, workspace: expectedWorkspace, expectedProfileID: expectedProfileID, stillCurrent: { [weak self] in
                     guard let self else { return false }
                     return self.activationToken == token && self.selection == expectedSelection
                         && self.workspace == expectedWorkspace && self.conversationPresented && !self.sharedChatPresented && !self.profilePresented
@@ -738,7 +560,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 
     func openAgentControls(_ agentID: String? = nil) {
         guard canInteract else { return }
-        quartersIsland = nil
+        selectedPresentationID = nil
         if let id = agentID ?? selection { openAgentProfile(id) }
         quartersPresented = true
     }
@@ -776,55 +598,14 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
               appModel?.savedAgentProfileID(for: sessionID) != profile.id else { return nil }
         return "Shared task · \(profile.name)"
     }
-    nonisolated static func isSafeThemeID(_ value: String) -> Bool {
-        value.range(of: "^[a-z0-9][a-z0-9-]{0,63}$", options: .regularExpression) != nil
-    }
-    nonisolated static func isSafeResidentStyle(_ value: String) -> Bool {
-        value == "mixed" || value == "pandas" || value == "explorers"
-    }
-    nonisolated static func isSafeSailingArea(_ value: String) -> Bool {
-        ["whole", "left", "right"].contains(value)
-    }
-    func setSailingArea(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeSailingArea(value), sailingArea != value else { return }
-        sailingArea = value
-        residentPlacements = [:]
-        defaults?.set(value, forKey: "Locus.AgentWorld.sailingArea.v1." + activeScreen.id)
-    }
-    func setResidentStyle(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeResidentStyle(value) else { return }
-        residentStyle = value
-        defaults?.set(value, forKey: "Locus.AgentWorld.residentStyle.v1." + activeScreen.id)
-    }
-    func setTheme(_ value: String) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"), Self.isSafeThemeID(value) else { return }
-        guard availableThemes.contains(where: { $0.id == value }) else { return }
-        quartersIsland = nil
-        theme = value
-        residentPlacements = [:]
-        window?.appearance = value == "grand-line" ? NSAppearance(named: .darkAqua) : nil
-        defaults?.set(value, forKey: "Locus.AgentWorld.theme.v1." + activeScreen.id)
-    }
-
     func requestActivityCenter() {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
         appModel?.activity.openActivityCenter()
         activityCenterRequest += 1
     }
 
-    func setShipStyle(agentID: String, style: String?) {
-        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences"),
-              let id = UUID(uuidString: agentID)?.uuidString,
-              profilesProvider().contains(where: { $0.id.uuidString == id }),
-              style.map(AgentWorldShipStyle.isSupported) ?? true else { return }
-        guard shipStyles[id] != style else { return }
-        shipStyles[id] = style
-        residentPlacements[id] = nil
-        defaults?.set(shipStyles, forKey: "Locus.AgentWorld.shipStyles.v1." + activeScreen.id)
-    }
-
     func receiveResidentPlacements(_ placements: [AgentWorldResidentPlacement]) {
-        guard theme == "grand-line", activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
+        guard activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
         let known = Set(residents.map(\.id))
         guard placements.count <= 500, placements.allSatisfy({ known.contains($0.agentID) }),
               Set(placements.map(\.agentID)).count == placements.count else { return }
@@ -832,40 +613,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         if residentPlacements != updated { residentPlacements = updated }
     }
 
-    static func loadThemeCatalog(for screen: AvailableScreen) -> [AgentWorldThemeOption] {
-        struct Catalog: Decodable { let version: Int; let themes: [AgentWorldThemeOption] }
-        let directory = (screen.screen.entrypoint as NSString).deletingLastPathComponent
-        let path = directory.isEmpty ? "themes/catalog.json" : directory + "/themes/catalog.json"
-        guard let file = try? PluginScreenFiles.file(root: URL(fileURLWithPath: screen.root), path: path),
-              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 32_768,
-              let data = try? Data(contentsOf: file),
-              let catalog = try? JSONDecoder().decode(Catalog.self, from: data),
-              catalog.version == 1, !catalog.themes.isEmpty, catalog.themes.count <= 50,
-              Set(catalog.themes.map(\.id)).count == catalog.themes.count,
-              catalog.themes.allSatisfy({ option in
-                  isSafeThemeID(option.id) && !option.name.isEmpty && option.name.count <= 100
-                      && !option.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-              }) else { return AgentWorldThemeOption.builtIn }
-        return catalog.themes
-    }
 
-    var snapshot: [String: Any] {
-        guard activeScreen?.screen.capabilities.contains("agents.read") == true else {
-            return ["version": 1, "type": "snapshot", "agents": [], "theme": theme, "residentStyle": residentStyle, "projectName": "", "canCreateAgent": false, "islandQuartersEnabled": islandQuartersEnabled]
-        }
-        var value: [String: Any] = ["version": 1, "type": "snapshot", "theme": theme, "residentStyle": residentStyle, "sailingArea": sailingArea, "projectName": projectName, "canCreateAgent": canCreateAgent,
-                                    "islandQuartersEnabled": islandQuartersEnabled, "nativeChrome": true, "activityCenterRequest": activityCenterRequest, "focusRequest": focusRequest,
-                                    "shipStyles": shipStyles.filter { id, _ in residents.contains { $0.id == id } },
-                                  "agents": residents.map { resident -> [String: Any] in
-            // Route failures can contain provider names; the world needs only
-            // the activity label. Detailed errors stay in the native panel.
-            ["id": resident.id, "name": resident.name, "role": resident.role, "status": resident.status]
-        }]
-        if let selection { value["selectedAgentID"] = selection }
-        value["attentionRequests"] = attentionRequests.map(\.snapshot)
-        value["transfers"] = transfers.map(\.snapshot)
-        return value
-    }
 }
 
 extension AgentWorldModel {
@@ -875,6 +623,7 @@ extension AgentWorldModel {
         guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1",
               ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_AGENT_WORLD_ROOT"] == root else { return }
         subscriptions.removeAll()
+        self.conversations.objectWillChange.sink { [weak self] in self?.refresh() }.store(in: &subscriptions)
         isVisualFixture = true
         let profiles = [
             AgentProfile(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, name: "Atlas", model: "Fixture model", role: .researcher),
@@ -887,7 +636,7 @@ extension AgentWorldModel {
         appModel?.agentProfiles = profiles
         profilesProvider = { profiles }
         availabilityProvider = { _ in nil }
-        createConversation = { _, profile in "fixture-" + profile.id.uuidString }
+        let fixtureCreate: (String, AgentProfile) async throws -> String = { _, profile in "fixture-" + profile.id.uuidString }
         loadConversation = { [weak self] id in
             guard let self, let app = self.appModel, let profileID = self.boundProfileID(for: id),
                   let profile = profiles.first(where: { $0.id == profileID }) else { return }
@@ -899,8 +648,8 @@ extension AgentWorldModel {
             app.currentSessionID = id
             app.blocks = [ChatBlock(kind: .assistant, text: "Welcome aboard. Your browser, task board, and calendar are beside this conversation.")]
         }
-        stateProvider = { _ in .init(blocks: [ChatBlock(kind: .assistant, text: "Welcome to the outpost. Choose Chat to talk, or Assign work to begin a task.")]) }
-        dispatch = { _, _, _, _, _ in throw AgentWorldError.unavailable("This is a visual test fixture; model calls are disabled.") }
+        stateProvider = { _ in .init(blocks: [ChatBlock(kind: .assistant, text: "Choose Chat to talk, or Assign work to begin a task.")]) }
+        let fixtureDispatch: (String, String, UUID, String, WorkMode) async throws -> Void = { _, _, _, _, _ in throw SavedAgentConversationError.unavailable("This is a visual test fixture; model calls are disabled.") }
         activityProvider = { profile, _ in
             switch profile.name {
             case "Nova": .init(status: "working", detail: "Fixture activity", busy: true)
@@ -908,9 +657,18 @@ extension AgentWorldModel {
             default: nil
             }
         }
-        stopConversation = { _ in }; openConversation = { _ in }; defaults = nil
+        conversations.configure(defaults: nil, state: stateProvider, create: fixtureCreate, dispatch: fixtureDispatch)
+        defaults = nil
         var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
-        let screen = ExtensionPluginScreen(id: "agent-world", title: "Agent World", entrypoint: "ui/index.html", version: 1,
+        let descriptorURL = URL(fileURLWithPath: root).appendingPathComponent(".codex-plugin/plugin.json")
+        let descriptor = (try? Data(contentsOf: descriptorURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let manifestScreens = (descriptor?["locus"] as? [String: Any])?["screens"] as? [[String: Any]]
+        let declaredScreen = manifestScreens?.first.flatMap { row -> ExtensionPluginScreen? in
+            guard let data = try? JSONSerialization.data(withJSONObject: row),
+                  let value = try? JSONDecoder().decode(ExtensionPluginScreen.self, from: data), value.isSupported else { return nil }
+            return value
+        }
+        let screen = declaredScreen ?? ExtensionPluginScreen(id: "agent-world", title: "Agent Worlds", entrypoint: "ui/index.html", version: 2,
                                            capabilities: ["agents.read", "agents.interact", "world.preferences"])
         var plugin = ExtensionPlugin(id: "agent-world", name: "agent-world", displayName: "Agent World", description: nil,
                                      version: "1.0.0", author: nil, digest: "fixture", enabledGlobal: true,
@@ -920,5 +678,112 @@ extension AgentWorldModel {
         catalog = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
                                      mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
         open(pluginID: plugin.id, screenID: screen.id)
+    }
+}
+
+
+extension AgentWorldModel {
+    /// Disposable visual state only. The migration never reads or writes native
+    /// conversation/history keys. Legacy visual keys remain available for rollback.
+    static func worldPreferenceStorageKey(screenID: String, workspace: String) -> String {
+        let canonical = SessionSummary.canonicalWorkspacePath(workspace)
+        let digest = SHA256.hash(data: Data(canonical.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "Locus.AgentWorlds.preferences.v2." + screenID + "." + digest
+    }
+
+    private func loadWorldPreferences(for screen: AvailableScreen) {
+        let key = Self.worldPreferenceStorageKey(screenID: screen.id, workspace: workspace)
+        if let data = defaults?.data(forKey: key),
+           let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           AgentWorldBridgeContract.validPreferences(saved) {
+            worldPreferences = saved
+            return
+        }
+        if defaults?.object(forKey: key) != nil {
+            // A pre-existing malformed namespace is not a first-run migration.
+            // Retain its bytes for recovery and await an explicit visual edit/reset.
+            worldPreferences = [:]
+            return
+        }
+        worldPreferences = LegacyAgentWorldPreferenceMigration.values(
+            defaults: defaults, screenID: screen.id, presentation: pluginPresentation,
+            authorizedAgentIDs: Set(profilesProvider().prefix(500).map { $0.id.uuidString }))
+        if let data = try? JSONSerialization.data(withJSONObject: worldPreferences, options: [.sortedKeys]) {
+            defaults?.set(data, forKey: key)
+        }
+    }
+
+    func updateWorldPreference(key: String, value: Any) throws {
+        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences") else {
+            throw AgentWorldBridgeContract.Failure(code: "denied", message: "World preferences are not authorized.")
+        }
+        var updated = worldPreferences
+        updated[key] = value
+        guard AgentWorldBridgeContract.validPreferences(updated),
+              let data = try? JSONSerialization.data(withJSONObject: updated, options: [.sortedKeys]) else {
+            throw AgentWorldBridgeContract.Failure(code: "quota", message: "World preferences exceed their storage limit.")
+        }
+        defaults?.set(data, forKey: Self.worldPreferenceStorageKey(screenID: activeScreen.id, workspace: workspace))
+        worldPreferences = updated
+        if key == pluginPresentation?.contextEnabledPreferenceKey, value as? Bool == false { selectedPresentationID = nil }
+    }
+
+    func resetWorldPreferences() throws {
+        guard let activeScreen, activeScreen.screen.capabilities.contains("world.preferences") else {
+            throw AgentWorldBridgeContract.Failure(code: "denied", message: "World preferences are not authorized.")
+        }
+        defaults?.set(Data("{}".utf8), forKey: Self.worldPreferenceStorageKey(screenID: activeScreen.id, workspace: workspace))
+        worldPreferences = [:]; selectedPresentationID = nil
+    }
+
+    func openWorldNativeSurface(_ surface: String, agentID: String?) {
+        if surface == "activity" { requestActivityCenter(); return }
+        openAgentControls(agentID)
+        requestedNativeSurface = surface
+        nativeNavigationRequest += 1
+    }
+
+    @discardableResult
+    func openPluginPresentation(_ id: String) -> Bool {
+        guard canInteract, let presentation = pluginPresentation,
+              presentation.presentations[id] != nil else { return false }
+        guard id == presentation.defaultPresentationID || worldPreferences[presentation.contextEnabledPreferenceKey] as? Bool != false else { return false }
+        selectedPresentationID = id == presentation.defaultPresentationID ? nil : id
+        quartersPresented = true
+        return true
+    }
+
+    func openWorldPresentation(_ presentationID: String) throws {
+        guard openPluginPresentation(presentationID) else {
+            throw AgentWorldBridgeContract.Failure(code: "not_found", message: "The requested native presentation is not available.")
+        }
+    }
+
+    func worldDisplayState(capabilities: Set<String>) -> [String: Any] {
+        func displayText(_ value: String, maximum: Int = 256) -> String {
+            String(String.UnicodeScalarView(value.unicodeScalars.filter { $0.value > 31 && !(127...159).contains($0.value) }.prefix(maximum)))
+        }
+        let knownResidents = capabilities.contains("agents.read") ? Array(residents.prefix(500)) : []
+        let ids = Set(knownResidents.map(\.id))
+        let statuses = ["idle", "working", "needs_attention", "completed", "failed", "queued"]
+        let agents: [[String: Any]] = knownResidents.map {
+            ["id": $0.id, "name": displayText($0.name), "role": displayText($0.role), "status": statuses.contains($0.status) ? $0.status : "idle"]
+        }
+        let attention = attentionRequests.filter { ids.contains($0.agentID) }.prefix(256).map { request -> [String: Any] in
+            ["id": request.id, "agentID": request.agentID, "kind": request.kind == "input" ? "input" : "approval", "title": displayText(request.title)]
+        }
+        let deliveries = transfers.filter {
+            ids.contains($0.fromAgentID) && ids.contains($0.toAgentID) && $0.fromAgentID != $0.toAgentID
+                && $0.occurredAt.timeIntervalSince1970.isFinite && (0...253402300799).contains($0.occurredAt.timeIntervalSince1970)
+        }.suffix(128).map { transfer -> [String: Any] in
+            ["id": transfer.id, "fromAgentID": transfer.fromAgentID, "toAgentID": transfer.toAgentID,
+             "kind": transfer.kind == "artifact" ? "artifact" : "handoff", "title": displayText(transfer.title), "occurredAt": transfer.occurredAt.timeIntervalSince1970]
+        }
+        var state: [String: Any] = ["agents": agents, "projectName": capabilities.contains("agents.read") ? displayText(projectName) : "",
+                                   "preferences": worldPreferences, "attentionRequests": attention, "transfers": deliveries,
+                                   "canCreateAgent": capabilities.contains("agents.interact") && canCreateAgent,
+                                   "nativeChrome": true, "focusRequest": max(0, focusRequest), "activityCenterRequest": max(0, activityCenterRequest)]
+        if let selection, ids.contains(selection) { state["selectedAgentID"] = selection }
+        return state
     }
 }
