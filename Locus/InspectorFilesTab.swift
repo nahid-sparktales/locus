@@ -63,7 +63,7 @@ private struct WorkspaceBrowserFilesContent: View {
             HStack(spacing: 8) {
                 Text(countLabel)
                     .font(.locus(size: 8))
-                    .foregroundStyle(viewColors.muted)
+                    .foregroundStyle(viewColors.textSecondary)
                     .accessibilityIdentifier("files.count")
                 Spacer()
                 Menu {
