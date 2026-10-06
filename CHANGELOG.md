@@ -4,6 +4,13 @@
 
 ### Added
 
+- Agent Worlds is now an optional, independently built plugin from
+  [agent-worlds](https://github.com/nahid-sparktales/agent-worlds). Local Line keeps
+  its map, ships and native workspaces through the version-2 host bridge. Locus
+  retains profiles, chats, permissions and queued work when the world closes or
+  fails. The old bundled renderer and Outpost are removed; the verified recovery
+  archive and scoped preference migration preserve rollback. Legacy world plugins
+  require the reviewed 0.2.x artifact or their matching older host.
 - Standard light and dark appearances use neutral white, gray, and charcoal
   surfaces with clearer text and boundaries, replacing the earlier cream/olive
   base. Saved accents, logos, semantic colours, and optional World/deck themes

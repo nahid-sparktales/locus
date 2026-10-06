@@ -1,6 +1,6 @@
 # Agent Worlds integration
 
-Agent Worlds is an independently built Locus plugin. Its first installed world is **Local Line**. The renderer, World SDK, developer mock host, artwork/provenance and release pipeline live in the separate `agent-worlds` repository. Locus no longer contains `AgentWorldWeb`, the bundled Agent World plugin, Outpost/Local Line models, native quarters backdrops or the asset-generation pipeline. No plugin is silently installed or downloaded from a sibling checkout.
+Agent Worlds is an independently built Locus plugin. Its first installed world is **Local Line**. The renderer, World SDK, developer mock host, artwork/provenance and release pipeline live in the public [agent-worlds repository](https://github.com/nahid-sparktales/agent-worlds). Locus no longer contains `AgentWorldWeb`, the bundled Agent World plugin, Outpost/Local Line models, native quarters backdrops or the asset-generation pipeline. No plugin is silently installed or downloaded from a sibling checkout.
 
 Locus remains the authority for saved agents, chats, tools, tasks, activity, permissions and persistence. The world receives a bounded read-only projection and submits validated native intentions. Agent selection opens the existing native chat/workspace; Captain's Quarters retains the native composer and browser, board, calendar and other tool panels. Plugin presentation metadata provides decorative labels, style tokens and confined package images. It cannot provide native code or add permissions. The ordinary shared agent portrait gallery remains a Locus profile feature.
 
@@ -39,4 +39,4 @@ The installer rehearsal uses isolated temporary state. Supply `--previous-plugin
 
 See [artifact acceptance](agent-worlds-artifact-acceptance.md), [browser comparison](agent-worlds-browser-verification.md), [native visual verification](agent-worlds-native-visual-verification.md), and [protocol fixtures](../ProtocolFixtures/agent-worlds/wire-v2.json) for evidence and compatibility details. [The extraction audit](agent-worlds-extraction-audit.md) records the original boundary; [recovery instructions](agent-worlds-recovery.md) identify the verified external Outpost/source archive. Historical UX/art-generation documents describe the preserved baseline, not current runtime/build inputs.
 
-The candidate remains unpublished. Its independent `NOTICE` records unverified derivative/reference-art redistribution rights; extraction does not invent a blanket asset license.
+The source repository is public. The packaged candidate has not been published as a versioned release. Its independent `NOTICE` records unverified derivative/reference-art redistribution rights; extraction does not invent a blanket asset license.

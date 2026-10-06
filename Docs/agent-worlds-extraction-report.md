@@ -1,6 +1,6 @@
 # Agent Worlds extraction report
 
-Status: **implemented, committed and tested locally**. The extraction and thin-host cutover passed final acceptance, including the complete native regression target. Publication is blocked by unresolved artwork redistribution rights, separately from local implementation acceptance.
+Status: **implemented, committed and tested locally**. The extraction and thin-host cutover passed final acceptance, including the complete native regression target. Source publication is recorded in the follow-up below. Artwork redistribution rights remain unverified, separately from implementation acceptance.
 
 ## Repositories and checkpoints
 
@@ -83,4 +83,13 @@ The compact [final native result](agent-worlds-verification/native-final-result.
 
 **NOT RUN:** live provider execution, quantitative CPU/GPU/frame/memory profiling, OS reduced-motion emulation, signed distribution, remote CI. Deterministic reduced-motion behavior is tested; a guarded isolated exact-PID WebContent process-kill and fresh-session recovery check passed while native work was pending. The native aggregate covers the complete `LocusTests` target; the separate `LocusUITests` target and unrelated Rust/wallet/Flutter suites were not run. Actual native GUI flows were inspected through isolated app fixtures. Native fixtures avoid user accounts and task submission. Browser screenshots are reviewed interaction evidence, not pixel-golden comparisons.
 
-**Blocked for publication:** derivative/reference artwork rights recorded in the independent NOTICE. No remote repository, push, release tag, public artifact, marketplace URL or paid asset generation was created. Once rights and publication are authorized, publish the exact reviewed source/artifact/hash and configure a pinned release source retaining the installation identity.
+**Unresolved rights and artifact publication:** derivative/reference artwork rights are recorded in the independent NOTICE. At the original local acceptance checkpoint, no remote repository, push, release tag, public artifact, marketplace URL or paid asset generation had been created. The subsequent public source pushes below do not resolve artwork rights. A packaged release still needs a reviewed version/hash and a pinned release source retaining installation identity.
+
+
+## Public source follow-up
+
+After the local acceptance checkpoint above, the user explicitly authorized public source publication. [Agent Worlds](https://github.com/nahid-sparktales/agent-worlds) and [Locus Runtime](https://github.com/nahid-sparktales/locus-runtime) are now separate public repositories. Runtime source is retained at `/Users/nahid/Documents/locus-runtime`, outside the managed worktree parent. The Locus integration branch is pushed for review; publication does not merge it into Locus main.
+
+These are source pushes, not a GitHub artifact release or registry publication. Existing artwork notices, pinned artifact hashes, local test evidence and unverified platform gates remain unchanged. Public source availability does not establish artwork rights. Subsequent remote CI results and corrections are tracked by the repositories' Actions runs and integration pull requests.
+
+Remote source CI passed: [Agent Worlds](https://github.com/nahid-sparktales/agent-worlds/actions/runs/37408915188) ran all 222 tests and reproduced the exact ZIP hash on Linux; [Locus Runtime](https://github.com/nahid-sparktales/locus-runtime/actions/runs/37408894967) passed four Ubuntu/macOS × Python 3.10/3.14 jobs, 90 tests each.
