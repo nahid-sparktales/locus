@@ -8,6 +8,50 @@ final class PluginPanelTests: XCTestCase {
         id: "workflows", title: "Workflows", entrypoint: "ui/index.html", version: 1,
         capabilities: ["plugin.settings", "plugin.tools", "chat.compose"], tools: ["workflow_decide"])
 
+    func testToolRequestBindsContextOutsidePluginArguments() throws {
+        let target = PluginPanelWindowController.Target(pluginID: "catalog/fixture", pluginName: "Fixture",
+                                                        digest: "reviewed-digest", root: "/plugin", panel: panel)
+        let body = try PluginPanelBridge.toolRequest(target: target, workspace: "/project/../project",
+                                                    tool: "status", arguments: ["workspace": "/untrusted"])
+        XCTAssertEqual(body["workspace"] as? String, SessionSummary.canonicalWorkspacePath("/project"))
+        XCTAssertEqual(body["panel_id"] as? String, panel.id)
+        XCTAssertEqual(body["digest"] as? String, "reviewed-digest")
+        XCTAssertEqual((body["arguments"] as? [String: String])?["workspace"], "/untrusted")
+        let unreviewed = PluginPanelWindowController.Target(pluginID: target.pluginID, pluginName: "Fixture",
+                                                            digest: nil, root: target.root, panel: panel)
+        XCTAssertThrowsError(try PluginPanelBridge.toolRequest(target: unreviewed, workspace: "/project",
+                                                              tool: "status", arguments: [:]))
+    }
+
+    func testRevocationStopsQueuedAndRunningPanelRequests() async throws {
+        let target = PluginPanelWindowController.Target(pluginID: "catalog/fixture", pluginName: "Fixture",
+                                                        digest: "reviewed-digest", root: "/plugin", panel: panel)
+        let bridge = PluginPanelBridge(settings: { [:] }, saveSettings: { _, _ in [:] },
+                                       callTool: { _, _ in [:] }, compose: { _ in })
+        let queued = PluginPanelHost.Coordinator(target: target, project: "Project", workspace: "/project", bridge: bridge)
+        var ran = false
+        queued.answer("queued") { ran = true; return [:] }
+        queued.revoke()
+        await Task.yield()
+        XCTAssertFalse(ran)
+
+        let running = PluginPanelHost.Coordinator(target: target, project: "Project", workspace: "/project", bridge: bridge)
+        let started = expectation(description: "request started")
+        let cancelled = expectation(description: "request cancelled")
+        running.answer("running") {
+            started.fulfill()
+            do { try await Task.sleep(for: .seconds(30)) }
+            catch { cancelled.fulfill(); throw error }
+            return [:]
+        }
+        await fulfillment(of: [started], timeout: 2)
+        running.revoke()
+        await fulfillment(of: [cancelled], timeout: 2)
+        running.answer("after-revocation") { ran = true; return [:] }
+        await Task.yield()
+        XCTAssertFalse(ran)
+    }
+
     func testPanelsAreSupportedOnlyWithKnownCapabilitiesAndLocalHTML() {
         XCTAssertTrue(panel.isSupported)
         let variants = [

@@ -1,15 +1,19 @@
 """Extension marketplace, plugin, skill, and MCP routes."""
 
+import asyncio
+import json
+import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from pathlib import Path
 from typing import Annotated, Any, TypeVar
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
-from ..extensions import ExtensionError
+from ..extensions import ExtensionError, parse_plugin
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -560,31 +564,120 @@ def set_extension_plugin_settings(
 
 def call_extension_plugin_panel_tool(
     service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+    *, should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Let a plugin's own window call its own MCP tools, and nothing else."""
     plugin_id, tool = str(body.get("plugin_id") or ""), str(body.get("tool") or "")
     arguments = _mcp_arguments(body)
+    if len(json.dumps(arguments, ensure_ascii=False).encode("utf-8")) > 256 * 1024:
+        raise HTTPException(413, "panel tool arguments exceed the 256 KiB limit")
+    context_fields = {"workspace", "panel_id", "digest"}
+    supplied_context = context_fields.intersection(body)
+    if supplied_context and supplied_context != context_fields:
+        raise HTTPException(422, "workspace, panel_id and digest must be supplied together")
+    captured = bool(supplied_context)
+    if captured and any(not isinstance(body[key], str) or not body[key] for key in context_fields):
+        raise HTTPException(422, "panel context values must be nonempty strings")
+    if captured and (len(body["workspace"]) > 4096 or not Path(body["workspace"]).is_absolute()
+                     or "\x00" in body["workspace"] or len(body["panel_id"]) > 80 or len(body["digest"]) > 128):
+        raise HTTPException(422, "panel context is invalid")
     manager = service.core.extensions
+    workspace = manager._workspace(body["workspace"] if captured else service.core.cwd)
     try:
         record = manager._plugin(plugin_id)
-        panels = [item for item in manager._plugin_view(record).get("panels") or []
+        panels = [item for item in parse_plugin(Path(record["root"]))["panels"]
                   if "plugin.tools" in item["capabilities"]]
     except ExtensionError as exc:
         raise _extension_failure(exc) from exc
     if not panels:
         raise HTTPException(403, "this plugin has no window that may call its tools")
+    digest, root = record.get("digest"), record.get("root")
+    panel = None
+    if captured:
+        if body["digest"] != digest:
+            raise HTTPException(409, "the plugin changed; reopen its window")
+        panel = next((item for item in panels if item["id"] == body["panel_id"]), None)
+        if panel is None:
+            raise HTTPException(403, "this window may not call plugin tools")
+        # Declared tools are hidden from agents, not an exhaustive allowlist:
+        # panels may also use public tools owned by the same plugin.
+        hidden_tools = {name for item in panels for name in item["tools"]}
+        if tool in hidden_tools and tool not in panel["tools"]:
+            raise HTTPException(403, "this tool belongs to another plugin window")
+
+    def revoked() -> bool:
+        if should_stop is not None and should_stop():
+            return True
+        try:
+            current = manager._plugin(plugin_id)
+            return current.get("digest") != digest or current.get("root") != root \
+                or not manager._active(current, workspace)
+        except ExtensionError:
+            return True
+
+    if revoked():
+        raise HTTPException(409, "the plugin is not enabled for this project")
     servers = [
-        server for server in manager.mcp_servers(service.core.cwd)
+        server for server in manager.mcp_servers(workspace)
         if server.get("origin") == "plugin" and server.get("plugin_id") == record.get("id")
         and server.get("active", True) and server.get("enabled", True)
     ]
     if not servers:
         raise HTTPException(409, "the plugin is not enabled for this project")
+    metadata = {"com.locus/panel": {
+        "version": 1, "workspace": workspace, "pluginId": plugin_id,
+        "panelId": panel["id"], "digest": digest,
+    }} if panel is not None else None
     for server in servers:
-        content = service.core.mcp.call_tool(str(server["id"]), tool, arguments)
+        server_id = str(server["id"])
+
+        def resolve_server(identifier: str = server_id) -> dict[str, Any] | None:
+            if revoked():
+                return None
+            return next((item for item in manager.mcp_servers(workspace)
+                         if item.get("id") == identifier and item.get("plugin_id") == plugin_id
+                         and item.get("active", True) and item.get("enabled", True)), None)
+
+        content = service.core.mcp.call_tool(
+            server_id, tool, arguments, should_stop=revoked,
+            request_meta=metadata, server_resolver=resolve_server,
+            output_limit=1_000_000, reject_output_overflow=True,
+        )
         if not content.startswith("Error: MCP tool is no longer available"):
             return {"content": content, "is_error": content.startswith("Error:")}
     raise HTTPException(404, f"the plugin has no tool named {tool}")
+
+
+async def call_extension_plugin_panel_tool_http(
+    request: Request, service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Closing a native panel also cancels its still-running MCP request."""
+    if await request.is_disconnected():
+        raise HTTPException(499, "The plugin panel closed before the request was dispatched.")
+    stopped = threading.Event()
+    task = asyncio.create_task(asyncio.to_thread(
+        call_extension_plugin_panel_tool, service, body, should_stop=stopped.is_set,
+    ))
+    try:
+        while not task.done():
+            if await request.is_disconnected():
+                stopped.set()
+                raise HTTPException(499, "The plugin panel closed. The pending request was cancelled without retrying; an operation already sent may still finish.")
+            await asyncio.wait({task}, timeout=0.05)
+        return await task
+    finally:
+        # This also covers cancellation of the HTTP handler itself. The worker
+        # observes the flag, cancels the MCP future, and never retries a write.
+        stopped.set()
+
+        def finish(done: asyncio.Task) -> None:
+            if not done.cancelled():
+                done.exception()
+
+        if task.done():
+            finish(task)
+        else:
+            task.add_done_callback(finish)
 
 
 def open_mcp_app(service: ServiceDependency, body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
@@ -630,7 +723,7 @@ def register_routes(router: APIRouter) -> None:
         ("/api/extensions/plugins/rollback", rollback_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/settings", get_extension_plugin_settings, ["GET"]),
         ("/api/extensions/plugins/settings", set_extension_plugin_settings, ["POST"]),
-        ("/api/extensions/plugins/panel-tool", call_extension_plugin_panel_tool, ["POST"]),
+        ("/api/extensions/plugins/panel-tool", call_extension_plugin_panel_tool_http, ["POST"]),
         (
             "/api/extensions/plugins/{plugin_id:path}",
             uninstall_extension_plugin,
