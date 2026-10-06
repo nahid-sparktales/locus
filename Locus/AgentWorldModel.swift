@@ -184,7 +184,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     private var profileHistory: [String: String] = [:]
     private var defaults: UserDefaults?
     private var window: NSWindow?
-    private let socialStudioWindows = SocialStudioWindowController()
     private let pluginPanelWindows = PluginPanelWindowController()
     private var refreshTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
@@ -277,7 +276,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func refresh() {
-        socialStudioWindows.refresh(catalog: catalog)
         pluginPanelWindows.refresh(catalog: catalog)
         let currentWorkspace = SessionSummary.canonicalWorkspacePath(workspaceProvider())
         let panels: [PluginPanelWindowController.Target] = catalog.capabilities.pluginPanels == true
@@ -357,13 +355,7 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         refresh()
         guard let choice = availableScreens.first(where: {
             (pluginID == nil || $0.pluginID == pluginID) && (screenID == nil || $0.screen.id == screenID)
-                && (pluginID != nil || screenID != nil || !$0.screen.isSocialStudio)
         }) else { error = "Install and enable this plugin for the project in Extensions."; return }
-        if choice.screen.isSocialStudio {
-            guard let appModel else { return }
-            socialStudioWindows.open(screen: choice, workspace: workspaceProvider(), appModel: appModel)
-            return
-        }
         if window != nil, activeScreen == choice, windowWorkspace == SessionSummary.canonicalWorkspacePath(workspaceProvider()) {
             window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return
         }
@@ -877,23 +869,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
 }
 
 extension AgentWorldModel {
-    func openSocialStudioUITestFixture() {
-        guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING"] == "1",
-              ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_SOCIAL_STUDIO"] == "1" else { return }
-        subscriptions.removeAll()
-        var capabilities = ExtensionCapabilities(); capabilities.pluginScreens = true
-        let screen = ExtensionPluginScreen(id: "social-studio", title: "Social Studio", entrypoint: "ui/index.html", version: 1,
-                                           capabilities: ["social.workspace"])
-        var plugin = ExtensionPlugin(id: "social-studio-fixture", name: "social-studio", displayName: "Social Studio", description: nil,
-                                     version: "0.1.0", author: nil, digest: "fixture", enabledGlobal: true,
-                                     enabledWorkspaces: [], disabledWorkspaces: [], previousVersions: nil,
-                                     skills: [], mcpServers: [], scripts: [], unsupported: [], updateAvailable: false, error: nil)
-        plugin.root = FileManager.default.temporaryDirectory.path; plugin.screens = [screen]
-        catalog = ExtensionsResponse(capabilities: capabilities, marketplaces: [], plugins: [plugin], skills: [],
-                                     mcpServers: [], mcpPresets: [], errors: [], pendingUpdates: 0)
-        open(pluginID: plugin.id, screenID: screen.id)
-    }
-
     /// Test-only opt-in: local asset and bridge verification never starts a
     /// worker, installs a plugin, or changes the user's saved profiles.
     func openUITestFixture(root: String) {

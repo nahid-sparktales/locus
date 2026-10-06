@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -54,6 +55,7 @@ def _fingerprint(
 
 def _substitute(value: str, server: dict[str, Any], workspace: str) -> str:
     replacements = {
+        "${LOCUS_PYTHON}": sys.executable,
         "${PLUGIN_ROOT}": str(server.get("plugin_root") or ""),
         "${PLUGIN_DATA}": str(server.get("plugin_data") or ""),
         "${LOCUS_WORKSPACE}": workspace,
@@ -791,18 +793,31 @@ class MCPManager:
         media_receiver: Callable[[list[dict[str, Any]]], None] | None = None,
         invocation_context: dict[str, str] | None = None,
         output_limit: int = MAX_OUTPUT,
+        request_meta: dict[str, Any] | None = None,
+        server_resolver: Callable[[], dict[str, Any] | None] | None = None,
+        reject_output_overflow: bool = False,
     ) -> str:
         if self._closed:
             return "Error: MCP runtime is closed."
+        if should_stop is not None and should_stop():
+            return "Error: MCP tool permission was revoked before dispatch."
+        resolved_server = server_resolver() if server_resolver is not None else None
+        if server_resolver is not None and resolved_server is None:
+            return "Error: MCP tool permission was revoked before dispatch."
         self._ensure_started()
         media: list[dict[str, Any]] = []
         context = {**(self.context_provider() or {}), **(invocation_context or {})}
         future = asyncio.run_coroutine_threadsafe(
             self._call_tool(server_id, tool_name, arguments, media, context,
-                            output_limit=max(1, min(output_limit, 1_000_000))), self._loop
+                            output_limit=max(1, min(output_limit, 1_000_000)),
+                            request_meta=request_meta, server_resolver=server_resolver,
+                            reject_output_overflow=reject_output_overflow), self._loop
         )
         record = self._clients.get(server_id)
-        timeout = float((record or {}).get("server", {}).get("tool_timeout_sec") or 60) + 5
+        configuration = resolved_server or (record or {}).get("server", {})
+        timeout = float(configuration.get("tool_timeout_sec") or 60) + 5
+        if resolved_server is not None and record is None:
+            timeout += float(configuration.get("startup_timeout_sec") or 10)
         deadline = time.monotonic() + timeout
         while True:
             if should_stop is not None and should_stop():
@@ -957,9 +972,22 @@ class MCPManager:
         media: list[dict[str, Any]] | None = None,
         context: dict[str, str] | None = None,
         *, output_limit: int = MAX_OUTPUT,
+        request_meta: dict[str, Any] | None = None,
+        server_resolver: Callable[[], dict[str, Any] | None] | None = None,
+        reject_output_overflow: bool = False,
     ) -> str:
+        # A panel belongs to its captured project, which may differ from the
+        # selected chat. Resolve that project's server without changing cwd or
+        # sharing its context through process-global environment variables.
+        if server_resolver is not None:
+            server = server_resolver()
+            if server is None:
+                return "Error: MCP tool permission was revoked before dispatch."
+            await self._connect(server)
+            if server_resolver() is None:
+                return "Error: MCP tool permission was revoked before dispatch."
         record = self._clients.get(server_id)
-        if record is None:
+        if record is None and server_resolver is None:
             await self._refresh()
             record = self._clients.get(server_id)
         if record is None:
@@ -970,7 +998,10 @@ class MCPManager:
             return f"Error: MCP tool is no longer available: {tool_name}"
         try:
             if tool.get("task_support") == "required":
-                return await self._call_task(record, tool, arguments, media, context)
+                return await self._call_task(
+                    record, tool, arguments, media, context, request_meta=request_meta,
+                    output_limit=output_limit, reject_output_overflow=reject_output_overflow,
+                )
             result = await record["client"].call_tool(
                 tool_name,
                 arguments,
@@ -978,22 +1009,29 @@ class MCPManager:
                 progress_callback=lambda progress, total, message=None: self._tool_progress(
                     server_id, tool_name, progress, total, message
                 ),
+                **({"meta": request_meta} if request_meta is not None else {}),
             )
         except Exception as exc:
             annotations = tool.get("annotations") or {}
-            retryable = annotations.get("readOnlyHint") is True or annotations.get("idempotentHint") is True
+            retryable = annotations.get("readOnlyHint") is True or (
+                server_resolver is None and annotations.get("idempotentHint") is True
+            )
             if not retryable:
                 return (
                     f"Error: MCP call ended with an uncertain result and was not retried: "
                     f"{self._server_error_text(server_id, exc)}. Verify the external system before trying again."
                 )
             await self._disconnect(server_id)
-            server = next((item for item in self.extensions.mcp_servers()
-                           if item.get("id") == server_id and item.get("active", True)
-                           and item.get("enabled", True)), None)
+            server = server_resolver() if server_resolver is not None else next(
+                (item for item in self.extensions.mcp_servers()
+                 if item.get("id") == server_id and item.get("active", True)
+                 and item.get("enabled", True)), None
+            )
             if server is None:
                 return "Error: MCP server was disabled before the call could be retried."
             await self._connect(server)
+            if server_resolver is not None and server_resolver() is None:
+                return "Error: MCP tool permission was revoked before retry."
             replacement = self._clients.get(server_id)
             if replacement is None:
                 return f"Error: MCP reconnect failed: {self._statuses.get(server_id, {}).get('error')}"
@@ -1008,6 +1046,7 @@ class MCPManager:
                     tool_name,
                     arguments,
                     read_timeout_seconds=float(server.get("tool_timeout_sec") or 60),
+                    **({"meta": request_meta} if request_meta is not None else {}),
                 )
             except Exception as second:
                 return f"Error: MCP tool failed after reconnect: {self._server_error_text(server_id, second)}"
@@ -1025,7 +1064,8 @@ class MCPManager:
         except (AttributeError, TypeError, ValueError):
             pass
         self._register_resource_links(server_id, tool_name, result, context)
-        return self._format_result(result, media, output_limit=output_limit)
+        return self._format_result(result, media, output_limit=output_limit,
+                                   reject_output_overflow=reject_output_overflow)
 
     async def _tool_progress(
         self,
@@ -1051,6 +1091,9 @@ class MCPManager:
         arguments: dict[str, Any],
         media: list[dict[str, Any]] | None = None,
         context: dict[str, str] | None = None,
+        *, request_meta: dict[str, Any] | None = None,
+        output_limit: int = MAX_OUTPUT,
+        reject_output_overflow: bool = False,
     ) -> str:
         """Run a task-required MCP tool and persist its remote lifecycle."""
         from mcp import types
@@ -1064,6 +1107,7 @@ class MCPManager:
                 name=tool_name,
                 arguments=arguments,
                 task=types.TaskMetadata(ttl=max(60_000, int(timeout * 2_000))),
+                **({"_meta": request_meta} if request_meta is not None else {}),
             )),
             types.CreateTaskResult,
             request_read_timeout_seconds=timeout,
@@ -1119,7 +1163,8 @@ class MCPManager:
             self._persist_task(task_record, "")
             self.emit({"type": "mcp_task_completed", **task_record})
             self._register_resource_links(server_id, tool_name, result, context)
-            return self._format_result(result, media)
+            return self._format_result(result, media, output_limit=output_limit,
+                                       reject_output_overflow=reject_output_overflow)
         except asyncio.CancelledError:
             cancellation_message = "Cancellation requested."
             try:
@@ -1156,7 +1201,8 @@ class MCPManager:
         )
 
     @staticmethod
-    def _format_result(result: Any, media: list[dict[str, Any]] | None = None, *, output_limit: int = MAX_OUTPUT) -> str:
+    def _format_result(result: Any, media: list[dict[str, Any]] | None = None, *, output_limit: int = MAX_OUTPUT,
+                       reject_output_overflow: bool = False) -> str:
         from .mcp_media import normalize_mcp_media
 
         images, omissions = normalize_mcp_media(list(getattr(result, "content", []) or []))
@@ -1187,8 +1233,10 @@ class MCPManager:
         if structured is not None:
             chunks.append("Structured result:\n" + json.dumps(structured, indent=2, ensure_ascii=False, default=str))
         text = "\n\n".join(chunk for chunk in chunks if chunk).strip() or "(empty MCP result)"
-        if bool(getattr(result, "is_error", False)) and not text.startswith("Error"):
+        if bool(getattr(result, "is_error", False)) and not text.startswith("Error:"):
             text = "Error: " + text
+        if reject_output_overflow and len(text) > output_limit:
+            return f"Error: MCP tool result exceeds the {output_limit:,}-character panel limit. Request a smaller page."
         return _truncate(text, output_limit)
 
     def _register_resource_links(
@@ -1511,14 +1559,19 @@ class MCPManager:
             return copy.deepcopy(value) if value else None
 
     def _publish_tools(self) -> None:
-        tools = [dict(tool) for record in self._clients.values() for tool in record.get("tools", [])
+        # A panel can temporarily connect a plugin enabled only for a different
+        # project. Its process must not expose tools to the selected chat.
+        active = {str(server["id"]) for server in self.extensions.mcp_servers()
+                  if server.get("active", True) and server.get("enabled", True)}
+        records = [record for server_id, record in self._clients.items() if server_id in active]
+        tools = [dict(tool) for record in records for tool in record.get("tools", [])
                  if not tool.get("panel_only") and "model" in tool.get("ui", {}).get("visibility", ["model", "app"])]
         resources = [
-            dict(item) for record in self._clients.values()
+            dict(item) for record in records
             for item in record.get("resources", [])
         ]
         prompts = [
-            dict(item) for record in self._clients.values()
+            dict(item) for record in records
             for item in record.get("prompts", [])
         ]
         with self._guard:

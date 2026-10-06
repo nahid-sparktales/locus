@@ -178,13 +178,6 @@
       "author": "Locus",
       "license": "Apache-2.0",
       "notes": "Original plugin artwork, not the external framework/service logo."
-    },
-    {
-      "id": "social-studio",
-      "asset": "Locus/Resources/Assets.xcassets/Plugin-social-studio.imageset/logo.svg",
-      "author": "Locus",
-      "license": "Apache-2.0",
-      "notes": "Original plugin artwork, not the external framework/service logo."
     }
   ]
 }

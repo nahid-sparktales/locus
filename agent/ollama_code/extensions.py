@@ -39,7 +39,7 @@ MAX_GIT_OUTPUT = 16_000
 MAX_OAUTH_METADATA_BYTES = 1024 * 1024
 MAX_PLUGIN_SCREENS = 16
 PLUGIN_SCREEN_CAPABILITIES = frozenset({
-    "agents.read", "agents.interact", "world.preferences", "social.workspace",
+    "agents.read", "agents.interact", "world.preferences",
 })
 # Plugin panels are plugin-owned windows. Their capabilities never reach
 # Locus data: they cover the plugin's own settings, the plugin's own MCP
@@ -395,8 +395,6 @@ def _parse_plugin_screens(root: Path, manifest: dict[str, Any]) -> list[dict[str
             raise ExtensionError(f"screen {identifier} requests unsupported capabilities")
         if len(capabilities) != len(set(capabilities)):
             raise ExtensionError(f"screen {identifier} declares duplicate capabilities")
-        if "social.workspace" in capabilities and (identifier != "social-studio" or capabilities != ["social.workspace"]):
-            raise ExtensionError("social.workspace requires the native social-studio screen with no additional capabilities")
         entrypoint = _html_entrypoint(root, screen.get("entrypoint"), f"screen {identifier}")
         screens.append({
             "id": identifier,
