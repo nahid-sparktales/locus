@@ -179,6 +179,7 @@ bundle_codex_helper() {
 }
 
 bundle_source() {
+    local build_python="$1"
     /bin/rm -rf "${runtime}"
     /bin/mkdir -p "${runtime}/source"
     # The edition factory is part of the sealed build, never a runtime toggle.
@@ -190,7 +191,11 @@ bundle_source() {
     esac
     python3 "${script_dir}/StageBackendEdition.py" \
         --source "${source_package}" --destination "${runtime}/source/ollama_code" \
-        --edition "${edition}"
+        --edition "${edition}" || return 1
+    "${build_python}" "${script_dir}/RuntimePackage.py" stage-host \
+        --agent "${backend_root}" --destination "${runtime}/source" || return 1
+    "${build_python}" "${script_dir}/RuntimePackage.py" provenance \
+        --agent "${backend_root}" --destination "${runtime}/provenance.json" || return 1
     for junk in "${runtime}/source/ollama_code"/**/__pycache__(N/); do
         /bin/rm -rf "${junk}"
     done
@@ -214,7 +219,7 @@ bundle_standalone() {
     "${script_dir}/PrepareAgentRuntime.sh" || return 1
     [[ -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] || return 1
 
-    bundle_source
+    bundle_source "${cache}/cpython/bin/python3" || return 1
     copy_without_extended_metadata "${cache}/cpython" "${runtime}/python"
     copy_without_extended_metadata "${cache}/site-packages" "${runtime}/site-packages"
 
@@ -301,7 +306,9 @@ bundle_venv() {
     done
     [[ -n "${python_home}" && -n "${python_bin}" ]] || return 1
 
-    bundle_source
+    "${backend_root}/.venv/bin/python" "${script_dir}/RuntimePackage.py" verify-installed \
+        --agent "${backend_root}" --destination "${site_packages}" >/dev/null || return 1
+    bundle_source "${backend_root}/.venv/bin/python" || return 1
     copy_without_extended_metadata "${site_packages}" "${runtime}/site-packages"
     copy_without_extended_metadata "${python_home%/bin}" "${runtime}/python"
     prune_disallowed_runtime_components
@@ -314,7 +321,8 @@ bundle_venv() {
 
 if [[ "${mode}" == "venv" ]]; then
     if ! bundle_venv; then
-        echo "warning: venv bundling failed; runtime not bundled."
+        echo "error: venv bundling failed; the pinned runtime must be installed before packaging." >&2
+        exit 1
     fi
     bundle_codex_helper
     exit 0

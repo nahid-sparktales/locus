@@ -11,6 +11,9 @@
   fails. The old bundled renderer and Outpost are removed; the verified recovery
   archive and scoped preference migration preserve rollback. Legacy world plugins
   require the reviewed 0.2.x artifact or their matching older host.
+- Locus now bundles the independently maintained, hash-pinned Locus Runtime
+  package for process supervision, remote transport, reviewed results, and
+  service recovery, while preserving existing profiles and public protocols.
 - The optional publishing workspace is downloaded through the plugin marketplace
   and opens from Work. Its package owns its interface, accounts, and project data.
 - Plugins can launch Python services with Locus's bundled interpreter and receive
@@ -50,6 +53,8 @@
 
 - Files counts and Agent section headings use stronger semantic text colors.
   The Companion popover close button handles the native Escape shortcut.
+- Independent runtime shutdown now cleans up owned worker descendants and
+  failed model starts, and reused private-command IDs cannot hide changed input.
 - Plugin windows keep the project they opened in when the selected chat changes.
   Revoking access cancels pending calls, uncertain writes are not retried, and
   oversized responses return an explicit error.

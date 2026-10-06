@@ -7,6 +7,7 @@ import io
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -33,6 +34,7 @@ def tool(name):
     return module
 
 
+tool("RuntimePackage")
 packager = tool("PackageRemoteRuntime")
 builder = tool("PrepareRemoteRuntime")
 
@@ -60,10 +62,66 @@ def test_package_provider_recognizes_tool_results_before_request_only_memory(new
     assert events[-1]["choices"][0]["finish_reason"] == expected_finish
 
 
+def test_rollback_fixture_fails_the_installed_entrypoint_but_allows_import(tmp_path):
+    smoke = tool("SmokeRemoteRuntime")
+    from locus_runtime import cli
+
+    entrypoint = "site-packages/locus_runtime/cli.py"
+    files = {entrypoint: Path(cli.__file__).read_bytes(),
+             "site-packages/locus_runtime/__init__.py": b'PROTOCOL_VERSION = 1\n__version__ = "fixture"\n',
+             "source/ollama_code/runtime.py": b'raise AssertionError("Legacy entrypoint must not run")\n'}
+    package, broken = tmp_path / "package.tar.gz", tmp_path / "broken.tar.gz"
+    manifest = {"files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    with tarfile.open(package, "w:gz") as archive:
+        for name, data in {**files, "manifest.json": json.dumps(manifest).encode()}.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    assert smoke.failed_startup_package(package, broken) == packager.digest(broken)
+    with tarfile.open(broken, "r:gz") as archive:
+        updated = json.load(archive.extractfile("manifest.json"))
+        for name, checksum in updated["files"].items():
+            data = archive.extractfile(name).read()
+            assert hashlib.sha256(data).hexdigest() == checksum
+            path = tmp_path / "extracted" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    assert updated["files"][entrypoint] != manifest["files"][entrypoint]
+    script = ("import runpy, sys; sys.path.insert(0, sys.argv[1]); "
+              "import locus_runtime.cli; print('import succeeded', flush=True); "
+              "runpy.run_module('locus_runtime.cli', run_name='__main__')")
+    result = subprocess.run([sys.executable, "-I", "-c", script,
+                             str(tmp_path / "extracted/site-packages")], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "import succeeded" in result.stdout
+    assert "fixture startup failure" in result.stderr
+    assert "Legacy entrypoint must not run" not in result.stderr
+
+
+@pytest.mark.parametrize("in_manifest,in_archive", [(False, False), (True, False), (False, True)])
+def test_rollback_fixture_rejects_a_missing_entrypoint(tmp_path, in_manifest, in_archive):
+    smoke = tool("SmokeRemoteRuntime")
+    entrypoint = "site-packages/locus_runtime/cli.py"
+    data = b'if __name__ == "__main__":\n    pass\n'
+    manifest = {"files": {entrypoint: hashlib.sha256(data).hexdigest()} if in_manifest else {}}
+    package = tmp_path / "package.tar.gz"
+    with tarfile.open(package, "w:gz") as archive:
+        for name, content in {"manifest.json": json.dumps(manifest).encode(),
+                              **({entrypoint: data} if in_archive else {})}.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+    with pytest.raises(ValueError, match="Cannot locate the runtime entry point"):
+        smoke.failed_startup_package(package, tmp_path / "broken.tar.gz")
+
+
 @pytest.fixture
 def layout(tmp_path, monkeypatch):
     root = tmp_path / "runtime"
-    for name, data in {"python/bin/python3.14": b"python", "source/ollama_code/runtime.py": b"source", "site-packages/example.py": b"dependency"}.items():
+    for name, data in {"python/bin/python3.14": b"python", "source/ollama_code/runtime.py": b"source",
+                       "source/ollama_code/runtime_host.py": b"host adapter",
+                       "site-packages/locus_runtime/__init__.py": b"runtime package",
+                       "site-packages/example.py": b"dependency"}.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)

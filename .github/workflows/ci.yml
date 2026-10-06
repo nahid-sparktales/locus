@@ -136,7 +136,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-      - run: python -m pip install -e './agent[dev]'
+      - run: python Tools/RuntimePackage.py verify --agent agent
+      - run: python -m pip install --find-links agent/vendor/wheels agent/vendor/wheels/locus_runtime-0.1.0-py3-none-any.whl -e './agent[dev]'
       - run: python -m ruff check agent Tools/ReviewabilityReport.py
       - run: python -m pytest -q
       - name: Agent Worlds thin-host resource boundary

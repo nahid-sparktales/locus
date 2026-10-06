@@ -16,6 +16,7 @@ repo_root="${script_dir:h}"
 backend_root="${LOCUS_BACKEND_ROOT:-${repo_root}/agent}"
 cache="${LOCUS_RUNTIME_CACHE:-${repo_root}/.agent-runtime}"
 requirements_lock="${backend_root}/requirements-runtime.lock"
+runtime_release="${backend_root}/vendor/wheels/runtime-release.json"
 
 if [[ ! -f "${requirements_lock}" ]]; then
     echo "error: missing hashed runtime lock ${requirements_lock}" >&2
@@ -45,6 +46,7 @@ url="https://github.com/astral-sh/python-build-standalone/releases/download/${pb
 manifest_hash="$(
     /usr/bin/shasum -a 256 \
         "${backend_root}/pyproject.toml" \
+        "${runtime_release}" \
         "${requirements_lock}" \
     | /usr/bin/shasum -a 256 \
     | /usr/bin/cut -d' ' -f1
@@ -54,6 +56,9 @@ stamp_file="${cache}/.stamp"
 
 if [[ -f "${stamp_file}" && -x "${cache}/cpython/bin/python3" && -d "${cache}/site-packages" ]] \
     && [[ "$(<"${stamp_file}")" == "${stamp_value}" ]]; then
+    # Use the bundled interpreter: Xcode's system Python can predate tomllib.
+    "${cache}/cpython/bin/python3" "${script_dir}/RuntimePackage.py" verify-installed \
+        --agent "${backend_root}" --destination "${cache}/site-packages" >/dev/null
     echo "Agent runtime cache is current (${asset})."
     exit 0
 fi
@@ -75,6 +80,9 @@ if [[ ! -x "${workdir}/python/bin/python3" ]]; then
     exit 1
 fi
 
+# Validate the committed wheel before pip; launch never consults a sibling or pip.
+"${workdir}/python/bin/python3" "${script_dir}/RuntimePackage.py" verify --agent "${backend_root}" >/dev/null
+
 # Install the locked dependencies, including the hash-pinned Locus Memory
 # release wheel. Downloads happen while building; the signed app runs offline
 # with these bundled packages and never installs them at launch.
@@ -82,11 +90,14 @@ fi
 "${workdir}/python/bin/python3" -m pip install --quiet \
     --require-hashes \
     --only-binary=:all: \
+    --find-links "${backend_root}/vendor/wheels" \
     --target "${workdir}/site-packages" \
     --requirement "${requirements_lock}"
+"${workdir}/python/bin/python3" "${script_dir}/RuntimePackage.py" verify-installed \
+    --agent "${backend_root}" --destination "${workdir}/site-packages" >/dev/null
 PYTHONPATH="${workdir}/site-packages" PYTHONDONTWRITEBYTECODE=1 \
     "${workdir}/python/bin/python3" -s -c \
-    'from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; from locus_memory.context.submissions import record; from locus_memory.history.transcript_cache import EncryptedTranscriptCache; from locus_memory.models import ContextRequest; assert ContextRequest(token_allowance=1, max_items=1).max_items == 1'
+    'from importlib.metadata import version; import locus_runtime; assert version("locus-runtime") == "0.1.0"; from locus_memory.context import CONTEXT_WRAPPER_OPEN, contains_context_block; from locus_memory.context.submissions import record; from locus_memory.history.transcript_cache import EncryptedTranscriptCache; from locus_memory.models import ContextRequest; assert ContextRequest(token_allowance=1, max_items=1).max_items == 1'
 /bin/rm -rf \
     "${workdir}/site-packages/bin" \
     "${workdir}/site-packages/claude_agent_sdk/_bundled"

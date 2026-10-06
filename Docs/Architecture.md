@@ -121,3 +121,23 @@ view-facing actions to `AppModel` and registered route handlers to `server.py`.
 Its findings are advisory: they surface review questions but never fail CI. A
 large file is not itself a defect; adding another unrelated responsibility to
 one is the signal to stop and choose an owner.
+
+## Independent execution package
+
+The independent supervisor, runtime transport tables/private store, strict SSH
+connections, reviewed snapshots, installer recovery and owned model-process
+lifecycle are maintained in the separately installable `locus_runtime` package.
+The product pins a reviewed wheel and bundles it with the selected edition's
+worker code. `runtime_host.py` supplies the worker driver, continuation/connector
+callbacks, product sanitizer, usage recovery and account/environment policy.
+The package does not accept the FastAPI application or product service.
+`RunStore.runtime_connection` is the explicit transaction boundary for the
+unchanged runtime tables in the product database.
+
+Product routes, task/goal/workflow admission, native permission enforcement,
+canonical usage, reasoning and integrations remain here. `runtime.py` and other
+runtime compatibility modules delegate to the package; they are not a second
+implementation. Native helper signing/registration and ordinary foreground
+execution remain unchanged and independent execution remains opt-in. See
+[extraction map](extraction-map.md), [consumer audit](runtime/companion-ownership.md)
+and [verification](runtime/extraction-verification.md).

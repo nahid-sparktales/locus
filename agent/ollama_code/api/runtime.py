@@ -114,12 +114,7 @@ async def worker_update(session_id: str, request: Request, body: dict = Body(def
             if not isinstance(reviewed, list) or not current or sorted(reviewed) != sorted(item["id"] for item in current):
                 raise ValueError("Review every current interrupted request before allowing new work")
             await runtime.stop_worker(session_id)
-            with runtime.store.runs._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                latest = [item[0] for item in db.execute("SELECT id FROM runtime_commands WHERE session_id=? AND state='uncertain'", (session_id,))]
-                if sorted(latest) != sorted(reviewed):
-                    raise ValueError("Another request was interrupted; reload the saved progress")
-                db.execute("UPDATE runtime_commands SET state='abandoned' WHERE session_id=? AND state='uncertain'", (session_id,))
+            runtime.store.acknowledge_interruption(session_id, reviewed)
             runtime.store.append(session_id, {"type": "runtime_interruption_reviewed", "command_ids": reviewed,
                                             "message": "Saved work retained. Interrupted requests will not be replayed."})
             runtime.store.state(session_id, "idle")
@@ -305,8 +300,7 @@ async def socket_proxy(ws: WebSocket, session_id: str):
                 await ws.send_json(runtime.restore_decision_event(event))
                 last = event["runtime_seq"]
     else:
-        with runtime.store.runs._connect(readonly=True) as db:
-            last = db.execute("SELECT COALESCE(MAX(seq),0) FROM runtime_events WHERE session_id=?", (session_id,)).fetchone()[0]
+        last = runtime.store.cursor(session_id)
         await ws.send_json({"type": "runtime_cursor", "runtime_seq": last})
         for decision in runtime.store.decisions(session_id):
             await ws.send_json(runtime.restore_decision_event({**decision["event"], "runtime_decision": {"id": decision["id"], "fingerprint": decision["fingerprint"]}}))
