@@ -183,7 +183,7 @@ struct CompanionContextSharingView: View {
                         .lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 4)
                     Button { model.remove(item.id) } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).accessibilityLabel("Remove \(item.name)")
+                        .buttonStyle(.locus(.icon)).accessibilityLabel("Remove \(item.name)")
                 }.font(.caption)
             }
             if !model.attachments.isEmpty {
