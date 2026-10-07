@@ -297,12 +297,35 @@ final class VoiceControlModel: ObservableObject {
     private var transcriptHandler: (String, VoiceInputPurpose) -> Bool = { _, _ in false }
     private var consentHandler: (Bool) -> Void = { _ in }
     private var voiceSessionID: String?
+    @Published private(set) var externalSessionID: String?
+    private var externalTranscriptHandler: ((String, VoiceInputPurpose) -> Bool)?
+    private var externalTargetIsValid: () -> Bool = { true }
+    private var targetIsCurrent: Bool {
+        externalSessionID != nil ? externalTargetIsValid() : voiceSessionID == sessionIDProvider()
+    }
+
+    func enterExternalVoiceMode(sessionID: String, isValid: @escaping () -> Bool,
+                                transcript: @escaping (String, VoiceInputPurpose) -> Bool) {
+        exitVoiceMode()
+        guard settingsProvider().voiceControlsEnabled, isValid() else { return }
+        externalSessionID = sessionID
+        voiceSessionID = sessionID
+        externalTargetIsValid = isValid
+        externalTranscriptHandler = transcript
+        isVoiceModeActive = true
+    }
+
+    func failExternalTurn(sessionID: String) {
+        guard externalSessionID == sessionID else { return }
+        turnFailed()
+    }
     private var activePurpose: VoiceInputPurpose?
     private var pendingConsentPurpose: VoiceInputPurpose?
     private var temporaryRecordingURL: URL?
     private var maximumDurationTask: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
     private var speechTask: Task<Void, Never>?
+    private var speechGeneration = UUID()
     private var generation = UUID()
     private var announcedAttentionTokens: Set<String> = []
     private var deactivationObserver: NSObjectProtocol?
@@ -354,6 +377,7 @@ final class VoiceControlModel: ObservableObject {
         consentHandler = appleNetworkConsent
     }
 
+    var activeConversationSessionID: String? { voiceSessionID }
     var isListening: Bool { state == .listening }
     var isSpeaking: Bool { state == .speaking }
     var isDictating: Bool { activePurpose == .dictation && isListening }
@@ -383,6 +407,9 @@ final class VoiceControlModel: ObservableObject {
         cancelRecording()
         stopPlayback()
         voiceSessionID = nil
+        externalSessionID = nil
+        externalTranscriptHandler = nil
+        externalTargetIsValid = { true }
         isVoiceModeActive = false
         announcedAttentionTokens.removeAll()
         state = .idle
@@ -460,6 +487,10 @@ final class VoiceControlModel: ObservableObject {
     }
 
     func sessionDidChange() {
+        if externalSessionID != nil {
+            if !externalTargetIsValid() { exitVoiceMode() }
+            return
+        }
         if isVoiceModeActive, voiceSessionID != sessionIDProvider() {
             exitVoiceMode()
         } else {
@@ -491,7 +522,7 @@ final class VoiceControlModel: ObservableObject {
 
     func announceAttention(_ kind: VoiceAttentionKind, token: String) {
         guard isVoiceModeActive,
-              voiceSessionID == sessionIDProvider(),
+              targetIsCurrent,
               announcedAttentionTokens.insert("\(kind.rawValue):\(token)").inserted
         else { return }
         cancelRecording()
@@ -506,7 +537,7 @@ final class VoiceControlModel: ObservableObject {
         attention: VoiceAttentionKind?,
         attentionToken: String? = nil
     ) {
-        guard isVoiceModeActive, voiceSessionID == sessionID else { return }
+        guard isVoiceModeActive, voiceSessionID == sessionID, targetIsCurrent else { return }
         if let attention {
             announceAttention(attention, token: attentionToken ?? sessionID)
             return
@@ -521,7 +552,7 @@ final class VoiceControlModel: ObservableObject {
     private func beginInput(_ purpose: VoiceInputPurpose) {
         guard settingsProvider().voiceControlsEnabled else { return }
         if purpose == .conversation {
-            guard isVoiceModeActive, voiceSessionID == sessionIDProvider() else { return }
+            guard isVoiceModeActive, targetIsCurrent else { exitVoiceMode(); return }
         }
         cancelRecording()
         stopPlayback()
@@ -554,6 +585,7 @@ final class VoiceControlModel: ObservableObject {
 
     private func startAuthorizedInput(_ purpose: VoiceInputPurpose, settings: AppSettings) throws {
         guard activePurpose == purpose else { throw CancellationError() }
+        let inputGeneration = generation
         switch settings.resolvedVoiceSpeechEngine {
         case .system:
             let supportsOnDevice = recognizer.supportsOnDeviceRecognition(
@@ -569,10 +601,17 @@ final class VoiceControlModel: ObservableObject {
             try recognizer.start(
                 languageIdentifier: settings.voiceLanguageIdentifier,
                 requiresOnDeviceRecognition: supportsOnDevice,
-                partialResult: { [weak self] text in self?.partialTranscript = text },
-                finalResult: { [weak self] text in self?.finishTranscript(text) },
+                partialResult: { [weak self] text in
+                    guard let self, self.generation == inputGeneration else { return }
+                    guard self.externalSessionID == nil || self.externalTargetIsValid() else { self.exitVoiceMode(); return }
+                    self.partialTranscript = text
+                },
+                finalResult: { [weak self] text in
+                    guard let self, self.generation == inputGeneration else { return }
+                    self.finishTranscript(text)
+                },
                 failure: { [weak self] error in
-                    guard let self, self.activePurpose != nil else { return }
+                    guard let self, self.generation == inputGeneration, self.activePurpose != nil else { return }
                     self.fail(error)
                 }
             )
@@ -660,7 +699,8 @@ final class VoiceControlModel: ObservableObject {
             }
             return
         }
-        let submitted = transcriptHandler(transcript, purpose)
+        guard externalSessionID == nil || externalTargetIsValid() else { exitVoiceMode(); return }
+        let submitted = (externalTranscriptHandler ?? transcriptHandler)(transcript, purpose)
         state = submitted && purpose == .conversation ? .waiting : .idle
         if purpose == .dictation || !submitted { partialTranscript = "" }
     }
@@ -671,10 +711,11 @@ final class VoiceControlModel: ObservableObject {
         completion: (() -> Void)? = nil
     ) {
         stopPlayback()
+        let speechToken = speechGeneration
         state = .speaking
         let settings = settingsProvider()
         let finished = { [weak self] in
-            guard let self else { return }
+            guard let self, self.speechGeneration == speechToken else { return }
             self.speechTask = nil
             self.state = finalState
             completion?()
@@ -688,6 +729,7 @@ final class VoiceControlModel: ObservableObject {
                 completion: finished
             )
         case .openAICompatible:
+            state = .waiting
             guard let configuration = cloudConfigurationProvider() else {
                 fail(VoiceControlError.cloudAccountUnavailable)
                 return
@@ -699,7 +741,9 @@ final class VoiceControlModel: ObservableObject {
                         text: text,
                         configuration: configuration
                     )
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, self.speechGeneration == speechToken else { return }
+                    guard self.externalSessionID == nil || self.externalTargetIsValid() else { self.exitVoiceMode(); return }
+                    self.state = .speaking
                     try self.playback.play(data: data, completion: finished)
                 } catch is CancellationError {
                     return
@@ -744,6 +788,7 @@ final class VoiceControlModel: ObservableObject {
     }
 
     private func stopPlayback() {
+        speechGeneration = UUID()
         speechTask?.cancel()
         speechTask = nil
         playback.stop()

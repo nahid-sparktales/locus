@@ -13,13 +13,19 @@ final class CompanionActivityPresentation: ObservableObject {
         let publishers = [app.objectWillChange.eraseToAnyPublisher(), app.activity.objectWillChange.eraseToAnyPublisher(),
             app.runs.objectWillChange.eraseToAnyPublisher(), app.runtimeStatus.objectWillChange.eraseToAnyPublisher(),
             app.providerAccountsModel.objectWillChange.eraseToAnyPublisher(), app.sessionCatalog.objectWillChange.eraseToAnyPublisher(),
-            app.agentTeamsModel.objectWillChange.eraseToAnyPublisher()]
+            app.agentTeamsModel.objectWillChange.eraseToAnyPublisher(), app.voiceControl.objectWillChange.eraseToAnyPublisher()]
         Publishers.MergeMany(publishers).receive(on: RunLoop.main).sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &observations)
     }
 
     func summary(profileID: UUID) -> CompanionActivitySummary? { app?.companionActivitySummary(profileID: profileID) }
+    func voicePose(profileID: UUID) -> CompanionCharacterPose? {
+        guard let app, profileID == app.primaryCompanionProfile?.id,
+              app.voiceControl.activeConversationSessionID == app.companionConversation?.id,
+              app.voiceControl.isVoiceModeActive else { return nil }
+        return app.voiceControl.isListening ? .listening : app.voiceControl.isSpeaking ? .speaking : nil
+    }
     func scopeID(profileID: UUID) -> String { app?.companionActivityWorkspacePath(profileID: profileID) ?? "" }
 }
 
@@ -74,7 +80,7 @@ struct CompanionActivityCharacterView: View {
 
     var body: some View {
         let summary = source.summary(profileID: profileID)
-        let livePose = summary?.pose ?? .idle
+        let livePose = source.voicePose(profileID: profileID) ?? summary?.pose ?? .idle
         let input = ReactionInput(scopeID: "\(source.scopeID(profileID: profileID))|\(profileID.uuidString)", event: summary?.latestCompletion)
         // Pending approvals and errors retain visual priority over a success
         // from a different task, while unread/activity counts remain separate.

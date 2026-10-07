@@ -550,6 +550,11 @@ extension AppModel {
         }
         guard currentSessionID == runtime.sessionID, !runtime.isAttaching else {
             recordBackgroundWorkerEvent(event, runtime: runtime)
+            if let type = event["type"] as? String {
+                if ["turn_done", "permission_request", "dispatch_plan_ready", "question_required", "computer_action_request"].contains(type) {
+                    completeCompanionVoiceTurnIfNeeded(sessionID: runtime.sessionID)
+                } else if type == "error" { voiceControl.failExternalTurn(sessionID: runtime.sessionID) }
+            }
             return
         }
         handle(event, source: runtime.service)

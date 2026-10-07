@@ -148,6 +148,58 @@ final class VoiceControlTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testCompanionVoicePinsTranscriptAndPlaybackToCapturedTarget() async {
+        let capture = FakeVoiceCapture()
+        let recognizer = FakeVoiceRecognizer()
+        let playback = FakeVoicePlayback()
+        let voice = VoiceControlModel(capture: capture, recognizer: recognizer, playback: playback,
+            cloudClient: FakeVoiceCloudClient(), authorization: FakeVoiceAuthorization())
+        var center = "center-one"
+        var received: [String] = []
+        var valid = true
+        voice.configure(settings: { AppSettings() }, cloudConfiguration: { nil }, sessionID: { center },
+            transcript: { _, _ in XCTFail("Companion must not send to foreground"); return false }, appleNetworkConsent: { _ in })
+        voice.enterExternalVoiceMode(sessionID: "companion", isValid: { valid }, transcript: { text, _ in
+            received.append(text); return true
+        })
+        center = "center-two"
+        voice.sessionDidChange()
+        XCTAssertTrue(voice.isVoiceModeActive)
+        voice.beginPushToTalk()
+        await waitUntil { capture.started }
+        recognizer.emitFinal("Hello companion")
+        XCTAssertEqual(received, ["Hello companion"])
+        XCTAssertEqual(voice.state, .waiting)
+        voice.handleCompletedTurn(sessionID: center, blocks: [ChatBlock(kind: .assistant, text: "Wrong target")], attention: nil)
+        XCTAssertTrue(playback.spoken.isEmpty)
+        valid = false
+        voice.beginPushToTalk()
+        XCTAssertFalse(voice.isVoiceModeActive)
+        XCTAssertNil(voice.externalSessionID)
+    }
+
+    @MainActor
+    func testCompanionVoiceDropsRecognitionAfterItsIdentityChanges() async {
+        let capture = FakeVoiceCapture()
+        let recognizer = FakeVoiceRecognizer()
+        let voice = VoiceControlModel(capture: capture, recognizer: recognizer, playback: FakeVoicePlayback(),
+            cloudClient: FakeVoiceCloudClient(), authorization: FakeVoiceAuthorization())
+        var valid = true
+        voice.configure(settings: { AppSettings() }, cloudConfiguration: { nil }, sessionID: { "foreground" },
+            transcript: { _, _ in XCTFail("Unexpected foreground transcript"); return false }, appleNetworkConsent: { _ in })
+        voice.enterExternalVoiceMode(sessionID: "companion", isValid: { valid }, transcript: { _, _ in
+            XCTFail("An invalidated companion must not receive late speech"); return false
+        })
+        voice.beginPushToTalk()
+        await waitUntil { capture.started }
+        valid = false
+        recognizer.emitFinal("Late recognition")
+        XCTAssertFalse(voice.isVoiceModeActive)
+        XCTAssertEqual(voice.state, .idle)
+        XCTAssertNil(voice.externalSessionID)
+    }
+
     func testVoiceSettingsDecodeOldPayloadAndRoundTrip() throws {
         let migrated = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
         XCTAssertTrue(migrated.voiceControlsEnabled)

@@ -101,9 +101,9 @@ struct CompanionMenuBarView: View {
             .padding(12)
             Divider()
             if tab == .chat {
-                CompanionInspectorTab(revealMainWindow: revealMainWindow)
+                CompanionInspectorTab(revealMainWindow: revealMainWindow, tracksPointer: false)
             } else {
-                activityContent(snapshot)
+                CompanionActivityCardsView(revealMainWindow: revealMainWindow)
             }
             Divider()
             HStack {
@@ -153,120 +153,6 @@ struct CompanionMenuBarView: View {
         .buttonStyle(.locus(.quiet))
         .accessibilityAddTraits(tab == selection ? .isSelected : [])
         .accessibilityIdentifier(selection == .chat ? "companion.menubar.chat" : "companion.menubar.activity")
-    }
-
-    private func activityContent(_ snapshot: CompanionMenuBarActivity) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                if let profile {
-                    Button {
-                        revealMainWindow()
-                        model.selectSavedAgent(profile)
-                    } label: {
-                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 64)
-                    }
-                    .buttonStyle(.locus(.icon)).accessibilityLabel("Open \(profile.name)’s profile")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(profile?.name ?? "Your companion").font(.locus(size: 18, weight: .semibold)).lineLimit(1)
-                    Text("Notifications and work updates")
-                        .font(.locus(size: 12)).foregroundStyle(colors.textSecondary)
-                }
-                Spacer(minLength: 0)
-                Button { Task { await activity.refreshActivityRuns(announceFailure: false) } } label: {
-                    Image(systemName: "arrow.clockwise").frame(width: 28, height: 28)
-                }
-                .buttonStyle(.locus(.icon)).disabled(activity.isRefreshing || !runtime.agentPhase.isOnline)
-                .accessibilityLabel("Refresh activity")
-            }.padding(16)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if let error = activity.refreshError {
-                        Text(error).font(.locus(size: 12)).foregroundStyle(colors.warning)
-                    }
-                    if !runtime.agentPhase.isOnline {
-                        Text("Locus is disconnected. Showing the last available updates.")
-                            .font(.locus(size: 12)).foregroundStyle(colors.textSecondary)
-                    }
-                    if snapshot.attentionItems.isEmpty && snapshot.unreadRuns.isEmpty && snapshot.inProgressRuns.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "bell").font(.locus(size: 24)).foregroundStyle(colors.textTertiary)
-                            Text(profile == nil ? "Set up your companion to see its activity." : "No new companion updates")
-                                .font(.locus(size: 14, weight: .medium))
-                            Text("Requests and new results appear here. Opening this popover does not mark them as read.")
-                                .font(.locus(size: 12)).foregroundStyle(colors.textSecondary)
-                        }
-                        .multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.vertical, 36)
-                    }
-                    if !snapshot.attentionItems.isEmpty {
-                        sectionTitle("Needs attention")
-                        ForEach(snapshot.attentionItems) { item in
-                            Button {
-                                revealMainWindow()
-                                activity.openActivityCenter(focus: item.workflowExecutionID.map(ActivityCenterModel.Focus.workflow)
-                                    ?? item.runID.map(ActivityCenterModel.Focus.run))
-                            } label: {
-                                activityRow(title: item.title, detail: item.detail, symbol: "exclamationmark.circle",
-                                            tint: colors.warning)
-                            }
-                            .buttonStyle(.locus(.card)).accessibilityIdentifier("companion.menubar.request.\(item.id)")
-                        }
-                    }
-                    if !snapshot.unreadRuns.isEmpty {
-                        sectionTitle("New results")
-                        ForEach(snapshot.unreadRuns) { run in runButton(run) }
-                    }
-                    if !snapshot.inProgressRuns.isEmpty {
-                        sectionTitle("Work in progress")
-                        ForEach(snapshot.inProgressRuns) { run in runButton(run) }
-                    }
-                    Button("View all Locus activity") {
-                        revealMainWindow()
-                        activity.openActivityCenter()
-                    }.buttonStyle(.locus()).padding(.vertical, 8)
-                }.padding(.horizontal, 16).padding(.bottom, 12)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task {
-            if runtime.agentPhase.isOnline { await activity.refreshActivityRuns(announceFailure: false) }
-        }
-    }
-
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title).font(.locus(size: 12, weight: .semibold)).foregroundStyle(colors.textSecondary)
-            .accessibilityAddTraits(.isHeader)
-    }
-
-    private func runButton(_ run: OrchestrationRun) -> some View {
-        let state = TeamRunState(rawValue: run.state)
-        let title = ChatTranscriptBuilder.displayUserText(run.request).split(separator: "\n").first.map(String.init)
-            ?? "Companion task"
-        return Button {
-            revealMainWindow()
-            model.openActivityRun(run)
-        } label: {
-            activityRow(title: title, detail: state?.title ?? run.state,
-                        symbol: state == .completed ? "checkmark.circle" : state == .paused ? "pause.circle"
-                            : state?.isTerminal == true ? "exclamationmark.circle" : "clock",
-                        tint: state == .completed ? colors.success : state?.isTerminal == true ? colors.warning : colors.textSecondary)
-        }
-        .buttonStyle(.locus(.card)).accessibilityIdentifier("companion.menubar.run.\(run.id)")
-    }
-
-    private func activityRow(title: String, detail: String, symbol: String, tint: Color) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol).font(.locus(size: 15)).foregroundStyle(tint).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.locus(size: 13, weight: .medium)).lineLimit(2)
-                Text(detail).font(.locus(size: 11)).foregroundStyle(colors.textSecondary).lineLimit(3)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "arrow.up.right").font(.locus(size: 10)).foregroundStyle(colors.textTertiary)
-        }
-        .multilineTextAlignment(.leading).padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(colors.surfaceStructural, in: RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
     }
 
     private func revealMainWindow() {

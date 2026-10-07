@@ -149,6 +149,33 @@ final class GoalModel: ObservableObject {
         }
     }
 
+    func createCompanionSession(sessionID: String, objective: String, mode: String, minutes: Int,
+                                checkpoints: [String], execution: [String: Any]) async throws {
+        guard let backend, !isSaving, !isStopped, !isShuttingDown() else { throw CancellationError() }
+        isSaving = true
+        defer { isSaving = false }
+        var route = execution
+        route["companion_session"] = ["mode": mode, "minutes": minutes, "steps": checkpoints]
+        let goal = try await backend.post("/api/sessions/\(sessionID)/goal", body: [
+            "objective": objective, "execution": route,
+        ], as: PersistentGoal.self)
+        guard goal.sessionID == sessionID else { throw CancellationError() }
+        ingest(goal)
+    }
+
+    func updateCompanionSession(sessionID: String, operation: String, index: Int? = nil, evidence: String? = nil) async throws {
+        guard let backend, let goal = goals[sessionID], !isSaving, !isStopped,
+              goal.execution["companion_session"] != nil else { throw CancellationError() }
+        isSaving = true
+        defer { isSaving = false }
+        var body: [String: Any] = ["action": "session_update", "expected_revision": goal.revision, "operation": operation]
+        if let index { body["index"] = index }
+        if let evidence { body["evidence"] = evidence }
+        let updated = try await backend.patch("/api/goals/\(goal.id)", body: body, as: PersistentGoal.self)
+        guard updated.sessionID == sessionID else { throw CancellationError() }
+        ingest(updated)
+    }
+
     func refresh() async {
         guard let backend, !isStopped, !isShuttingDown() else { return }
         let token = UUID()
@@ -237,7 +264,6 @@ final class GoalModel: ObservableObject {
         }
     }
 
-    @discardableResult
     func acceptResult(sessionID: String) async {
         guard let goal = goals[sessionID], goal.status == .needsReview else { return }
         _ = await update(sessionID: sessionID, action: "accept", expectedRevision: goal.revision)

@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Navigation-only transport. It resumes empty fixture transcripts and
+/// Navigation-only transport. It resumes fixture transcripts and
 /// rejects every other mutation; it never connects a provider or executes work.
 private final class CompanionChatUITestProtocol: URLProtocol {
     static let profileID = UUID(uuidString: "C0111111-1111-4111-8111-111111111111")!
@@ -15,9 +15,16 @@ private final class CompanionChatUITestProtocol: URLProtocol {
 
     static func workspace(_ id: String) -> String { id == companionSessionID ? homePath : "/tmp" }
 
+    static func messages(_ id: String) -> [[String: String]] {
+        guard id == companionSessionID,
+              ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_HISTORY"] == "1" else { return [] }
+        return [["role": "user", "content": "Hello, Pitou."],
+                ["role": "assistant", "content": "We can keep talking here."]]
+    }
+
     static func sessionInfo(_ id: String) -> SessionInfo {
         SessionInfo(model: "qwen3:8b", host: "http://localhost:11434", cwd: workspace(id),
-                    session: id, sessionID: id, messages: 0, approxTokens: 0,
+                    session: id, sessionID: id, messages: messages(id).count, approxTokens: 0,
                     promptTokens: 0, completionTokens: 0, maxIterations: 40,
                     hasProjectContext: false, provider: "ollama",
                     permissions: SessionPermissions(skipAll: false, allowed: []))
@@ -37,14 +44,24 @@ private final class CompanionChatUITestProtocol: URLProtocol {
         if request.httpMethod == "POST", url.path.hasSuffix("/resume"), knownSession,
            let data = try? JSONEncoder().encode(Self.sessionInfo(sessionID)),
            let info = try? JSONSerialization.jsonObject(with: data) {
-            response = ["ok": true, "messages": [], "session_info": info]
+            response = ["ok": true, "messages": Self.messages(sessionID), "session_info": info]
             status = 200
         } else if request.httpMethod == "GET", url.path == "/api/sessions/\(detailID)",
                   Self.sessionIDs.contains(detailID) {
-            response = ["id": detailID, "messages": [], "preview": "", "cwd": Self.workspace(detailID),
+            response = ["id": detailID, "messages": Self.messages(detailID), "preview": "", "cwd": Self.workspace(detailID),
                         "workspace_root": Self.workspace(detailID), "archived": false,
                         "agent_profile_id": detailID != Self.workSessionID
                             ? Self.profileID.uuidString as Any : NSNull()]
+            status = 200
+        } else if request.httpMethod == "GET", url.path.hasSuffix("/task") {
+            response = ["detail": "This conversation has no saved task."]
+            status = 404
+        } else if request.httpMethod == "GET", url.path == "/api/memory/status" {
+            response = ["encrypted": true, "cipher": "AES-256-GCM", "approved_count": 0,
+                        "candidate_count": 0, "candidate_ttl_days": 30, "memory_available": true]
+            status = 200
+        } else if request.httpMethod == "GET", url.path == "/api/memory" {
+            response = ["memories": []]
             status = 200
         } else if request.httpMethod == "GET" {
             response = ["goals": [], "runs": [], "goal": NSNull(), "task": NSNull()]

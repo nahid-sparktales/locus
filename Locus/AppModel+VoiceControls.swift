@@ -87,6 +87,7 @@ extension AppModel {
     }
 
     func announceVoiceAttention(_ kind: VoiceAttentionKind, token: String) {
+        guard voiceControl.externalSessionID == nil || voiceControl.externalSessionID == currentSessionID else { return }
         voiceControl.announceAttention(kind, token: token)
     }
 

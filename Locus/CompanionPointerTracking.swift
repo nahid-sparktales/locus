@@ -39,8 +39,44 @@ struct CompanionPointerResponse: Equatable {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var companionPointerResponse = CompanionPointerResponse.neutral
+}
+
+struct CompanionPointerTargetKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+extension View {
+    /// Opts one container into pointer reactions. Avatars elsewhere stay neutral.
+    func companionPointerScope(enabled: Bool = true) -> some View {
+        modifier(CompanionPointerScopeModifier(enabled: enabled))
+    }
+}
+
+private struct CompanionPointerScopeModifier: ViewModifier {
+    let enabled: Bool
+    @State private var pointer = CompanionPointerResponse.neutral
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.companionPointerResponse, enabled ? pointer : .neutral)
+            .backgroundPreferenceValue(CompanionPointerTargetKey.self) { target in
+                GeometryReader { geometry in
+                    CompanionPointerTracking(enabled: enabled && target != nil,
+                        responseBounds: target.map { geometry[$0] }) { pointer = $0 }
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
 struct CompanionPointerTracking: NSViewRepresentable {
     var enabled: Bool
+    var responseBounds: CGRect? = nil
     var changed: (CompanionPointerResponse) -> Void
 
     func makeNSView(context: Context) -> CompanionPointerTrackingView {
@@ -48,6 +84,7 @@ struct CompanionPointerTracking: NSViewRepresentable {
     }
     func updateNSView(_ view: CompanionPointerTrackingView, context: Context) {
         view.changed = changed
+        view.responseBounds = responseBounds
         view.setEnabled(enabled)
     }
     static func dismantleNSView(_ view: CompanionPointerTrackingView, coordinator: ()) { view.detach() }
@@ -62,10 +99,10 @@ struct CompanionPointerTracking: NSViewRepresentable {
 @MainActor
 final class CompanionPointerTrackingView: NSView {
     var changed: (CompanionPointerResponse) -> Void
+    var responseBounds: CGRect?
     private(set) var isTracking = false
     private(set) var observationCount = 0
     private var enabled = false
-    private weak var trackingHost: NSView?
     private var area: NSTrackingArea?
     private var movementMonitor: Any?
     var hasMovementMonitor: Bool { movementMonitor != nil }
@@ -99,12 +136,11 @@ final class CompanionPointerTrackingView: NSView {
 
     private func attachIfNeeded() {
         guard enabled, !isTracking, !isHiddenOrHasHiddenAncestor,
-              let window, let host = window.contentView else { return }
+              let window else { return }
         let area = NSTrackingArea(rect: .zero,
             options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self, userInfo: nil)
-        host.addTrackingArea(area)
-        trackingHost = host
+        addTrackingArea(area)
         self.area = area
         isTracking = true
         movementMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
@@ -137,7 +173,9 @@ final class CompanionPointerTrackingView: NSView {
     private func updatePointer(_ event: NSEvent) {
         guard isTracking, enabled, event.window === window,
               window?.isKeyWindow == true, !isHiddenOrHasHiddenAncestor else { return }
-        publish(.response(at: convert(event.locationInWindow, from: nil), in: bounds))
+        let point = convert(event.locationInWindow, from: nil)
+        guard visibleRect.contains(point) else { publish(.neutral); return }
+        publish(.response(at: point, in: responseBounds ?? bounds))
     }
 
     private func publish(_ response: CompanionPointerResponse) {
@@ -156,9 +194,8 @@ final class CompanionPointerTrackingView: NSView {
     }
 
     func detach() {
-        if let area { trackingHost?.removeTrackingArea(area) }
+        if let area { removeTrackingArea(area) }
         area = nil
-        trackingHost = nil
         isTracking = false
         if let movementMonitor { NSEvent.removeMonitor(movementMonitor) }
         movementMonitor = nil

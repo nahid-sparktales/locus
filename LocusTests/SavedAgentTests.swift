@@ -972,7 +972,7 @@ final class SavedAgentTests: XCTestCase {
     }
 
     @MainActor
-    func testMainCompanionEntryRestoresRememberedProjectChatThroughNormalResume() async throws {
+    func testMainCompanionEntryRestoresSingleChatAcrossProjectsThroughNormalResume() async throws {
         for remembered in ["remembered", "another-project"] {
             let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
             let latest = SessionSummary(id: "latest", name: "Latest", preview: "", mtime: 3, size: 0,
@@ -992,7 +992,7 @@ final class SavedAgentTests: XCTestCase {
             let inspector = model.inspectorTab
             model.openCompanionMainConversation()
             await model.activeTranscriptLoad?.task.value
-            let expected = remembered == "remembered" ? "remembered" : "latest"
+            let expected = remembered
             XCTAssertEqual(model.currentSessionID, expected)
             XCTAssertEqual(model.sidebarDestination, .agents)
             XCTAssertEqual(model.selectedSavedAgentID, profile.id)

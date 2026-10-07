@@ -61,7 +61,8 @@ extension AppModel {
         lastSidebarSessionIDs[destination.rawValue] = session.id
         if session.savedAgentProfileID == agentTeamsModel.primaryCompanionID,
            session.savedAgentProfileID != nil, !session.isAgentEventChat,
-           session.agentTriggerID?.nilIfEmpty == nil, let workspace = session.workspacePath {
+           session.agentTriggerID?.nilIfEmpty == nil, companionConversation?.id == session.id,
+           let workspace = session.workspacePath {
             lastSidebarSessionIDs[companionSessionKey(workspace: workspace)] = session.id
         }
         if persistenceEnabled {
@@ -126,6 +127,15 @@ extension AppModel {
 
     func clearChatConfirmed() {
         clearChatConfirmationPresented = false
+        if currentCompanionConversationProfile != nil {
+            companionPanel.activate()
+            guard companionPanel.canClearConversation else {
+                showToast("Finish the companion’s run and reconnect before clearing its chat")
+                return
+            }
+            companionPanel.clearConversation()
+            return
+        }
         // Re-checked here, not just in requestClearChat(): a permission
         // request can arrive while the confirmation alert is open, and
         // clearing then would orphan the backend's blocked decision.

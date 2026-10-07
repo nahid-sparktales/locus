@@ -839,3 +839,33 @@ def test_root_plan_surface_is_read_only_and_keeps_external_research(tmp_path):
         # Only the visible root may address the user.
         "ask_user_question",
     })
+
+
+def test_shared_task_context_is_bounded_redacted_and_recovered_from_run_events(tmp_path):
+    from ollama_code.runstore import RunStore
+    store = RunStore(tmp_path / "runs.sqlite3")
+    events = []
+    def emit(event):
+        events.append(event)
+        store.append_event("companion-run", event)
+    executor = SoloSwarmExecutor(_route(tmp_path), emit=emit, should_stop=lambda: False)
+    tasks = _tasks(2)
+    tasks[0]["goal"] = "Inspect auth.py with api_key=super-secret-value and report evidence."
+    executor.execute({"tasks": tasks})
+    attempts = store.attempts("companion-run")
+    assert len(attempts) == 2
+    first = next(attempt for attempt in attempts if attempt["job_id"] == tasks[0]["id"])
+    context = first["shared_context"]
+    assert context["task_brief"] == "Inspect auth.py with api_key=[redacted] and report evidence."
+    assert context["working_folder"] == str(tmp_path)
+    assert context["tool_names"]
+    assert len(context["instructions_preview"]) <= 16_000
+    assert "parent chat transcript is not copied" in context["input_scope"]
+    assert "permission checks" in context["access_note"]
+    assert first["result"]["output"]
+    from ollama_code.runstore import sanitize_event
+    assert sanitize_event({"shared_context": context}, include_content=False)["shared_context"] == "[content omitted]"
+    reopened = RunStore(tmp_path / "runs.sqlite3")
+    assert reopened.attempts("companion-run")[0]["shared_context"] is not None
+    store.append_event("legacy", {"type": "agent_job_started", "job_id": "old", "goal": "Older worker"})
+    assert store.attempts("legacy")[0]["shared_context"] is None

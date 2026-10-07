@@ -117,7 +117,7 @@ def _execution(value: Any) -> dict[str, Any]:
     allowed = {"provider", "provider_account_id", "model", "runner", "team_id", "team_name",
                "workspace_root", "execution_path", "execution_environment", "agent_config",
                "team_manifest", "team_configuration", "solo_swarm",
-               "conversation_profile_id", "agent_profile_configuration"}
+               "conversation_profile_id", "agent_profile_configuration", "companion_session"}
     result = sanitize_event({key: item for key, item in value.items() if key in allowed})
     for key in ("provider", "model", "workspace_root"):
         result[key] = _text(result.get(key, ""), key, 4096, required=True)
@@ -155,6 +155,23 @@ def _execution(value: Any) -> dict[str, Any]:
         raise GoalError("execution_environment must be text")
     if result["execution_environment"] not in {"local", "worktree"}:
         raise GoalError("unknown execution environment")
+    if "companion_session" in result:
+        session = result["companion_session"]
+        if not isinstance(session, dict) or session.get("mode") not in {"focus", "learning"}:
+            raise GoalError("choose a focus or learning session")
+        minutes = session.get("minutes")
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 240:
+            raise GoalError("session duration must be 1 to 240 minutes")
+        steps = session.get("steps")
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 12:
+            raise GoalError("agree on 1 to 12 checkpoints")
+        result["companion_session"] = {
+            "mode": session["mode"], "minutes": minutes,
+            "steps": [{"title": _text(step.get("title", "") if isinstance(step, dict) else step,
+                                     "checkpoint", 1000, required=True), "evidence": "", "completed": False}
+                      for step in steps],
+            "state": "running", "started_at": time.time(), "elapsed_seconds": 0,
+        }
     if len(_json(result)) > 240_000:
         raise GoalError("execution configuration is too large")
     return result
@@ -254,9 +271,43 @@ class GoalStore:
                     "INSERT INTO goals(id,session_id,objective,execution_json,model_call_budget,token_budget,created_at,updated_at)"
                     " VALUES(?,?,?,?,?,?,?,?)", (goal_id, session_id, objective, _json(execution), calls, tokens, now, now),
                 )
+                if "companion_session" in execution:
+                    connection.execute("UPDATE goals SET status='paused',reason=? WHERE id=?",
+                                       ("User-paced session; Companion waits for each instruction.", goal_id))
                 return self._present(connection, self._row(connection, goal_id))
         except sqlite3.IntegrityError as error:
             raise GoalError("this chat already has an unfinished goal") from error
+
+    def _update_companion_session(self, connection, row, execution, fields):
+        session = execution["companion_session"]
+        operation = fields.get("operation")
+        if operation not in {"pause", "resume", "checkpoint", "finish"}:
+            raise GoalError("unknown focus session operation")
+        now = time.time()
+        if session["state"] == "running":
+            session["elapsed_seconds"] += max(0, now - session["started_at"])
+            session["started_at"] = now
+        if operation == "checkpoint":
+            index = fields.get("index")
+            if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(session["steps"]):
+                raise GoalError("choose an existing checkpoint")
+            evidence = _text(fields.get("evidence", ""), "progress evidence", 4000, required=True)
+            session["steps"][index].update(evidence=evidence, completed=True)
+        elif operation == "pause":
+            session["state"] = "paused"
+        elif operation == "resume":
+            session["state"] = "running"
+            session["started_at"] = now
+        else:
+            session["state"] = "finished"
+        complete = sum(step["completed"] for step in session["steps"])
+        summary = f"{complete} of {len(session['steps'])} checkpoints reported complete by you."
+        evidence = [step["title"] + ": " + step["evidence"] for step in session["steps"] if step["completed"]]
+        connection.execute(
+            "UPDATE goals SET execution_json=?,status=?,summary=?,evidence_json=?,reason=?,revision=revision+1,updated_at=? WHERE id=?",
+            (_json(execution), "completed" if operation == "finish" else "paused", summary, _json(evidence),
+             "User-reported progress; not independently verified.", now, row["id"]))
+        return self._present(connection, self._row(connection, row["id"]))
 
     @staticmethod
     def _revision(row: sqlite3.Row, expected: Any, *, required: bool = True) -> None:
@@ -267,15 +318,23 @@ class GoalStore:
 
     def update(self, goal_id: str, action: str, *, expected_revision: int | None = None,
                **fields: Any) -> dict[str, Any]:
-        if action not in {"pause", "resume", "cancel", "edit", "block", "steer", "discard_input", "accept"}:
+        if action not in {"pause", "resume", "cancel", "edit", "block", "steer", "discard_input", "accept", "session_update"}:
             raise GoalError("unknown goal action")
         with self._write() as connection:
             row = self._row(connection, goal_id)
-            self._revision(row, expected_revision, required=action in {"edit", "accept"})
+            self._revision(row, expected_revision, required=action in {"edit", "accept", "session_update"})
             if row["status"] in TERMINAL:
                 if action == "cancel" and row["status"] == "cancelled":
                     return self._present(connection, row)
                 raise GoalError("this goal has ended; create a new goal")
+            execution = json.loads(row["execution_json"])
+            if "companion_session" in execution:
+                if action == "session_update":
+                    return self._update_companion_session(connection, row, execution, fields)
+                if action in {"resume", "edit"}:
+                    raise GoalError("use the focus session controls; this session never continues automatically")
+            elif action == "session_update":
+                raise GoalError("this goal is not a focus or learning session")
             if action == "accept":
                 if row["status"] != "needs_review":
                     raise GoalError("Only a settled result needing review can be accepted.")
@@ -458,7 +517,7 @@ class GoalStore:
             self._revision(row, expected_revision)
             current = connection.execute("SELECT state,run_kind,recoverable FROM runs WHERE id=?", (row["current_run_id"],)).fetchone()
             pending = connection.execute("SELECT 1 FROM goal_inputs WHERE goal_id=? AND consumed=0 LIMIT 1", (goal_id,)).fetchone()
-            if row["status"] != "active" or pending:
+            if row["status"] != "active" or pending or "companion_session" in json.loads(row["execution_json"]):
                 return {"goal": self._present(connection, row), "run": None}
             if self._unmeasured_budget(connection, row):
                 connection.execute("UPDATE goals SET status='blocked',reason=?,updated_at=? WHERE id=?",

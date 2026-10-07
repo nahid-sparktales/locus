@@ -158,7 +158,7 @@ final class CompanionOnboardingUITests: XCTestCase {
         capture("Companion panel drafts restored")
     }
 
-    func testLeftCompanionShortcutOpensItsNormalMainConversation() {
+    func testLeftCompanionShortcutOpensItsCharacterAtTopOfMainConversation() {
         app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
@@ -176,6 +176,15 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(composer.exists)
         XCTAssertFalse(element("companion.panel").exists)
         XCTAssertFalse(element("sidebar.mode.companion").exists)
+        let character = element("companion.conversation.character")
+        XCTAssertTrue(character.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("session.companion-fixture-chat").exists)
+        XCTAssertFalse(element("session.companion-fixture-project").exists,
+                       "The normal sidebar exposes only the current Companion chat")
+        let transcript = element("conversation.scroll")
+        XCTAssertEqual(character.frame.midX, transcript.frame.midX, accuracy: 3)
+        XCTAssertLessThanOrEqual(character.frame.maxY, transcript.frame.minY + 3)
+        XCTAssertFalse(element("conversation.welcome").exists)
         composer.click()
         composer.typeText("Main companion draft")
         element("sidebar.mode.ask").click()
@@ -185,7 +194,7 @@ final class CompanionOnboardingUITests: XCTestCase {
         capture("Left shortcut opens companion in main composer")
     }
 
-    func testCompanionFolderChoiceKeepsCenterAndSeparateDrafts() {
+    func testCompanionPanelAndMainConversationShareOneChatAndDraft() {
         app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
@@ -198,25 +207,60 @@ final class CompanionOnboardingUITests: XCTestCase {
         element("inspector.rail.companion").click()
         let folder = element("companion.panel.workspace")
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
-        XCTAssertEqual(folder.value as? String, "Companion home")
+        XCTAssertTrue([folder.label, folder.value as? String].compactMap { $0 }
+            .joined(separator: " ").contains("Companion home"), "Folder: \(folder.label), value: \(String(describing: folder.value))")
+        XCTAssertFalse(app.menuButtons["companion.panel.workspace"].exists)
+        XCTAssertFalse(element("companion.panel.history").exists)
+        XCTAssertFalse(element("companion.panel.new").exists)
+        XCTAssertTrue(element("companion.panel.clear").exists)
+        let character = element("companion.panel.character")
+        XCTAssertTrue(character.exists)
+        XCTAssertEqual(character.frame.midX, element("companion.panel").frame.midX, accuracy: 3)
+        XCTAssertEqual(element("companion.panel.name").frame.midX,
+                       element("companion.panel").frame.midX, accuracy: 3)
         let input = element("companion.panel.input")
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.click()
-        input.typeText("Private home draft")
-        folder.click()
-        app.menuItems["tmp"].click()
-        XCTAssertEqual(folder.value as? String, "tmp")
-        let empty = NSPredicate(format: "value == %@", "")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: empty, object: input)], timeout: 5), .completed)
-        input.click()
-        input.typeText("Project companion draft")
+        input.typeText("One companion draft")
         XCTAssertTrue(waitForComposerValue("Keep my work draft"))
-        folder.click()
-        app.menuItems["Companion home"].click()
-        let homeDraft = NSPredicate(format: "value == %@", "Private home draft")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: homeDraft, object: input)], timeout: 5), .completed)
-        XCTAssertEqual(folder.value as? String, "Companion home")
+        element("companion.panel.options").click()
+        app.menuItems["Open full conversation"].click()
+        XCTAssertTrue(element("companion.conversation.character").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForComposerValue("One companion draft"))
+        composer.click()
+        app.typeKey("a", modifierFlags: .command)
+        composer.typeText("Updated companion draft")
+        element("sidebar.mode.ask").click()
         XCTAssertTrue(waitForComposerValue("Keep my work draft"))
-        capture("Companion dedicated home and explicit project choice")
+        if !element("companion.panel").exists { element("inspector.rail.companion").click() }
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        let updatedDraft = NSPredicate(format: "value == %@", "Updated companion draft")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: updatedDraft,
+                                object: input)], timeout: 5), .completed)
+        XCTAssertTrue([folder.label, folder.value as? String].compactMap { $0 }
+            .joined(separator: " ").contains("Companion home"))
+        XCTAssertFalse(element("companion.panel.history").exists)
+        XCTAssertFalse(element("companion.panel.new").exists)
+        capture("One companion chat shared across both surfaces")
+    }
+
+    func testCompanionCharacterRemainsCenteredAboveExistingMessages() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_HISTORY"] = "1"
+        app.launch()
+        XCTAssertTrue(element("sidebar.companion").waitForExistence(timeout: 15))
+        element("sidebar.companion").click()
+        let character = element("companion.conversation.character")
+        XCTAssertTrue(character.waitForExistence(timeout: 5))
+        let reply = app.textViews.matching(NSPredicate(
+            format: "value == %@", "We can keep talking here.")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertEqual(character.frame.midX, element("conversation.scroll").frame.midX, accuracy: 3)
+        XCTAssertLessThanOrEqual(character.frame.maxY, element("conversation.scroll").frame.minY + 3)
+        XCTAssertFalse(element("conversation.welcome").exists)
+        capture("Companion stays centered above chat history")
     }
 
     func testMenuBarCompanionPreservesDraftAcrossDismissalAndOpensLocus() throws {
@@ -276,6 +320,87 @@ final class CompanionOnboardingUITests: XCTestCase {
         element("companion.menubar.open").click()
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForComposerValue("Keep my main task draft"))
+    }
+
+    func testCompanionContextRequiresPreviewAndStaysWithItsChat() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1200"
+        app.launch()
+        app.activate()
+        XCTAssertTrue(element("composer.input").waitForExistence(timeout: 15))
+        element("composer.input").hover()
+        element("composer.input").click()
+        element("composer.input").typeText("Keep this work note")
+        XCTAssertTrue(waitForComposerValue("Keep this work note"))
+        element("inspector.rail.companion").hover()
+        element("inspector.rail.companion").click()
+        let workTitle = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@",
+                                    "Work UI fixture", "Work UI fixture")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: workTitle,
+            object: element("workspace.sessionTitle"))], timeout: 5), .completed)
+        XCTAssertTrue(element("companion.context.add").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("companion.panel.send").isEnabled)
+        element("companion.context.add").click()
+        app.menuItems["Selected text or error…"].click()
+        let text = element("companion.context.text")
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.click(); text.typeText("Only this error should be shared")
+        element("companion.context.review").click()
+        XCTAssertTrue(element("companion.context.confirm").waitForExistence(timeout: 5))
+        capture("Companion explicit context preview")
+        element("companion.context.confirm").click()
+        let enabled = NSPredicate(format: "enabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: enabled,
+            object: element("companion.panel.send"))], timeout: 5), .completed)
+        XCTAssertTrue(waitForComposerValue("Keep this work note"))
+        element("sidebar.companion").click()
+        XCTAssertTrue(element("companion.conversation.character").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Remove Selected text"].firstMatch.waitForExistence(timeout: 5))
+        capture("Shared context follows Companion into main chat")
+    }
+
+    func testCompanionToolsAndDesktopUseExistingIdentity() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1200"
+        app.launch()
+        XCTAssertTrue(element("composer.input").waitForExistence(timeout: 15))
+        element("inspector.rail.companion").click()
+        element("companion.panel.options").click()
+        app.menuItems["Companion tools…"].click()
+        XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 5))
+        for title in ["Activity", "Memory", "Focus", "Handoffs", "Guide", "Character"] {
+            let tab = app.radioButtons[title].firstMatch
+            XCTAssertTrue(tab.waitForExistence(timeout: 5), title)
+            tab.click()
+        }
+        XCTAssertTrue(element("companion.pack.import").waitForExistence(timeout: 5))
+        capture("Companion character and desktop tools")
+        app.buttons["Show desktop companion"].firstMatch.click()
+        XCTAssertTrue(element("companion.desktop.character").waitForExistence(timeout: 5))
+        capture("Floating Companion")
+        app.buttons["Done"].firstMatch.click()
+    }
+
+    func testCompanionGuideOpensTheActualMCPControls() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launch()
+        XCTAssertTrue(element("composer.input").waitForExistence(timeout: 15))
+        element("inspector.rail.companion").click()
+        element("companion.panel.options").click()
+        app.menuItems["Companion tools…"].click()
+        XCTAssertTrue(app.radioButtons["Guide"].firstMatch.waitForExistence(timeout: 5))
+        app.radioButtons["Guide"].firstMatch.click()
+        app.buttons["Connect an MCP server"].firstMatch.click()
+        XCTAssertTrue(element("extensions.tab.mcp-servers").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Stop guidance"].firstMatch.waitForExistence(timeout: 5))
+        capture("Companion guidance highlights real controls")
+        app.buttons["Stop guidance"].firstMatch.click()
     }
 
     private func openMenuBarCompanion(_ item: XCUIElement) throws {

@@ -488,6 +488,16 @@ extension AppModel {
             ?? orchestrationRunID
             ?? taskConversationStates[resolvedSessionID]?.runID
             ?? ""
+        let companion = primaryCompanionProfile.map { profile in
+            sessionCatalog.snapshot.sessionsByID[resolvedSessionID]?.savedAgentProfileID == profile.id
+        } ?? false
+        if companion {
+            let policy = activity.companionNotificationPolicy
+            let run = activity.visibleActivityRuns.first { $0.id == resolvedRunID }
+                ?? runs.runDetailsByID[resolvedRunID]
+            guard !policy.isQuiet(at: .now), !policy.isSnoozed(resolvedRunID),
+                  policy.includes(run.map { ActivityFilter.Kind.kind(for: $0) } ?? .chat) else { return }
+        }
         let content = UNMutableNotificationContent()
         content.title = "Locus"
         content.body = body
@@ -498,7 +508,7 @@ extension AppModel {
         ]
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(
-                identifier: UUID().uuidString,
+                identifier: companion && !resolvedRunID.isEmpty ? "companion:\(resolvedRunID):\(body)" : UUID().uuidString,
                 content: content,
                 trigger: nil
             )

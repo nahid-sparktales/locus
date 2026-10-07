@@ -1,13 +1,14 @@
 # Companion pointer reactions
 
-An idle character can react to the pointer inside its own key Locus window.
+Only the character in the right Companion tab reacts to the pointer, and only
+while the mouse is inside that tab in its key Locus window. Other avatars,
+setup previews, and the menu-bar companion stay neutral.
 This is a local presentation effect. It does not create work, collect pointer
 history, change permissions, call a model, or imply that the agent is working.
 
 - A native app-local mouse-move listener filters events to the character's own
-  key window and returns every event unchanged. The listener does not separately
-  require `NSApp.isActive`, so a nonactivating menu panel can supply its own key-window
-  events. Tracking still requires enabled, visible content in that window.
+  key window and returns every event unchanged. Tracking requires an enabled,
+  visible inspector and the pointer inside that inspector's bounds.
   A tracking area requests
   native movement events and handles entry and exit; duplicate updates coalesce.
   There is no global input monitor, cursor polling, accessibility
@@ -26,18 +27,11 @@ history, change permissions, call a model, or imply that the agent is working.
   characters move their existing drawn eyes through discrete positions.
 - Reactions run only in idle. Greeting, queued, working, approval, completion,
   failure, paused, and unavailable states retain their actual status behavior.
-  A setup preview becomes idle after its decorative greeting finishes, so it can
-  then follow the pointer. This does not clear real task completion or errors.
-- Leaving the window or switching focus returns the character to neutral.
+  These reactions do not clear real task completion or errors.
+- Leaving the tab or switching focus returns the character to neutral.
   Reduce Motion, **Animate characters** off, hidden/occluded views, and closing
   or detaching the view disable reactions and remove both the listener and tracking area. Real
   status labels and normal keyboard navigation remain unchanged.
-
-The listener's key-window allowance does not establish the actual menu popover's
-scene activation or pointer delivery. Those remain unverified locally because
-the display notch prevented opening its status item. The renderer's scene and
-visibility gates are unchanged. See the [verification record](CompanionTabVerification.md#pointer-guard-follow-up)
-for the earlier hosted-delivery pass and the later explicit fixture-activation skip.
 
 Playback uses Locus's own 8fps stepped timing: approved source frames last one
 or more 125ms ticks, with two-second rests during idle and longer waiting holds.

@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension EnvironmentValues {
+    @Entry var companionAllowsInactiveAnimation = false
+}
+
 extension CompanionPalette {
     var color: Color {
         switch self {
@@ -20,6 +24,8 @@ extension CompanionPalette {
 struct CompanionCharacterView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.companionAllowsInactiveAnimation) private var allowsInactiveAnimation
+    @Environment(\.companionPointerResponse) private var pointer
     let appearance: CompanionAppearance
     var size: CGFloat = 180
     var pose: CompanionCharacterPose = .idle
@@ -30,11 +36,10 @@ struct CompanionCharacterView: View {
     @State private var blinking = false
     @State private var lift: CGFloat = 0
     @State private var wave: CGFloat = 0
-    @State private var pointer = CompanionPointerResponse.neutral
     @State private var finishedGreetingKey: String?
 
     private var canAnimate: Bool {
-        visible && windowVisible && animationsEnabled && !reduceMotion && scenePhase == .active
+        visible && windowVisible && animationsEnabled && !reduceMotion && (scenePhase == .active || allowsInactiveAnimation)
             && pose != .paused && pose != .unavailable
     }
     private var animationKey: String { "\(canAnimate)-\(pose.rawValue)-\(appearance.assetID)" }
@@ -46,7 +51,9 @@ struct CompanionCharacterView: View {
 
     var body: some View {
         let sprite = appearance.validated.bundledSprite
-        let spriteAtlas = sprite.flatMap { CompanionSpriteCatalog.atlas(for: $0) }
+        let spriteAtlas = appearance.kind == .importedSprite
+            ? CompanionImportedSpriteCatalog.atlas(assetID: appearance.assetID, data: customImageData)
+            : sprite.flatMap { CompanionSpriteCatalog.atlas(for: $0) }
         ZStack(alignment: .bottomTrailing) {
             Group {
                 if let atlas = spriteAtlas {
@@ -85,7 +92,7 @@ struct CompanionCharacterView: View {
         }
         .frame(width: size, height: size)
         .background(CompanionWindowVisibility { windowVisible = $0 }.frame(width: 0, height: 0))
-        .background(CompanionPointerTracking(enabled: canFollowPointer) { pointer = $0 }.allowsHitTesting(false))
+        .anchorPreference(key: CompanionPointerTargetKey.self, value: .bounds) { canFollowPointer ? $0 : nil }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(appearance.kind == .portrait
             ? (customImageData == nil ? "Character picture unavailable; showing Robot" : "Custom character")
@@ -93,7 +100,7 @@ struct CompanionCharacterView: View {
                : "\(appearance.validated.displayName) character"))
         .accessibilityValue(pose.label)
         .onAppear { visible = true }
-        .onDisappear { visible = false; pointer = .neutral; finishedGreetingKey = nil; resetMotion() }
+        .onDisappear { visible = false; finishedGreetingKey = nil; resetMotion() }
         .task(id: animationKey) { await animate() }
     }
 
@@ -102,6 +109,8 @@ struct CompanionCharacterView: View {
         case .idle, .greeting: nil
         case .queued: "clock"
         case .working: "ellipsis"
+        case .listening: "mic.fill"
+        case .speaking: "speaker.wave.2.fill"
         case .needsApproval: "hand.raised.fill"
         case .completed: "checkmark"
         case .failed: "exclamationmark"
@@ -120,7 +129,7 @@ struct CompanionCharacterView: View {
     @MainActor private func animate() async {
         resetMotion()
         finishedGreetingKey = nil
-        guard canAnimate, appearance.kind != .bundledSprite else { return }
+        guard canAnimate, appearance.animationCapability != .spriteFrames else { return }
         do {
             if pose == .greeting || pose == .completed {
                 // Deliberate key poses, including a short anticipation and settle.

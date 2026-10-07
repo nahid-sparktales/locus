@@ -207,6 +207,9 @@ private struct ExtensionsSettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(14)
+            .companionGuideAnchor("extensions.tabs", guide: model.companionGuidance)
+
+            CompanionGuidanceStatus(guide: model.companionGuidance, topic: .mcp)
 
             if let error = extensionsModel.extensionErrorMessage, !error.isEmpty {
                 HStack(spacing: 7) {
@@ -243,7 +246,13 @@ private struct ExtensionsSettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onChange(of: tab) { _, _ in updateCompanionGuide() }
+        .onChange(of: extensionsModel.extensions.mcpServers) { _, _ in updateCompanionGuide() }
+        .onChange(of: extensionsModel.mcpProbeStatuses.mapValues(\.state)) { _, _ in updateCompanionGuide() }
+        .onChange(of: extensionsModel.mcpProbeErrors) { _, _ in updateCompanionGuide() }
+        .onChange(of: extensionsModel.extensionErrorMessage) { _, _ in updateCompanionGuide() }
         .task {
+            updateCompanionGuide()
             await extensionsModel.refreshExtensions()
             await extensionsModel.refreshExtensionCatalog()
         }
@@ -386,6 +395,30 @@ private struct ExtensionsSettingsView: View {
         }
     }
 
+    private func updateCompanionGuide() {
+        let guide = model.companionGuidance
+        guard guide.topic == .mcp, !guide.stopped else { return }
+        if let error = extensionsModel.extensionErrorMessage?.nilIfEmpty {
+            guide.error = error; guide.target = nil; guide.instruction = "Resolve the connection error before continuing."; return
+        }
+        guide.error = nil
+        guard tab == .mcp else {
+            guide.point(to: "extensions.tabs", instruction: "Choose MCP Servers to inspect or add a connection."); return
+        }
+        if let server = extensionsModel.extensions.mcpServers.first {
+            let status = extensionsModel.mcpProbeStatuses[server.id]?.state ?? server.state
+            let problem = extensionsModel.mcpError(for: server)
+            if let problem, !problem.isEmpty {
+                guide.error = problem; guide.target = nil; guide.instruction = "Resolve this server’s connection error before continuing."; return
+            }
+            guide.point(to: "extensions.test." + server.id, instruction: status == "connected"
+                ? "This server is connected. Test it to inspect the tools currently available, or stop this guide."
+                : "Test this server. Follow its authentication request if needed; testing does not grant tool permissions.")
+        } else {
+            guide.point(to: "extensions.add", instruction: "Add the server’s connection details. Review and save them in the editor.")
+        }
+    }
+
     private var mcpPane: some View {
         VStack(spacing: 10) {
             HStack {
@@ -404,6 +437,7 @@ private struct ExtensionsSettingsView: View {
                     editorPresented = true
                 }
                 .disabled(model.isBusy)
+                .companionGuideAnchor("extensions.add", guide: model.companionGuidance)
             }
             ScrollView {
                 LazyVStack(spacing: 9) {
@@ -490,6 +524,7 @@ private struct ExtensionsSettingsView: View {
                                 }
                                 .disabled(model.isBusy || extensionsModel.mcpOperations[server.id] != nil)
                                 .accessibilityIdentifier("extensions.mcp.server.\(server.id).test")
+                                .companionGuideAnchor("extensions.test." + server.id, guide: model.companionGuidance)
                                 Button("Reconnect") { Task { await extensionsModel.reconnectMCPServer(server.id) } }
                                     .disabled(model.isBusy || extensionsModel.mcpOperations[server.id] != nil)
                                 if server.origin == "user" {

@@ -180,7 +180,7 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertNil(app.emptySidebarDestination)
     }
 
-    func testCompanionChatsExcludeOtherProjectsAgentsAutomationsAndArchives() throws {
+    func testSingleCompanionChatSpansFoldersAndExcludesOtherAgentsAutomationsAndArchives() throws {
         let app = AppModel(startImmediately: false)
         let profile = AgentProfile(name: "Pitou", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
         let other = AgentProfile(name: "Other", model: "fixture")
@@ -195,8 +195,9 @@ final class CompanionIntegrationTests: XCTestCase {
             chat("other-agent", owner: other.id), chat("archived", owner: profile.id, archived: true),
             chat("automation", owner: profile.id, trigger: "scheduled")]
         XCTAssertEqual(app.companionChats(in: "/tmp").map(\.id), ["owned"])
-        XCTAssertEqual(app.companionChats(in: "/var/tmp").map(\.id), ["private"])
-        XCTAssertNotEqual(app.companionSessionKey(workspace: "/tmp"), app.companionSessionKey(workspace: "/var/tmp"))
+        XCTAssertEqual(app.companionChats(in: "/var/tmp").map(\.id), ["owned"])
+        XCTAssertEqual(app.companionSessionKey(workspace: "/tmp"), app.companionSessionKey(workspace: "/var/tmp"))
+        XCTAssertEqual(app.savedAgentChats(profile.id).count, 3, "Legacy and automation history remains intact")
     }
 
     func testCompanionDefaultsToStableLazyHomeIndependentOfCenterProject() throws {
@@ -347,7 +348,7 @@ final class CompanionIntegrationTests: XCTestCase {
         app.draftText = "Companion draft"
         app.isBusy = true
         app.openCompanionDestination()
-        XCTAssertFalse(app.companionConversationIsSelected, "Default panel chat must be independent of the center")
+        XCTAssertTrue(app.companionConversationIsSelected, "The panel and center share the companion conversation")
         app.openCompanionChat(chat)
         XCTAssertTrue(app.companionPanel.isForegroundConversation)
         app.companionPanel.draft = "Must not replace the central draft"
@@ -356,6 +357,6 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertNil(app.activeTranscriptLoad)
         XCTAssertNil(app.savedAgentOverviewID)
         XCTAssertTrue(app.creatingSavedAgentChatIDs.isEmpty)
-        XCTAssertNil(app.lastSidebarSessionIDs[app.companionSessionKey(workspace: "/tmp")], "Offline selection has not loaded durable ownership")
+        XCTAssertEqual(app.lastSidebarSessionIDs[app.companionSessionKey(workspace: "/tmp")], chat.id)
     }
 }

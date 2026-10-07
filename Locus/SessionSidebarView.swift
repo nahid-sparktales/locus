@@ -42,14 +42,23 @@ enum AgentSidebarCatalog {
         definitions: [AgentDefinition], sessions: [SessionSummary], query: String,
         showArchived: Bool, runningSessionIDs: Set<String>,
         connections: [ConnectorConnection] = [], connectionsLoaded: Bool = false,
-        profiles: [AgentProfile] = [], recentAgentIDs: [String] = []
+        profiles: [AgentProfile] = [], recentAgentIDs: [String] = [],
+        primaryCompanionID: UUID? = nil, companionSessionID: String? = nil
     ) -> [AgentSidebarGroupModel] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let profileChats = sessions.filter { $0.savedAgentProfileID != nil && (showArchived || !$0.isArchived) }
         let profileIDs = Set(profiles.map(\.id)).union(profileChats.compactMap(\.savedAgentProfileID))
         let savedGroups = profileIDs.compactMap { profileID -> AgentSidebarGroupModel? in
             let profile = profiles.first { $0.id == profileID }
-            let tasks = profileChats.filter { $0.savedAgentProfileID == profileID }.sorted {
+            let ownedChats = profileChats.filter { $0.savedAgentProfileID == profileID }
+            // Companion has one ongoing manual chat. Earlier project chats
+            // remain recoverable through search or Show Archived Sessions;
+            // automated conversations and their activity remain visible.
+            let tasks = ownedChats.filter {
+                profileID != primaryCompanionID || companionSessionID == nil || showArchived || !query.isEmpty
+                    || $0.id == companionSessionID || $0.isAgentEventChat
+                    || $0.agentTriggerID?.nilIfEmpty != nil
+            }.sorted {
                 if $0.isPinned != $1.isPinned { return $0.isPinned }
                 if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
                 return $0.id < $1.id
@@ -69,7 +78,7 @@ enum AgentSidebarCatalog {
                 }
             return AgentSidebarGroupModel(id: "profile:\(profileID.uuidString)", reference: nil,
                 accessibilityID: profileID.uuidString, name: name, tasks: matches, totalChatCount: tasks.count,
-                definition: nil, runningChatCount: tasks.filter { runningSessionIDs.contains($0.id) }.count,
+                definition: nil, runningChatCount: ownedChats.filter { runningSessionIDs.contains($0.id) }.count,
                 sourceNeedsAttention: needsAttention, profileID: profileID, profile: profile)
         }
         // A saved agent owns its automation chats too; do not repeat those
@@ -2641,7 +2650,9 @@ private struct AgentSidebarSection: View {
             showArchived: snapshot.showArchivedSessions,
             runningSessionIDs: model.runningChatSessionIDs,
             connections: automation.connections, connectionsLoaded: automation.hasLoaded,
-            profiles: agentTeams.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs
+            profiles: agentTeams.agentProfiles, recentAgentIDs: model.recentSidebarAgentIDs,
+            primaryCompanionID: agentTeams.primaryCompanionID,
+            companionSessionID: model.companionConversation?.id
         )
     }
 

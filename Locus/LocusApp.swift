@@ -119,6 +119,8 @@ struct LocusApp: App {
                     .accessibilityIdentifier("menu.gettingStarted")
                 Button("Your companion…") { model.presentCompanion() }
                 .accessibilityIdentifier("menu.companion")
+                Button("Show or Hide Desktop Companion") { model.companionDesktop.toggle() }
+                    .accessibilityIdentifier("menu.companion.desktop")
             }
             CommandGroup(after: .appInfo) {
                 if updates.isAvailable {

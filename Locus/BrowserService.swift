@@ -2385,6 +2385,18 @@ final class BrowserService: NSObject, ObservableObject {
         }
     }
 
+    /// An explicit, read-only capture for the Companion preview. The browser
+    /// remains owned by its source chat; no control target is transferred.
+    func companionPageSnapshot(sessionID: String) async throws -> ChatAttachment {
+        guard !IdentityPrivacyGuard.shared.blocksCapture, !isIdentityApplication(sessionID: sessionID) else {
+            throw ApplicationContextError.privateIdentitySurface
+        }
+        let result = try await getText(["max_chars": 100_000], sessionID: sessionID)
+        guard let text = result["text"] as? String else { throw BrowserToolError("the page could not be read") }
+        guard !IdentityPrivacyGuard.shared.blocksCapture else { throw ApplicationContextError.privateIdentitySurface }
+        return CompanionContextSharingModel.textAttachment(text, name: "Browser page")
+    }
+
     func activeSnapshot(for sessionID: String) -> TabSnapshot? {
         guard let id = activeTabBySession[sessionID] else { return nil }
         return tabs.first { $0.id == id }

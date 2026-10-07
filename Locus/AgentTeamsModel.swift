@@ -254,6 +254,15 @@ final class AgentTeamsModel: ObservableObject {
         if data != nil { setAgentAppearance(.portrait, profileID: profileID) }
     }
 
+    func setAgentAnimationPack(_ data: Data, profileID: UUID) throws {
+        guard agentProfiles.contains(where: { $0.id == profileID }) else { throw CompanionValidationError.missingProfile }
+        let pack = try CompanionAnimationPack.decode(data)
+        let clean = try JSONEncoder().encode(pack)
+        agentAvatarData[profileID] = clean
+        persistAgentAvatars()
+        setAgentAppearance(.importedSprite(assetID: pack.assetID), profileID: profileID)
+    }
+
     func setAgentAppearance(_ appearance: CompanionAppearance?, profileID: UUID) {
         guard agentProfiles.contains(where: { $0.id == profileID }) else { return }
         companionPresentation.appearances[profileID] = appearance?.validated
@@ -401,7 +410,11 @@ final class AgentTeamsModel: ObservableObject {
         agentAvatarData = Dictionary(uniqueKeysWithValues:
             (defaults.dictionary(forKey: Self.avatarsKey) ?? [:]).compactMap { key, value in
                 guard let id = UUID(uuidString: key), profileIDs.contains(id),
-                      let data = value as? Data, data.count <= AgentAvatarImage.maximumStoredBytes else { return nil }
+                      let data = value as? Data else { return nil }
+                if data.count > AgentAvatarImage.maximumStoredBytes || agentAppearances[id]?.kind == .importedSprite {
+                    guard agentAppearances[id]?.kind == .importedSprite,
+                          (try? CompanionAnimationPack.decode(data)) != nil else { return nil }
+                }
                 return (id, data)
             })
     }

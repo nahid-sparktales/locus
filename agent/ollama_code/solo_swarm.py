@@ -874,6 +874,23 @@ class SoloSwarmExecutor:
             "model": self.route.model,
             "execution_engine": engine,
             "read_only": bool(task.get("read_only")),
+            # Record only the bounded task's actual initial input and declared
+            # tools. Never serialize the route/client or provider credentials.
+            # The ordinary run event ledger owns this evidence after restart.
+            "shared_context": {
+                "task_brief": task["goal"],
+                "task_label": task["label"],
+                "working_folder": self.route.workspace,
+                "tool_names": sorted(str(name) for name in task.get("_allowed_tools") or [])[:128],
+                "instructions_preview": self._worker_instructions(task)[:16_000],
+                "instructions_truncated": len(self._worker_instructions(task)) > 16_000,
+                "input_scope": (
+                    "Approved task brief sent to the hosted orchestrator; its internal worker prompt is not exposed."
+                    if engine == "openai_responses" else
+                    "Initial task brief and agent guidance; the parent chat transcript is not copied."
+                ),
+                "access_note": "Tool calls remain subject to the existing capability and permission checks. Later tool results are recorded separately.",
+            },
         }
         self.emit({"type": "agent_spawned", "parent_node_id": "/root", "depth": 1, **common})
         self.emit({"type": "agent_job_started", **common})

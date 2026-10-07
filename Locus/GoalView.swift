@@ -15,7 +15,7 @@ struct GoalCardView: View {
                     Image(systemName: goal.status == .completed ? "checkmark.circle" : "scope")
                         .foregroundStyle(viewColors.accentAction)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(goal.verificationStatus == "checking" ? "Checking" : goal.status.title).font(.callout.weight(.semibold))
+                        Text(goal.isCompanionSession ? (goal.status.isTerminal ? "Session ended" : "Focus & learning session") : goal.verificationStatus == "checking" ? "Checking" : goal.status.title).font(.callout.weight(.semibold))
                             .accessibilityIdentifier("goal.status")
                         Text(goal.objective).font(.callout).lineLimit(3).textSelection(.enabled)
                             .accessibilityIdentifier("goal.objective")
@@ -31,7 +31,7 @@ struct GoalCardView: View {
                     Text("Next: \(next)").font(.caption).foregroundStyle(viewColors.textSecondary).lineLimit(2)
                 }
                 if goal.status == .completed, goal.verificationStatus != "passed" {
-                    Text(goal.verificationStatus == "accepted" ? "Accepted by you · Not machine verified" : "Historical result · Verification unavailable")
+                    Text(goal.isCompanionSession ? "Progress reported by you · Not independently verified" : goal.verificationStatus == "accepted" ? "Accepted by you · Not machine verified" : "Historical result · Verification unavailable")
                         .font(.caption).foregroundStyle(viewColors.textTertiary)
                         .accessibilityIdentifier("goal.verificationLabel")
                 }
@@ -65,7 +65,7 @@ struct GoalCardView: View {
                         Button("Pause") { model.pauseAndStop(sessionID: sessionID) }
                             .help("Pause this goal and stop its current work")
                             .accessibilityIdentifier("goal.pause")
-                    } else if goal.status.canResume {
+                    } else if goal.status.canResume && !goal.isCompanionSession {
                         Button("Resume") { Task { await model.resume(sessionID: sessionID) } }
                             .help("Continue this goal in its chat")
                             .accessibilityIdentifier("goal.resume")
@@ -75,8 +75,10 @@ struct GoalCardView: View {
                             .accessibilityIdentifier("goal.accept")
                     }
                     if !goal.status.isTerminal {
-                        Button("Edit") { model.open(sessionID: sessionID) }
-                            .accessibilityIdentifier("goal.edit")
+                        if !goal.isCompanionSession {
+                            Button("Edit") { model.open(sessionID: sessionID) }
+                                .accessibilityIdentifier("goal.edit")
+                        }
                         Button("End") { Task { await model.cancel(sessionID: sessionID) } }
                             .help("Stop current work and end this goal")
                             .accessibilityLabel("End this goal")

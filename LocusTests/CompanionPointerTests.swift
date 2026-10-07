@@ -72,17 +72,18 @@ final class CompanionPointerTests: XCTestCase {
         host.addSubview(tracker)
         XCTAssertFalse(tracker.isTracking)
         XCTAssertFalse(tracker.hasMovementMonitor)
-        let baseline = host.trackingAreas.count
+        let baseline = tracker.trackingAreas.count
         tracker.setEnabled(true)
         XCTAssertTrue(tracker.isTracking)
         XCTAssertTrue(tracker.hasMovementMonitor)
-        XCTAssertEqual(host.trackingAreas.count, baseline + 1)
+        XCTAssertEqual(tracker.trackingAreas.count, baseline + 1)
+        XCTAssertTrue(host.trackingAreas.isEmpty, "Tracking belongs to the tab, not the whole window")
         XCTAssertEqual(tracker.observationCount, 2)
         XCTAssertNil(tracker.hitTest(.zero), "Pointer reactions must not intercept ordinary controls")
         tracker.setEnabled(false)
         XCTAssertFalse(tracker.isTracking)
         XCTAssertFalse(tracker.hasMovementMonitor)
-        XCTAssertEqual(host.trackingAreas.count, baseline)
+        XCTAssertEqual(tracker.trackingAreas.count, baseline)
         XCTAssertEqual(tracker.observationCount, 0)
         tracker.setEnabled(true)
         tracker.isHidden = true
@@ -94,14 +95,14 @@ final class CompanionPointerTests: XCTestCase {
         tracker.removeFromSuperview()
         XCTAssertFalse(tracker.isTracking)
         XCTAssertFalse(tracker.hasMovementMonitor)
-        XCTAssertEqual(host.trackingAreas.count, baseline)
+        XCTAssertEqual(tracker.trackingAreas.count, baseline)
         host.addSubview(tracker)
         XCTAssertTrue(tracker.isTracking)
         window.close()
         XCTAssertFalse(tracker.isTracking)
         XCTAssertFalse(tracker.hasMovementMonitor)
         XCTAssertEqual(tracker.observationCount, 0)
-        XCTAssertEqual(host.trackingAreas.count, baseline)
+        XCTAssertEqual(tracker.trackingAreas.count, baseline)
         tracker.detach()
         XCTAssertEqual(tracker.observationCount, 0)
     }
@@ -122,7 +123,7 @@ final class CompanionPointerTests: XCTestCase {
         window.contentView?.addSubview(tracker)
         tracker.setEnabled(true)
         func event(for target: NSWindow) throws -> NSEvent {
-            try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: .init(x: 250, y: 90),
+            try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: .init(x: 150, y: 90),
                 modifierFlags: [], timestamp: 0, windowNumber: target.windowNumber, context: nil,
                 eventNumber: 0, clickCount: 0, pressure: 0))
         }
@@ -152,20 +153,27 @@ final class CompanionPointerTests: XCTestCase {
         XCTAssertFalse(tracker.isTracking)
     }
 
-    func testHostedWindowDeliversQueuedMouseMovementAndReleasesLocalListener() throws {
+    func testHostedScopeTracksAroundCharacterOnlyInsideTabAndReleasesLocalListener() throws {
         let previousKeyWindow = NSApp.keyWindow
         let window = NSWindow(contentRect: .init(x: 200, y: 200, width: 400, height: 300),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close(); previousKeyWindow?.makeKey() }
         var delivered: [CompanionPointerResponse] = []
-        let root = ZStack(alignment: .bottomLeading) {
-            Color.clear
-            Color.clear.frame(width: 96, height: 96)
-                .background(CompanionPointerTracking(enabled: true) { delivered.append($0) }
-                    .allowsHitTesting(false))
-        }.frame(width: 400, height: 300)
-        let host = NSHostingView(rootView: root)
+        func root(enabled: Bool) -> some View {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: 100)
+                ZStack(alignment: .bottomLeading) {
+                    Color.clear
+                    CompanionPointerProbe { delivered.append($0) }
+                        .frame(width: 96, height: 96)
+                        .anchorPreference(key: CompanionPointerTargetKey.self, value: .bounds) { $0 }
+                }
+                .frame(width: 300, height: 300)
+                .companionPointerScope(enabled: enabled)
+            }.frame(width: 400, height: 300)
+        }
+        let host = NSHostingView(rootView: root(enabled: true))
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -197,17 +205,18 @@ final class CompanionPointerTests: XCTestCase {
             guard let tracker = findTracker(in: host) else { return false }
             return tracker.window === window && tracker.isTracking
                 && tracker.hasMovementMonitor
-                && tracker.bounds.width == 96 && tracker.bounds.height == 96
+                && tracker.bounds.width == 300 && tracker.bounds.height == 300
                 && !tracker.visibleRect.isEmpty && !tracker.isHiddenOrHasHiddenAncestor
-                && host.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker }
+                && tracker.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker }
         }
         let tracker = try XCTUnwrap(findTracker(in: host))
         XCTAssertTrue(tracker.isTracking)
         XCTAssertTrue(tracker.hasMovementMonitor)
         XCTAssertTrue(tracker.window === window)
-        XCTAssertEqual(tracker.bounds.size, CGSize(width: 96, height: 96))
+        XCTAssertEqual(tracker.bounds.size, CGSize(width: 300, height: 300))
+        XCTAssertEqual(tracker.responseBounds, CGRect(x: 0, y: 204, width: 96, height: 96))
         XCTAssertFalse(tracker.visibleRect.isEmpty)
-        XCTAssertTrue(host.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker })
+        XCTAssertTrue(tracker.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker })
         var observedMoves = 0
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
             if event.window === window { observedMoves += 1 }
@@ -217,7 +226,7 @@ final class CompanionPointerTests: XCTestCase {
         // Test native queue dispatch, not a direct mouseMoved call. An app-local
         // listener works across NSHostingView's own tracking-area management.
         window.acceptsMouseMovedEvents = false
-        for (point, direction) in [(CGPoint(x: 350, y: 48), 4), (CGPoint(x: 48, y: 250), 0)] {
+        for (point, direction) in [(CGPoint(x: 350, y: 48), 4), (CGPoint(x: 148, y: 250), 0)] {
             delivered.removeAll()
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved,
                 location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -227,11 +236,17 @@ final class CompanionPointerTests: XCTestCase {
             XCTAssertTrue(delivered.contains(where: { $0.directionIndex == direction }),
                 "Queued move \(direction) missing. key=\(window.isKeyWindow), active=\(NSApp.isActive), "
                 + "tracking=\(tracker.isTracking), bounds=\(tracker.bounds), visible=\(tracker.visibleRect), "
-                + "registered=\(host.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker }), "
+                + "registered=\(tracker.trackingAreas.contains { ($0.owner as? CompanionPointerTrackingView) === tracker }), "
                 + "localMoves=\(observedMoves), responses=\(delivered), modal=\(String(describing: NSApp.modalWindow))")
         }
-        tracker.setEnabled(false)
+        let outsideMovement = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved,
+            location: .init(x: 50, y: 48), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 0, pressure: 0))
+        NSApp.postEvent(outsideMovement, atStart: false)
         pumpEvents { delivered.last == .neutral }
+        XCTAssertEqual(delivered.last, .neutral, "Leaving the tab must return the character to neutral")
+        host.rootView = root(enabled: false)
+        pumpEvents { !tracker.hasMovementMonitor }
         delivered.removeAll()
         let disabledMovement = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved,
             location: .init(x: 350, y: 48), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -241,11 +256,31 @@ final class CompanionPointerTests: XCTestCase {
         pumpEvents { observedMoves > beforeDisabledMove }
         XCTAssertFalse(tracker.hasMovementMonitor)
         XCTAssertTrue(delivered.isEmpty, "Disabling reactions removes the local listener without consuming the mouse event")
-        tracker.setEnabled(true)
+        host.rootView = root(enabled: true)
+        pumpEvents { tracker.hasMovementMonitor }
         XCTAssertTrue(tracker.hasMovementMonitor)
         window.close()
         XCTAssertFalse(tracker.hasMovementMonitor)
         XCTAssertFalse(window.acceptsMouseMovedEvents, "Tracking must not change a shared window preference")
+    }
+
+    func testUnscopedCharactersDoNotInstallPointerTracking() {
+        let host = NSHostingView(rootView: CompanionCharacterView(appearance: .robot))
+        host.frame = CGRect(x: 0, y: 0, width: 180, height: 180)
+        host.layoutSubtreeIfNeeded()
+        func hasTracker(_ view: NSView) -> Bool {
+            view is CompanionPointerTrackingView || view.subviews.contains(where: hasTracker)
+        }
+        XCTAssertFalse(hasTracker(host), "Sidebar, chat and profile avatars must not observe window movement")
+        XCTAssertEqual(EnvironmentValues().companionPointerResponse, .neutral)
+    }
+}
+
+private struct CompanionPointerProbe: View {
+    @Environment(\.companionPointerResponse) private var pointer
+    let changed: (CompanionPointerResponse) -> Void
+    var body: some View {
+        Color.clear.onChange(of: pointer) { _, value in changed(value) }
     }
 }
 

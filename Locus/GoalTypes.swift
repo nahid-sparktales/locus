@@ -50,6 +50,8 @@ struct PersistentGoal: Codable, Hashable, Identifiable {
     var createdAt: JSONValue?
     var updatedAt: JSONValue?
 
+    var isCompanionSession: Bool { execution["companion_session"] != nil }
+
     var totalTokens: Int {
         let (total, overflow) = promptTokens.addingReportingOverflow(completionTokens)
         return overflow ? Int.max : total

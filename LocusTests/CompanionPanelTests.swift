@@ -63,16 +63,16 @@ final class CompanionPanelTests: XCTestCase {
         }
     }
 
-    func testLateReadCannotDisplayAFormerExplicitCompanionFolder() async throws {
+    func testChangingPreferredFolderKeepsTheSingleCompanionConversation() async throws {
         let (app, _, _) = try fixture()
         defer { cleanup(app) }
         app.companionPanel.activate()
         let oldTask = app.companionPanel.loadTask
         app.selectCompanionWorkspace("/var/tmp")
         await oldTask?.value
-        XCTAssertEqual(app.companionPanel.workspace, SessionSummary.canonicalWorkspacePath("/var/tmp"))
-        XCTAssertNil(app.companionPanel.selectedSessionID)
-        XCTAssertTrue(app.companionPanel.blocks.isEmpty)
+        XCTAssertEqual(app.companionPanel.workspace, SessionSummary.canonicalWorkspacePath("/tmp"))
+        XCTAssertEqual(app.companionPanel.selectedSessionID, "companion")
+        XCTAssertEqual(app.companionPanel.blocks.last?.text, "Saved companion answer")
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.draftText, "Central draft")
     }
@@ -112,8 +112,8 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.initialWorkspacePath, "/tmp")
         app.selectCompanionWorkspace("/var/tmp")
-        XCTAssertEqual(app.companionPanel.conversationWorkspacePath,
-                       SessionSummary.canonicalWorkspacePath("/var/tmp"), "Stale execution paths cannot escape the selected scope")
+        XCTAssertEqual(app.companionPanel.conversationWorkspacePath, execution,
+                       "Changing the next chat's folder does not retarget the current conversation")
     }
 
     func testGitSubfolderSelectionSurvivesCatalogRefreshAndRejectsSiblingAlias() async throws {
@@ -215,7 +215,7 @@ final class CompanionPanelTests: XCTestCase {
         app.agentProfiles = [profile]
         app.settings.agentChatModelSelections[chat.id] = .init(profileID: profile.id, accountID: nil, model: "healthy-local")
         var dispatchedModel: String?
-        app.companionPanel.configure(app: app) { id, _, owner, _, mode in
+        app.companionPanel.configure(app: app) { id, _, owner, _, mode, _ in
             dispatchedModel = try app.savedAgentProfileDispatch(profileID: owner, mode: mode, sessionID: id).profile.model
         }
         app.companionPanel.activate()
@@ -237,7 +237,7 @@ final class CompanionPanelTests: XCTestCase {
         defer { cleanup(app) }
         app.settings.agentChatModelSelections[chat.id] = .init(profileID: profile.id, accountID: UUID(), model: "unavailable-model")
         var dispatched = false
-        app.companionPanel.configure(app: app) { _, _, _, _, _ in dispatched = true }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
         app.companionPanel.draft = "Keep this draft"
@@ -252,11 +252,11 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertEqual(app.draftText, "Central draft")
     }
 
-    func testExplicitFolderChangeCancelsStaleSendPreflightWithoutLosingDraft() async throws {
+    func testPreferredFolderChangeDoesNotRetargetPendingCompanionSend() async throws {
         let (app, _, chat) = try fixture()
         defer { cleanup(app) }
         var dispatched = false
-        app.companionPanel.configure(app: app) { _, _, _, _, _ in dispatched = true }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
         app.companionPanel.draft = "Keep in the original folder"
@@ -264,21 +264,21 @@ final class CompanionPanelTests: XCTestCase {
         let oldSubmission = app.companionPanel.sendingTask
         app.selectCompanionWorkspace("/var/tmp")
         await oldSubmission?.value
-        XCTAssertFalse(dispatched)
-        XCTAssertNil(app.companionPanel.selectedSessionID)
-        XCTAssertEqual(app.paneDraft(for: chat.id), "Keep in the original folder")
+        XCTAssertTrue(dispatched)
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertEqual(app.paneDraft(for: chat.id), "")
         XCTAssertEqual(app.currentSessionID, "center")
         app.selectCompanionWorkspace("/tmp")
         await app.companionPanel.loadTask?.value
         XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
-        XCTAssertEqual(app.companionPanel.draft, "Keep in the original folder")
+        XCTAssertEqual(app.companionPanel.draft, "")
     }
 
     func testSendingUsesCapturedCanonicalScopeAndPreservesCenterAndLaterEdits() async throws {
         let (app, profile, chat) = try fixture()
         defer { cleanup(app) }
         var captured: (String, String, UUID, String, WorkMode)?
-        app.companionPanel.configure(app: app) { id, workspace, owner, text, mode in
+        app.companionPanel.configure(app: app) { id, workspace, owner, text, mode, _ in
             captured = (id, workspace, owner, text, mode)
             app.companionPanel.draft = "Later edit"
         }
@@ -303,7 +303,7 @@ final class CompanionPanelTests: XCTestCase {
     func testFailedSendPreservesPanelDraftAndCentralExecutionAndProvider() async throws {
         let (app, _, _) = try fixture()
         defer { cleanup(app) }
-        app.companionPanel.configure(app: app) { _, _, _, _, _ in
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
             throw SavedAgentConversationError.unavailable("Fixture provider unavailable")
         }
         app.companionPanel.activate()
@@ -330,7 +330,7 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertEqual(app.transcriptPresentation.sessionOwnershipToken, owner)
     }
 
-    func testStoppingAnotherSelectionDoesNotCancelPendingSubmission() async throws {
+    func testLegacyChatCannotReplaceSingleConversationDuringPendingSubmission() async throws {
         let (app, profile, chat) = try fixture()
         defer { cleanup(app) }
         let other = SessionSummary(id: "other", name: "Other", preview: "", mtime: 0, size: 0,
@@ -339,7 +339,7 @@ final class CompanionPanelTests: XCTestCase {
         let enteredDispatch = expectation(description: "First chat awaits normal admission")
         var continuation: CheckedContinuation<Void, Never>?
         var firstSubmissionWasCancelled = false
-        app.companionPanel.configure(app: app) { _, _, _, _, _ in
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
             await withCheckedContinuation { continuation = $0; enteredDispatch.fulfill() }
             firstSubmissionWasCancelled = Task.isCancelled
         }
@@ -353,18 +353,17 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertTrue(app.companionPanel.isSending)
         app.companionPanel.select(other)
         await app.companionPanel.loadTask?.value
-        XCTAssertEqual(app.companionPanel.selectedSessionID, other.id)
-        XCTAssertFalse(app.companionPanel.isSending, "Another chat's admission is not this chat's state")
-        XCTAssertNil(app.companionPanel.sendingTask)
-        app.companionPanel.draft = "Second chat draft"
-        app.companionPanel.stop()
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertTrue(app.companionPanel.isSending)
+        XCTAssertNotNil(app.companionPanel.sendingTask)
+        app.companionPanel.draft = "Later companion draft"
         let pending = try XCTUnwrap(continuation)
         continuation = nil
         pending.resume()
         await firstTask?.value
         XCTAssertFalse(firstSubmissionWasCancelled)
-        XCTAssertEqual(app.companionPanel.draft, "Second chat draft")
-        XCTAssertEqual(app.paneDraft(for: chat.id), "", "Only the accepted first draft is cleared")
+        XCTAssertEqual(app.companionPanel.draft, "Later companion draft")
+        XCTAssertEqual(app.paneDraft(for: chat.id), "Later companion draft", "A later edit survives the accepted turn")
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.draftText, "Central draft")
     }
@@ -452,7 +451,7 @@ final class CompanionPanelTests: XCTestCase {
         let (app, _, _) = try fixture()
         defer { cleanup(app) }
         var dispatched = false
-        app.companionPanel.configure(app: app) { _, _, _, _, _ in dispatched = true }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
         app.companionPanel.draft = "Keep this draft"
@@ -467,8 +466,8 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertNil(app.companionPanel.sendingTask)
     }
 
-    func testExplicitCreateIsIdempotentAndDoesNotReconcileCenter() async throws {
-        let (app, profile, _) = try fixture()
+    func testExplicitCreateReusesTheSingleChatAndDoesNotReconcileCenter() async throws {
+        let (app, profile, chat) = try fixture()
         defer { cleanup(app) }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
@@ -477,9 +476,9 @@ final class CompanionPanelTests: XCTestCase {
         app.companionPanel.createConversation()
         await app.companionPanel.creationTask?.value
         await app.companionPanel.loadTask?.value
-        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
-        XCTAssertEqual(app.companionPanel.selectedSessionID, "companion-created")
-        XCTAssertEqual(app.savedAgentProfileID(for: "companion-created"), profile.id)
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 0)
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertEqual(app.savedAgentProfileID(for: chat.id), profile.id)
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.draftText, "Central draft")
         XCTAssertTrue(app.isBusy)
@@ -488,21 +487,63 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertFalse(CompanionPanelURLProtocol.paths().contains { $0.hasSuffix("/resume") || $0 == "/api/runs/queue" })
     }
 
-    func testLateCreationStaysInItsFolderHistoryWithoutSelectingNewCompanionFolder() async throws {
-        let (app, profile, _) = try fixture()
+    func testNewChatActionKeepsConversationAcrossPreferredFolderChanges() async throws {
+        let (app, profile, chat) = try fixture()
         defer { cleanup(app) }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
         app.companionPanel.createConversation()
         app.selectCompanionWorkspace("/var/tmp")
         await app.companionPanel.creationTask?.value
-        XCTAssertNil(app.companionPanel.selectedSessionID)
-        XCTAssertEqual(app.companionPanel.workspace, SessionSummary.canonicalWorkspacePath("/var/tmp"))
-        XCTAssertEqual(app.savedAgentProfileID(for: "companion-created"), profile.id)
-        XCTAssertEqual(app.sessions.first { $0.id == "companion-created" }?.workspacePath,
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertEqual(app.companionPanel.workspace, SessionSummary.canonicalWorkspacePath("/tmp"))
+        XCTAssertEqual(app.savedAgentProfileID(for: chat.id), profile.id)
+        XCTAssertEqual(app.sessions.first { $0.id == chat.id }?.workspacePath,
                        SessionSummary.canonicalWorkspacePath("/tmp"))
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.draftText, "Central draft")
+    }
+
+    func testSharedContextIsCapturedForCompanionAndConsumedOnlyAfterAcceptance() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        let scope = try XCTUnwrap(app.companionScope)
+        app.companionContext.activate(scope)
+        app.companionContext.previewText("Original error", name: "Error")
+        XCTAssertTrue(app.companionContext.approvePreview())
+        var captured: [ChatAttachment] = []
+        app.companionPanel.configure(app: app) { id, _, _, _, _, attachments in
+            XCTAssertEqual(id, chat.id)
+            captured = attachments
+            app.companionContext.previewText("Next message", name: "Later")
+            XCTAssertTrue(app.companionContext.approvePreview())
+        }
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(captured.map(\.textContent), ["Original error"])
+        XCTAssertEqual(app.companionContext.attachments.map(\.name), ["Later"])
+        XCTAssertEqual(app.currentSessionID, "center")
+        XCTAssertEqual(app.draftText, "Central draft")
+        XCTAssertTrue(app.chatAttachments.isEmpty)
+    }
+
+    func testSharedContextRemainsAfterFailedCompanionSend() async throws {
+        let (app, _, _) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionContext.activate(try XCTUnwrap(app.companionScope))
+        app.companionContext.previewText("Keep for retry", name: "Error")
+        XCTAssertTrue(app.companionContext.approvePreview())
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            throw SavedAgentConversationError.unavailable("Offline")
+        }
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(app.companionContext.attachments.first?.textContent, "Keep for retry")
+        XCTAssertNotNil(app.companionPanel.error)
     }
 
     func testForegroundConversationIsReadOnlyInPanel() async throws {
@@ -510,7 +551,7 @@ final class CompanionPanelTests: XCTestCase {
         defer { cleanup(app) }
         app.installTranscriptSession(chat.id, blocks: [ChatBlock(kind: .assistant, text: "Live central answer")])
         app.companionPanel.activate()
-        XCTAssertNil(app.companionPanel.selectedSessionID)
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
         app.companionPanel.select(chat)
         await app.companionPanel.loadTask?.value
         XCTAssertTrue(app.companionPanel.isForegroundConversation)
@@ -521,6 +562,107 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertEqual(app.draftText, "Central draft")
         XCTAssertFalse(app.companionPanel.canSend)
         XCTAssertNil(app.companionPanel.sendingTask)
+    }
+
+    func testMainAndInspectorCreationShareOneInFlightChat() async throws {
+        let (app, _, _) = try fixture()
+        defer { cleanup(app) }
+        app.sessions.removeAll { $0.id == "companion" }
+        app.companionPanel.createConversation()
+        app.openCompanionMainConversation()
+        app.companionPanel.createConversation()
+        await app.companionPanel.creationTask?.value
+        await app.companionPanel.loadTask?.value
+        XCTAssertEqual(app.companionPanel.selectedSessionID, "companion-created")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
+        XCTAssertEqual(app.companionChats().count, 1)
+    }
+
+    func testLateCreationRemembersOnlyItsCapturedCompanionProfile() async throws {
+        let (app, original, _) = try fixture()
+        defer { cleanup(app) }
+        app.sessions.removeAll { $0.id == "companion" }
+        app.companionPanel.createConversation()
+        let creation = app.companionPanel.creationTask
+        let replacement = AgentProfile(name: "Other companion", model: "fixture",
+                                       workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        XCTAssertTrue(app.agentTeamsModel.removeAgentProfile(original))
+        app.agentProfiles.append(contentsOf: [original, replacement])
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: replacement.id))
+        XCTAssertEqual(app.agentTeamsModel.primaryCompanionID, replacement.id)
+        app.companionPanel.activate()
+        await creation?.value
+        XCTAssertNil(app.companionPanel.selectedSessionID)
+        XCTAssertNil(app.lastSidebarSessionIDs[app.companionSessionKey(workspace: "/tmp")])
+        XCTAssertEqual(app.lastSidebarSessionIDs["companion:\(original.id.uuidString)"], "companion-created")
+        XCTAssertEqual(app.currentSessionID, "center")
+    }
+
+    func testClearCompanionArchivesPreviousChatAndPreservesCenter() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Previous draft"
+        app.isBusy = true
+        XCTAssertTrue(app.companionPanel.canClearConversation)
+        app.companionPanel.clearConversation()
+        app.companionPanel.clearConversation()
+        await app.companionPanel.clearingTask?.value
+        await app.companionPanel.loadTask?.value
+        XCTAssertEqual(app.companionConversation?.id, "companion-created")
+        XCTAssertEqual(app.companionPanel.selectedSessionID, "companion-created")
+        XCTAssertTrue(app.companionPanel.blocks.isEmpty)
+        XCTAssertEqual(app.companionPanel.draft, "")
+        XCTAssertEqual(CompanionPanelURLProtocol.archivedIDs(), [chat.id])
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
+        XCTAssertEqual(app.currentSessionID, "center")
+        XCTAssertEqual(app.draftText, "Central draft")
+        XCTAssertTrue(app.isBusy)
+        XCTAssertNil(app.companionPanel.error)
+    }
+
+    func testClearForegroundCompanionStaysWithCompanionAndArchivesOnlyAfterResume() async throws {
+        let (app, profile, chat) = try fixture()
+        defer { app.activeTranscriptLoad?.task.cancel(); cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [ChatBlock(kind: .assistant, text: "Old conversation")])
+        app.clearChatConfirmed()
+        await app.companionPanel.clearingTask?.value
+        await app.companionPanel.loadTask?.value
+        XCTAssertEqual(app.currentSessionID, "companion-created")
+        XCTAssertEqual(app.currentCompanionConversationProfile?.id, profile.id)
+        XCTAssertEqual(CompanionPanelURLProtocol.archivedIDs(), [chat.id])
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/sessions/new"))
+        XCTAssertNil(app.companionPanel.error)
+    }
+
+    func testClearFailureKeepsOriginalConversationAndDraft() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Keep on failure"
+        CompanionPanelURLProtocol.failNextCreation()
+        app.companionPanel.clearConversation()
+        await app.companionPanel.clearingTask?.value
+        XCTAssertEqual(app.companionConversation?.id, chat.id)
+        XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
+        XCTAssertEqual(app.companionPanel.draft, "Keep on failure")
+        XCTAssertTrue(CompanionPanelURLProtocol.archivedIDs().isEmpty)
+        XCTAssertNotNil(app.companionPanel.error)
+        XCTAssertEqual(app.currentSessionID, "center")
+    }
+
+    func testBusyCompanionCannotClear() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [])
+        app.isBusy = true
+        app.companionPanel.activate()
+        XCTAssertFalse(app.companionPanel.canClearConversation)
+        app.clearChatConfirmed()
+        XCTAssertNil(app.companionPanel.clearingTask)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/sessions/detached"))
     }
 
     private func fixture(failures: Int = 0, mismatch: String? = nil, workspace: String = "/tmp",
@@ -553,6 +695,7 @@ final class CompanionPanelTests: XCTestCase {
     private func cleanup(_ app: AppModel) {
         app.companionPanel.loadTask?.cancel()
         app.companionPanel.creationTask?.cancel()
+        app.companionPanel.clearingTask?.cancel()
         app.companionPanel.sendingTask?.cancel()
         app.knowledge.cancelAll()
         app.agentInstructions.cancelAll()
@@ -567,13 +710,18 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     private static var mismatch: String?
     private static var requestedPaths: [String] = []
     private static var created = false
+    private static var archived: Set<String> = []
+    private static var rejectCreation = false
     private static var sessionContext: [String: Any] = [:]
     static func reset(profileID: UUID, failures: Int, mismatch: String?, context: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         self.profileID = profileID; self.failures = failures; self.mismatch = mismatch; requestedPaths = []; created = false
         sessionContext = context
+        archived = []; rejectCreation = false
     }
     static func paths() -> [String] { lock.lock(); defer { lock.unlock() }; return requestedPaths }
+    static func archivedIDs() -> Set<String> { lock.lock(); defer { lock.unlock() }; return archived }
+    static func failNextCreation() { lock.lock(); defer { lock.unlock() }; rejectCreation = true }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
@@ -581,7 +729,7 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         Self.lock.lock()
         let path = request.url!.path
         Self.requestedPaths.append(path)
-        let status = Self.failures > 0 ? 503 : 200
+        let status = Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
         Self.failures = max(0, Self.failures - 1)
         let owner = Self.mismatch == "owner" ? UUID() : Self.profileID
         let archived = Self.mismatch == "archive"
@@ -593,11 +741,15 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
             payload = ["session_id": "companion-created"]
         } else if path == "/api/sessions" {
             let ids = Self.created ? ["companion", "companion-created"] : ["companion"]
-            let rows = ids.map { id -> [String: Any] in
+            let rows = ids.filter { !Self.archived.contains($0) }.map { id -> [String: Any] in
                 ["id": id, "name": id, "preview": "", "mtime": 1, "size": 0,
                  "agent_profile_id": Self.profileID.uuidString].merging(Self.sessionContext) { _, new in new }
             }
             payload = ["sessions": rows, "current": "must-not-replace-center"]
+        } else if request.httpMethod == "PATCH" {
+            let id = request.url!.lastPathComponent
+            Self.archived.insert(id)
+            payload = ["ok": true, "id": id, "title": id, "pinned": false, "archived": true]
         } else if path.hasSuffix("/resume") {
             let id = request.url!.pathComponents.dropLast().last!
             var info: [String: Any] = ["model": "fixture", "host": "localhost", "session": id,
@@ -609,7 +761,7 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         } else {
             var detail: [String: Any] = ["id": request.url!.lastPathComponent, "preview": "",
                 "archived": archived, "agent_profile_id": owner.uuidString,
-                "messages": [["role": "assistant", "content": "Saved companion answer"]]]
+                "messages": request.url!.lastPathComponent == "companion-created" ? [] : [["role": "assistant", "content": "Saved companion answer"]]]
             detail.merge(Self.sessionContext) { _, new in new }
             if Self.mismatch == "workspace" { detail["cwd"] = "/var/tmp" }
             payload = detail

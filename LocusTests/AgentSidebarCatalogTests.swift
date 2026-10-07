@@ -123,6 +123,56 @@ final class AgentSidebarCatalogTests: XCTestCase {
         XCTAssertEqual(history.first?.tasks.map(\.id), ["old"])
     }
 
+    func testCompanionShowsOneManualChatWithoutHidingAutomationOrOtherAgents() throws {
+        let companion = AgentProfile(name: "Companion", model: "fixture")
+        let other = AgentProfile(name: "Reviewer", model: "fixture")
+        let sessions = [
+            SessionSummary(id: "canonical", name: "Ongoing companion", preview: "", mtime: 1, size: 0,
+                           agentProfileID: companion.id.uuidString),
+            SessionSummary(id: "legacy", name: "Earlier project task", preview: "", mtime: 2, size: 0,
+                           agentProfileID: companion.id.uuidString),
+            SessionSummary(id: "automation", name: "Inbox updates", preview: "", mtime: 3, size: 0,
+                           agentTriggerID: "inbox", agentProfileID: companion.id.uuidString),
+            SessionSummary(id: "other-first", name: "First review", preview: "", mtime: 1, size: 0,
+                           agentProfileID: other.id.uuidString),
+            SessionSummary(id: "other-second", name: "Second review", preview: "", mtime: 2, size: 0,
+                           agentProfileID: other.id.uuidString),
+        ]
+        let groups = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "",
+            showArchived: false, runningSessionIDs: ["legacy"], profiles: [companion, other],
+            primaryCompanionID: companion.id, companionSessionID: "canonical")
+        let primary = try XCTUnwrap(groups.first { $0.profileID == companion.id })
+        XCTAssertEqual(primary.tasks.map(\.id), ["automation", "canonical"])
+        XCTAssertEqual(primary.totalChatCount, 2)
+        XCTAssertEqual(primary.runningChatCount, 1, "Earlier work must still contribute to activity status")
+        XCTAssertEqual(groups.first { $0.profileID == other.id }?.tasks.map(\.id), ["other-second", "other-first"])
+    }
+
+    func testCompanionEarlierChatsRemainAvailableThroughSearchAndArchiveView() throws {
+        let companion = AgentProfile(name: "Companion", model: "fixture")
+        let sessions = [
+            SessionSummary(id: "canonical", name: "canonical.jsonl", preview: "", mtime: 1, size: 0,
+                           title: "Ongoing companion", agentProfileID: companion.id.uuidString),
+            SessionSummary(id: "legacy", name: "legacy.jsonl", preview: "", mtime: 2, size: 0,
+                           title: "Earlier project task", agentProfileID: companion.id.uuidString),
+            SessionSummary(id: "archived", name: "archived.jsonl", preview: "", mtime: 3, size: 0,
+                           title: "Archived companion", archived: true, agentProfileID: companion.id.uuidString),
+        ]
+        let search = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "project",
+            showArchived: false, runningSessionIDs: [], profiles: [companion],
+            primaryCompanionID: companion.id, companionSessionID: "canonical")
+        XCTAssertEqual(try XCTUnwrap(search.first).tasks.map(\.id), ["legacy"])
+        let history = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "",
+            showArchived: true, runningSessionIDs: [], profiles: [companion],
+            primaryCompanionID: companion.id, companionSessionID: "canonical")
+        XCTAssertEqual(try XCTUnwrap(history.first).tasks.map(\.id), ["archived", "legacy", "canonical"])
+        let unresolved = AgentSidebarCatalog.groups(definitions: [], sessions: sessions, query: "",
+            showArchived: false, runningSessionIDs: [], profiles: [companion],
+            primaryCompanionID: companion.id)
+        XCTAssertEqual(try XCTUnwrap(unresolved.first).tasks.map(\.id), ["legacy", "canonical"],
+                       "Do not hide existing chats before the canonical conversation is resolved")
+    }
+
     func testRunningStateIncludesConversationsHiddenByTheCurrentSearch() {
         let groups = project(
             [.trigger(trigger())],

@@ -5,9 +5,13 @@ import SwiftUI
 struct CompanionInspectorTab: View {
     @EnvironmentObject private var model: AppModel
     var revealMainWindow: () -> Void = {}
+    var tracksPointer = true
+    var showsCharacterHeader = true
+    var showsForegroundComposer = true
 
     var body: some View {
-        CompanionInspectorContent(panel: model.companionPanel, revealMainWindow: revealMainWindow)
+        CompanionInspectorContent(panel: model.companionPanel, context: model.companionContext, revealMainWindow: revealMainWindow, showsCharacterHeader: showsCharacterHeader, showsForegroundComposer: showsForegroundComposer)
+            .companionPointerScope(enabled: tracksPointer)
     }
 }
 
@@ -18,10 +22,16 @@ private struct CompanionInspectorContent: View {
     @Environment(\.locusViewColors) private var colors
     @Environment(\.companionActivityPresentation) private var activitySource
     @ObservedObject var panel: CompanionPanelModel
+    @ObservedObject var context: CompanionContextSharingModel
     let revealMainWindow: () -> Void
+    let showsCharacterHeader: Bool
+    let showsForegroundComposer: Bool
     @StateObject private var selection = TranscriptSelectionStore()
     @StateObject private var scroll = TranscriptScrollCoordinator()
     @FocusState private var composerFocused: Bool
+    @State private var clearConfirmationPresented = false
+    @State private var toolsPresented = false
+    @State private var tool: CompanionTool = .context
 
     private var scopeKey: String {
         "\(agentTeams.primaryCompanionID?.uuidString ?? "none")|\(model.companionWorkspacePath)"
@@ -30,11 +40,10 @@ private struct CompanionInspectorContent: View {
     var body: some View {
         VStack(spacing: 0) {
             if let profile = panel.profile {
-                header(profile)
-                Divider()
+                if showsCharacterHeader { header(profile); Divider() }
                 conversationControls
                 transcript
-                composer(profile)
+                if !panel.isForegroundConversation || showsForegroundComposer { composer(profile) }
             } else {
                 VStack(spacing: 14) {
                     Text("Your companion").font(.locus(size: 20, weight: .semibold))
@@ -60,102 +69,77 @@ private struct CompanionInspectorContent: View {
             if online { panel.activate() }
         }
         .onChange(of: model.currentSessionID) { _, _ in panel.activate() }
+        .sheet(isPresented: $toolsPresented) { CompanionToolsView(initialTool: tool) }
+        .alert("Clear this companion chat?", isPresented: $clearConfirmationPresented) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear Chat") { panel.clearConversation() }
+                .accessibilityIdentifier("companion.panel.clear.confirm")
+        } message: {
+            Text("This conversation will be archived and a fresh chat with your companion will open.")
+        }
     }
 
     private func header(_ profile: AgentProfile) -> some View {
-        HStack(spacing: 12) {
-            Button { revealMainWindow(); model.selectSavedAgent(profile) } label: {
-                AgentAvatarView(profileID: profile.id, name: profile.name, size: 72)
-            }
-            .buttonStyle(.locus(.icon))
-            .accessibilityLabel("Open \(profile.name)’s profile")
-            .help("Open profile and activity")
-            VStack(alignment: .leading, spacing: 4) {
-                Button { revealMainWindow(); model.selectSavedAgent(profile) } label: {
-                    Text(profile.name).font(.locus(size: 18, weight: .semibold)).lineLimit(1)
+        let isHome = SessionSummary.canonicalWorkspacePath(panel.conversationWorkspacePath)
+            == SessionSummary.canonicalWorkspacePath(model.savedAgentHomePath(profile))
+        let folderTitle = isHome ? "Companion home"
+            : model.savedAgentWorkspaceTitle(profile, path: panel.conversationWorkspacePath)
+        return VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Label(folderTitle, systemImage: isHome ? "house" : "folder")
+                    .font(.locus(size: 10)).foregroundStyle(colors.textSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(panel.conversationWorkspacePath)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Companion folder, \(folderTitle)")
+                    .accessibilityIdentifier("companion.panel.workspace")
+                Spacer(minLength: 0)
+                Menu {
+                    Button("Companion tools…") { tool = .context; toolsPresented = true }
+                    Button("Show desktop companion") { model.companionDesktop.show() }
+                    Divider()
+                    Button("Profile and activity") { revealMainWindow(); model.selectSavedAgent(profile) }
+                    Button("Edit companion") { revealMainWindow(); model.presentSavedAgentEditor(profile) }
+                    Button("Models & Providers") { revealMainWindow(); model.presentSettings(.accounts) }
+                    Divider()
+                    Button("Open full conversation") { revealMainWindow(); panel.openFullConversation() }
+                        .disabled(panel.selectedSessionID == nil || panel.isLoading)
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 28)
                 }
-                .buttonStyle(.locus(.quiet))
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .accessibilityLabel("Companion options")
+                .accessibilityIdentifier("companion.panel.options")
+            }
+            HStack {
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: 80)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(profile.name), your companion")
+            .accessibilityIdentifier("companion.panel.character")
+            Text(profile.name)
+                .font(.locus(size: 18, weight: .semibold)).lineLimit(1)
                 .accessibilityIdentifier("companion.panel.name")
-                .help("Open profile and activity")
-                workspaceMenu(profile)
-                if let activitySource {
-                    CompanionSidebarStatus(source: activitySource, profileID: profile.id)
-                }
+            if let activitySource {
+                CompanionSidebarStatus(source: activitySource, profileID: profile.id)
             }
-            Spacer(minLength: 0)
-            Menu {
-                Button("Profile and activity") { revealMainWindow(); model.selectSavedAgent(profile) }
-                Button("Edit companion") { revealMainWindow(); model.presentSavedAgentEditor(profile) }
-                Button("Models & Providers") { revealMainWindow(); model.presentSettings(.accounts) }
-                Divider()
-                Button("Open full conversation") { revealMainWindow(); panel.openFullConversation() }
-                    .disabled(panel.selectedSessionID == nil || panel.isLoading)
-            } label: {
-                Image(systemName: "ellipsis").frame(width: 24, height: 28)
-            }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .accessibilityLabel("Companion options")
-            .accessibilityIdentifier("companion.panel.options")
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, 14).padding(.vertical, 10)
-    }
-
-    private func workspaceMenu(_ profile: AgentProfile) -> some View {
-        Menu {
-            ForEach(model.savedAgentWorkspaceChoices(profile), id: \.path) { choice in
-                Button { model.selectCompanionWorkspace(choice.path) } label: {
-                    let title = choice.path == model.savedAgentHomePath(profile) ? "Companion home" : choice.title
-                    if choice.path == panel.workspace { Label(title, systemImage: "checkmark") }
-                    else { Text(title) }
-                }
-                .help(choice.path)
-            }
-            Divider()
-            Button("Choose a folder…") {
-                if let path = model.chooseSavedAgentProjectFolder() { model.selectCompanionWorkspace(path) }
-            }
-        } label: {
-            Label(panel.workspace == model.savedAgentHomePath(profile) ? "Companion home"
-                  : model.savedAgentWorkspaceTitle(profile, path: panel.workspace),
-                  systemImage: panel.workspace == model.savedAgentHomePath(profile) ? "house" : "folder")
-                .lineLimit(1).truncationMode(.middle)
-        }
-        .font(.locus(size: 10)).foregroundStyle(colors.textSecondary)
-        .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
-        .help("Choose your companion’s folder. Existing conversations keep their folders.")
-        .accessibilityLabel("Companion folder")
-        .accessibilityValue(panel.workspace == model.savedAgentHomePath(profile) ? "Companion home"
-                            : model.savedAgentWorkspaceTitle(profile, path: panel.workspace))
-        .accessibilityIdentifier("companion.panel.workspace")
     }
 
     private var conversationControls: some View {
         HStack(spacing: 8) {
-            Menu {
-                ForEach(panel.chats) { chat in
-                    Button { panel.select(chat) } label: {
-                        if panel.selectedSessionID == chat.id {
-                            Label(chat.displayTitle, systemImage: "checkmark")
-                        } else { Text(chat.displayTitle) }
-                    }
-                }
-            } label: {
-                Label(panel.chats.first { $0.id == panel.selectedSessionID }?.displayTitle ?? "Conversations",
-                      systemImage: "bubble.left.and.bubble.right")
-                    .lineLimit(1)
-            }
-            .menuStyle(.borderlessButton)
-            .disabled(panel.chats.isEmpty)
-            .accessibilityIdentifier("companion.panel.history")
+            Text("Your conversation")
+                .foregroundStyle(colors.textSecondary)
             Spacer(minLength: 0)
-            Button { panel.createConversation() } label: {
-                Image(systemName: "square.and.pencil").frame(width: 26, height: 26)
+            Button { clearConfirmationPresented = true } label: {
+                Label(panel.isClearing ? "Clearing…" : "Clear chat", systemImage: "eraser")
             }
-            .buttonStyle(.locus(.icon))
-            .disabled(panel.isCreating || !runtime.agentPhase.isOnline)
-            .help("New companion conversation in the selected folder")
-            .accessibilityLabel("New companion conversation")
-            .accessibilityIdentifier("companion.panel.new")
+            .buttonStyle(.locus(.quiet))
+            .disabled(!panel.canClearConversation)
+            .help("Start fresh with your companion")
+            .accessibilityIdentifier("companion.panel.clear")
         }
         .font(.locus(size: 11)).padding(.horizontal, 14).padding(.vertical, 6)
     }
@@ -164,6 +148,18 @@ private struct CompanionInspectorContent: View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
+                    if let scope = model.companionScope, panel.selectedSessionID == scope.sessionID {
+                        CompanionFocusCheckInView(sessionID: scope.sessionID) {
+                            tool = .focus; toolsPresented = true
+                        }
+                        CompanionCatchUpView(backend: model.backend, scope: scope,
+                            openConversation: { revealMainWindow(); panel.openFullConversation() },
+                            reviewChanges: { revealMainWindow(); model.showTaskDetail(sessionID: scope.sessionID) },
+                            resume: { saved in
+                                if saved.goal?.isCompanionSession == true { tool = .focus; toolsPresented = true }
+                                else { model.resumeCompanionTask(saved, scope: scope) }
+                            })
+                    }
                     if panel.isLoading || panel.isCreating {
                         ProgressView(panel.isCreating ? "Creating conversation…" : "Opening conversation…")
                             .controlSize(.small).frame(maxWidth: .infinity, minHeight: 100)
@@ -171,7 +167,7 @@ private struct CompanionInspectorContent: View {
                         VStack(spacing: 12) {
                             Text("Talk with your companion")
                                 .font(.locus(size: 17, weight: .semibold))
-                            Text("Start a conversation in your companion’s selected folder. Your current task stays open.")
+                            Text("One ongoing conversation with your companion, always here when you need it.")
                                 .font(.locus(size: 12)).foregroundStyle(colors.textSecondary)
                             Button("Start conversation") { panel.createConversation() }
                                 .buttonStyle(.locus(.primary))
@@ -273,6 +269,8 @@ private struct CompanionInspectorContent: View {
                 Button("Reconnect Locus") { Task { await model.bootstrap() } }
                     .accessibilityIdentifier("companion.panel.reconnect")
             }
+            CompanionContextSharingView(model: context)
+            CompanionVoiceControls()
             VStack(spacing: 0) {
                 ComposerTextInput(text: $panel.draft, placeholder: "Message \(profile.name)…",
                     focus: $composerFocused, accessibilityID: "companion.panel.input",

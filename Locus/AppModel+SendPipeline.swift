@@ -76,7 +76,18 @@ extension AppModel {
             showToast("Choose Local Ollama or an API provider for a private Identity task.")
             return
         }
-        let availableAttachments = includeAttachments && !privateIdentity ? availableChatAttachments : []
+        let sharedCompanionScope = companionContext.scope.flatMap { scope in
+            scope == companionScope && scope.sessionID == currentSessionID ? scope : nil
+        }
+        let sharedCompanionAttachments = sharedCompanionScope == nil ? [] : companionContext.attachments
+        let availableAttachments = includeAttachments && !privateIdentity
+            ? availableChatAttachments + sharedCompanionAttachments : []
+        guard availableAttachments.count <= 10,
+              availableAttachments.reduce(0, { $0 + ($1.imageData?.count ?? 0) }) <= 25_000_000,
+              availableAttachments.reduce(0, { $0 + ($1.textContent?.utf8.count ?? 0) }) <= 750_000 else {
+            showToast("Remove shared items: a message allows 10 attachments, 25 MB of images and 750 KB of text.")
+            return
+        }
         let hasChatAttachments = !availableAttachments.isEmpty
         guard !text.isEmpty || hasChatAttachments else { return }
 
@@ -590,6 +601,9 @@ extension AppModel {
             // Appshots are explicit one-message captures. Retain them through
             // queue and transport failures; clear only after accepted delivery.
             capsuleRequestAccepted = true
+            if let sharedCompanionScope {
+                self.companionContext.consume(Set(dispatchedAttachments.map(\.id)), for: sharedCompanionScope)
+            }
             if self.currentSessionID == dispatchedSessionID, !oneMessageSnapshotIDs.isEmpty {
                 self.chatAttachments.removeAll { oneMessageSnapshotIDs.contains($0.id) }
                 if self.chatAttachments.isEmpty { self.chatAttachmentNotice = nil }

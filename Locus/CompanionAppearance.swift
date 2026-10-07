@@ -3,7 +3,7 @@ import Foundation
 /// Native presentation metadata only. Custom pixels remain in the existing
 /// AgentTeamsModel avatar store; no provider URL, prompt, or local path is saved here.
 struct CompanionAppearance: Codable, Hashable {
-    enum AssetKind: String, Codable { case builtIn, portrait, bundledSprite }
+    enum AssetKind: String, Codable { case builtIn, portrait, bundledSprite, importedSprite }
     enum AnimationCapability: String { case articulated, wholeImage, spriteFrames }
 
     var version = 1
@@ -54,6 +54,12 @@ struct CompanionAppearance: Codable, Hashable {
         return result
     }
 
+    static func importedSprite(assetID: String) -> Self {
+        var appearance = Self.robot
+        appearance.kind = .importedSprite
+        appearance.assetID = assetID
+        return appearance
+    }
     var builtIn: CompanionCharacterKind? {
         kind == .builtIn ? CompanionCharacterKind(rawValue: assetID) : nil
     }
@@ -64,6 +70,7 @@ struct CompanionAppearance: Codable, Hashable {
         switch kind {
         case .builtIn: builtIn?.name ?? "Robot"
         case .portrait: "Custom character"
+        case .importedSprite: "Animated character"
         case .bundledSprite: bundledSprite?.displayName ?? "Robot"
         }
     }
@@ -71,7 +78,7 @@ struct CompanionAppearance: Codable, Hashable {
         switch kind {
         case .builtIn: .articulated
         case .portrait: .wholeImage
-        case .bundledSprite: .spriteFrames
+        case .bundledSprite, .importedSprite: .spriteFrames
         }
     }
     var supportsAppearanceControls: Bool { kind == .builtIn }
@@ -80,6 +87,7 @@ struct CompanionAppearance: Codable, Hashable {
     var validated: CompanionAppearance {
         guard version == 1 else { return .robot }
         if kind == .portrait { return .portrait }
+        if kind == .importedSprite { return assetID.hasPrefix("pack-") ? self : .robot }
         if kind == .bundledSprite { return bundledSprite.map(CompanionAppearance.init(sprite:)) ?? .robot }
         guard builtIn != nil else { return .robot }
         return self
@@ -233,12 +241,14 @@ enum CompanionAccessory: String, Codable, CaseIterable, Identifiable {
 /// A display pose, never an execution controller. Callers derive work poses from
 /// authoritative activity. Greeting and breathing are purely decorative.
 enum CompanionCharacterPose: String, Equatable {
-    case idle, greeting, queued, working, needsApproval, completed, failed, paused, unavailable
+    case idle, greeting, queued, working, listening, speaking, needsApproval, completed, failed, paused, unavailable
     var label: String {
         switch self {
         case .idle, .greeting: "Ready"
         case .queued: "Waiting to start"
         case .working: "Working"
+        case .listening: "Listening"
+        case .speaking: "Speaking"
         case .needsApproval: "Needs your approval"
         case .completed: "Completed"
         case .failed: "Needs attention"

@@ -349,6 +349,7 @@ struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var composerState: ComposerStateModel
     @EnvironmentObject private var voiceControl: VoiceControlModel
+    @EnvironmentObject private var companionContext: CompanionContextSharingModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var teamRunLive: TeamRunLiveModel
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -453,6 +454,11 @@ struct ComposerView: View {
                         onEscape: handleEscape
                     )
 
+                    if model.currentCompanionConversationProfile != nil {
+                        CompanionContextSharingView(model: companionContext)
+                            .padding(.horizontal, 12).padding(.bottom, 8)
+                            .task(id: model.companionScope) { companionContext.activate(model.companionScope) }
+                    }
                     if model.hasComposerContextChips {
                         attachmentChipsRow
                     }
@@ -468,6 +474,7 @@ struct ComposerView: View {
                     }
 
                     if model.settings.voiceControlsEnabled,
+                       voiceControl.externalSessionID == nil || voiceControl.externalSessionID == model.currentSessionID,
                        voiceControl.isVoiceModeActive
                         || voiceControl.state != .idle {
                         VoiceComposerStrip(voice: voiceControl)
@@ -504,11 +511,11 @@ struct ComposerView: View {
         }
         .locusSheet(isPresented: $goals.isPresented) { GoalEditorView(model: goals) }
         .onAppear { restoreFocus() }
-        .onDisappear { voiceControl.cancelRecording() }
+        .onDisappear { if voiceControl.externalSessionID == nil { voiceControl.cancelRecording() } }
         .alert(
             "Allow Apple Online Speech Recognition?",
             isPresented: Binding(
-                get: { voiceControl.networkRecognitionConsentRequested },
+                get: { voiceControl.externalSessionID == nil && voiceControl.networkRecognitionConsentRequested },
                 set: { voiceControl.networkRecognitionConsentRequested = $0 }
             )
         ) {
@@ -1028,7 +1035,8 @@ struct ComposerView: View {
     /// This is one stable subtree, not duplicated alternatives in ViewThatFits.
     private var primaryActionControls: some View {
         HStack(spacing: 6) {
-            if model.settings.voiceControlsEnabled {
+            if model.settings.voiceControlsEnabled,
+               voiceControl.externalSessionID == nil || voiceControl.externalSessionID == model.currentSessionID {
                 VoiceComposerButtons(voice: voiceControl)
                     .environmentObject(model)
                 Divider()
@@ -1234,7 +1242,10 @@ struct ComposerView: View {
 
     private var canSubmit: Bool {
         model.canAcceptTranscriptInput
-            && (!promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty)
+            && (!promptTrimmed.isEmpty || !model.availableChatAttachments.isEmpty
+                || (companionContext.scope == model.companionScope
+                    && companionContext.scope?.sessionID == model.currentSessionID
+                    && !companionContext.attachments.isEmpty))
     }
 
     private var primaryAction: ComposerPrimaryAction {

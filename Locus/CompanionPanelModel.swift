@@ -10,6 +10,7 @@ final class CompanionPanelModel: ObservableObject {
     @Published private(set) var profileID: UUID?
     @Published private(set) var isLoading = false
     @Published private(set) var isCreating = false
+    @Published private(set) var isClearing = false
     @Published private var sendingSessionIDs: Set<String> = []
     @Published var error: String?
     @Published var mode: WorkMode = .ask
@@ -19,17 +20,18 @@ final class CompanionPanelModel: ObservableObject {
     private var loadedSessionID: String?
     private(set) var loadTask: Task<Void, Never>?
     private(set) var creationTask: Task<Void, Never>?
+    private(set) var clearingTask: Task<Void, Never>?
     private var sendingTasks: [String: Task<Void, Never>] = [:]
     private var catalogObservation: AnyCancellable?
-    private var dispatch: ((String, String, UUID, String, WorkMode) async throws -> Void)?
+    private var dispatch: ((String, String, UUID, String, WorkMode, [ChatAttachment]) async throws -> Void)?
 
     func configure(app: AppModel,
-                   dispatch: ((String, String, UUID, String, WorkMode) async throws -> Void)? = nil) {
+                   dispatch: ((String, String, UUID, String, WorkMode, [ChatAttachment]) async throws -> Void)? = nil) {
         self.app = app
-        self.dispatch = dispatch ?? { [weak app] id, workspace, profileID, text, mode in
+        self.dispatch = dispatch ?? { [weak app] id, workspace, profileID, text, mode, attachments in
             guard let app else { throw CancellationError() }
             try await app.sendSavedAgentTurn(sessionID: id, workspace: workspace, profileID: profileID,
-                                            text: text, mode: mode, preservingForeground: true)
+                                            text: text, mode: mode, preservingForeground: true, attachments: attachments)
         }
         // Catalog changes intentionally do not invalidate the entire AppModel.
         // Observe this store only for the panel's history and selected identity.
@@ -76,7 +78,7 @@ final class CompanionPanelModel: ObservableObject {
     var availabilityIssue: String? {
         guard let app, let profile else { return "Set up your companion to start a conversation." }
         guard scopeIsCurrent else { return "This project changed. Reopen your companion to continue." }
-        if isForegroundConversation { return "This conversation is open in the center. Start another conversation to chat alongside it." }
+        if isForegroundConversation { return "This conversation is open in the center. Continue chatting there." }
         guard app.isAgentOnline else { return "Your companion is ready. Reconnect Locus to continue." }
         let effectiveProfile = selectedSessionID.map { app.agentChatProfile(profile, sessionID: $0) } ?? profile
         do { _ = try app.agentProfileProvider(effectiveProfile); return nil }
@@ -84,8 +86,8 @@ final class CompanionPanelModel: ObservableObject {
     }
     var canSend: Bool {
         selectionIsCurrent && selectedSessionID != nil && loadedSessionID == selectedSessionID && !isLoading && !isSending
-            && !isCreating && !state.busy && availabilityIssue == nil
-            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isCreating && !isClearing && !state.busy && availabilityIssue == nil
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(app?.companionContext.attachments.isEmpty ?? true))
             && [.ask, .work].contains(mode)
     }
     var canRetryLoading: Bool {
@@ -100,10 +102,10 @@ final class CompanionPanelModel: ObservableObject {
         scopeIsCurrent && chats.contains { $0.id == selectedSessionID }
     }
 
-    /// Opening the panel only selects and reads a saved conversation. Prefer a
-    /// different chat from the center so both drafts can remain independent.
+    /// The inspector reads the same companion conversation as the center.
     func activate() {
         guard let app else { return }
+        app.companionContext.activate(app.companionScope)
         let newWorkspace = app.companionWorkspacePath
         let newProfileID = app.agentTeamsModel.primaryCompanionID
         if workspace != newWorkspace || profileID != newProfileID {
@@ -120,7 +122,7 @@ final class CompanionPanelModel: ObservableObject {
             return
         }
         let remembered = app.lastSidebarSessionIDs[app.companionSessionKey(workspace: workspace)]
-        let candidates = chats.filter { $0.id != app.currentSessionID }
+        let candidates = chats
         if let selected = candidates.first(where: { $0.id == remembered }) ?? candidates.first {
             select(selected)
         } else if selectedSessionID != nil {
@@ -135,6 +137,7 @@ final class CompanionPanelModel: ObservableObject {
         if selectedSessionID == session.id, (isLoading || loadedSessionID == session.id) { return }
         invalidateSelection()
         selectedSessionID = session.id
+        app.rememberCompanionPanelSession(session.id, workspace: workspace)
         guard app.isAgentOnline else { error = "Reconnect Locus to load this conversation."; return }
         let revision = selectionRevision
         let requestedWorkspace = workspace
@@ -159,7 +162,7 @@ final class CompanionPanelModel: ObservableObject {
                     app.splitPaneBlocks[session.id] = ChatTranscriptBuilder.blocks(from: response.detail.messages)
                 }
                 loadedSessionID = session.id
-                app.rememberCompanionPanelSession(session.id, workspace: requestedWorkspace)
+                app.rememberCompanionPanelSession(session.id, workspace: requestedWorkspace, profileID: profileID)
             } catch {
                 guard !Task.isCancelled, selectionRevision == revision, scopeIsCurrent else { return }
                 loadedSessionID = nil
@@ -180,21 +183,34 @@ final class CompanionPanelModel: ObservableObject {
     func createConversation() {
         guard !isCreating else { return }
         activate()
-        guard let app, let profile, scopeIsCurrent, !isCreating else { return }
-        guard app.isAgentOnline else { error = "Reconnect Locus before opening a new conversation."; return }
+        guard let app, let profile, scopeIsCurrent, !isCreating, !isClearing else { return }
+        if let existing = app.companionConversation {
+            select(existing)
+            return
+        }
+        guard app.creatingSavedAgentChatIDs.insert(profile.id).inserted else { return }
+        guard app.isAgentOnline else {
+            app.creatingSavedAgentChatIDs.remove(profile.id)
+            error = "Reconnect Locus before opening a new conversation."
+            return
+        }
         let requestedWorkspace = workspace
         let revision = selectionRevision
         isCreating = true
         error = nil
         creationTask = Task { [weak self, weak app] in
             guard let self, let app else { return }
-            defer { isCreating = false; creationTask = nil }
+            defer {
+                isCreating = false
+                creationTask = nil
+                app.creatingSavedAgentChatIDs.remove(profile.id)
+            }
             do {
                 let session = try await app.createSavedAgentConversation(profile, workspace: requestedWorkspace,
                                                                          preservingForeground: true)
-                guard selectionRevision == revision, scopeIsCurrent,
-                      workspace == requestedWorkspace, profileID == profile.id else { return }
-                select(session)
+                app.rememberCompanionPanelSession(session.id, workspace: requestedWorkspace, profileID: profile.id)
+                guard selectionRevision == revision, profileID == profile.id else { return }
+                activate()
             } catch {
                 guard selectionRevision == revision, scopeIsCurrent else { return }
                 self.error = error.localizedDescription
@@ -202,9 +218,80 @@ final class CompanionPanelModel: ObservableObject {
         }
     }
 
+    var canClearConversation: Bool {
+        guard let app, selectionIsCurrent, let id = selectedSessionID else { return false }
+        return app.isAgentOnline && !isCreating && !isClearing && !isSending && !state.busy
+            && !app.pendingSessionReset && app.goals.goal(for: id)?.status != .active
+    }
+
+    /// Start empty only after the replacement is durable. The former transcript
+    /// is archived through the normal API and remains recoverable in history.
+    func clearConversation() {
+        activate()
+        guard canClearConversation, let app, let profile,
+              let previous = app.companionConversation else { return }
+        guard app.creatingSavedAgentChatIDs.insert(profile.id).inserted else { return }
+        let requestedWorkspace = app.savedAgentWorkspacePath(profile)
+        let previousWorkspace = workspace
+        let ownership = app.transcriptPresentation.sessionOwnershipToken
+        let wasForeground = previous.id == app.currentSessionID
+        isClearing = true
+        error = nil
+        clearingTask = Task { [weak self, weak app] in
+            guard let self, let app else { return }
+            defer {
+                isClearing = false
+                clearingTask = nil
+                app.creatingSavedAgentChatIDs.remove(profile.id)
+            }
+            do {
+                let response = try await app.backend.get("/api/sessions/\(previous.id)", as: CompanionPanelConversation.self)
+                guard response.identity.matches(sessionID: previous.id, profileID: profile.id, workspace: previousWorkspace),
+                      response.detail.archived != true, app.primaryCompanionProfile?.id == profile.id,
+                      app.companionConversation?.id == previous.id,
+                      !app.savedAgentConversationState(previous.id).busy,
+                      app.goals.goal(for: previous.id)?.status != .active else {
+                    throw SavedAgentConversationError.unavailable("This companion conversation cannot be cleared right now.")
+                }
+                let replacement = try await app.createSavedAgentConversation(profile, workspace: requestedWorkspace,
+                                                                             preservingForeground: true)
+                // A turn or approval may have arrived while creation was in flight.
+                // Leave the original selected if it can no longer safely clear.
+                guard app.primaryCompanionProfile?.id == profile.id,
+                      !app.savedAgentConversationState(previous.id).busy,
+                      app.goals.goal(for: previous.id)?.status != .active else {
+                    throw SavedAgentConversationError.unavailable("Wait for your companion to finish before clearing the chat.")
+                }
+                app.rememberCompanionPanelSession(replacement.id, workspace: requestedWorkspace, profileID: profile.id)
+                if wasForeground, app.transcriptPresentation.sessionOwnershipToken == ownership,
+                   app.canSwitchToCompanionChat {
+                    app.resume(replacement, destination: .agents)
+                    await app.activeTranscriptLoad?.task.value
+                }
+                activate()
+                guard previous.id != app.currentSessionID else {
+                    throw SavedAgentConversationError.unavailable("Your fresh companion chat is ready. Open it before archiving the previous conversation.")
+                }
+                guard !app.savedAgentConversationState(previous.id).busy,
+                      app.goals.goal(for: previous.id)?.status != .active else {
+                    throw SavedAgentConversationError.unavailable("Your previous conversation is still working and was kept in history.")
+                }
+                _ = try await app.backend.patch("/api/sessions/\(previous.id)", body: ["archived": true],
+                                                as: SessionMetadataResponse.self)
+                try await app.refreshCompanionConversationCatalog()
+                app.showToast("Companion chat cleared")
+            } catch {
+                self.error = error.localizedDescription
+                app.showToast("Could not finish clearing the companion chat: \(error.localizedDescription)")
+            }
+        }
+    }
+
     func send() {
         guard canSend, let app, let id = selectedSessionID, let profileID, let dispatch else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scope = CompanionConversationScope(sessionID: id, workspace: workspace, profileID: profileID)
+        let attachments = app.companionContext.scope == scope ? app.companionContext.attachments : []
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Please look at the shared context."
         let originalDraft = draft
         let requestedWorkspace = workspace
         let requestedMode = mode
@@ -225,7 +312,8 @@ final class CompanionPanelModel: ObservableObject {
                       response.detail.archived != true else {
                     throw SavedAgentConversationError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
                 }
-                try await dispatch(id, requestedWorkspace, profileID, text, requestedMode)
+                try await dispatch(id, requestedWorkspace, profileID, text, requestedMode, attachments)
+                app.companionContext.consume(Set(attachments.map(\.id)), for: scope)
                 // Acceptance only clears the exact submitted draft. Later edits
                 // or a different selected chat remain untouched.
                 if id != app.currentSessionID, app.paneDraft(for: id) == originalDraft {
@@ -248,13 +336,12 @@ final class CompanionPanelModel: ObservableObject {
     /// that may replace the center, for attachments or its full approval UI.
     func openFullConversation() {
         guard let app, scopeIsCurrent, let id = selectedSessionID,
-              let session = chats.first(where: { $0.id == id }) else { return }
-        if id == app.currentSessionID { return }
+              chats.contains(where: { $0.id == id }) else { return }
         guard app.isAgentOnline, app.canSwitchToCompanionChat else {
             error = "Finish or stop the active foreground run before opening this conversation."
             return
         }
-        app.resume(session)
+        app.openCompanionMainConversation()
     }
 
     private func catalogDidChange(_ snapshot: SessionCatalogSnapshot) {

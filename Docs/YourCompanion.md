@@ -1,5 +1,15 @@
 # Your companion
 
+The ten persistent-assistant features are implemented. The current native build
+succeeded; focused native checks executed **297 tests with one skip and zero
+failures**, and backend regressions passed **140 tests**. All **12 Companion UI
+tests passed** with no failures or skips. Actual microphone capture, macOS Screen
+Recording permission flows, and live provider calls were not exercised.
+See [the implementation and validation record](CompanionImplementationPlan.md).
+
+The verification totals below describe earlier Companion changes and do not
+replace the current delivery record.
+
 See [verification and changed-file inventory](YourCompanionVerification.md) for
 the original launch checks, and [Companion panel verification](CompanionTabVerification.md)
 for the right-panel correction, Scout, cursor reactions, and remaining manual checks.
@@ -56,9 +66,10 @@ schedules, or call a model.
 
 The left **Agent** and **Work** modes remain unchanged; there is no third segmented
 Companion mode. The **Companion** row above **Manage Accounts** opens the saved
-agent's normal conversation in the **main composer**. It prefers the current owned
-chat, then the remembered chat in the companion’s chosen folder, then an existing
-eligible chat there.
+agent's one ongoing conversation in the **main composer**, with the character
+horizontally centered at the top of the chat, including an empty conversation.
+The main-chat character is 80 points and stays above existing messages. The same remembered chat
+is used regardless of the selected project.
 When none exists and the runtime is available, this explicit click creates one
 empty canonical conversation. Normal switching rules protect active work and
 approvals; a late creation cannot take over a newer chat, project, or profile.
@@ -67,7 +78,7 @@ Opening a conversation does not send a message.
 The **Companion button in the right rail** opens the side-panel inspector alongside
 the current workspace. Opening or closing that panel leaves the central conversation,
 composer draft, active work, and pending approvals in place. Main-chat navigation
-and side-panel presentation use the same saved identity with independent selections.
+and side-panel presentation use the same saved identity and conversation.
 
 The panel uses the same canonical saved-agent profile and normal folder-bound
 conversation records. Sending and queueing a message use the existing background
@@ -76,20 +87,22 @@ permissions, and real task state. It does not introduce a second chat engine or
 an autonomous controller. Opening the panel does not send a message; creating an
 empty conversation and starting work remain explicit actions. The companion draft
 is separate from the central draft and stays bound to its conversation and folder.
-Switching the central project does not change the companion’s folder. Explicitly
-choosing another companion folder changes the visible history without revealing
-other folders’ private transcripts or retargeting queued work. Late load or creation results retain their captured ownership rather
-than taking over a newer panel selection. If the selected companion conversation is
-also open in the central workspace, the panel presents it read-only and offers
-**New conversation**, so two editors do not compete for one draft. **Open full
+Switching the central project does not change the companion’s conversation or folder.
+Late load or creation results retain their captured ownership. If the companion
+conversation is also open in the central workspace, the panel presents it read-only
+and points to the main composer, so two editors do not compete for one draft.
+**Clear chat** starts a fresh companion conversation and archives the previous one;
+active work and pending approvals must finish first. Older conversations remain
+recoverable in saved-agent history. There is no companion conversation picker or
+new-chat button. **Open full
 conversation** is the explicit route to the existing advanced composer, attachments,
 and approval controls; it intentionally selects that chat in the central workspace.
 Interactive tool views and image editing also use that full conversation.
 
-The panel provides access to the companion's conversations and existing profile
-and Overview controls. Click its face or name to open that profile, or use
-**Companion options → Profile and activity**. The same shared avatar appears in
-the agent picker, profile, and conversation header. Rename and change its picture
+The panel shows an 80-point character, horizontally centered at the top above the
+conversation, including when the chat is empty. Open the
+existing profile and Overview controls through **Companion options → Profile and
+activity**. The same shared avatar appears in the agent picker and profile. Rename and change its picture
 through those existing profile controls. Disabling character animation affects only
 presentation. Removing an agent remains the separate confirmed deletion action. Changing
 appearance or model does not create a new identity, move conversations, or change
@@ -113,9 +126,11 @@ introduce another notification store or enable system notifications. Profile,
 approval/recovery, and full-conversation actions reveal the main window and use
 their existing surfaces. **Open Locus** only reveals that window; it does not
 switch its conversation or discard either draft. Native activity/filtering tests
-and hosted CI checks for popover clicking, typing, Escape, Close, draft preservation,
-and reopening after closing the main window passed. Local XCTest automation could
-not initialize on the development host; the interaction evidence comes from CI.
+and earlier hosted CI checks for popover clicking, typing, Escape, Close, draft
+preservation, and reopening after closing the main window passed. For that earlier
+menu-bar change, local XCTest automation could not initialize on the development
+host; its interaction evidence came from CI. The current feature pass has its own
+validation record above.
 
 ## Your companion's folder
 
@@ -133,16 +148,12 @@ project does not select a different default folder. The home is created lazily b
 the existing workspace preparation API when an explicit action needs it; merely
 reading the preference does not create a folder or scan its contents.
 
-The right panel's folder menu shows **Companion home** for the dedicated folder,
-linked projects by folder name, and **Choose a folder…** for an explicit selection.
-Choose **Companion home** to return to the default. The existing
-`AgentProfile.workspacePreferences.defaultProjectPath` owns that choice; an earlier
-explicit saved-agent default is respected. Returning to the home clears only that
-default override, retaining linked projects and the rest of the profile. Choosing
-a folder leaves the central chat and draft in place and does not start work or
-change tool permissions.
+The right panel displays the current conversation's folder. Edit the companion's
+workspace preference through its profile to choose the folder used for its first
+chat or after clearing. That preference does not switch to another conversation or
+change the current chat's folder.
 
-Folder selection affects subsequent companion chat selection and creation. It does
+Folder selection affects subsequent companion chat creation. It does
 not move or rewrite existing conversations, files, drafts, tasks, or queued requests.
 Each keeps its original execution folder. A missing explicit folder produces an
 error rather than a silent fallback. Existing home validation rejects redirected
@@ -223,10 +234,10 @@ See [artwork provenance and input limits](CompanionArtwork.md).
 Reduce Motion, the animation preference, scene inactivity, and view disappearance
 disable or stop the cancellable animation task. Static text/status equivalents remain.
 Imported/generated pictures receive honest whole-image motion, never face rigging.
-Idle bundled characters look toward the pointer within their own key Locus window.
-The app-local listener requires that window and enabled, visible tracking; it does
-not separately require the whole app to be active. Actual pointer delivery and
-scene activation in the nonactivating menu popover remain unverified locally.
+Idle bundled characters in the right tab react only while the pointer is inside
+that tab. Main-chat, menu-bar, desktop, gallery and profile characters do not
+track the pointer. The app-local listener also requires its own key window and
+enabled, visible tracking; it does not separately require the whole app to be active.
 Playback holds discrete poses on an eight-frame-per-second cadence: each source
 frame lasts one or more 125 ms ticks, with quiet idle/waiting holds and brief
 greetings and completion reactions. Legacy procedural appearances use held key poses too;
@@ -347,7 +358,7 @@ text. The fixture deliberately rejects submitted work with a visible error; it d
 not connect a provider or generate an AI reply. Runtime availability is simulated.
 Remove the companion-chat flag before returning to other fixture scenarios.
 
-The completed full run passed **1,966 native tests** and **seven companion UI
+The earlier completed full run passed **1,966 native tests** and **seven companion UI
 cases**, with **one explicit UI skip**, zero failures, and `xcodebuild` exit 0.
 It covers folder/output isolation, sizing, palette, gallery, activity, and menu
 activity. The Python suite passed **3,083 tests plus 31 subtests**. Actual menu
@@ -366,3 +377,56 @@ Live-provider conversation and generation, real permission/approval flows, physi
 cursor interaction, VoiceOver use, signed distribution, and the latest LocusX build
 remain unverified in this follow-up. Renderer tracking and observer teardown have
 native test coverage; that is separate from manual resource profiling.
+
+
+## Persistent assistant tools
+
+Open **Companion tools** from the character or the right-tab options menu.
+The tools share the current Companion conversation, including when it is open on
+the desktop. The main-chat and right-tab characters are 80 points and stay
+horizontally centered at the top, including when their conversation is empty.
+
+- **Share**: choose pasted text/error, files, the current Locus browser page, the
+  last active application, or a screenshot region. Review the captured contents,
+  attach them, and send a message. Chips remain visible beside the composer and
+  are removed only after accepted delivery. These snapshots grant no app control.
+- **Catch up**: read the latest saved request, decisions, recorded task progress
+  and verification. Conversation excerpts remain explicitly unverified. Resume
+  uses the task's existing controls; source/review opens the saved conversation
+  or task inspector.
+- **Activity**: review grouped requests/results, choose event sources, snooze an
+  update, and set local quiet hours. Snooze never approves a request or marks a
+  result read.
+- **Memory**: type “Remember that…” to prepare a memory, review its scope and
+  confirm. Inspect sources and update times, edit, forget or approve candidates.
+  Scope changes use existing create/forget APIs with rollback if forgetting
+  fails; after an interrupted change, refresh and review both records.
+- **Focus**: agree a deliverable, duration and checkpoints for focus or learning.
+  Record evidence as you progress. Learning has explicit explanation, exercise,
+  hint and answer steps. The timer offers a check-in; it never dispatches work.
+  Finishing records user-reported progress, not independent verification.
+- **Handoffs**: in Work mode, Companion can use the existing specialist runtime.
+  Cards show recorded task input, tool declarations, status, results, evidence
+  and uncertainties. “Explain results” asks Companion to synthesize these records.
+  Stop work ends the Companion turn; supported team branches use existing branch
+  cancellation. Historical input may be unavailable. Hosted previews identify the
+  approved orchestrator input; they do not claim to expose internal worker prompts.
+- **Guide**: follow actual highlighted controls for MCP setup, recurring agents
+  or waiting work. You still choose what to save and permit. Errors stop
+  highlighting; a status banner keeps the explanation and **Stop guidance** visible
+  in MCP and schedule setup.
+- **Character**: import a validated [animation pack](CompanionAnimationPacks.md),
+  edit the profile, or show the desktop Companion.
+
+The **desktop Companion** is a movable native window. Click the character to open
+its compact chat, drag near an edge to snap, and use its options for size and
+always-on-top. **Control–Option–Command–C** shows/hides it when that shortcut is
+available. Desktop sizing starts at 80 points, offers 64/80/112/144-point presets,
+and is independent of the main chat and right tab.
+Hiding the window preserves the conversation and draft and never cancels work.
+
+**Talk with companion** uses the configured voice engine. Push-to-talk makes
+recording visible; interruption stops playback. Voice and approved context stay
+bound to the Companion session even while a different central chat is selected.
+Recognition/playback failures use the existing voice settings and error states.
+Real microphone and Screen Recording access remain native macOS permissions.

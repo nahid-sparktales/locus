@@ -430,6 +430,9 @@ final class AppModel: ObservableObject {
         : OutputsLibraryStore())
     let onboarding = OnboardingModel()
     let companionPanel = CompanionPanelModel()
+    let companionContext = CompanionContextSharingModel()
+    let companionDesktop = CompanionDesktopController()
+    let companionGuidance = CompanionGuidanceModel()
     let agentInspector = AgentInspectorModel()
     /// Deliberately not bridged into `objectWillChange`: the Notebook sheet
     /// observes this directly, and republishing here would invalidate the whole
@@ -1384,6 +1387,8 @@ final class AppModel: ObservableObject {
         }
 
         companionPanel.configure(app: self)
+        configureCompanionContext()
+        configureCompanionDesktop()
         configureLibraryFeatures()
         configureIdentityVault()
         configureOnboarding(

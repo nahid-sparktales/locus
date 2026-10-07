@@ -183,7 +183,9 @@ private struct LocusPresentationAnchor: View {
             Button("Clear Chat") { model.clearChatConfirmed() }
                 .accessibilityIdentifier("clearChat.confirm")
         } message: {
-            Text("The current conversation will remain available in Sessions. Locus will start a fresh chat with the same workspace, model, mode, context, and browser home.")
+            Text(model.currentCompanionConversationProfile != nil
+                 ? "This conversation will be archived and a fresh chat with your companion will open."
+                 : "The current conversation will remain available in Sessions. Locus will start a fresh chat with the same workspace, model, mode, context, and browser home.")
         }
         .alert("Clear saved sessions?", isPresented: owned($model.clearSessionsConfirmationPresented)) {
             Button("Cancel", role: .cancel) {}

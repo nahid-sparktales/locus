@@ -17,11 +17,11 @@ enum CompanionSteppedMotion {
 /// directional running is reserved for an actual directional interaction.
 enum CompanionSpriteRow: Int, CaseIterable {
     case idle = 0, runningRight, runningLeft, waving, jumping, failed, waiting, working, review
-    case lookFirst, lookSecond
+    case lookFirst, lookSecond, listening, speaking
 
     var frameCount: Int {
         switch self {
-        case .idle, .waiting, .working, .review: 6
+        case .idle, .waiting, .working, .review, .listening, .speaking: 6
         case .runningRight, .runningLeft, .failed, .lookFirst, .lookSecond: 8
         case .waving: 4
         case .jumping: 5
@@ -38,7 +38,7 @@ enum CompanionSpriteRow: Int, CaseIterable {
         case .runningRight, .runningLeft, .failed: ticks = [1, 1, 1, 1, 1, 1, 1, 2]
         case .waving: ticks = [1, 1, 1, 2]
         case .jumping: ticks = [1, 1, 1, 1, 2]
-        case .waiting, .review: ticks = [2, 2, 2, 2, 2, 3]
+        case .waiting, .review, .listening, .speaking: ticks = [2, 2, 2, 2, 2, 3]
         case .working: ticks = [1, 1, 1, 1, 1, 2]
         case .lookFirst, .lookSecond: ticks = Array(repeating: 1, count: 8)
         }
@@ -50,6 +50,8 @@ enum CompanionSpriteRow: Int, CaseIterable {
         case .idle, .queued, .paused, .unavailable: .idle
         case .greeting: .waving
         case .working: .working
+        case .listening: .listening
+        case .speaking: .speaking
         case .needsApproval: .waiting
         case .completed: .jumping
         case .failed: .failed
@@ -111,10 +113,11 @@ final class CompanionSpriteAtlas {
     let pixelHeight: Int
     let layout: CompanionSpriteLayout
     private let frames: [CompanionSpriteRow: [CGImage]]
+    private var timings: [CompanionSpriteRow: [Int]] = [:]
 
     enum ValidationError: Error { case invalidType, invalidDimensions, invalidTransparency, invalidFrame }
 
-    init(data: Data) throws {
+    init(data: Data, pack: CompanionAnimationPack? = nil) throws {
         guard !data.isEmpty, data.count <= Self.maximumSourceBytes,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let sourceType = CGImageSourceGetType(source) as String?,
@@ -122,7 +125,9 @@ final class CompanionSpriteAtlas {
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int else { throw ValidationError.invalidType }
-        guard width == 1_536, height == 1_872 || height == 2_288 else { throw ValidationError.invalidDimensions }
+        guard width == 1_536,
+              pack == nil ? (height == 1_872 || height == 2_288)
+                : (height > 0 && height <= 2_704 && height % Self.cellHeight == 0) else { throw ValidationError.invalidDimensions }
         guard let image = CGImageSourceCreateImageAtIndex(source, 0,
             [kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
               [.premultipliedLast, .premultipliedFirst, .last, .first].contains(image.alphaInfo) else {
@@ -133,9 +138,22 @@ final class CompanionSpriteAtlas {
         var cells: [CompanionSpriteRow: [CGImage]] = [:]
         var referenceBounds: CGRect?
         var contentBounds = CGRect.null
-        for row in CompanionSpriteRow.allCases where row.rawValue < height / Self.cellHeight {
-            cells[row] = try (0..<row.frameCount).map { column in
-                let rect = CGRect(x: column * Self.cellWidth, y: row.rawValue * Self.cellHeight,
+        let rows: [(CompanionSpriteRow, Int, Int, [Int])]
+        if let pack {
+            rows = pack.animations.compactMap { name, animation in
+                guard let row = CompanionAnimationPack.stateRows[name] else { return nil }
+                return (row, animation.row, animation.frameCount,
+                        Array(repeating: animation.frameMilliseconds, count: animation.frameCount))
+            }
+        } else {
+            rows = CompanionSpriteRow.allCases.filter { $0.rawValue < height / Self.cellHeight }
+                .map { ($0, $0.rawValue, $0.frameCount, $0.frameDurations) }
+        }
+        for (row, sourceRow, count, durations) in rows {
+            guard sourceRow >= 0, sourceRow < height / Self.cellHeight, (1...8).contains(count) else { throw ValidationError.invalidFrame }
+            timings[row] = durations
+            cells[row] = try (0..<count).map { column in
+                let rect = CGRect(x: column * Self.cellWidth, y: sourceRow * Self.cellHeight,
                     width: Self.cellWidth, height: Self.cellHeight)
                 guard let cell = image.cropping(to: rect), let bounds = Self.alphaBounds(in: cell) else {
                     throw ValidationError.invalidFrame
@@ -183,15 +201,20 @@ final class CompanionSpriteAtlas {
     }
 
     func frame(row: CompanionSpriteRow, index: Int) -> CGImage? {
-        guard let rowFrames = frames[row], rowFrames.indices.contains(index) else { return nil }
+        if (row == .lookFirst || row == .lookSecond), frames[row] == nil { return nil }
+        let rowFrames = frames[row] ?? frames[.idle] ?? []
+        guard rowFrames.indices.contains(index) else { return nil }
         return rowFrames[index]
     }
 
+    func frameDurations(for row: CompanionSpriteRow) -> [Int] {
+        timings[row] ?? timings[.idle] ?? [2_000]
+    }
     var frameCount: Int { frames.values.reduce(0) { $0 + $1.count } }
 
     func lookFrame(for pointer: CompanionPointerResponse, pose: CompanionCharacterPose,
                    canAnimate: Bool) -> (row: CompanionSpriteRow, index: Int)? {
-        guard version == 2, CompanionPointerResponse.allowsReaction(canAnimate: canAnimate, pose: pose),
+        guard version == 2, frames[.lookFirst] != nil, frames[.lookSecond] != nil, CompanionPointerResponse.allowsReaction(canAnimate: canAnimate, pose: pose),
               let direction = pointer.directionIndex else { return nil }
         return (direction < 8 ? .lookFirst : .lookSecond, direction % 8)
     }
@@ -278,7 +301,7 @@ struct CompanionSpriteView: View {
 
     @MainActor private func playOnce(_ row: CompanionSpriteRow) async throws {
         activeRow = row
-        for (index, duration) in row.frameDurations.enumerated() {
+        for (index, duration) in atlas.frameDurations(for: row).enumerated() {
             try Task.checkCancellation()
             frameIndex = index
             try await Task.sleep(for: .milliseconds(duration))

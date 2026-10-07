@@ -128,6 +128,11 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
+            if let profile = model.currentCompanionConversationProfile {
+                CompanionConversationCharacter(profile: profile, size: 80, showsPrompt: model.blocks.isEmpty)
+                    .padding(.vertical, 8)
+            }
+
             ConversationView(streamingReply: model.streamingReply)
                 .frame(minHeight: 0, maxHeight: .infinity)
                 .clipped()
@@ -160,8 +165,10 @@ struct WorkspaceView: View {
                let profile = agentTeams.agentProfiles.first(where: { $0.id == profileID }) {
                 Button { model.selectSavedAgent(profile) } label: {
                     HStack(spacing: 7) {
-                        AgentAvatarView(profileID: profile.id, name: profile.name, size: 32)
-                        if !compactHeader {
+                        if profile.id != agentTeams.primaryCompanionID {
+                            AgentAvatarView(profileID: profile.id, name: profile.name, size: 32)
+                        }
+                        if !compactHeader || profile.id == agentTeams.primaryCompanionID {
                             Text(profile.name).font(.locus(size: 12, weight: .semibold)).lineLimit(1)
                         }
                     }
@@ -1316,7 +1323,7 @@ struct ActivityCenterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            header.companionGuideAnchor("activity.waiting", guide: model.companionGuidance)
             HStack(spacing: 4) {
                 activityTab(.inbox, count: activityCenter.displayedAttentionItems.count + activityCenter.attentionRuns.count)
                 activityTab(.inProgress, count: activityCenter.inProgressRuns.count)
@@ -2361,6 +2368,7 @@ struct ScheduleEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            CompanionGuidanceStatus(guide: model.companionGuidance, topic: .recurring)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
@@ -2396,7 +2404,24 @@ struct ScheduleEditorView: View {
             initialDraft = draft
             nameFocused = draft.id == nil
         }
-        .onChange(of: draft) { _, _ in saveError = nil }
+        .onChange(of: draft) { _, _ in
+            saveError = nil
+            let guide = model.companionGuidance
+            guard guide.topic == .recurring, !guide.stopped else { return }
+            if draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                guide.point(to: "schedule.prompt", instruction: "Describe the work this agent should perform at each scheduled run.")
+            } else if validationIssue != nil {
+                guide.point(to: "schedule.repeat", instruction: "Choose repeat timing and complete the required fields. " + (validationIssue ?? ""))
+            } else {
+                guide.point(to: "schedule.save", instruction: "Review the working folder, model, timing and permissions. Create Agent when you are ready.")
+            }
+        }
+        .onChange(of: saveError) { _, error in
+            guard let error, model.companionGuidance.topic == .recurring else { return }
+            model.companionGuidance.target = nil
+            model.companionGuidance.error = error
+            model.companionGuidance.instruction = "Resolve the save error before continuing."
+        }
         .onChange(of: routeSelection) { _, value in updateRoute(value) }
         .confirmationDialog("Discard changes?", isPresented: $discardPresented, titleVisibility: .visible) {
             Button("Discard changes", role: .destructive) { schedule.scheduleEditorDraft = nil }
@@ -2455,6 +2480,7 @@ struct ScheduleEditorView: View {
                     .overlay { RoundedRectangle(cornerRadius: 9).stroke(viewColors.lineStrong) }
                     .accessibilityLabel("Instructions for each scheduled run")
                     .accessibilityIdentifier("scheduleEditor.prompt")
+                    .companionGuideAnchor("schedule.prompt", guide: model.companionGuidance)
                 Text(draft.workflow.steps.count > 1
                     ? "Instructions for the first agent step. Edit the remaining steps in Workflow below."
                     : "Describe what to do and what to report. Temporary context chips and attachments are not included.")
@@ -2472,6 +2498,7 @@ struct ScheduleEditorView: View {
                 ForEach(ScheduleRuleKind.allCases) { kind in Text(kind.title).tag(kind) }
             }
             .accessibilityIdentifier("scheduleEditor.repeat")
+            .companionGuideAnchor("schedule.repeat", guide: model.companionGuidance)
             scheduleFields
             HStack(spacing: 10) {
                 Text("Time zone").font(.locus(size: 10))
@@ -2673,6 +2700,7 @@ struct ScheduleEditorView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(isSaving || validationIssue != nil)
                     .accessibilityIdentifier("scheduleEditor.save")
+                    .companionGuideAnchor("schedule.save", guide: model.companionGuidance)
             }
         }
         .padding(.horizontal, 22)
@@ -3386,12 +3414,12 @@ private struct ConversationView: View {
 
     var body: some View {
         GeometryReader { viewport in
-            transcriptContent(viewportWidth: viewport.size.width)
+            transcriptContent(viewportWidth: viewport.size.width, viewportHeight: viewport.size.height)
         }
         .locusSheet(item: $reusableCheckSource) { source in ReusableChecksView(source: source).environmentObject(model) }
     }
 
-    private func transcriptContent(viewportWidth: CGFloat) -> some View {
+    private func transcriptContent(viewportWidth: CGFloat, viewportHeight: CGFloat) -> some View {
         let transcript = transcriptPresentation.snapshot
         let items = transcript.items
         let token = transcript.renderToken
@@ -3406,7 +3434,7 @@ private struct ConversationView: View {
             }
             ScrollView {
                 TranscriptLayoutStack(itemCount: items.count) {
-                    if transcript.isEmpty {
+                    if transcript.isEmpty, model.currentCompanionConversationProfile == nil {
                         EmptyConversationView()
                             .environmentObject(model)
                     }
@@ -3415,7 +3443,10 @@ private struct ConversationView: View {
                     ForEach(transcript.rows) { row in
                         renderRow(row, in: transcript, taskResults: taskResults)
                     }
-                    if transcript.isEmpty { transcriptEnd(token: token, id: bottomID) }
+                    if transcript.isEmpty {
+                        transcriptEnd(token: token, id: bottomID,
+                                      height: model.currentCompanionConversationProfile == nil ? 41 : 1)
+                    }
                 }
                 .background {
                     // AppKit's pass-through overrides do not exclude the
@@ -3690,11 +3721,11 @@ private struct ConversationView: View {
         case structured(ResponseDocument, String?)
     }
 
-    private func transcriptEnd(token: TranscriptRenderToken, id: TranscriptScrollTarget) -> some View {
+    private func transcriptEnd(token: TranscriptRenderToken, id: TranscriptScrollTarget, height: CGFloat = 41) -> some View {
         // Realize terminal content and its existing breathing room together.
         // An independent lazy footer can remain unrealized after a row pin.
         Color.clear
-            .frame(height: 41)
+            .frame(height: height)
             .id(id)
             .background {
                 TranscriptTailLayoutProbe(coordinator: scrollCoordinator, token: token, kind: .end)
@@ -5659,6 +5690,47 @@ private struct TranscriptSearchBar: View {
             Rectangle().fill(viewColors.line).frame(height: 1)
         }
         .onAppear { focused = true }
+    }
+}
+
+private struct CompanionConversationCharacter: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.locusViewColors) private var colors
+    @State private var focusPresented = false
+    let profile: AgentProfile
+    let size: CGFloat
+    let showsPrompt: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            VStack(spacing: 8) {
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: size)
+                Text(profile.name)
+                    .font(.locus(size: 15, weight: .semibold))
+                    .foregroundStyle(colors.ink)
+                if showsPrompt {
+                    Text("What would you like to talk about?")
+                        .font(.locus(size: 13)).foregroundStyle(colors.textSecondary)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(profile.name), your companion")
+            .accessibilityIdentifier("companion.conversation.character")
+            .overlay(alignment: .topTrailing) { CompanionToolsButton().padding(.horizontal, 16) }
+            if !showsPrompt, let scope = model.companionScope {
+                CompanionCatchUpView(backend: model.backend, scope: scope,
+                    openConversation: { model.openCompanionMainConversation() },
+                    reviewChanges: { model.showTaskDetail(sessionID: scope.sessionID) },
+                    resume: { saved in
+                        if saved.goal?.isCompanionSession == true { focusPresented = true }
+                        else { model.resumeCompanionTask(saved, scope: scope) }
+                    }).frame(maxWidth: 600).padding(.horizontal, 16)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .sheet(isPresented: $focusPresented) { CompanionToolsView(initialTool: .focus) }
     }
 }
 

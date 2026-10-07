@@ -1600,6 +1600,7 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
     let result: [String: JSONValue]?
     let startedAt: Double?
     let completedAt: Double?
+    var sharedContext: [String: JSONValue]? = nil
 
     var id: String { attemptID }
     var resolvedNodeID: String { nodeID ?? jobID }
@@ -1618,6 +1619,7 @@ struct AgentJobAttempt: Identifiable, Codable, Hashable {
         case executionEngine = "execution_engine"
         case startedAt = "started_at"
         case completedAt = "completed_at"
+        case sharedContext = "shared_context"
     }
 
 

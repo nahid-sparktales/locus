@@ -447,6 +447,7 @@ struct AppFeatureEnvironmentModifier: ViewModifier {
             .environmentObject(model.transcriptPresentation)
             .environmentObject(model.providerAccountsModel)
             .environmentObject(model.voiceControl)
+            .environmentObject(model.companionContext)
             .environmentObject(model.agentTeamsModel)
             .environmentObject(model.teamRunLive)
             .environmentObject(model.landingFlow)

@@ -101,7 +101,7 @@ extension AppModel {
     /// the resident's workspace and profile for every submitted turn, including
     /// an explicit model choice saved for this conversation.
     func sendSavedAgentTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode, runID: String = UUID().uuidString,
-                            preservingForeground: Bool = false) async throws {
+                            preservingForeground: Bool = false, attachments: [ChatAttachment] = []) async throws {
         guard [.ask, .work].contains(mode), !isShuttingDown,
               let profile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw SavedAgentConversationError.unavailable("This agent profile is unavailable.")
@@ -116,6 +116,14 @@ extension AppModel {
             throw SavedAgentConversationError.unavailable("Pause the current goal before continuing this agent conversation.")
         }
         let dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID)
+        let payload = attachments.isEmpty ? text : Self.decoratedPrompt(text, mode: mode,
+            chatAttachments: attachments, contextFiles: [], restoredTranscriptContext: nil)
+        let imageAttachments: [[String: Any]] = attachments.compactMap { attachment in
+            guard attachment.isAvailable, attachment.kind != .text,
+                  let data = attachment.imageData, let mime = attachment.mimeType else { return nil }
+            return ["name": attachment.name, "mime_type": mime, "data": data.base64EncodedString()]
+        }
+        let allowsSpecialists = profileID == primaryCompanionProfile?.id && mode == .work
         let token = UUID()
         var failure: Error?
         let turn = Task { @MainActor [weak self] in
@@ -128,8 +136,8 @@ extension AppModel {
                 var queueBody = detail.executionQueueContext
                 queueBody.merge([
                     "run_id": runID, "session_id": sessionID, "message_id": UUID().uuidString,
-                    "request": text, "run_kind": "solo",
-                    "solo_swarm": false,
+                    "request": payload, "run_kind": "solo",
+                    "solo_swarm": allowsSpecialists,
                 ]) { _, new in new }
                 if let route = try await prepareAgentChatQueueRoute(dispatch, sessionID: sessionID) {
                     queueBody["agent_chat_route"] = route
@@ -158,12 +166,14 @@ extension AppModel {
                                                            restoringOverride: true, ordinaryProviderBody: [:])
                 let _: OrchestrationRun = try await backend.patch("/api/runs/\(runID)/queue", body: ["action": "admit"], as: OrchestrationRun.self)
                 try Task.checkCancellation()
-                let request: [String: Any] = [
-                    "type": "user_message", "text": text, "mode": mode.rawValue,
+                var request: [String: Any] = [
+                    "type": "user_message", "text": payload, "mode": mode.rawValue,
                     "request_id": runID, "run_id": runID,
                     "agent_profile": Self.savedAgentProfileBody(dispatch.profile),
                     "agent_config": encodedJSONObject(dispatch.profile.resolvedBehavior) ?? [:],
                 ]
+                if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
+                if allowsSpecialists { request["solo_swarm"] = ["enabled": true] }
                 if currentSessionID == sessionID {
                     blocks.append(ChatBlock(kind: .user, text: text))
                 }

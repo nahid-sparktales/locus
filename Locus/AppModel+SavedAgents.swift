@@ -350,6 +350,10 @@ extension AppModel {
 
     func newSavedAgentChat(_ profile: AgentProfile, workspace: String? = nil,
                            destination: SidebarDestination = .agents) {
+        if profile.id == agentTeamsModel.primaryCompanionID, destination != .companion {
+            openCompanionMainConversation()
+            return
+        }
         if destination == .companion {
             openCompanionDestination()
             companionPanel.createConversation()

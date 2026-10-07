@@ -42,6 +42,7 @@ final class ActivityCenterModel: ObservableObject {
         var id: String { rawValue }
     }
 
+    @Published private(set) var companionNotificationPolicy = CompanionNotificationPolicy()
     @Published var activityCenterPresented = false
     @Published var selectedTab: Tab = .inbox
     @Published private(set) var isRefreshing = false
@@ -191,6 +192,10 @@ final class ActivityCenterModel: ObservableObject {
         self.persistenceEnabled = persistenceEnabled
         self.defaults = defaults
         guard persistenceEnabled else { return }
+        if let data = defaults.data(forKey: "Locus.companionNotificationPolicy.v1"),
+           let policy = try? JSONDecoder().decode(CompanionNotificationPolicy.self, from: data) {
+            companionNotificationPolicy = policy
+        }
         if let data = defaults.data(forKey: "Locus.activitySeenUpdates"),
            let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
             activitySeenUpdates = saved
@@ -203,6 +208,20 @@ final class ActivityCenterModel: ObservableObject {
         acknowledgedWarningRunIDs = Set(
             defaults.stringArray(forKey: "Locus.acknowledgedWarningRunIDs") ?? []
         )
+    }
+
+    func updateCompanionNotificationPolicy(_ policy: CompanionNotificationPolicy) {
+        companionNotificationPolicy = policy
+        if persistenceEnabled, let data = try? JSONEncoder().encode(policy) {
+            defaults.set(data, forKey: "Locus.companionNotificationPolicy.v1")
+        }
+    }
+
+    func snoozeCompanionActivity(_ id: String, until: Date) {
+        var policy = companionNotificationPolicy
+        policy.snoozedUntil = policy.snoozedUntil.filter { $0.value > .now }
+        policy.snoozedUntil[id] = until
+        updateCompanionNotificationPolicy(policy)
     }
 
     func configure(

@@ -392,7 +392,12 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func newConversation(for agentID: String) {
-        guard canStartConversation(for: agentID), let profileID = UUID(uuidString: agentID),
+        guard canStartConversation(for: agentID) else { return }
+        if let appModel, UUID(uuidString: agentID) == appModel.agentTeamsModel.primaryCompanionID {
+            appModel.openCompanionMainConversation()
+            return
+        }
+        guard let profileID = UUID(uuidString: agentID),
               resetCurrentConversation(workspace: windowWorkspace, profileID: profileID) else { return }
         select(agentID)
     }

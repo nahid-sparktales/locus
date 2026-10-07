@@ -108,6 +108,7 @@ def sanitize_event(value: Any, *, include_content: bool = True, depth: int = 0, 
             if not include_content and key.lower() in {
                 "content", "output", "reasoning", "reasoning_text", "result",
                 "arguments", "prompt", "goal", "detail", "preview", "text", "response_parts", "_response_parts",
+                "shared_context", "task_brief", "instructions_preview",
             }:
                 result[key] = "[content omitted]"
                 continue
@@ -1390,6 +1391,15 @@ class RunStore(AgentInspectorStore):
                 "SELECT * FROM job_attempts WHERE run_id=? ORDER BY started_at, job_id, attempt",
                 (run_id,),
             ).fetchall()
+            starts = connection.execute(
+                "SELECT attempt_id, payload_json FROM run_events WHERE run_id=? AND type='agent_job_started' ORDER BY seq",
+                (run_id,),
+            ).fetchall()
+        contexts = {}
+        for event in starts:
+            value = json.loads(event["payload_json"]).get("shared_context")
+            if isinstance(value, dict):
+                contexts[event["attempt_id"]] = value
         return [{
             "run_id": row["run_id"], "job_id": row["job_id"], "attempt": row["attempt"],
             "attempt_id": row["attempt_id"], "agent_id": row["agent_id"],
@@ -1400,6 +1410,7 @@ class RunStore(AgentInspectorStore):
             "depth": int(row["depth"] or 0),
             "execution_engine": row["execution_engine"] or "locus_managed",
             "goal": row["goal"],
+            "shared_context": contexts.get(row["attempt_id"]),
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "started_at": row["started_at"], "completed_at": row["completed_at"],
         } for row in rows]

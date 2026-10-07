@@ -5,11 +5,16 @@ extension AppModel {
         agentProfiles.first { $0.id == agentTeamsModel.primaryCompanionID }
     }
 
-    /// The companion uses its saved agent home unless the user explicitly
-    /// selected a project in its existing profile preferences. Center navigation
-    /// must never change this independent scope.
+    /// An existing companion chat keeps its captured folder. Profile preferences
+    /// only choose the folder for its first chat or its next cleared chat.
     var companionWorkspacePath: String {
         guard let profile = primaryCompanionProfile else { return "" }
+        if let session = companionConversation {
+            if let source = session.environment?["source_workspace"], session.belongsToWorkspace(source) {
+                return SessionSummary.canonicalWorkspacePath(source)
+            }
+            if let workspace = session.workspacePath { return workspace }
+        }
         return savedAgentWorkspacePath(profile)
     }
 
@@ -42,34 +47,50 @@ extension AppModel {
         !pendingSessionReset && ((!isBusy && !hasPendingPermission) || taskWorkers[currentSessionID] != nil)
     }
 
-    func companionChats(in workspace: String? = nil) -> [SessionSummary] {
-        guard let profile = primaryCompanionProfile else { return [] }
-        let root = SessionSummary.canonicalWorkspacePath(workspace ?? companionWorkspacePath)
-        return savedAgentChats(profile.id).filter {
+    /// One durable conversation belongs to the companion across all folders.
+    /// Earlier chats stay available in saved-agent history; adopting one here
+    /// never deletes or combines their transcripts.
+    var companionConversation: SessionSummary? {
+        guard let profile = primaryCompanionProfile else { return nil }
+        let candidates = savedAgentChats(profile.id).filter {
             !$0.isAgentEventChat && $0.agentTriggerID?.nilIfEmpty == nil
-                && $0.belongsToWorkspace(root)
         }.sorted {
-            if $0.isPinned != $1.isPinned { return $0.isPinned }
             if $0.mtime != $1.mtime { return $0.mtime > $1.mtime }
             return $0.id < $1.id
         }
+        if let remembered = lastSidebarSessionIDs[companionSessionKey(workspace: "")],
+           let session = candidates.first(where: { $0.id == remembered }) { return session }
+        let preferredWorkspace = savedAgentWorkspacePath(profile)
+        let legacyKey = "companion:\(profile.id.uuidString):\(SessionSummary.canonicalWorkspacePath(preferredWorkspace))"
+        if let remembered = lastSidebarSessionIDs[legacyKey],
+           let session = candidates.first(where: { $0.id == remembered }) { return session }
+        return candidates.first(where: { $0.belongsToWorkspace(preferredWorkspace) }) ?? candidates.first
+    }
+
+    var currentCompanionConversationProfile: AgentProfile? {
+        guard companionConversation?.id == currentSessionID else { return nil }
+        return primaryCompanionProfile
+    }
+
+    func companionChats(in workspace: String? = nil) -> [SessionSummary] {
+        companionConversation.map { [$0] } ?? []
     }
 
     var companionConversationIsSelected: Bool { companionPanel.selectedSessionID != nil }
 
     func companionSessionKey(workspace: String) -> String {
-        "companion:\(agentTeamsModel.primaryCompanionID?.uuidString ?? "none"):\(SessionSummary.canonicalWorkspacePath(workspace))"
+        "companion:\(agentTeamsModel.primaryCompanionID?.uuidString ?? "none")"
     }
 
-    func rememberCompanionPanelSession(_ id: String, workspace: String) {
-        lastSidebarSessionIDs[companionSessionKey(workspace: workspace)] = id
+    func rememberCompanionPanelSession(_ id: String, workspace: String, profileID: UUID? = nil) {
+        let key = profileID.map { "companion:\($0.uuidString)" } ?? companionSessionKey(workspace: workspace)
+        lastSidebarSessionIDs[key] = id
         if persistenceEnabled {
             UserDefaults.standard.set(lastSidebarSessionIDs, forKey: "Locus.lastSidebarSessionIDs")
         }
     }
 
-    /// The left shortcut opens the ordinary profile-bound conversation. The
-    /// inspector remains an independent destination with its own selection.
+    /// Both companion entry points open the same profile-bound conversation.
     func openCompanionMainConversation() {
         guard let profile = primaryCompanionProfile else {
             onboarding.beginCompanionSetup()
@@ -78,6 +99,7 @@ extension AppModel {
         let workspace = companionWorkspacePath
         let candidates = companionChats(in: workspace)
         if let current = candidates.first(where: { $0.id == currentSessionID }) {
+            rememberCompanionPanelSession(current.id, workspace: workspace)
             agentCrewChatPresented = false
             savedAgentOverviewID = nil
             emptySidebarDestination = nil
@@ -98,6 +120,7 @@ extension AppModel {
         }
         let remembered = lastSidebarSessionIDs[companionSessionKey(workspace: workspace)]
         if let existing = candidates.first(where: { $0.id == remembered }) ?? candidates.first {
+            rememberCompanionPanelSession(existing.id, workspace: workspace)
             resume(existing, destination: .agents)
             return
         }
@@ -111,6 +134,7 @@ extension AppModel {
         let sourceOverview = savedAgentOverviewID
         let sourceAgent = selectedSavedAgentID
         let sourceWorkspace = SessionSummary.canonicalWorkspacePath(pendingWorkspacePath ?? workspacePath)
+        let requestedPreference = savedAgentWorkspacePath(profile)
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { creatingSavedAgentChatIDs.remove(profile.id) }
@@ -119,8 +143,10 @@ extension AppModel {
                 // selection until this explicit navigation still owns its scope.
                 let created = try await createSavedAgentConversation(profile, workspace: workspace,
                                                                       preservingForeground: true)
+                rememberCompanionPanelSession(created.id, workspace: workspace, profileID: profile.id)
                 guard !Task.isCancelled, canSwitchToCompanionChat,
                       primaryCompanionProfile?.id == profile.id, companionWorkspacePath == workspace,
+                      primaryCompanionProfile.map(savedAgentWorkspacePath) == requestedPreference,
                       SessionSummary.canonicalWorkspacePath(pendingWorkspacePath ?? workspacePath) == sourceWorkspace,
                       transcriptPresentation.sessionOwnershipToken == ownership,
                       sidebarDestination == sourceDestination, savedAgentOverviewID == sourceOverview,
