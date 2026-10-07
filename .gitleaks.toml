@@ -55,3 +55,10 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''^Locus/ActivityCenterModel\.swift$''']
 regexes = ['''forKey: "Locus\.companionCompletionRunIDs\.v1"''']
+
+[[allowlists]]
+description = "The companion notification policy UserDefaults key is a persistence identifier, not a credential"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^Locus/ActivityCenterModel\.swift$''']
+regexes = ['''^Locus\.companionNotificationPolicy\.v1$''']

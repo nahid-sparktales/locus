@@ -21,7 +21,64 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Keep cheap policy failures ahead of the full native and UI suites. Every
+  # existing audit remains mandatory; a failed preflight stops costly jobs.
+  preflight:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # gitleaks walks commit history; on a shallow clone it degrades to a
+          # current-tree scan and never sees a secret committed and removed
+          # within a PR's commit series — which still lands in public history.
+          fetch-depth: 0
+      # The design audit requires ripgrep and fails closed when it is absent.
+      - run: brew install ripgrep
+      - name: Design-system source audit
+        run: Tools/AuditDesignSystem.sh
+      # The app disables App Transport Security so it can reach self-hosted
+      # model servers on plain HTTP. This is what enforces the rules ATS used
+      # to enforce for everything else.
+      - name: Transport-security audit
+        run: python3 Tools/AuditTransportSecurity.py
+      - name: Protocol manifest is current
+        run: python3 Tools/ProtocolManifest.py
+      - name: Release script syntax
+        run: |
+          for release_script in Tools/*.sh; do
+            zsh -n "$release_script" || exit "$?"
+          done
+
+      - name: Repository secret scan
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          case "$(uname -m)" in
+            arm64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+              expected="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+              ;;
+            x86_64)
+              asset="gitleaks_${GITLEAKS_VERSION}_darwin_x64.tar.gz"
+              expected="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+              ;;
+            *)
+              echo "Unsupported CI architecture" >&2
+              exit 1
+              ;;
+          esac
+          gitleaks_dir="$RUNNER_TEMP/gitleaks-${GITLEAKS_VERSION}"
+          mkdir -p "$gitleaks_dir"
+          curl -fL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}" \
+            -o "$gitleaks_dir/$asset"
+          actual="$(shasum -a 256 "$gitleaks_dir/$asset" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          tar -xzf "$gitleaks_dir/$asset" -C "$gitleaks_dir"
+          "$gitleaks_dir/gitleaks" git --no-banner --redact --config .gitleaks.toml .
+
   agent-worlds-contract:
+    needs: preflight
     runs-on: macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -40,14 +97,10 @@ jobs:
           "$RUNNER_TEMP/agent-worlds-contract" ProtocolFixtures/agent-worlds/wire-v2.json
 
   wallet-signer:
+    needs: preflight
     runs-on: macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          # gitleaks walks commit history; on a shallow clone it degrades to a
-          # current-tree scan and never sees a secret committed and removed
-          # within a PR's commit series — which still lands in public history.
-          fetch-depth: 0
       - name: Install reviewed wallet JavaScript toolchain
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -95,35 +148,9 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked -- --skip fuzz_smoke_mutated_ffi_corpora_always_return_bounded_json
-      - name: Repository secret scan
-        env:
-          GITLEAKS_VERSION: 8.30.1
-        run: |
-          case "$(uname -m)" in
-            arm64)
-              asset="gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
-              expected="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
-              ;;
-            x86_64)
-              asset="gitleaks_${GITLEAKS_VERSION}_darwin_x64.tar.gz"
-              expected="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
-              ;;
-            *)
-              echo "Unsupported CI architecture" >&2
-              exit 1
-              ;;
-          esac
-          gitleaks_dir="$RUNNER_TEMP/gitleaks-${GITLEAKS_VERSION}"
-          mkdir -p "$gitleaks_dir"
-          curl -fL \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}" \
-            -o "$gitleaks_dir/$asset"
-          actual="$(shasum -a 256 "$gitleaks_dir/$asset" | awk '{print $1}')"
-          test "$actual" = "$expected"
-          tar -xzf "$gitleaks_dir/$asset" -C "$gitleaks_dir"
-          "$gitleaks_dir/gitleaks" git --no-banner --redact --config .gitleaks.toml .
 
   python:
+    needs: preflight
     runs-on: macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -143,13 +170,9 @@ jobs:
       - name: Agent Worlds thin-host resource boundary
         run: python Tools/VerifyAgentWorldsHostBoundary.py
       - run: python -m pip_audit -r agent/requirements-runtime.lock --disable-pip --no-deps
-      - name: Release script syntax
-        run: |
-          for release_script in Tools/*.sh; do
-            zsh -n "$release_script" || exit "$?"
-          done
 
   standard-native:
+    needs: preflight
     name: Wallet-free ${{ matrix.scheme }}
     runs-on: macos-15
     strategy:
@@ -218,24 +241,14 @@ jobs:
           retention-days: 90
 
   swift:
+    needs: preflight
     runs-on: macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      # ripgrep is what the design-system audit greps with. Without it that
-      # step found nothing, reported success, and checked nothing at all.
-      - run: brew install xcodegen ripgrep
+      - run: brew install xcodegen
       - run: xcodegen generate
       - name: Generated project is current
         run: git diff --exit-code -- Locus.xcodeproj/project.pbxproj
-      - name: Design-system source audit
-        run: Tools/AuditDesignSystem.sh
-      # The app disables App Transport Security so it can reach self-hosted
-      # model servers on plain HTTP. This is what enforces the rules ATS used
-      # to enforce for everything else.
-      - name: Transport-security audit
-        run: python3 Tools/AuditTransportSecurity.py
-      - name: Protocol manifest is current
-        run: python3 Tools/ProtocolManifest.py
       - name: Shared wire types still compile for iOS
         # The iOS companion vendors these files byte-for-byte and cannot edit
         # them, so prove here that they build for iOS before any sync happens.
@@ -459,6 +472,7 @@ jobs:
           retention-days: 90
 
   mobile:
+    needs: preflight
     runs-on: macos-15
     defaults:
       run:
@@ -487,6 +501,7 @@ jobs:
         run: flutter build ios --simulator --no-codesign
 
   ui:
+    needs: preflight
     runs-on: macos-15
     strategy:
       fail-fast: false
