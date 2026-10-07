@@ -1,10 +1,10 @@
 """Cross-session context, memory, and skill-observation routes."""
 
 import uuid
+from types import SimpleNamespace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from locus_memory.learning.selected_chat import review_selected_chat
 
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
@@ -13,7 +13,7 @@ from ..knowledge import KnowledgeError, KnowledgeStore
 from ..knowledge_runtime import knowledge_store
 from ..memory import MemoryError
 from ..memory_runtime import memory_vault, memory_workspace
-from ..sessions import SessionStore, SessionTooLargeError, strip_prompt_decoration
+from ..sessions import SessionStore, SessionTooLargeError
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -155,20 +155,29 @@ def memory_status(
     from .. import paths
     from ..memory_adapter import LocusKeyProvider
     from ..memory_guard import restore_protection_status
+    from ..memory_markdown import MarkdownMemoryError, storage_status
+    from ..memory_ownership import ownership_state
     from ..product_build import PRODUCT_NAME
 
     target = memory_workspace(service, workspace)
+    storage = (storage_status(paths.APP_DIR / "memories")
+               if ownership_state(paths.APP_DIR, PRODUCT_NAME) in {"package_authoritative", "legacy_retired"}
+               else {"encrypted": True, "cipher": "AES-256-GCM"})
     protection = restore_protection_status(paths.APP_DIR, PRODUCT_NAME, LocusKeyProvider(paths.APP_DIR))
     if protection["state"] == "recovery_required":
-        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+        return {**storage, "approved_count": 0, "candidate_count": 0,
                 "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
                 "restore_protection": protection}
     try:
         result = memory_vault(target).status(workspace=target, agent_id=agent_id)
     except MemoryError as exc:
+        if isinstance(exc.__cause__, MarkdownMemoryError):
+            return {**storage, "approved_count": 0, "candidate_count": 0,
+                    "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
+                    "storage_error": str(exc), "restore_protection": protection}
         # A healthy external checkpoint can still detect a rolled-back local
         # ledger. Keep recovery status available while canonical reads fail closed.
-        return {"encrypted": True, "cipher": "AES-256-GCM", "approved_count": 0, "candidate_count": 0,
+        return {**storage, "approved_count": 0, "candidate_count": 0,
                 "candidate_ttl_days": 30, "memory_available": False, "counts_available": False,
                 "restore_protection": {**protection, "state": "recovery_required", "message": str(exc),
                                        "offline_recovery": True}}
@@ -182,11 +191,58 @@ def memory_list(
     status: str = Query(default=""),
 ) -> dict[str, Any]:
     target = memory_workspace(service, workspace)
-    return {
-        "memories": memory_vault(target).list(
-            workspace=target, agent_id=agent_id, status=status
-        )
-    }
+    try:
+        with memory_vault(target, agent_id=agent_id) as vault:
+            return {"memories": vault.list(workspace=target, agent_id=agent_id, status=status)}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_storage(service: ServiceDependency, workspace: str = Query(default=""),
+                   agent_id: str = Query(default="primary")) -> dict[str, Any]:
+    target = memory_workspace(service, workspace)
+    try:
+        with memory_vault(target, agent_id=agent_id) as vault:
+            result = vault.synchronize()
+            return {**result, "format": result["storage_format"], "root": result["storage_root"],
+                    "sharing": "shared_host", "transport": "ssh"}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_consolidate(service: ServiceDependency,
+                       body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            return {"ok": True, **vault.consolidate()}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_check_sources(service: ServiceDependency,
+                         body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            result = vault.synchronize()["sources"]
+            return {"ok": True, **result,
+                    "stale": sum(item["state"] == "stale" for item in result["items"])}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def memory_refresh_sources(memory_id: str, service: ServiceDependency,
+                           body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    target = memory_workspace(service, str(body.get("workspace") or ""))
+    revision = body.get("expected_revision")
+    if type(revision) is not int or revision < 1:
+        raise HTTPException(422, "expected_revision must identify the reviewed memory revision")
+    try:
+        with memory_vault(target, agent_id=str(body.get("agent_id") or "primary")) as vault:
+            return {"ok": True, "memory": vault.refresh_sources(memory_id, expected_revision=revision)}
+    except MemoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def memory_create(
@@ -427,9 +483,8 @@ def memory_reprocess(
     if path is None:
         raise HTTPException(404, "session not found")
     target = memory_workspace(service, str(body.get("workspace") or ""))
-    agent_id = str(body.get("agent_id") or "primary")
     try:
-        messages = SessionStore.load(path)
+        SessionStore.load(path)
     except SessionTooLargeError as exc:
         raise HTTPException(413, str(exc)) from exc
     run_id = uuid.uuid4().hex
@@ -452,17 +507,31 @@ def memory_reprocess(
     store.append_event(
         run_id, {"type": "memory_review_started", "state": "running"}
     )
-    # Host prompt decoration includes selected files and attachment text; only
-    # the original user request crosses the package's review boundary.
-    evidence = (
-        {"role": message.get("role"),
-         "content": strip_prompt_decoration(str(message.get("content") or ""))}
-        for message in messages if message.get("role") == "user"
-    )
-    candidates = review_selected_chat(
-        memory_vault(target), evidence, workspace=target, agent_id=agent_id,
-        session_id=session_id, run_id=run_id,
-    )
+    from ..agent_profile_runtime import trusted_memory_agent
+    from ..memory_automation import capture_user_memory
+
+    # Resolve the selected chat's saved owner from host metadata, not a request
+    # body's agent_id. Review remains candidate-only even with auto-save enabled.
+    review = SimpleNamespace(**vars(service.core))
+    review.session = SimpleNamespace(session_id=session_id, path=path)
+    review.tool_ctx = SimpleNamespace(memory_run_id="")
+    review._memory_profile_active = False
+    try:
+        review.agent_id, review.agent_configuration = trusted_memory_agent(review)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    review._memory_profile_active = True
+    review.workspace_root = target
+    review.cwd = target
+    review.tool_ctx.memory_run_id = run_id
+    candidates = []
+    for message in SessionStore.cleanup_source_records(path, include_covered=True):
+        if message.get("role") != "user":
+            continue
+        candidates.extend(capture_user_memory(review, message["content"],
+            event_id=message["source_id"], auto_save=False))
+        if len(candidates) >= 20:
+            break
     store.append_event(
         run_id,
         {
@@ -516,6 +585,10 @@ def register_routes(router: APIRouter) -> None:
         methods=["GET"],
     )
     router.add_api_route("/api/memory/status", memory_status, methods=["GET"])
+    router.add_api_route("/api/memory/storage", memory_storage, methods=["GET"])
+    router.add_api_route("/api/memory/consolidate", memory_consolidate, methods=["POST"])
+    router.add_api_route("/api/memory/check-sources", memory_check_sources, methods=["POST"])
+    router.add_api_route("/api/memory/{memory_id}/refresh-sources", memory_refresh_sources, methods=["POST"])
     router.add_api_route("/api/memory", memory_list, methods=["GET"])
     router.add_api_route("/api/memory", memory_create, methods=["POST"])
     router.add_api_route("/api/memory", memory_delete_all, methods=["DELETE"])

@@ -63,6 +63,7 @@ struct RemoteRuntimesView: View {
     @State private var busy = false
     @State private var deployTarget: RemoteRuntimeRecord?
     @State private var statusTarget: RemoteRuntimeRecord?
+    @State private var memoryTarget: RemoteRuntimeRecord?
     @State private var result: RuntimeReturnedResult?
     @State private var returnedTarget: (String, String)?
     @State private var selectedChanges: Set<String> = []
@@ -80,6 +81,7 @@ struct RemoteRuntimesView: View {
                     HStack {
                         Button("Deploy agent") { deployTarget = runtime }
                         Button("Health and approvals") { statusTarget = runtime }
+                        Button("Shared memory") { memoryTarget = runtime }
                         Button("Pause runtime") { perform { let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/request", body: ["method": "POST", "path": "/api/runtime/pause", "body": [:]], as: [String: JSONValue].self); message = "Remote agents are pausing." } }
                         Button("Resume scheduling") { perform { let _: [String: JSONValue] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/request", body: ["method": "POST", "path": "/api/runtime/resume", "body": [:]], as: [String: JSONValue].self) } }
                         Button("Stop service") { perform { let _: [String: Bool] = try await model.backend.post("/api/runtime/remotes/\(runtime.id)/control", body: ["action": "stop"], timeout: 60, as: [String: Bool].self); message = "Remote service stopped. Saved work remains on the host." } }
@@ -151,6 +153,7 @@ struct RemoteRuntimesView: View {
         .disabled(busy)
         .task { await refresh() }
         .locusSheet(item: $statusTarget) { target in RemoteRuntimeStatusView(runtime: target).environmentObject(model) }
+        .locusSheet(item: $memoryTarget) { target in SharedMemoryView(runtime: target).environmentObject(model) }
         .locusSheet(item: $deployTarget) { target in DeployAgentView(target: target, completed: { Task { await refresh() } }).environmentObject(model) }
     }
 
@@ -162,6 +165,234 @@ struct RemoteRuntimesView: View {
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         busy = true
         Task { defer { busy = false }; do { try await operation() } catch { message = error.localizedDescription } }
+    }
+}
+
+struct SharedMemoryWorker: Decodable, Identifiable {
+    let sessionID: String
+    let workspace: String
+    let configuration: Configuration?
+    var id: String { sessionID }
+    var agentID: String {
+        let value = configuration?.agentID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? "primary" : value
+    }
+
+    struct Configuration: Decodable {
+        let agentID: String?
+        enum CodingKeys: String, CodingKey { case agentID = "agent_id" }
+    }
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id", workspace, configuration
+    }
+}
+
+/// Every operation stays on the chosen remote worker's host and workspace.
+/// Remote filesystem paths are display data, never local file URLs.
+@MainActor
+struct SharedMemoryConnection {
+    let backend: BackendService
+    let runtimeID: String
+
+    func workers() async throws -> [SharedMemoryWorker] {
+        struct Listing: Decodable { let workers: [SharedMemoryWorker] }
+        let result: Listing = try await backend.post(
+            "/api/runtime/remotes/\(runtimeID)/request",
+            body: ["method": "GET", "path": "/api/runtime", "body": [:]],
+            timeout: 45, as: Listing.self
+        )
+        return result.workers
+    }
+
+    func request<Value: Decodable>(
+        worker: SharedMemoryWorker, method: String, suffix: String = "",
+        fields: [String: Any] = [:], as type: Value.Type
+    ) async throws -> Value {
+        var components = URLComponents()
+        components.path = "/api/runtime/workers/\(worker.sessionID)/api/memory\(suffix)"
+        components.queryItems = [
+            URLQueryItem(name: "workspace", value: worker.workspace),
+            URLQueryItem(name: "agent_id", value: worker.agentID),
+        ]
+        if method == "GET", suffix.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "status", value: "approved"))
+        }
+        var body = fields
+        body["workspace"] = worker.workspace
+        body["agent_id"] = worker.agentID
+        return try await backend.post(
+            "/api/runtime/remotes/\(runtimeID)/request",
+            body: ["method": method, "path": components.string ?? "", "body": body],
+            timeout: 45, as: type
+        )
+    }
+}
+
+private struct SharedMemoryView: View {
+    let runtime: RemoteRuntimeRecord
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var workers: [SharedMemoryWorker] = []
+    @State private var selectedWorkerID = ""
+    @State private var memories: [WorkspaceMemory] = []
+    @State private var storage: MemoryStorageResponse?
+    @State private var draft: WorkspaceMemoryDraft?
+    @State private var deletion: WorkspaceMemory?
+    @State private var message = ""
+    @State private var busy = false
+
+    private var connection: SharedMemoryConnection {
+        .init(backend: model.backend, runtimeID: runtime.id)
+    }
+    private var selectedWorker: SharedMemoryWorker? {
+        workers.first { $0.id == selectedWorkerID }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Shared memory · \(runtime.host)").font(.title2)
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            Text("Run agents on this host to use its shared memories from either computer. Local chats keep local memory. The host must be online; offline sync is not supported.")
+                .font(.caption).foregroundStyle(.secondary)
+            Form {
+                Section("Remote agent") {
+                    if workers.isEmpty {
+                        Text("No remote agents are available. Deploy an agent to this host first.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Agent and workspace", selection: Binding(
+                            get: { selectedWorkerID },
+                            set: { selectedWorkerID = $0; Task { await refreshMemory() } }
+                        )) {
+                            ForEach(workers) { worker in
+                                Text("\(worker.agentID) · \(worker.workspace) · \(worker.sessionID)").tag(worker.id)
+                            }
+                        }
+                    }
+                    HStack {
+                        Button("Refresh") { Task { await refreshWorkers() } }
+                        Button("Remember…") { draft = .new }.disabled(selectedWorker == nil)
+                        if busy { ProgressView().controlSize(.small) }
+                    }
+                }
+                if let storage {
+                    Section("Storage on \(runtime.host)") {
+                        Text(storage.usesMarkdown
+                            ? "Editable Markdown files contain readable memory text. SQLite retains metadata and the search index on this host."
+                            : "Memory storage format: \(storage.format)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(storage.files) { file in
+                            Text(file.path).font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                    }
+                }
+                Section("Saved memories") {
+                    if memories.isEmpty { Text("No saved memories for this agent and workspace.").foregroundStyle(.secondary) }
+                    ForEach(memories.filter { $0.supersededBy == nil }) { memory in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(memory.title).fontWeight(.semibold)
+                            Text(memory.content).textSelection(.enabled)
+                            Text("\(memory.resolvedScope.title) · \(memory.resolvedKind.title)\(memory.stale ? " · Needs verification" : "")")
+                                .font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button("Edit") { draft = .existing(memory) }
+                                Button("Delete", role: .destructive) { deletion = memory }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .disabled(busy)
+            if !message.isEmpty { Text(message).font(.caption).textSelection(.enabled) }
+        }
+        .padding(20)
+        .frame(width: 720, height: 650)
+        .task { await refreshWorkers() }
+        .locusSheet(item: $draft) { value in
+            WorkspaceMemoryEditor(draft: value) { value in
+                draft = nil
+                save(value)
+            }
+        }
+        .confirmationDialog("Delete this shared memory?", isPresented: Binding(
+            get: { deletion != nil }, set: { if !$0 { deletion = nil } }
+        ), titleVisibility: .visible) {
+            if let memory = deletion {
+                Button("Delete from shared host", role: .destructive) {
+                    deletion = nil
+                    mutate(method: "DELETE", suffix: "/\(memory.id)", fields: [:])
+                }
+            }
+        } message: {
+            Text("This removes the memory for every computer using this host.")
+        }
+    }
+
+    private func refreshWorkers() async {
+        busy = true
+        defer { busy = false }
+        do {
+            workers = try await connection.workers()
+            if !workers.contains(where: { $0.id == selectedWorkerID }) {
+                selectedWorkerID = workers.first?.id ?? ""
+            }
+            message = ""
+            await refreshMemory()
+        } catch { message = "Could not reach shared host: \(error.localizedDescription)" }
+    }
+
+    private func refreshMemory() async {
+        memories = []
+        storage = nil
+        guard let worker = selectedWorker else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            async let response = connection.request(worker: worker, method: "GET", as: WorkspaceMemoriesResponse.self)
+            async let files = connection.request(worker: worker, method: "GET", suffix: "/storage", as: MemoryStorageResponse.self)
+            let (loaded, loadedStorage) = try await (response, files)
+            guard selectedWorkerID == worker.id else { return }
+            memories = loaded.memories
+            storage = loadedStorage
+            message = ""
+        } catch { message = "Could not load shared memory: \(error.localizedDescription)" }
+    }
+
+    private func save(_ value: WorkspaceMemoryDraft) {
+        var fields: [String: Any] = [
+            "title": value.title, "content": value.content,
+            "tags": value.tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
+            "scope": value.scope.rawValue, "kind": value.kind.rawValue,
+            "confidence": value.confidence,
+            "valid_until": value.expires ? value.validUntil.timeIntervalSince1970 as Any : NSNull(),
+        ]
+        if let original = value.original {
+            if let revision = original.revision { fields["expected_revision"] = revision }
+            mutate(method: "PUT", suffix: "/\(original.id)", fields: fields)
+        } else {
+            fields["status"] = "approved"
+            mutate(method: "POST", suffix: "", fields: fields)
+        }
+    }
+
+    private func mutate(method: String, suffix: String, fields: [String: Any]) {
+        guard let worker = selectedWorker else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let _: [String: JSONValue] = try await connection.request(
+                    worker: worker, method: method, suffix: suffix, fields: fields,
+                    as: [String: JSONValue].self
+                )
+                await refreshMemory()
+            } catch { message = "Could not update shared memory: \(error.localizedDescription)" }
+        }
     }
 }
 

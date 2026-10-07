@@ -84,7 +84,7 @@ def saved_memory_agent(bound: str, *, read_only: bool = False) -> tuple[str, Age
             if not isinstance(memory, dict):
                 raise ValueError("The bound memory policy is malformed")
             switches = ("recall_enabled", "search_enabled", "proposals_enabled",
-                        "native_codex_enabled", "cross_chat_context_enabled")
+                        "native_codex_enabled", "cross_chat_context_enabled", "auto_save_enabled")
             if any(key in memory and not isinstance(memory[key], bool) for key in switches):
                 raise ValueError("The bound memory policy is malformed")
             scopes = memory.get("scopes", [])

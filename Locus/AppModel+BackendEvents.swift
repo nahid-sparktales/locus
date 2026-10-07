@@ -919,6 +919,11 @@ extension AppModel {
             blocks.append(ChatBlock(kind: .error, text: message))
             showToast(message)
 
+        case "context_cleanup":
+            if let cleanup = ChatContextCleanupResult(event: event) {
+                recordContextCleanup(cleanup)
+            }
+
         case "slash_result":
             isBusy = false
             applyPendingProviderSwitchIfNeeded()
@@ -929,6 +934,9 @@ extension AppModel {
                 activePlan = nil
                 planApprovalPending = false
                 clearPendingQuestion()
+            } else if let cleanup = ChatContextCleanupResult(event: event) {
+                let detail = cleanup.failed ? (event["text"] as? String ?? "") : ""
+                recordContextCleanup(cleanup, detail: detail)
             } else if let text = event["text"] as? String, !text.isEmpty {
                 blocks.append(
                     ChatBlock(
@@ -940,6 +948,22 @@ extension AppModel {
 
         default:
             break
+        }
+    }
+
+    /// Automatic and manual cleanup report the same operation. Keep one receipt
+    /// without altering the active turn or adding replayable model history.
+    private func recordContextCleanup(_ cleanup: ChatContextCleanupResult, detail: String = "") {
+        let text = cleanup.message + (detail.isEmpty ? "" : "\n\n\(detail)")
+        if let operationID = cleanup.operationID, !operationID.isEmpty,
+           let index = blocks.lastIndex(where: { $0.contextCleanup?.operationID == operationID }) {
+            var block = blocks[index]
+            block.kind = cleanup.failed ? .error : .note
+            block.text = text
+            block.contextCleanup = cleanup
+            blocks[index] = block
+        } else {
+            blocks.append(ChatBlock(kind: cleanup.failed ? .error : .note, text: text, contextCleanup: cleanup))
         }
     }
 

@@ -51,13 +51,13 @@ _SHELL_TOOLS = {"bash", "background_service"}
 _READ_ONLY_BUILTIN_TOOLS = {
     *_WORKSPACE_READ_TOOLS,
     *_SAFE_EXTENSION_TOOLS,
-    "search_memory",
+    "search_memory", "search_context",
     "web_fetch",
 }
 _READ_ONLY_CONNECTOR_TOOLS = {"gmail_fetch_thread"}
 _PARALLEL_SAFE_BUILTIN_TOOLS = {
     "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
-    "search_workspace_knowledge", "search_memory", "web_fetch", "read_skill_file",
+    "search_workspace_knowledge", "search_memory", "search_context", "web_fetch", "read_skill_file",
 }
 
 
@@ -1127,6 +1127,7 @@ class ToolRegistry:
         self._user_capability_policy: dict[str, bool] = {}
         self._solo_swarm_enabled = False
         self.goal_enabled = False
+        self.adaptive_retrieval_enabled = False
         self.memory_search_enabled = True
         self.memory_proposals_enabled = True
         self.runtime_wait_enabled = False
@@ -1341,6 +1342,9 @@ class ToolRegistry:
 
     def _user_allows(self, name: str) -> bool:
         policy = self._user_capability_policy
+        if name == "search_context":
+            return self.adaptive_retrieval_enabled and (
+                self.memory_search_enabled or policy.get("workspace_read", True))
         if name in _WORKSPACE_READ_TOOLS and not policy.get("workspace_read", True):
             return False
         if name in _WORKSPACE_WRITE_TOOLS and not policy.get("workspace_write", True):
@@ -1511,6 +1515,8 @@ class ToolRegistry:
             schema for schema in TOOL_SCHEMAS
             if schema["function"]["name"] in wanted
         )
+        if self.adaptive_retrieval_enabled and self._user_allows("search_context"):
+            schemas.extend(schema for schema in TOOL_SCHEMAS if schema["function"]["name"] == "search_context")
         if memory_enabled:
             # Reuse the full schema gates; direct tool execution still rechecks
             # the agent's search/proposal switches and scopes in ToolContext.

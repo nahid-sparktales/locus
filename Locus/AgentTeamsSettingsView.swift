@@ -1367,8 +1367,12 @@ private struct AgentBehaviorEditor: View {
             Group {
                 Text("MEMORY")
                     .font(.locus(size: 8, weight: .bold)).foregroundStyle(viewColors.muted)
-                Toggle("Automatically recall relevant approved memory", isOn: $draft.memoryPolicy.recallEnabled)
-                Toggle("Allow conservative Memory Inbox suggestions", isOn: $draft.memoryPolicy.proposalsEnabled)
+                Toggle("Automatically recall relevant saved memory", isOn: $draft.memoryPolicy.recallEnabled)
+                Toggle("Learn new memories from conversations", isOn: $draft.memoryPolicy.proposalsEnabled)
+                Toggle("Automatically save new memories", isOn: $draft.memoryPolicy.autoSaveEnabled)
+                    .disabled(!draft.memoryPolicy.proposalsEnabled)
+                Text("With automatic saving off, new memories wait for approval in the Memory Inbox. Turn off learning to stop creating new memories.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Allow explicit memory search", isOn: $draft.memoryPolicy.searchEnabled)
                 Toggle("Use Locus memory in native Codex turns", isOn: $draft.memoryPolicy.nativeCodexEnabled)
                 Text("Memory is sent as reference data. Disabling it rebuilds managed context; information already sent to a provider cannot be retracted.")
@@ -2205,13 +2209,13 @@ struct AgentProfileEditor: View {
                 capabilityBinding(\.mcp)
             )
             toolAccessRow(
-                "Search approved memory",
+                "Search saved memory",
                 "Automatic recall and the explicit memory search tool",
                 memorySearchBinding
             )
             toolAccessRow(
-                "Suggest memory",
-                "May add a suggestion to the Memory Inbox; cannot approve it",
+                "Learn new memories",
+                "Saved automatically when enabled; otherwise sent to the Memory Inbox for review",
                 memoryProposalBinding
             )
         }
@@ -3103,6 +3107,8 @@ struct WorkspaceKnowledgeSettingsView: View {
     @Binding var advancedExpanded: Bool
     @State private var enabled = true
     @State private var embeddingModel = ""
+    @State private var rerankModel = ""
+    @State private var adaptiveRagEnabled = true
     @State private var exclusions = ""
     @State private var memoryDraft: WorkspaceMemoryDraft?
     @State private var confirmDeleteAll = false
@@ -3119,22 +3125,38 @@ struct WorkspaceKnowledgeSettingsView: View {
                         Text(profile.name).tag(profile.id.uuidString)
                     }
                 }
-                Text("The agent can suggest preferences, decisions, and facts. Nothing is recalled until you approve it.")
+                Toggle("Automatically recall relevant saved memory", isOn: selectedMemoryPolicyBinding(\.recallEnabled))
+                    .accessibilityIdentifier("memory.automaticRecall")
+                Toggle("Learn new memories from conversations", isOn: selectedMemoryPolicyBinding(\.proposalsEnabled))
+                    .accessibilityIdentifier("memory.learningEnabled")
+                Toggle("Automatically save new memories", isOn: selectedMemoryPolicyBinding(\.autoSaveEnabled))
+                    .disabled(!selectedMemoryPolicy.proposalsEnabled)
+                    .accessibilityIdentifier("memory.automaticSaving")
+                Toggle("Use Locus memory in native Codex turns", isOn: selectedMemoryPolicyBinding(\.nativeCodexEnabled))
+                    .accessibilityIdentifier("memory.nativeCodexEnabled")
+                Text("By default, relevant saved memories are recalled and new preferences, decisions, and facts are saved automatically. Conflicts still need review. Turn off automatic saving to review new memories in the Memory Inbox, or turn off learning to stop creating them. Changes apply on the next turn.")
                     .font(.caption)
                     .foregroundStyle(viewColors.textTertiary)
 
                 if let vault = knowledge.memoryVaultStatus {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(vault.memoryAvailable == false ? "Memory needs recovery" : vault.encrypted ? "Private on this Mac" : "Encryption needs attention")
+                            Text(vault.storageError != nil ? "Memory needs attention" : vault.memoryAvailable == false ? "Memory needs recovery" : knowledge.memoryStorage?.usesMarkdown == true ? "Editable Markdown memory" : vault.encrypted ? "Encrypted memory index" : "Memory storage")
                                 .fontWeight(.semibold)
-                            Text(vault.countsAvailable == false ? "Memory counts are unavailable until protection is restored." : "\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
+                            Text(vault.countsAvailable == false ? (vault.storageError != nil ? "Resolve the memory file issue to restore recall and memory counts." : "Memory counts are unavailable until protection is restored.") : "\(vault.candidateCount) in Inbox · \(vault.conflictCount ?? 0) conflicts · \(vault.staleCount ?? 0) stale")
                                 .font(.caption)
                                 .foregroundStyle(viewColors.textTertiary)
+                            if let error = vault.storageError {
+                                Text(error).font(.caption).foregroundStyle(viewColors.warning)
+                                    .textSelection(.enabled)
+                                if let root = vault.storageRoot {
+                                    Text(root).font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
                         }
                     } icon: {
-                        Image(systemName: vault.encrypted ? "lock.fill" : "lock.open.fill")
-                            .foregroundStyle(vault.encrypted ? viewColors.accentAction : viewColors.warning)
+                        Image(systemName: knowledge.memoryStorage?.usesMarkdown == true ? "doc.text" : "externaldrive")
+                            .foregroundStyle(viewColors.accentAction)
                     }
                 }
 
@@ -3195,7 +3217,7 @@ struct WorkspaceKnowledgeSettingsView: View {
                     .padding(.vertical, 3)
                 }
 
-                ForEach(knowledge.workspaceMemories) { memory in
+                ForEach(knowledge.workspaceMemories.filter { $0.supersededBy == nil }) { memory in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: memory.pinned ? "pin.fill" : "bookmark")
                             .foregroundStyle(memory.stale ? viewColors.warning : viewColors.accentAction)
@@ -3209,12 +3231,54 @@ struct WorkspaceKnowledgeSettingsView: View {
                             Text("\(memory.resolvedScope.title) · \(memory.resolvedKind.title)")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                            if memory.stale {
+                                Label("Needs verification", systemImage: "exclamationmark.triangle")
+                                    .font(.caption)
+                                    .foregroundStyle(viewColors.warning)
+                            }
                         }
                         Spacer()
                         memoryMenu(memory)
                     }
                     .padding(.vertical, 3)
                 }
+            }
+
+            Section("Memory files") {
+                if let storage = knowledge.memoryStorage, storage.usesMarkdown {
+                    Text("Memory text is stored in editable USER.md and MEMORY.md files. These files are plain text; SQLite retains metadata and the search index. Edits are picked up when memory is next read.")
+                        .font(.caption)
+                        .foregroundStyle(viewColors.textTertiary)
+                    ForEach(storage.files) { file in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(file.path).font(.caption.monospaced()).textSelection(.enabled)
+                            Text([file.scope, file.status].compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption2).foregroundStyle(viewColors.textTertiary)
+                        }
+                    }
+                } else {
+                    Text("Storage details are unavailable for this host.")
+                        .font(.caption).foregroundStyle(viewColors.textTertiary)
+                }
+                Text("To share memory across computers, open Remote runtimes and choose Shared memory for your host. Agents running on that host use the same memories; local chats keep their local memory. The host must be online; offline sync is not supported.")
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
+            }
+
+            Section("Memory upkeep") {
+                HStack {
+                    Button("Consolidate Duplicates") {
+                        knowledge.consolidateMemory(agentID: selectedMemoryAgentID)
+                    }
+                    .accessibilityIdentifier("memory.consolidate")
+                    Button("Check Sources") {
+                        knowledge.checkMemorySources(agentID: selectedMemoryAgentID)
+                    }
+                    .accessibilityIdentifier("memory.checkSources")
+                    if knowledge.isMemoryMaintenanceRunning { ProgressView().controlSize(.small) }
+                }
+                .disabled(knowledge.isMemoryMaintenanceRunning)
+                Text("Merge redundant memories and flag memories whose sources have changed. After verifying a stale memory, use Recheck after verification in its menu to update its source record.")
+                    .font(.caption).foregroundStyle(viewColors.textTertiary)
             }
 
             Section("Workspace knowledge") {
@@ -3328,6 +3392,36 @@ struct WorkspaceKnowledgeSettingsView: View {
         }
     }
 
+    private var selectedMemoryPolicy: AgentMemoryPolicy {
+        if selectedMemoryAgentID == "primary" {
+            return agentTeams.primaryAgentBehavior.memoryPolicy
+        }
+        return agentTeams.agentProfiles.first { $0.id.uuidString == selectedMemoryAgentID }?
+            .resolvedBehavior.memoryPolicy ?? AgentMemoryPolicy()
+    }
+
+    private func selectedMemoryPolicyBinding(
+        _ keyPath: WritableKeyPath<AgentMemoryPolicy, Bool>
+    ) -> Binding<Bool> {
+        Binding(
+            get: { selectedMemoryPolicy[keyPath: keyPath] },
+            set: { enabled in
+                if selectedMemoryAgentID == "primary" {
+                    var behavior = agentTeams.primaryAgentBehavior
+                    behavior.memoryPolicy[keyPath: keyPath] = enabled
+                    agentTeams.savePrimaryAgentBehavior(behavior)
+                } else if var profile = agentTeams.agentProfiles.first(where: {
+                    $0.id.uuidString == selectedMemoryAgentID
+                }) {
+                    var behavior = profile.resolvedBehavior
+                    behavior.memoryPolicy[keyPath: keyPath] = enabled
+                    profile.behavior = behavior
+                    agentTeams.saveAgentProfile(profile)
+                }
+            }
+        )
+    }
+
     @ViewBuilder
     private var advancedKnowledgeSections: some View {
         Section("Workspace search index") {
@@ -3336,17 +3430,31 @@ struct WorkspaceKnowledgeSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Local semantic search")
                         .fontWeight(.semibold)
-                    Text("Leave the model empty to use fast text search only.")
+                    Text("Embeddings find related meanings. Optional reranking orders the strongest matches.")
                         .font(.caption)
                         .foregroundStyle(viewColors.textTertiary)
                 }
             }
             Toggle("Index this workspace", isOn: $enabled)
+            Toggle("Adaptive retrieval", isOn: $adaptiveRagEnabled)
+                .accessibilityIdentifier("knowledge.adaptiveRetrieval")
+            Text("Combine permitted memory, code, and documents. When evidence is incomplete, allow one focused follow-up search.")
+                .font(.caption)
+                .foregroundStyle(viewColors.textTertiary)
             LocusFormTextField(
                 "Optional Ollama embedding model",
                 text: $embeddingModel,
                 prompt: Text("Text search only")
             )
+            LocusFormTextField(
+                "Reranking",
+                text: $rerankModel,
+                prompt: Text("Off")
+            )
+            .accessibilityIdentifier("knowledge.rerankModel")
+            Text("Enter an installed local Ollama generation model to score result relevance. This can make searches slower. Leave empty to turn it off; no models are downloaded here.")
+                .font(.caption)
+                .foregroundStyle(viewColors.textTertiary)
             LocusFormTextField(
                 "Additional exclusions",
                 text: $exclusions,
@@ -3357,6 +3465,8 @@ struct WorkspaceKnowledgeSettingsView: View {
                     knowledge.configureWorkspaceKnowledge(
                         enabled: enabled,
                         embeddingModel: embeddingModel,
+                        rerankModel: rerankModel,
+                        adaptiveRagEnabled: adaptiveRagEnabled,
                         exclusions: exclusions.split(separator: ",").map {
                             $0.trimmingCharacters(in: .whitespacesAndNewlines)
                         }.filter { !$0.isEmpty }
@@ -3366,11 +3476,26 @@ struct WorkspaceKnowledgeSettingsView: View {
                 .tint(viewColors.ink)
                 Button("Rebuild Index") { knowledge.rebuildWorkspaceKnowledge() }
                     .disabled(!enabled || model.isBusy)
+                Button("Refresh Status") {
+                    Task { await knowledge.refreshKnowledgeStatus() }
+                }
             }
             if let status = knowledge.knowledgeStatus {
                 Text("\(status.documentCount) indexed files · \(status.chunkCount) searchable chunks")
                     .font(.caption)
                     .foregroundStyle(viewColors.textTertiary)
+                if !status.embeddingModel.isEmpty,
+                   let complete = status.embeddingComplete,
+                   let pending = status.embeddingPending {
+                    Text("\(complete) chunks embedded · \(pending) waiting for embeddings")
+                        .font(.caption)
+                        .foregroundStyle(viewColors.textTertiary)
+                }
+                if let error = status.embeddingError, !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(viewColors.warning)
+                }
                 if let error = status.lastError, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -3387,7 +3512,9 @@ struct WorkspaceKnowledgeSettingsView: View {
                 Button("Export Memory…") { knowledge.exportMemory(agentID: selectedMemoryAgentID) }
             }
             if let vault = knowledge.memoryVaultStatus {
-                Text("\(vault.cipher) · memory text and optional vectors are encrypted together on this Mac.")
+                Text(knowledge.memoryStorage?.usesMarkdown == true
+                    ? "Memory text is readable in Markdown files. SQLite retains metadata and the search index."
+                    : "\(vault.cipher) · memory index storage on this host.")
                     .font(.caption)
                     .foregroundStyle(viewColors.textTertiary)
                 if let protection = vault.restoreProtection {
@@ -3477,7 +3604,17 @@ struct WorkspaceKnowledgeSettingsView: View {
 
     private var knowledgeSummary: String {
         guard let status = knowledge.knowledgeStatus else { return "Loading index status…" }
-        let method = status.embeddingModel.isEmpty ? "text search" : "text and local semantic search"
+        var method = "text search"
+        if !status.embeddingModel.isEmpty {
+            if status.embeddingComplete == 0 {
+                method += " (semantic indexing pending)"
+            } else if (status.embeddingPending ?? 0) > 0 {
+                method = "text and partial local semantic search"
+            } else {
+                method = "text and local semantic search"
+            }
+        }
+        if !(status.rerankModel ?? "").isEmpty { method += " and local reranking" }
         return status.enabled
             ? "\(status.documentCount) files indexed with \(method)."
             : "Indexing is off. Saved memory still works."
@@ -3494,10 +3631,17 @@ struct WorkspaceKnowledgeSettingsView: View {
                 value.pinned.toggle()
                 knowledge.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
             }
-            Button(memory.stale ? "Mark Current" : "Mark Stale") {
-                var value = memory
-                value.stale.toggle()
-                knowledge.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+            if memory.canRefreshSources {
+                Button("Recheck after verification") {
+                    knowledge.refreshMemorySources(memory, agentID: selectedMemoryAgentID)
+                }
+                .disabled(knowledge.isMemoryMaintenanceRunning)
+            } else if memory.supersededBy == nil {
+                Button(memory.stale ? "Mark Current" : "Mark Stale") {
+                    var value = memory
+                    value.stale.toggle()
+                    knowledge.updateWorkspaceMemory(value, agentID: selectedMemoryAgentID)
+                }
             }
             Divider()
             Button("Delete", role: .destructive) {
@@ -3539,11 +3683,13 @@ struct WorkspaceKnowledgeSettingsView: View {
         guard let status = knowledge.knowledgeStatus else { return }
         enabled = status.enabled
         embeddingModel = status.embeddingModel
+        rerankModel = status.rerankModel ?? ""
+        adaptiveRagEnabled = status.adaptiveRagEnabled ?? true
         exclusions = (status.exclusions ?? []).joined(separator: ", ")
     }
 }
 
-private struct WorkspaceMemoryDraft: Identifiable {
+struct WorkspaceMemoryDraft: Identifiable {
     let id = UUID()
     var original: WorkspaceMemory?
     var title: String
@@ -3574,7 +3720,7 @@ private struct WorkspaceMemoryDraft: Identifiable {
     }
 }
 
-private struct WorkspaceMemoryEditor: View {
+struct WorkspaceMemoryEditor: View {
     @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 

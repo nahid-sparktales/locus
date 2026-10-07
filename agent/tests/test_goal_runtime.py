@@ -41,7 +41,7 @@ def report(status="complete"):
 def core(tmp_path, goal, *, coordinator=True):
     value = AgentCore(cwd=str(tmp_path), config={"model": "test"})
     attach_goal_runtime(value, goal, coordinator=coordinator)
-    value._request_messages = lambda: [{"role": "user", "content": "work"}]
+    value._request_messages = lambda *, revalidate_memory=True: [{"role": "user", "content": "work"}]
     value.chat_options = lambda: None
     return value
 

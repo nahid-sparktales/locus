@@ -174,7 +174,7 @@ final class CompanionPointerTrackingView: NSView {
         guard isTracking, enabled, event.window === window,
               window?.isKeyWindow == true, !isHiddenOrHasHiddenAncestor else { return }
         let point = convert(event.locationInWindow, from: nil)
-        guard visibleRect.contains(point) else { publish(.neutral); return }
+        guard bounds.contains(point), visibleRect.contains(point) else { publish(.neutral); return }
         publish(.response(at: point, in: responseBounds ?? bounds))
     }
 

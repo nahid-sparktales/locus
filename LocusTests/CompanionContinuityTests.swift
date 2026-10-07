@@ -131,12 +131,13 @@ final class CompanionContinuityTests: XCTestCase {
         stubConversation()
         BackendStub.respond(toPath: "/api/memory/status") { _ in
             ["encrypted": true, "cipher": "AES-256-GCM", "approved_count": 0,
-             "candidate_count": 0, "candidate_ttl_days": 30, "memory_available": false]
+             "candidate_count": 0, "candidate_ttl_days": 30, "memory_available": false,
+             "storage_error": "Resolve the conflicting memory files before editing."]
         }
         let notebook = CompanionMemoryNotebookModel()
         await notebook.refresh(backend: stubbedBackendService(), scope: scope)
         XCTAssertFalse(notebook.isAvailable)
-        XCTAssertNotNil(notebook.error)
+        XCTAssertEqual(notebook.error, "Resolve the conflicting memory files before editing.")
         XCTAssertFalse(BackendStub.requestPaths.contains("/api/memory"))
         let request = BackendStub.requests.first { $0.url?.path == "/api/memory/status" }
         let query = URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)!.queryItems!
@@ -156,6 +157,35 @@ final class CompanionContinuityTests: XCTestCase {
         XCTAssertNoBackendTraffic()
     }
 
+    func testNotebookEditUsesReviewedRevisionAndPreservesMemoryWhenServerRejectsStaleEdit() async throws {
+        stubConversation()
+        BackendStub.respond(toPath: "/api/memory/status") { _ in
+            ["encrypted": false, "cipher": "none", "approved_count": 1,
+             "candidate_count": 0, "candidate_ttl_days": 30, "memory_available": true]
+        }
+        let original: [String: Any] = ["id": "original", "status": "approved", "scope": "agent",
+            "title": "Examples", "content": "Use examples first", "tags": [], "pinned": false,
+            "stale": false, "created_at": 1, "updated_at": 1, "kind": "preference", "revision": 7]
+        BackendStub.respond(toPath: "/api/memory") { _ in ["memories": [original]] }
+        BackendStub.respond(toPath: "/api/memory/original", status: 422) { _ in
+            ["detail": "The memory changed on this host; reload it before saving your edit."]
+        }
+        let backend = stubbedBackendService()
+        let model = CompanionMemoryNotebookModel()
+        await model.refresh(backend: backend, scope: scope)
+        let memory = try XCTUnwrap(model.memories.first)
+        let saved = await model.save(backend: backend, title: memory.title, content: "Keep explanations short",
+                                     memoryScope: .agent, existing: memory, expectedScope: scope)
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.memories.first?.content, memory.content)
+        XCTAssertTrue(model.error?.contains("reload") == true)
+        let request = try XCTUnwrap(BackendStub.requests.first { $0.httpMethod == "PUT" })
+        let body = try requestBody(request)
+        XCTAssertEqual(body["expected_revision"] as? Int, 7)
+        XCTAssertNil(body["revision"])
+        XCTAssertEqual(body["agent_id"] as? String, profileID.uuidString)
+    }
+
     func testScopeRestrictionRollsBackIfOriginalCannotBeForgotten() async throws {
         stubConversation()
         BackendStub.respond(toPath: "/api/memory/status") { _ in
@@ -164,7 +194,7 @@ final class CompanionContinuityTests: XCTestCase {
         }
         let original: [String: Any] = ["id": "original", "status": "approved", "scope": "personal",
             "title": "Examples", "content": "Use examples first", "tags": [], "pinned": false,
-            "stale": false, "created_at": 1, "updated_at": 1, "kind": "preference", "source_session_id": "source"]
+            "stale": false, "created_at": 1, "updated_at": 1, "kind": "preference", "source_session_id": "source", "revision": 7]
         var replacement = original
         replacement["id"] = "replacement"
         replacement["scope"] = "workspace"
@@ -186,6 +216,24 @@ final class CompanionContinuityTests: XCTestCase {
         let mutations = BackendStub.requests.filter { $0.httpMethod != "GET" }
         XCTAssertEqual(mutations.map { $0.httpMethod ?? "" }, ["POST", "DELETE", "DELETE"])
         XCTAssertEqual(mutations.compactMap { $0.url?.path }, ["/api/memory", "/api/memory/original", "/api/memory/replacement"])
+        let body = try requestBody(XCTUnwrap(mutations.first))
+        XCTAssertNil(body["expected_revision"], "Creating a replacement must not reuse the original record's revision")
+        XCTAssertEqual(body["source_session_id"] as? String, "source")
+    }
+
+    private func requestBody(_ request: URLRequest) throws -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     private func stubConversation(owner: UUID? = nil) {

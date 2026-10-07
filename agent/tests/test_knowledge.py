@@ -103,3 +103,41 @@ def test_configured_exclusions_are_workspace_scoped_globs(tmp_path) -> None:
     assert configured["exclusions"] == ["Generated/**"]
     assert store.search("exclude") == []
     assert store.search("keep")[0]["path"] == "keep.txt"
+
+
+def test_existing_index_rebuilds_contextual_chunks_on_next_search(tmp_path):
+    from ollama_code.knowledge_chunks import CHUNKER_VERSION
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "guide.md").write_text("# Deployment\n\n## Canary\n\nRoll out signed packages.\n")
+    store = KnowledgeStore(str(root), tmp_path / "index.sqlite3")
+    store.reindex()
+    with store._connect() as connection:
+        connection.execute("UPDATE settings SET index_version='legacy'")
+        connection.execute("UPDATE documents SET chunker_version='legacy'")
+        connection.execute("UPDATE chunks SET context='',search_content=''")
+    result = store.search("Canary signed packages")
+    assert result[0]["context"] == "guide.md | heading: Deployment > Canary"
+    assert "Roll out signed packages." in result[0]["snippet"]
+    assert store.settings()["index_version"] == CHUNKER_VERSION
+    with store._connect() as connection:
+        assert {row[0] for row in connection.execute("SELECT chunker_version FROM documents")} == {CHUNKER_VERSION}
+
+
+def test_reindex_schedules_embeddings_and_never_indexes_blank_symbol_gaps(tmp_path, monkeypatch):
+    from ollama_code import knowledge_embeddings
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "tasks.py").write_text("def first_task():\n    return 1\n\n\ndef second_task():\n    return 2\n")
+    store = KnowledgeStore(str(root), tmp_path / "index.sqlite3")
+    scheduled = []
+    monkeypatch.setattr(knowledge_embeddings, "schedule_embeddings", lambda value: scheduled.append(value))
+    response = store.reindex()
+    assert scheduled == [store]
+    assert response["embedded"] == 0
+    with store._connect() as connection:
+        chunks = connection.execute("SELECT content,search_content FROM chunks").fetchall()
+    assert len(chunks) == 2
+    assert all(row[0].strip() and "symbol:" in row[1] for row in chunks)

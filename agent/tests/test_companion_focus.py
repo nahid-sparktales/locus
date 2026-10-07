@@ -1,4 +1,5 @@
 import pytest
+
 from ollama_code.goals import GoalError, GoalStore
 from ollama_code.runstore import RunStore
 
@@ -60,7 +61,9 @@ def test_invalid_session_configuration_rejected(tmp_path, fields):
 def test_saved_companion_chat_uses_existing_goal_api_and_checks_workspace(tmp_path, monkeypatch):
     import uuid
     from types import SimpleNamespace
+
     from fastapi import HTTPException
+
     from ollama_code.api import goals as api
     path = tmp_path / "companion.jsonl"
     path.write_text('{}\n')

@@ -108,8 +108,9 @@ def test_chatgpt_route_contains_no_secret_fields():
 class FakeManagedRuntime:
     runtime_version = "0.147.0"
 
-    def __init__(self, *, reject_resume: bool = False):
+    def __init__(self, *, reject_resume: bool = False, answer: str = "managed answer"):
         self.reject_resume = reject_resume
+        self.answer = answer
         self.started: list[str] = []
         self.resumed: list[str] = []
         self.turn_texts: list[str] = []
@@ -144,7 +145,7 @@ class FakeManagedRuntime:
         })
         event_handler({
             "method": "item/agentMessage/delta",
-            "params": {"delta": "managed answer"},
+            "params": {"delta": self.answer},
         })
         event_handler({
             "method": "thread/tokenUsage/updated",
@@ -239,6 +240,9 @@ class StructuredManagedRuntime(FakeManagedRuntime):
 
 
 def _managed_core(tmp_path, runtime):
+    # Freeze pre-adaptive wire/event contracts; dedicated adaptive tests cover the default.
+    from ollama_code.knowledge import KnowledgeStore
+    KnowledgeStore(str(tmp_path)).configure(adaptive_rag_enabled=False)
     core = AgentCore(cwd=str(tmp_path), config={})
     core.use_chatgpt(
         account_id="managed-account",
@@ -650,6 +654,7 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     (tmp_path / "AGENTS.md").write_text("Always answer in haiku.\n")
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": False}})
 
     core.run_turn(DECORATED)
 
@@ -667,10 +672,10 @@ def test_parity_turn_uses_native_contract_and_raw_input(tmp_path):
     assert all("[Locus mode:" not in text for text in texts)
 
 
-def test_native_memory_is_opt_in_separate_data_and_policy_change_rebuilds(tmp_path):
+def test_native_memory_defaults_on_as_separate_data_and_opt_out_rebuilds(tmp_path):
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
-    core.configure_agent({"memory_policy": {"native_codex_enabled": True}},
+    core.configure_agent({},
                          memory_context="MEMORY-CANARY: use violet deployment", agent_id="reviewer")
     core.run_turn("deployment")
     first = runtime.start_kwargs[-1]
@@ -702,6 +707,7 @@ def test_parity_tools_gain_image_tools_only_when_configured_and_keep_the_thread(
     """Configuring a provider changes the tool set once; the thread then stays put."""
     runtime = ParityFakeRuntime()
     core = _managed_core(tmp_path, runtime)
+    core.configure_agent({"memory_policy": {"native_codex_enabled": False}})
     core.run_turn(DECORATED)
     default = [item["function"]["name"] for item in runtime.start_kwargs[-1]["tools"]]
     assert default == ["shell", "apply_patch", "update_plan", "ask_user_question", "attach_output_parts", "read_dispatcher_resource"]

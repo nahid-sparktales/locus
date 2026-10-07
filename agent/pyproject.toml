@@ -61,6 +61,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Preserve the upstream helper source order in the reproducible dispatcher export.
 "ollama_code/builtin_skills/agent-dispatcher/scripts/*.py" = ["I001"]
+# Preserve immutable corpus bytes used by the retrieval benchmark fingerprint.
+"tests/fixtures/knowledge_relevance/corpus/src/acknowledgements.py" = ["UP012"]
 
 [project.scripts]
 ollama-code-server = "ollama_code.server:main"

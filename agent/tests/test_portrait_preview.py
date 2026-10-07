@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import threading
+import time
 import uuid
 
 import pytest
@@ -126,6 +127,34 @@ def test_request_cancellation_stops_existing_provider_context(client, monkeypatc
     asyncio.run(run())
     assert stopped.wait(1)
     assert not portrait_preview._pending
+
+
+def test_disconnect_discards_preview_finished_before_poll_resumes(client, monkeypatch):
+    service = configured(client)
+    started = threading.Event()
+    original_wait = asyncio.wait
+
+    def finish_after_stop(prompt, account_id, ctx):
+        started.set()
+        while not ctx.stopped():
+            time.sleep(0.005)
+        return PNG
+
+    async def wait_until_worker_finishes(tasks, **_options):
+        return await original_wait(tasks)
+
+    monkeypatch.setattr(service.image_generation, "portrait_preview", finish_after_stop)
+    monkeypatch.setattr(asyncio, "wait", wait_until_worker_finishes)
+
+    async def exercise():
+        task, events, sent = await _exchange(client.app, body(), path="/api/images/portrait")
+        await _wait_for(started.is_set)
+        await events.put({"type": "http.disconnect"})
+        await asyncio.wait_for(task, 2)
+        assert sent[0]["status"] == 499
+        assert not portrait_preview._pending
+
+    asyncio.run(exercise())
 
 
 def test_timeout_stops_context_without_retry(client, monkeypatch):

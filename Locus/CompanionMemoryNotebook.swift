@@ -30,7 +30,7 @@ final class CompanionMemoryNotebookModel: ObservableObject {
             let query = Self.query(requested)
             let status = try await backend.get("/api/memory/status", query: query, as: MemoryVaultStatus.self)
             guard status.memoryAvailable != false else {
-                throw SavedAgentConversationError.unavailable(status.restoreProtection?.message ?? "Memory is unavailable. Review memory recovery in Settings.")
+                throw SavedAgentConversationError.unavailable(status.storageError ?? status.restoreProtection?.message ?? "Memory is unavailable. Review memory recovery in Settings.")
             }
             let response = try await backend.get("/api/memory", query: query, as: WorkspaceMemoriesResponse.self)
             guard revision == token, !Task.isCancelled else { return }
@@ -72,7 +72,7 @@ final class CompanionMemoryNotebookModel: ObservableObject {
         // creation is attributed to the active Companion conversation.
         if existing == nil { body["source_session_id"] = scope.sessionID }
         if let existing {
-            body["revision"] = existing.revision
+            body["expected_revision"] = existing.revision
             body["pinned"] = existing.pinned
             body["confidence"] = existing.confidence
             body["valid_from"] = existing.validFrom
@@ -101,7 +101,7 @@ final class CompanionMemoryNotebookModel: ObservableObject {
                 // widening. Copy the reviewed value, then forget the old one.
                 // A failed forget rolls the new copy back and leaves the
                 // original source of truth intact.
-                body.removeValue(forKey: "revision")
+                body.removeValue(forKey: "expected_revision")
                 body["source_session_id"] = existing.sourceSessionID ?? scope.sessionID
                 body["source_run_id"] = existing.sourceRunID
                 let replacement = try await backend.post("/api/memory", body: body, as: WorkspaceMemoryResponse.self)
@@ -195,7 +195,7 @@ struct CompanionMemoryNotebookView: View {
                 Spacer()
                 Button("Done") { dismiss() }
             }
-            Text("Review your existing memories, correct them, or choose where a new preference belongs. Proposed memories are used only after approval.")
+            Text("Review saved memories and choose where a new preference belongs. Your agent's settings control automatic saving; memories awaiting approval are not recalled.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 TextField("Remember that I prefer examples before explanations…", text: $memoryRequest)

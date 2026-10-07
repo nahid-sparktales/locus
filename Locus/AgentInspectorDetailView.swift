@@ -5,7 +5,7 @@ struct MemoryInspectorButton: View {
     @State private var showing = false
     var body: some View {
         Button { showing = true } label: { Label("Memory", systemImage: "brain") }
-            .buttonStyle(.locus()).help("Inspect memory submitted for this turn")
+            .buttonStyle(.locus()).help("Inspect memory and retrieval evidence for this turn")
             .accessibilityIdentifier("memory.inspect.\(runID)")
             .sheet(isPresented: $showing) { MemorySubmissionInspector(runID: runID) }
     }
@@ -303,6 +303,10 @@ private struct MemorySubmissionInspector: View {
     @State private var error = ""
     @State private var loading = true
 
+    @State private var retrievalTraces: [RetrievalTrace] = []
+    @State private var retrievalError = ""
+    @State private var retrievalExpanded = false
+
     private struct Submission: Decodable, Identifiable {
         let submission_id: String
         let agent_id: String
@@ -320,6 +324,7 @@ private struct MemorySubmissionInspector: View {
         var id: String { attempt_id }
     }
     private struct Listing: Decodable { let submissions: [Submission]; let helpers: [Helper] }
+    private struct MemorySaveResponse: Decodable { let status: String }
     private struct Item: Decodable, Identifiable {
         let record_id: String
         let scope: [String: String]
@@ -355,6 +360,7 @@ private struct MemorySubmissionInspector: View {
             if !error.isEmpty { Text(error).foregroundStyle(.secondary) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    retrievalSection
                     if !loading && submissions.isEmpty { Text("No retained memory submissions for this run.") }
                     ForEach(submissions) { submission in
                         Button { Task { await inspect(submission) } } label: {
@@ -390,9 +396,9 @@ private struct MemorySubmissionInspector: View {
                     if !helpers.isEmpty {
                         Divider()
                         Text("Helper discoveries").font(.headline)
-                        Text("Suggestions enter the Memory Inbox and require human approval before recall.").font(.caption)
+                        Text("Discoveries follow this agent's automatic saving setting. Suggestions that need review appear in the Memory Inbox.").font(.caption)
                         ForEach(helpers) { helper in
-                            Button("Suggest workspace memory · \(helper.agent_id)") { Task { await propose(helper) } }
+                            Button("Remember discovery · \(helper.agent_id)") { Task { await propose(helper) } }
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
@@ -410,13 +416,68 @@ private struct MemorySubmissionInspector: View {
             if let content = item.current_content { Text(content).font(.callout) }
         }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
+
+    private var retrievalSection: some View {
+        DisclosureGroup("Retrieval for this turn", isExpanded: $retrievalExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Retrieved and submitted are delivery states, not proof of use. Query text and source content are not saved in these traces.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !retrievalError.isEmpty { Text(retrievalError).font(.caption).foregroundStyle(.secondary) }
+                if !loading && retrievalTraces.isEmpty { Text("No retained retrieval traces for this run.").font(.caption) }
+                ForEach(retrievalTraces) { trace in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Round \(trace.round) · \(trace.phase.capitalized)").font(.subheadline.bold())
+                        Text("\(trace.agentID) · Turn \(trace.turnID.prefix(8))").font(.caption).foregroundStyle(.secondary)
+                        Text("Sources: \(trace.sources.map { $0 == "workspace" || $0 == "code" ? "Code and text" : $0.capitalized }.joined(separator: ", "))")
+                            .font(.caption)
+                        Text("\(trace.selected.count) citations · \(trace.packedBytes) bytes · \(trace.durationMS.formatted(.number.precision(.fractionLength(1)))) ms")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(trace.selected.enumerated()), id: \.offset) { _, citation in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(citation.locationLabel).font(.caption.monospaced())
+                                if let hash = citation.contentHash {
+                                    Text("Source version \(hash)")
+                                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        ForEach(Array(trace.omitted.enumerated()), id: \.offset) { _, omission in
+                            Text("Excluded: \(omission.count) · \(omission.reason.replacingOccurrences(of: "_", with: " "))").font(.caption)
+                        }
+                        ForEach(Array(trace.fallbacks.enumerated()), id: \.offset) { _, fallback in
+                            Text("Fallback: \(fallback.replacingOccurrences(of: "_", with: " "))").font(.caption)
+                        }
+                        if trace.unavailableItems > 0 {
+                            Text("\(trace.unavailableItems) citations are deleted or no longer accessible.").font(.caption)
+                        }
+                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }.padding(.top, 8)
+        }
+        .accessibilityIdentifier("retrieval.inspect")
+    }
+
+    private func loadRetrieval() async {
+        do {
+            let response = try await model.orchestrationBackend(for: runID).get(
+                "/api/retrieval/trace", query: [URLQueryItem(name: "run_id", value: runID)],
+                as: RetrievalTraceResponse.self
+            )
+            guard !Task.isCancelled else { return }
+            retrievalTraces = response.traces
+        } catch { retrievalError = "Retrieval details are unavailable: \(error.localizedDescription)" }
+    }
+
     private func load() async {
+        async let retrieval: Void = loadRetrieval()
         do {
             let result = try await model.orchestrationBackend(for: runID).get("/api/memory/submissions",
                 query: [URLQueryItem(name: "run_id", value: runID)], as: Listing.self)
             guard !Task.isCancelled else { return }
             submissions = result.submissions; helpers = result.helpers
         } catch { self.error = error.localizedDescription }
+        await retrieval
         loading = false
     }
     private func inspect(_ submission: Submission) async {
@@ -428,9 +489,11 @@ private struct MemorySubmissionInspector: View {
     }
     private func propose(_ helper: Helper) async {
         do {
-            let _: SimpleActionResponse = try await model.orchestrationBackend(for: runID).post("/api/memory/helper-proposals",
-                body: ["run_id": runID, "attempt_id": helper.attempt_id], as: SimpleActionResponse.self)
-            error = "Suggestion added to the Memory Inbox for review."
+            let result: MemorySaveResponse = try await model.orchestrationBackend(for: runID).post("/api/memory/helper-proposals",
+                body: ["run_id": runID, "attempt_id": helper.attempt_id], as: MemorySaveResponse.self)
+            error = result.status == "approved"
+                ? "Memory saved and available for future recall."
+                : "Suggestion added to the Memory Inbox for review."
         } catch { self.error = error.localizedDescription }
     }
 }

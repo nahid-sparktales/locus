@@ -435,7 +435,8 @@ class DocumentStore:
                             digest.update(data)
                     if digest.hexdigest() != job["content_hash"]:
                         raise DocumentError("Source changed during extraction; retry its latest version.")
-                    KnowledgeStore(str(self.root)).index_extracted_document(job["path"], job["content_hash"], result["segments"], job["format"])
+                    knowledge = KnowledgeStore(str(self.root))
+                    knowledge.index_extracted_document(job["path"], job["content_hash"], result["segments"], job["format"])
                 target = self.job_directory / job_id / "result.json"
                 temporary = target.with_suffix(".tmp")
                 temporary.write_text(json.dumps(result, ensure_ascii=False))
@@ -444,6 +445,13 @@ class DocumentStore:
                 state = "partial" if result["truncated"] else "ready"
                 db.execute("UPDATE document_jobs SET state=?,result_available=1,owner_pid=NULL,progress=MAX(progress,total),updated_at=? WHERE id=?", (state, _now(), job_id))
                 db.execute("UPDATE library_documents SET status=?,error=NULL,segment_count=?,truncated=?,warnings_json=?,updated_at=? WHERE job_id=?", (state, len(result["segments"]), int(result["truncated"]), json.dumps(result["warnings"]), _now(), job_id))
+            if job["persistent"]:
+                from .knowledge_embeddings import schedule_embeddings
+
+                # Extraction has committed successfully; a scheduler failure
+                # leaves durable NULL rows for startup/reindex to resume.
+                with contextlib.suppress(OSError, sqlite3.Error):
+                    schedule_embeddings(knowledge)
         except _JobInterrupted:
             with self._connect() as db:
                 db.execute("UPDATE document_jobs SET state='queued',owner_pid=NULL,updated_at=? WHERE id=? AND state='running'", (_now(), job_id))

@@ -95,3 +95,24 @@ def test_otlp_export_retries_three_times_without_persisting_error_text(tmp_path,
     run = store.run("run")
     assert run["export_state"] == "failed"
     assert run["export_attempts"] == 3
+
+
+@pytest.mark.parametrize("include_content", [False, True])
+def test_otlp_never_exports_retrieval_source_identifiers(tmp_path, include_content):
+    store = _store(tmp_path)
+    selected = [
+        {"kind": "workspace", "path": "restricted/private.py", "content_hash": "a" * 64},
+        {"kind": "memory", "id": "restricted-memory-id", "revision": 2},
+    ]
+    store.append_event("run", {"type": "retrieval_trace", "trace": {
+        "id": "trace-a", "phase": "submitted", "round": 2, "selected": selected,
+    }})
+
+    encoded = json.dumps(build_otlp_payload(store, "run", include_content=include_content))
+
+    assert "restricted/private.py" not in encoded
+    assert "restricted-memory-id" not in encoded
+    assert "locus.retrieval_trace" in encoded
+    if include_content:
+        assert "citations_redacted" in encoded
+    assert store.events("run")[-1]["trace"]["selected"] == selected

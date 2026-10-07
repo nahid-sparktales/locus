@@ -39,6 +39,11 @@ struct SlashCommand: Identifiable, Hashable {
 
     var id: String { name }
 
+    var displayTitle: String {
+        if action == .compact { return "Clean chat context" }
+        return "/\(name)\(argumentHint.map { " <\($0)>" } ?? "")"
+    }
+
     /// Every command available from the composer, in palette order.
     static let all: [SlashCommand] = [
         SlashCommand(
@@ -133,7 +138,7 @@ struct SlashCommand: Identifiable, Hashable {
         ),
         SlashCommand(
             name: "compact", aliases: [],
-            summary: "Ask the agent to compact the conversation",
+            summary: "Clean chat context: preserve durable memories and unfinished work (/compact)",
             argumentHint: nil, symbol: "arrow.down.right.and.arrow.up.left", action: .compact
         ),
         SlashCommand(

@@ -24,6 +24,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,24 @@ def isolated_app_dir(tmp_path, monkeypatch):
     for module, attribute, leaf in _APP_DIR_CONSTANTS:
         monkeypatch.setattr(module, attribute, home / leaf if leaf else home)
     return home
+
+
+@pytest.fixture(autouse=True)
+def isolate_knowledge_workers(isolated_app_dir, monkeypatch):
+    """Keep worker cancellation and publication inside this test's storage scope."""
+    from ollama_code import document_library
+    from ollama_code.document_library import stop_document_jobs
+    from ollama_code.knowledge_embeddings import stop_embedding_jobs
+
+    # Manual extraction fixtures intentionally bypass _coordinator(), which
+    # normally clears this event when a backend starts. A preceding app
+    # lifespan must not leave those fixtures permanently shutting down.
+    monkeypatch.setattr(document_library, "_SHUTTING_DOWN", threading.Event())
+    yield
+    # Documents can enqueue embeddings, so stop them first. Both stops run
+    # before isolated_app_dir's path patches and this event are restored.
+    stop_document_jobs()
+    stop_embedding_jobs()
 
 
 @pytest.fixture(autouse=True)

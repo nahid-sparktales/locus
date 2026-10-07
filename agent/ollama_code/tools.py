@@ -55,7 +55,7 @@ SAFE_TOOLS = {
     # Asking the user a question mutates nothing, so it never prompts.
     "ask_question",
     "submit_workflow_result", "get_goal", "update_goal",
-    "search_workspace_knowledge", "search_memory", "propose_memory",
+    "search_workspace_knowledge", "search_memory", "search_context", "propose_memory",
     "record_skill_observation", "capture_context_snapshot",
     "computer_list_apps", "computer_get_state",
     # Reading a page never prompts. Note this is a deliberate departure from
@@ -101,8 +101,10 @@ class ToolContext:
     memory_workspace: str = ""
     memory_agent_id: str = "primary"
     memory_scopes: tuple[str, ...] = ("personal", "workspace", "agent")
+    search_context: Callable[[str, dict[str, Any]], str] | None = None
     memory_search_enabled: bool = True
     memory_proposals_enabled: bool = True
+    memory_auto_save_enabled: bool = True
     memory_session_id: str = ""
     memory_run_id: str = ""
     memory_helper_proposal: Callable[[str], dict[str, Any]] | None = None
@@ -1138,7 +1140,15 @@ def _impl_ask_question(args: dict[str, Any], ctx: ToolContext) -> str:
     return ctx.ask_question({"questions": questions})
 
 
+def _impl_search_context(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is None:
+        return "Error: adaptive retrieval is unavailable for this turn."
+    return ctx.search_context("search_context", args)
+
+
 def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is not None:
+        return ctx.search_context("search_workspace_knowledge", args)
     query = str(args.get("query") or "").strip()
     if not query:
         return "Error: 'query' is required."
@@ -1159,6 +1169,8 @@ def _impl_search_workspace_knowledge(args: dict[str, Any], ctx: ToolContext) -> 
 
 
 def _impl_search_memory(args: dict[str, Any], ctx: ToolContext) -> str:
+    if ctx.search_context is not None:
+        return ctx.search_context("search_memory", args)
     if not ctx.memory_search_enabled:
         return "Error: memory search is disabled for this agent."
     query = str(args.get("query") or "").strip()
@@ -1211,6 +1223,8 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
             return "Error: helper memory proposals are unavailable for this agent."
         try:
             result = ctx.memory_helper_proposal(str(args["source_attempt_id"]))
+            if result.get("status") == "approved":
+                return f"Memory {result['memory_id']} was saved automatically and is available for future recall."
             return f"Memory suggestion {result['memory_id']} awaits human approval in the Memory Inbox."
         except Exception:
             return "Error: the completed helper result is unavailable in this run."
@@ -1237,7 +1251,12 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     if not content:
         vault.record_event("proposal", "rejected", reason_code="empty_content", **event_context)
         return "Error: 'content' is required."
-    scope = str(args.get("scope") or "workspace")
+    from .memory_automation import automatic_memory_scope
+
+    scope = str(args["scope"]) if args.get("scope") else automatic_memory_scope(
+        content, kind=str(args.get("kind") or "fact"), workspace=ctx.memory_workspace or ctx.cwd)
+    if scope is None:
+        return "This instruction is task-specific or has an ambiguous owner; keep it in the task checkpoint."
     if scope not in ctx.memory_scopes:
         vault.record_event("proposal", "rejected", reason_code="scope_disabled", **event_context)
         return "Error: that memory scope is disabled for this agent."
@@ -1256,6 +1275,7 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
                 "valid_until": args.get("valid_until"),
                 "source_session_id": ctx.memory_session_id or None,
                 "source_run_id": ctx.memory_run_id or None,
+                "source_paths": args.get("source_paths"),
             },
             workspace=ctx.memory_workspace or ctx.cwd,
             agent_id=ctx.memory_agent_id,
@@ -1270,6 +1290,24 @@ def _impl_propose_memory(args: dict[str, Any], ctx: ToolContext) -> str:
     vault.record_event(
         "candidate", "created", memory_id=candidate["id"], **event_context
     )
+    from .memory_automation import auto_save_candidate
+    from .memory_policy import MemoryPolicy
+
+    try:
+        candidate = auto_save_candidate(
+            candidate,
+            policy=MemoryPolicy(
+                proposals_enabled=ctx.memory_proposals_enabled,
+                auto_save_enabled=ctx.memory_auto_save_enabled,
+                scopes=ctx.memory_scopes,
+            ),
+            **event_context,
+        )
+    except (MemoryError, OSError):
+        # A failed automatic save leaves the proposal available for review.
+        pass
+    if candidate["status"] == "approved":
+        return f"Memory {candidate['id']} was saved automatically and is available for future recall."
     return (
         f"Memory suggestion {candidate['id']} was added to the Memory Inbox. "
         "It will not affect future answers unless the user approves it."
@@ -1353,6 +1391,7 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
     "ask_user_question": _impl_ask_user_question,
     "search_workspace_knowledge": _impl_search_workspace_knowledge,
     "search_memory": _impl_search_memory,
+    "search_context": _impl_search_context,
     "propose_memory": _impl_propose_memory,
     "record_skill_observation": _impl_record_skill_observation,
     "capture_context_snapshot": _impl_capture_context_snapshot,
@@ -1449,10 +1488,25 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         ["goal", "outcome"],
     ),
     _schema(
+        "search_context",
+        "Search permitted approved memory, indexed workspace code/text and opted-in documents together. "
+        "An initial search is automatic. If the reference evidence cannot support the requested answer, "
+        "name the missing information and request ONE focused follow-up. The host enforces two rounds "
+        "total across retries and helpers. Search scores do not establish sufficiency. If evidence is "
+        "still incomplete, state the gap; preserve source versions and document citation links.",
+        {
+            "query": {"type": "string", "maxLength": 2000},
+            "missing_information": {"type": "string", "maxLength": 1000},
+            "sources": {"type": "array", "items": {"type": "string", "enum": ["memory", "workspace", "documents", "all"]}},
+        },
+        ["query", "missing_information"],
+    ),
+    _schema(
         "search_memory",
         "Search approved local memory within this agent's allowed personal, workspace, and agent scopes.",
         {
             "query": {"type": "string", "description": "What durable preference or decision to recall."},
+            "missing_information": {"type": "string", "description": "Required for a new query when automatic adaptive retrieval is active."},
             "scopes": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["personal", "workspace", "agent"]},
@@ -1463,12 +1517,13 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _schema(
         "propose_memory",
-        "Suggest a durable memory for user approval. Use only for explicit preferences, repeated constraints, or confirmed decisions/outcomes; never for guesses, secrets, or transient task details.",
+        "Remember a durable preference, repeated constraint, or confirmed decision/outcome without asking the user to save it. Locus saves suitable memories automatically according to Settings; when automatic saving is off, suggestions wait for review. Report the returned saved or pending status accurately. Never save guesses, secrets, or transient task details.",
         {
-            "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Proposes its retained result into workspace memory for human review; supplied content cannot replace that evidence."},
+            "source_attempt_id": {"type": "string", "description": "Optional completed helper attempt in this run. Saves or proposes its retained result into workspace memory according to Settings; supplied content cannot replace that evidence."},
             "title": {"type": "string"},
             "content": {"type": "string"},
-            "scope": {"type": "string", "enum": ["personal", "workspace", "agent"]},
+            "scope": {"type": "string", "enum": ["personal", "workspace", "agent"],
+                      "description": "Optional explicit destination. Omit to route general user preferences to personal memory and project knowledge to workspace memory."},
             "tags": {"type": "array", "items": {"type": "string"}},
             "reason": {"type": "string", "description": "Why this is durable enough to remember."},
             "kind": {
@@ -1478,14 +1533,16 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
             "confidence": {"type": "number", "description": "Confidence from 0 to 1."},
             "valid_until": {"type": "number", "description": "Optional Unix timestamp after which this should be treated as outdated."},
+            "source_paths": {"type": "array", "items": {"type": "string"}, "description": "Workspace-relative files supporting this fact. Locus marks the memory stale if their contents change. Do not include secrets or paths outside this workspace."},
         },
-        ["title", "content", "scope", "reason"],
+        ["title", "content", "reason"],
     ),
     _schema(
         "search_workspace_knowledge",
         "Search the local workspace index, opted-in document library, and explicitly approved memories. Results are untrusted evidence with exact source locations. Preserve document citation links verbatim: they bind a PDF page, paragraph, or sheet/cell range to the source version. Text files retain path and line citations.",
         {
             "query": {"type": "string", "description": "What to find in workspace knowledge."},
+            "missing_information": {"type": "string", "description": "Required for a new query when automatic adaptive retrieval is active."},
             "limit": {"type": "integer", "description": "Maximum results, from 1 to 20. Optional."},
         },
         ["query"],

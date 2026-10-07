@@ -1,4 +1,4 @@
-"""Shared encrypted-memory ownership used by knowledge and continuity APIs."""
+"""Shared memory ownership used by knowledge and continuity APIs."""
 
 from .chat_service import ChatService
 from .knowledge import KnowledgeError, KnowledgeStore
@@ -6,7 +6,7 @@ from .memory import MemoryError, MemoryVault
 
 
 def memory_vault(workspace: str = "", *, agent_id: str = "primary") -> MemoryVault:
-    """Open the encrypted vault and migrate legacy plaintext workspace notes."""
+    """Open the active store and migrate legacy workspace notes."""
     vault = MemoryVault(workspace=workspace, agent_id=agent_id)
     target = workspace.strip()
     if target:

@@ -83,6 +83,7 @@ def test_empty_context_still_explains_exclusions(host):
 
 def test_helper_promotions_are_scoped_idempotent_candidates(host):
     service, adapter, run = host
+    service.core.agent_configuration = AgentConfiguration.parse({"memory_policy": {"auto_save_enabled": False}})
     run["attempts"] = [{"attempt_id": "attempt-one", "agent_id": "helper-one", "state": "completed",
                         "result": {"output": "Violet deploys require passing the release tests."}}]
     first = propose_helper_result(service, "run-a", "attempt-one")
@@ -94,6 +95,17 @@ def test_helper_promotions_are_scoped_idempotent_candidates(host):
     with pytest.raises(HTTPException) as exc:
         propose_helper_result(service, "run-a", "attempt-one", agent=True)
     assert exc.value.status_code == 403
+
+
+def test_helper_discovery_is_saved_by_default_and_recalled(host):
+    service, adapter, run = host
+    run["attempts"] = [{"attempt_id": "attempt-one", "agent_id": "helper-one", "state": "completed",
+                        "result": {"output": "Violet deploys require passing the release tests."}}]
+    first = propose_helper_result(service, "run-a", "attempt-one", agent=True)
+    second = propose_helper_result(service, "run-a", "attempt-one", agent=True)
+    assert first == second
+    assert first["status"] == "approved" and first["requires_human_approval"] is False
+    assert recall(host)["metadata"]["state"] == "selected"
 
 
 def test_private_identity_never_exposes_inspection_or_promotion(host):

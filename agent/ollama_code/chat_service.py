@@ -482,7 +482,7 @@ class ChatService:
             "tool_call_proposed", "permission_request",
             "question_required", "question_resolved", "question_ready",
             "permission_resolved", "computer_action_resolved",
-            "tool_result", "steer_ack", "steer_applied", "computer_action_request",
+            "retrieval_trace", "context_cleanup", "tool_result", "steer_ack", "steer_applied", "computer_action_request",
             "simulator_action_request",
             "browser_action_request", "notes_action_request", "calendar_action_request",
             "board_action_request",

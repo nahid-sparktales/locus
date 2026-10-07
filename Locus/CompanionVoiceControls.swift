@@ -75,12 +75,7 @@ extension AppModel {
 
 struct CompanionVoiceControls: View {
     @EnvironmentObject private var model: AppModel
-    var body: some View { CompanionVoiceContent(voice: model.voiceControl) }
-}
-
-private struct CompanionVoiceContent: View {
-    @EnvironmentObject private var model: AppModel
-    @ObservedObject var voice: VoiceControlModel
+    @EnvironmentObject private var voice: VoiceControlModel
     private var isCompanionVoice: Bool {
         voice.isVoiceModeActive && voice.externalSessionID == model.companionConversation?.id
     }

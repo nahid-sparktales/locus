@@ -111,6 +111,34 @@ def test_http_disconnect_cancels_real_mcp_before_publication(panel, tmp_path):
     asyncio.run(exercise())
 
 
+def test_disconnect_wins_when_worker_finishes_before_poll_resumes(panel, monkeypatch):
+    service, payload, _manager, runtime = panel
+    started = threading.Event()
+    original_wait = asyncio.wait
+
+    def dispatch(_server, _tool, _arguments, **options):
+        started.set()
+        while not options["should_stop"]():
+            time.sleep(0.005)
+        return "Error: cancelled"
+
+    async def wait_until_worker_finishes(tasks, **_options):
+        return await original_wait(tasks)
+
+    monkeypatch.setattr(runtime, "call_tool", dispatch)
+    # Exercise cancellation and worker completion in the same polling interval.
+    monkeypatch.setattr(asyncio, "wait", wait_until_worker_finishes)
+
+    async def exercise():
+        task, events, sent = await _exchange(_app(service), payload)
+        await _wait_for(started.is_set)
+        await events.put({"type": "http.disconnect"})
+        await asyncio.wait_for(task, 2)
+        assert sent[0]["status"] == 499
+
+    asyncio.run(exercise())
+
+
 @contextmanager
 def _serve(app):
     listener = socket.socket()

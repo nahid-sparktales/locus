@@ -58,9 +58,11 @@ async def generate_portrait(request: Request, body: dict[str, Any] = Body(defaul
     task = asyncio.create_task(asyncio.to_thread(perform))
     try:
         deadline = asyncio.get_running_loop().time() + PREVIEW_TIMEOUT_SECONDS
-        while not task.done():
+        while True:
             if stopped.is_set():
                 raise HTTPException(499, "Image generation cancelled. The provider may already have charged for work started.")
+            if task.done():
+                break
             if asyncio.get_running_loop().time() >= deadline:
                 stopped.set()
                 raise HTTPException(504, "Image generation timed out. No automatic retry was made.")

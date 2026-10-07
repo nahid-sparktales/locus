@@ -434,6 +434,83 @@ private extension String {
     }
 }
 
+/// A cleanup receipt keeps only outcome metadata, never extracted memory or checkpoint bodies.
+struct ChatContextCleanupResult: Codable, Hashable {
+    struct Outcome: Codable, Hashable {
+        let status: String
+        let memoryID: String?
+        let revision: Int?
+        let scope: String?
+    }
+
+    let operationID: String?
+    let contextGeneration: Int?
+    let checkpointStatus: String?
+    let saved: Int?
+    let pending: Int?
+    let skipped: Int?
+    let outcomes: [Outcome]
+    let failed: Bool
+
+    init?(event: [String: Any]) {
+        let isCleanupEvent = event["type"] as? String == "context_cleanup"
+        guard isCleanupEvent || event["command"] as? String == "compact" else { return nil }
+        let data = isCleanupEvent ? event : event["data"] as? [String: Any] ?? [:]
+        let isFailure = event["error"] as? Bool == true
+            || (event["error"] as? String).map { !$0.isEmpty } == true
+        guard isFailure || data["cleanup_operation_id"] != nil || data["checkpoint_status"] != nil || data["counts"] != nil
+        else { return nil }
+        operationID = data["cleanup_operation_id"] as? String
+        contextGeneration = data["context_generation"] as? Int
+        checkpointStatus = data["checkpoint_status"] as? String
+        let counts = data["counts"] as? [String: Any] ?? [:]
+        saved = (counts["saved"] as? Int).map { max(0, $0) }
+        pending = (counts["pending"] as? Int).map { max(0, $0) }
+        skipped = (counts["skipped"] as? Int).map { max(0, $0) }
+        failed = isFailure
+        outcomes = (data["outcomes"] as? [[String: Any]] ?? []).map { value in
+            let scope: String?
+            if let name = value["scope"] as? String {
+                scope = name
+            } else if let dimensions = value["scope"] as? [String: String] {
+                scope = dimensions.isEmpty ? "personal" : dimensions.keys.sorted().joined(separator: ", ")
+            } else {
+                scope = nil
+            }
+            return Outcome(status: value["status"] as? String ?? "unresolved",
+                           memoryID: value["id"] as? String, revision: value["revision"] as? Int, scope: scope)
+        }
+    }
+
+    var title: String { failed ? "Cleanup failed — chat context retained" : "Chat context cleaned" }
+
+    var countSummary: String {
+        [(saved.map { "\($0) \($0 == 1 ? "memory" : "memories") saved" }), (pending.map { "\($0) pending review" }),
+         (skipped.map { "\($0) skipped" })].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var outcomeLabels: [String] {
+        Set(outcomes.map { outcome in
+            [outcome.status.replacingOccurrences(of: "_", with: " "), outcome.scope,
+             outcome.memoryID, outcome.revision.map { "revision \($0)" }]
+                .compactMap { $0 }.joined(separator: " · ")
+        }).sorted()
+    }
+
+    var checkpointLabel: String {
+        switch checkpointStatus {
+        case "saved": "Unfinished-work checkpoint saved"
+        case "not_committed": "Checkpoint not committed; chat context retained"
+        case "failed": "Checkpoint failed; chat context retained"
+        default: "Checkpoint status unavailable"
+        }
+    }
+
+    var message: String {
+        [title, countSummary, checkpointLabel].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+}
+
 struct ChatBlock: Identifiable, Codable, Hashable {
     enum Kind: String, Codable {
         case user
@@ -465,6 +542,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     /// Present only for the quiet end-of-turn note rendered after a run.
     /// Optional keeps checkpoints written by older Locus releases decodable.
     var completion: TurnCompletion?
+    var contextCleanup: ChatContextCleanupResult?
     /// Links a request to its durable run. Ordinary Solo rows remain unchanged
     /// because their activity panel stays hidden until delegation begins.
     var runID: String?
@@ -484,6 +562,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, kind, text, assistantPhase, sourceItemID, responseParts, reasoningFormat
         case reasoningText, reasoningSections, isStreaming, tool, completion, historyIndex
+        case contextCleanup
         case runID = "run_id"
         case eventTrigger
         case legacyRunID = "runID"
@@ -503,6 +582,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         isStreaming: Bool = false,
         tool: ToolPayload? = nil,
         completion: TurnCompletion? = nil,
+        contextCleanup: ChatContextCleanupResult? = nil,
         runID: String? = nil,
         eventTrigger: EventTranscriptContext? = nil,
         teamRunID: String? = nil,
@@ -520,6 +600,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         self.isStreaming = isStreaming
         self.tool = tool
         self.completion = completion
+        self.contextCleanup = contextCleanup
         self.runID = runID ?? teamRunID
         self.eventTrigger = eventTrigger
         self.historyIndex = historyIndex
@@ -540,6 +621,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         tool = try container.decodeIfPresent(ToolPayload.self, forKey: .tool)
         completion = try container.decodeIfPresent(TurnCompletion.self, forKey: .completion)
+        contextCleanup = try? container.decodeIfPresent(ChatContextCleanupResult.self, forKey: .contextCleanup)
         runID = try container.decodeIfPresent(String.self, forKey: .runID)
             ?? container.decodeIfPresent(String.self, forKey: .legacyRunID)
             ?? container.decodeIfPresent(String.self, forKey: .legacyTeamRunID)
@@ -565,6 +647,7 @@ struct ChatBlock: Identifiable, Codable, Hashable {
         try container.encode(isStreaming, forKey: .isStreaming)
         try container.encodeIfPresent(tool, forKey: .tool)
         try container.encodeIfPresent(completion, forKey: .completion)
+        try container.encodeIfPresent(contextCleanup, forKey: .contextCleanup)
         try container.encodeIfPresent(runID, forKey: .runID)
         try container.encodeIfPresent(eventTrigger, forKey: .eventTrigger)
         try container.encodeIfPresent(historyIndex, forKey: .historyIndex)

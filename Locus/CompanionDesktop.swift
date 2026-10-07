@@ -129,6 +129,7 @@ extension AppModel {
 struct CompanionDesktopView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agents: AgentTeamsModel
+    @EnvironmentObject private var voice: VoiceControlModel
     @ObservedObject var controller: CompanionDesktopController
     @State private var chatShown = false
 
@@ -178,7 +179,7 @@ struct CompanionDesktopView: View {
         .environment(\.companionPointerResponse, .neutral)
         .accessibilityIdentifier("companion.desktop")
         .onChange(of: chatShown) { _, value in controller.setChatExpanded(value) }
-        .onDisappear { if model.voiceControl.externalSessionID != nil { model.voiceControl.cancelRecording() } }
+        .onDisappear { if voice.externalSessionID != nil { voice.cancelRecording() } }
     }
 }
 

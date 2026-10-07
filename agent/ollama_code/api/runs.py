@@ -288,7 +288,7 @@ def orchestration_events(
     return {
         "run_id": run_id,
         "after_seq": after_seq,
-        "events": events,
+        "events": _redact_retrieval_sources(events),
         "last_seq": int(events[-1].get("seq") or after_seq) if events else after_seq,
     }
 
@@ -300,9 +300,27 @@ def orchestration_export(
 ) -> dict[str, Any]:
     _require_capability("durable_runs")
     try:
-        return service.run_store.export(run_id, include_content=include_content)
+        return _redact_retrieval_sources(service.run_store.export(run_id, include_content=include_content))
     except RunStoreError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+
+def _redact_retrieval_sources(value: Any) -> Any:
+    """Citation identities are available only through the scoped inspector.
+
+    Even content-inclusive generic exports do not imply access to a previously
+    selected memory or an excluded workspace path. Copy without changing the
+    retained receipt used by /api/retrieval/trace.
+    """
+    if isinstance(value, list):
+        return [_redact_retrieval_sources(item) for item in value]
+    if isinstance(value, dict):
+        result = {key: _redact_retrieval_sources(item) for key, item in value.items()}
+        if result.get("type") == "retrieval_trace" and isinstance(result.get("trace"), dict):
+            result["trace"]["selected"] = []
+            result["trace"]["citations_redacted"] = True
+        return result
+    return value
 
 
 def orchestration_otlp(

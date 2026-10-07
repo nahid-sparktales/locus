@@ -52,7 +52,7 @@ async def remote_remove(runtime_id: str, request: Request):
 
 async def remote_call(runtime_id: str, request: Request, body: dict = Body(default_factory=dict)):
     method = str(body.get("method", "GET"))
-    if method not in {"GET", "POST", "PATCH", "DELETE"}:
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
         raise HTTPException(422, "Invalid method")
     return await invoke(remotes(request).request, runtime_id, method, str(body.get("path", "")), body.get("body"))
 

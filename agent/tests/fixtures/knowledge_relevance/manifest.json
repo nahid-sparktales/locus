@@ -1,0 +1,120 @@
+{
+  "name": "harbor-workspace-relevance",
+  "version": 1,
+  "description": "Authored fictional code/doc fixture, judged before benchmarking; lexical retrieval regression evidence only.",
+  "files": [
+    "docs/accounts.md", "docs/api/v2/leases.md", "docs/api/v3/leases.md",
+    "docs/contributing.md", "docs/export.md", "docs/keyboard.md",
+    "docs/migrations.md", "docs/operations.md", "docs/shared_hosts.md",
+    "docs/source_checks.md", "src/acknowledgements.py", "src/client.py",
+    "src/exporter.py", "src/leases.py", "src/source_fingerprint.py"
+  ],
+  "queries": [
+    {
+      "id": "claim_identifier", "category": "exact_identifier",
+      "query": "claim_worker_lease",
+      "relevance": [{"path": "src/leases.py", "line_start": 12, "line_end": 17, "grade": 3}]
+    },
+    {
+      "id": "ack_identifier", "category": "exact_identifier",
+      "query": "record_delivery_ack idempotent",
+      "relevance": [{"path": "src/acknowledgements.py", "line_start": 10, "line_end": 17, "grade": 3}]
+    },
+    {
+      "id": "fingerprint_identifier", "category": "exact_identifier",
+      "query": "source_fingerprint missing file",
+      "relevance": [{"path": "src/source_fingerprint.py", "line_start": 5, "line_end": 8, "grade": 3}]
+    },
+    {
+      "id": "export_identifier", "category": "exact_identifier",
+      "query": "validate_export unsupported_export_version",
+      "relevance": [{"path": "src/exporter.py", "line_start": 11, "line_end": 14, "grade": 3}]
+    },
+    {
+      "id": "sleeping_host", "category": "paraphrase",
+      "query": "Can a second laptop read saved notes while the shared computer is powered off?",
+      "relevance": [{"path": "docs/shared_hosts.md", "line_start": 8, "line_end": 11, "grade": 3}]
+    },
+    {
+      "id": "vanished_source", "category": "paraphrase",
+      "query": "What happens to saved claims when a referenced project file disappears?",
+      "relevance": [{"path": "docs/source_checks.md", "line_start": 8, "line_end": 10, "grade": 3}]
+    },
+    {
+      "id": "moved_checkout", "category": "paraphrase",
+      "query": "Will opening another checkout with the same folder name combine its notebook automatically?",
+      "relevance": [{"path": "docs/migrations.md", "line_start": 11, "line_end": 14, "grade": 3}]
+    },
+    {
+      "id": "shortcut", "category": "paraphrase",
+      "query": "Which key combination opens the command palette?",
+      "relevance": [{"path": "docs/keyboard.md", "line_start": 3, "line_end": 3, "grade": 3}]
+    },
+    {
+      "id": "journal_handoff", "category": "ambiguous_heading",
+      "query": "Journal recovery final inspection token",
+      "relevance": [{"path": "docs/operations.md", "line_start": 125, "line_end": 127, "grade": 3}]
+    },
+    {
+      "id": "release_handoff", "category": "ambiguous_heading",
+      "query": "Deployment approval final inspection token",
+      "relevance": [{"path": "docs/operations.md", "line_start": 143, "line_end": 145, "grade": 3}]
+    },
+    {
+      "id": "focus_recovery", "category": "ambiguous_heading",
+      "query": "Keyboard recovery after a sheet closes",
+      "relevance": [{"path": "docs/keyboard.md", "line_start": 8, "line_end": 9, "grade": 3}, {"path": "docs/operations.md", "line_start": 149, "line_end": 150, "grade": 2}]
+    },
+    {
+      "id": "current_lease_default", "category": "competing_versions",
+      "query": "Current version 3 default lease duration seconds",
+      "relevance": [{"path": "docs/api/v3/leases.md", "line_start": 8, "line_end": 9, "grade": 3}]
+    },
+    {
+      "id": "archived_lease_default", "category": "competing_versions",
+      "query": "Archived version 2 default lease duration seconds",
+      "relevance": [{"path": "docs/api/v2/leases.md", "line_start": 8, "line_end": 9, "grade": 3}]
+    },
+    {
+      "id": "migration_conflict", "category": "competing_versions",
+      "query": "Upgrade version 2 etag conflict handling to version 3",
+      "relevance": [{"path": "docs/migrations.md", "line_start": 5, "line_end": 7, "grade": 3}]
+    },
+    {
+      "id": "conflict_end_to_end", "category": "multiple_sources",
+      "query": "Stale expected_revision HTTP 409 client action_for_status reload",
+      "relevance": [{"path": "docs/api/v3/leases.md", "line_start": 13, "line_end": 14, "grade": 3}, {"path": "src/client.py", "line_start": 4, "line_end": 6, "grade": 3}]
+    },
+    {
+      "id": "recheck_conflict", "category": "multiple_sources",
+      "query": "Recheck after verification concurrent edit conflict client reload",
+      "relevance": [{"path": "docs/source_checks.md", "line_start": 14, "line_end": 16, "grade": 3}, {"path": "src/client.py", "line_start": 4, "line_end": 6, "grade": 2}]
+    },
+    {
+      "id": "rollback_permissions", "category": "overlapping_chunks",
+      "query": "rollback directory original permissions private notes",
+      "relevance": [{"path": "docs/operations.md", "line_start": 96, "line_end": 102, "grade": 3}]
+    },
+    {
+      "id": "verification_roundtrip", "category": "overlapping_chunks",
+      "query": "temporary verification note second controller delete first refresh",
+      "relevance": [{"path": "docs/operations.md", "line_start": 118, "line_end": 121, "grade": 3}]
+    },
+    {
+      "id": "missing_identifier", "category": "unanswerable",
+      "query": "zxqv_bazalt_handshake", "relevance": []
+    },
+    {
+      "id": "saml_rotation", "category": "unanswerable",
+      "query": "SAML identity provider signing certificate rotation interval", "relevance": []
+    },
+    {
+      "id": "purge_duration", "category": "unanswerable",
+      "query": "How many days are deleted notebook records retained before permanent purge?", "relevance": []
+    },
+    {
+      "id": "invoice_retention", "category": "unanswerable",
+      "query": "Where is the billing invoice PDF retention period configured?", "relevance": []
+    }
+  ]
+}

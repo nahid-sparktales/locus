@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cleanup_fixtures import cleanup_reply
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -3610,6 +3611,9 @@ class FakeClient:
 
 
 def _core(tmp_path, responses):
+    # Freeze pre-adaptive wire/event contracts; dedicated adaptive tests cover the default.
+    from ollama_code.knowledge import KnowledgeStore
+    KnowledgeStore(str(tmp_path)).configure(adaptive_rag_enabled=False)
     core = AgentCore(cwd=str(tmp_path), config={"model": "test-model", "max_iterations": 5})
     core.model = "test-model"
     core.client = FakeClient(responses)
@@ -6813,6 +6817,31 @@ def test_starting_a_new_team_turn_clears_the_previous_interrupt(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("message", [
+    {"type": "compact"},
+    {"type": "user_message", "text": "/compact", "mode": "work"},
+])
+def test_manual_cleanup_after_stop_clears_only_the_previous_interrupt(tmp_path, message):
+    async def scenario():
+        core = _core(tmp_path, [ChatResponse(content_parts=[cleanup_reply("Saved checkpoint")])])
+        core.context_limit = 32768
+        core._add_message({"role": "user", "content": "Inspect the migration."})
+        core._add_message({"role": "assistant", "content": "The migration needs verification."})
+        service = server_mod.ChatService(core)
+        service.loop = asyncio.get_running_loop()
+        try:
+            core.interrupt()
+            await server_mod._handle_client_message(service, message)
+            assert service.turn_future is not None
+            await service.turn_future
+            assert not core._interrupt.is_set()
+            assert SessionStore.context_generation(core.session.path) == 1
+            assert core.client.calls == 1
+        finally:
+            core.close()
+    asyncio.run(scenario())
+
+
 def test_uncaught_turn_worker_error_publishes_a_terminal_event(tmp_path):
     async def scenario():
         core = _core(tmp_path, [])
@@ -7485,11 +7514,11 @@ def test_new_session_emits_session_started_and_clears_state(tmp_path):
 
 def test_auto_compaction_runs_before_the_window_overflows(tmp_path):
     core = _core(tmp_path, [
-        ChatResponse(content_parts=["a summary"], done=True),
-        ChatResponse(content_parts=["second section summary"], done=True),
-        ChatResponse(content_parts=["third section summary"], done=True),
-        ChatResponse(content_parts=["fourth section summary"], done=True),
-        ChatResponse(content_parts=["fifth section summary"], done=True),   # the compaction call
+        ChatResponse(content_parts=[cleanup_reply("a summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("second section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("third section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("fourth section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("fifth section summary")], done=True),   # the compaction call
         ChatResponse(content_parts=["answer"], done=True),      # the real turn
     ])
     core.client.loaded_window = 32_768
@@ -7855,11 +7884,11 @@ def test_a_configured_window_is_sent_on_every_call_in_a_turn(tmp_path):
 def test_compaction_asks_for_the_same_window_as_the_turn(tmp_path):
     # A different num_ctx mid-turn would make Ollama reload the model.
     core = _core(tmp_path, [
-        ChatResponse(content_parts=["a summary"], done=True),
-        ChatResponse(content_parts=["second section summary"], done=True),
-        ChatResponse(content_parts=["third section summary"], done=True),
-        ChatResponse(content_parts=["fourth section summary"], done=True),
-        ChatResponse(content_parts=["fifth section summary"], done=True),
+        ChatResponse(content_parts=[cleanup_reply("a summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("second section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("third section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("fourth section summary")], done=True),
+        ChatResponse(content_parts=[cleanup_reply("fifth section summary")], done=True),
         ChatResponse(content_parts=["answer"], done=True),
     ])
     core.config["context_window"] = 32_768
@@ -8425,7 +8454,7 @@ def test_compaction_leaves_room_for_the_schemas_and_the_reply(tmp_path):
         RESERVED_REPLY_TOKENS,
     )
 
-    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)] * 4)
+    core = _core(tmp_path, [ChatResponse(content_parts=[cleanup_reply("a summary")], done=True)] * 4)
     core.context_limit = 32_768
     core.messages = [
         core.system_message(),
@@ -8461,7 +8490,7 @@ def test_a_small_window_still_compacts_rather_than_giving_up(tmp_path):
     """
     from ollama_code.core import RESERVED_REPLY_TOKENS
 
-    core = _core(tmp_path, [ChatResponse(content_parts=["a summary"], done=True)] * 4)
+    core = _core(tmp_path, [ChatResponse(content_parts=[cleanup_reply("a summary")], done=True)] * 4)
     core.context_limit = 12_288
     assert core._reply_room() < RESERVED_REPLY_TOKENS
     core.messages = [
@@ -8587,7 +8616,7 @@ def test_slash_permissions_mode(tmp_path):
 def test_slash_compact_replaces_history(tmp_path):
     core = _core(tmp_path, [
         ChatResponse(content_parts=["answer"], done=True),
-        ChatResponse(content_parts=["a summary"], done=True),
+        ChatResponse(content_parts=[cleanup_reply("a summary")], done=True),
     ])
     core.run_turn("a question")
     result = core.handle_slash("/compact")
@@ -8829,7 +8858,7 @@ def test_compaction_transcript_is_capped_so_it_cannot_overflow_itself(tmp_path):
             return super().chat_stream(model, messages, **kwargs)
 
     core = _core(tmp_path, [])
-    core.client = RecordingClient([ChatResponse(content_parts=["summary"], done=True)] * 6)
+    core.client = RecordingClient([ChatResponse(content_parts=[cleanup_reply("summary")], done=True)] * 6)
     core.context_limit = 32_768
     for i in range(40):
         role = "user" if i % 2 == 0 else "assistant"

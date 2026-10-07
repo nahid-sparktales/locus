@@ -44,6 +44,7 @@ def knowledge_settings(
     embedding_model = (
         str(body.get("embedding_model") or "") if "embedding_model" in body else None
     )
+    rerank_model = str(body.get("rerank_model") or "") if "rerank_model" in body else None
     ollama_host = str(body.get("ollama_host") or "") if "ollama_host" in body else None
     if "exclusions" in body and not isinstance(body.get("exclusions"), list):
         raise HTTPException(422, "knowledge exclusions must be a list of glob patterns")
@@ -52,13 +53,18 @@ def knowledge_settings(
         if "exclusions" in body
         else None
     )
-    result = store.configure(
-        enabled=enabled,
-        embedding_model=embedding_model,
-        ollama_host=ollama_host,
-        exclusions=exclusions,
-        documents_enabled=body.get("documents_enabled") if isinstance(body.get("documents_enabled"), bool) else None,
-    )
+    try:
+        result = store.configure(
+            enabled=enabled,
+            embedding_model=embedding_model,
+            rerank_model=rerank_model,
+            adaptive_rag_enabled=body.get("adaptive_rag_enabled") if isinstance(body.get("adaptive_rag_enabled"), bool) else None,
+            ollama_host=ollama_host,
+            exclusions=exclusions,
+            documents_enabled=body.get("documents_enabled") if isinstance(body.get("documents_enabled"), bool) else None,
+        )
+    except KnowledgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if body.get("documents_enabled") is False or body.get("enabled") is False:
         DocumentStore(str(store.root)).cancel_persistent()
     return result
@@ -89,7 +95,7 @@ def knowledge_search(
     limit: int = Query(default=8, ge=1, le=20),
 ) -> dict[str, Any]:
     try:
-        return {"results": _knowledge_store(service, workspace).search(query, limit=limit)}
+        return _knowledge_store(service, workspace).search_with_diagnostics(query, limit=limit)
     except KnowledgeError as exc:
         raise HTTPException(422, str(exc)) from exc
 

@@ -659,9 +659,11 @@ async def call_extension_plugin_panel_tool_http(
         call_extension_plugin_panel_tool, service, body, should_stop=stopped.is_set,
     ))
     try:
-        while not task.done():
+        while True:
             if stopped.is_set():
                 raise HTTPException(499, "The plugin panel closed. The pending request was cancelled without retrying; an operation already sent may still finish.")
+            if task.done():
+                break
             await asyncio.wait({task}, timeout=0.05)
         return await task
     finally:

@@ -8,6 +8,7 @@ trash folder rather than being deleted.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -619,16 +620,66 @@ class SessionStore:
             pass  # session logging must never crash the app
 
     def append_strict(self, record: dict[str, Any]) -> None:
-        """Persist execution-critical goal history before acknowledging work.
+        """Persist execution-critical history before acknowledging work.
 
-        Ordinary transcript logging remains best effort. Goal recovery needs
-        a confirmed tool-result record before a mutation can become replay-safe.
+        Ordinary transcript logging remains best effort. Goal recovery and
+        context cleanup require confirmed records before advancing live state.
         """
+        with _APPEND_LOCK:
+            self._append_strict_unlocked(record)
+
+    def _append_strict_unlocked(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
-        with _APPEND_LOCK, self.path.open("a", encoding="utf-8") as handle:
+        if len(line.encode("utf-8")) > MAX_SESSION_LINE_BYTES:
+            raise SessionTooLargeError(
+                f"{self.path.name} record exceeds the "
+                f"{MAX_SESSION_LINE_BYTES // (1024 * 1024)} MB record limit"
+            )
+        with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())
+
+    def commit_cleanup(self, record: dict[str, Any], expected_snapshot: dict[str, Any]) -> None:
+        """Compare the source boundary and commit while excluding new appends.
+
+        Prepared-operation and outcome bookkeeping can advance the log without
+        invalidating extraction. New source records or a concurrent context
+        generation cannot. Callers additionally hold their execution/steer
+        lock and recheck owner permissions before committing.
+        """
+        with _APPEND_LOCK:
+            current = SessionStore.cleanup_snapshot(self.path)
+            if "source_fingerprints" in expected_snapshot:
+                fields = ("source_id", "position", "role", "content_hash")
+                source_matches = [{key: source[key] for key in fields} for source in current["sources"]] == expected_snapshot["source_fingerprints"]
+            else:
+                source_matches = current["sources"] == expected_snapshot.get("sources")
+            if (current["context_generation"] != expected_snapshot.get("context_generation")
+                    or not source_matches):
+                raise ValueError("Chat changed during cleanup; previous context retained.")
+            if (record.get("type") != "compacted_context"
+                    or not isinstance(record.get("messages"), list)
+                    or not isinstance(record.get("checkpoint"), dict)
+                    or type(record.get("covered_through")) is not int
+                    or record["covered_through"] != expected_snapshot.get("covered_through")
+                    or record.get("context_generation") != current["context_generation"] + 1):
+                raise ValueError("Invalid cleanup checkpoint boundary.")
+            offset = self.path.stat().st_size
+            try:
+                self._append_strict_unlocked(record)
+            except OSError:
+                # A failed flush/fsync may still leave a complete JSON line
+                # readable. Undo that unacknowledged checkpoint so restart
+                # keeps the previous context whenever storage permits it.
+                try:
+                    with self.path.open("r+b") as handle:
+                        handle.truncate(offset)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except OSError:
+                    pass
+                raise
 
     # ------------------------------------------------------------------ reads
 
@@ -719,9 +770,121 @@ class SessionStore:
         return records
 
     @staticmethod
+    def _cleanup_boundary(records: list[dict[str, Any]]) -> tuple[int, dict[str, Any] | None]:
+        generation, checkpoint = 0, None
+        for position, record in enumerate(records, 1):
+            if record.get("type") != "compacted_context" or not isinstance(record.get("messages"), list):
+                continue
+            supplied = record.get("context_generation")
+            generation = max(generation + 1, supplied) if type(supplied) is int else generation + 1
+            covered = record.get("covered_through")
+            if (isinstance(record.get("checkpoint"), dict) and type(covered) is int
+                    and 0 <= covered < position
+                    and covered >= (checkpoint or {}).get("covered_through", 0)):
+                checkpoint = record
+        return generation, checkpoint
+
+    @staticmethod
+    def context_generation(path: Path) -> int:
+        """Monotonic provider-context generation, including legacy compactions."""
+        return SessionStore._cleanup_boundary(SessionStore.context_records(path))[0]
+
+    @staticmethod
+    def context_checkpoint(path: Path) -> dict[str, Any] | None:
+        """Latest committed checkpoint record; prepared cleanup is not authority."""
+        return SessionStore._cleanup_boundary(SessionStore.context_records(path))[1]
+
+    @staticmethod
+    def _cleanup_sources(
+        path: Path, records: list[dict[str, Any]], *, through: int | None = None,
+        include_covered: bool = False,
+    ) -> list[dict[str, Any]]:
+        limit = len(records) if through is None else max(0, min(through, len(records)))
+        _, checkpoint = SessionStore._cleanup_boundary(records[:limit])
+        start = 0 if include_covered else int((checkpoint or {}).get("covered_through", 0))
+        sources: list[dict[str, Any]] = []
+        for position, record in enumerate(records[:limit], 1):
+            if position <= start:
+                continue
+            kind = record.get("type")
+            if kind == "message" and isinstance(record.get("message"), dict):
+                message = record["message"]
+                if message.get("_locus_context") or message.get("_display_only"):
+                    continue
+                role, content = message.get("role"), message.get("content")
+                identifier = message.get("_item_id") or record.get("event_id")
+            elif kind == "pending_task_input":
+                role, content, identifier = "user", record.get("text"), record.get("event_id")
+            elif kind == "native_tool_observation":
+                role, content, identifier = "tool", record.get("result"), record.get("event_id")
+                if not isinstance(content, str):
+                    content = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)
+            else:
+                continue
+            if role not in {"user", "assistant", "tool"} or not isinstance(content, str) or not content:
+                continue
+            sources.append({
+                "source_id": str(identifier or f"{path.stem}:record:{position}"),
+                "position": position, "role": role, "content": content,
+                "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            })
+        return sources
+
+    @staticmethod
+    def cleanup_source_records(
+        path: Path, *, through: int | None = None, include_covered: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Exact persisted evidence after the last covered transcript boundary.
+
+        Positions are one-based indexes into valid context records, stable in
+        this append-only log. Synthetic context and private reasoning are never
+        eligible source messages. Explicit source revalidation may include
+        covered records without returning them to automatic active context.
+        """
+        return SessionStore._cleanup_sources(path, SessionStore.context_records(path),
+                                             through=through, include_covered=include_covered)
+
+    @staticmethod
+    def cleanup_snapshot(path: Path) -> dict[str, Any]:
+        """Read one coherent extraction boundary without counting later appends."""
+        records = SessionStore.context_records(path)
+        generation, checkpoint = SessionStore._cleanup_boundary(records)
+        return {
+            "context_generation": generation,
+            "covered_through": len(records),
+            "checkpoint": checkpoint.get("checkpoint") if checkpoint else None,
+            "sources": SessionStore._cleanup_sources(path, records),
+        }
+
+    @staticmethod
+    def cleanup_operation(path: Path, operation_id: str | None = None) -> dict[str, Any] | None:
+        """Recover a prepared cleanup and its saved outcomes after interruption."""
+        records = SessionStore.context_records(path)
+        prepared = next((record for record in reversed(records)
+                         if record.get("type") == "context_cleanup_prepared"
+                         and isinstance(record.get("operation_id"), str)
+                         and (operation_id is None or record["operation_id"] == operation_id)), None)
+        if prepared is None:
+            return None
+        identifier = prepared["operation_id"]
+        return {
+            **prepared,
+            "outcomes": [record for record in records
+                         if record.get("type") == "context_cleanup_outcome"
+                         and record.get("operation_id") == identifier],
+            "committed": any(record.get("type") == "compacted_context"
+                             and isinstance(record.get("messages"), list)
+                             and record.get("cleanup_operation_id") == identifier
+                             for record in records),
+        }
+
+    @staticmethod
     def authoritative_inputs(path: Path) -> list[dict[str, Any]]:
         inputs, pending = [], {}
-        for record in SessionStore.context_records(path):
+        records = SessionStore.context_records(path)
+        _, checkpoint = SessionStore._cleanup_boundary(records)
+        start = int((checkpoint or {}).get("covered_through", 0))
+        for record in records[start:]:
             if record.get("type") == "pending_task_input" and isinstance(record.get("text"), str):
                 text = record["text"]
                 pending.setdefault(text, []).append(len(inputs))
@@ -937,6 +1100,7 @@ class SessionStore:
         the normal transcript ceilings to keep damaged files bounded.
         """
         latest: dict[str, Any] | None = None
+        generation = 0
         try:
             if path.stat().st_size > MAX_SESSION_BYTES:
                 return None
@@ -950,7 +1114,19 @@ class SessionStore:
                         record = json.loads(raw.decode("utf-8", errors="replace"))
                     except json.JSONDecodeError:
                         continue
-                    if not isinstance(record, dict) or record.get("type") != "chatgpt_thread":
+                    if not isinstance(record, dict):
+                        continue
+                    if record.get("type") == "compacted_context" and isinstance(record.get("messages"), list):
+                        supplied = record.get("context_generation")
+                        generation = max(generation + 1, supplied) if type(supplied) is int else generation + 1
+                        latest = None
+                        continue
+                    if record.get("type") != "chatgpt_thread":
+                        continue
+                    # An old provider thread can emit a late usage marker. It
+                    # must not reclaim the context after cleanup committed.
+                    marker_generation = record.get("context_generation", 0)
+                    if type(marker_generation) is not int or marker_generation != generation:
                         continue
                     thread_id = record.get("thread_id")
                     protocol = record.get("protocol_version")
@@ -969,6 +1145,7 @@ class SessionStore:
                             "protocol_version": protocol,
                             "tool_schema_fingerprint": fingerprint,
                             "history_revision": revision,
+                            "context_generation": generation,
                             # Token baselines ride the marker so a resumed
                             # thread's first turn is billed as a delta, not the
                             # thread's whole cumulative total. Older markers

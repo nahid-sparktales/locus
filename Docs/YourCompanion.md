@@ -1,9 +1,11 @@
 # Your companion
 
-The ten persistent-assistant features are implemented. The current native build
-succeeded; focused native checks executed **297 tests with one skip and zero
-failures**, and backend regressions passed **140 tests**. All **12 Companion UI
-tests passed** with no failures or skips. Actual microphone capture, macOS Screen
+The ten persistent-assistant features are implemented. After integration with
+automatic memory and retrieval, the native build and **2,043 native tests passed
+with two environment-related skips and zero failures**. The backend passed
+**3,652 tests and 31 subtests**. All **12 Companion UI cases** passed before the
+integration, and **three targeted UI cases** passed on the combined code.
+Actual microphone capture, macOS Screen
 Recording permission flows, and live provider calls were not exercised.
 See [the implementation and validation record](CompanionImplementationPlan.md).
 

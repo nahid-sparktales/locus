@@ -12,6 +12,8 @@ final class WorkspaceKnowledgeModel: ObservableObject {
     @Published private(set) var workspaceMemories: [WorkspaceMemory] = []
     @Published private(set) var memoryCandidates: [WorkspaceMemory] = []
     @Published private(set) var memoryVaultStatus: MemoryVaultStatus?
+    @Published private(set) var memoryStorage: MemoryStorageResponse?
+    @Published private(set) var isMemoryMaintenanceRunning = false
     @Published private(set) var memoryDiagnosticReport: MemoryDiagnosticReport?
     @Published private(set) var contextSnapshots: [ContextSnapshot] = []
     @Published private(set) var skillObservations: [SkillObservation] = []
@@ -87,6 +89,7 @@ final class WorkspaceKnowledgeModel: ObservableObject {
     func refreshWorkspaceKnowledge(agentID: String = "primary") async {
         guard let backend else { return }
         let workspacePath = workspacePathProvider()
+        memoryStorage = nil
         do {
             let memoryQuery = [
                 URLQueryItem(name: "workspace", value: workspacePath),
@@ -114,6 +117,9 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                 "/api/memory/diagnostics", query: memoryQuery,
                 as: MemoryDiagnosticReport.self
             )
+            async let storage: MemoryStorageResponse? = try? backend.get(
+                "/api/memory/storage", query: memoryQuery, as: MemoryStorageResponse.self
+            )
             async let snapshots: ContextSnapshotsResponse = backend.get(
                 "/api/context-snapshots",
                 query: [URLQueryItem(name: "workspace", value: workspacePath)],
@@ -125,6 +131,7 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                 as: SkillObservationsResponse.self
             )
             memoryVaultStatus = try await vaultStatus
+            memoryStorage = await storage
             if memoryVaultStatus?.memoryAvailable == false {
                 workspaceMemories = []
                 memoryCandidates = []
@@ -257,9 +264,27 @@ final class WorkspaceKnowledgeModel: ObservableObject {
         }
     }
 
+    func refreshKnowledgeStatus() async {
+        guard let backend else { return }
+        let workspace = workspacePathProvider()
+        do {
+            let status = try await backend.get(
+                "/api/knowledge/status",
+                query: [URLQueryItem(name: "workspace", value: workspace)],
+                as: WorkspaceKnowledgeStatus.self
+            )
+            guard workspacePathProvider() == workspace else { return }
+            knowledgeStatus = status
+        } catch {
+            toastHandler("Could not refresh index status: \(error.localizedDescription)")
+        }
+    }
+
     func configureWorkspaceKnowledge(
         enabled: Bool,
         embeddingModel: String,
+        rerankModel: String = "",
+        adaptiveRagEnabled: Bool = true,
         exclusions: [String] = []
     ) {
         guard let backend else { return }
@@ -272,6 +297,8 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                         "workspace": self.workspacePathProvider(),
                         "enabled": enabled,
                         "embedding_model": embeddingModel,
+                        "rerank_model": rerankModel,
+                        "adaptive_rag_enabled": adaptiveRagEnabled,
                         "ollama_host": self.ollamaHostProvider(),
                         "exclusions": exclusions,
                     ],
@@ -389,6 +416,7 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                 // An omitted optional field means "leave unchanged" to the
                 // vault. Send explicit null when the editor removes expiry.
                 updateBody["valid_until"] = memory.validUntil ?? NSNull()
+                if let revision = memory.revision { updateBody["expected_revision"] = revision }
                 let response: WorkspaceMemoryResponse = try await backend.put(
                     "/api/memory/\(memory.id)",
                     body: updateBody,
@@ -452,6 +480,79 @@ final class WorkspaceKnowledgeModel: ObservableObject {
                 )
             } catch {
                 toastHandler("Could not review memory: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func consolidateMemory(agentID: String = "primary") {
+        guard let backend, !isMemoryMaintenanceRunning else { return }
+        let workspace = workspacePathProvider()
+        isMemoryMaintenanceRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isMemoryMaintenanceRunning = false }
+            do {
+                let response: MemoryConsolidationResponse = try await backend.post(
+                    "/api/memory/consolidate",
+                    body: ["workspace": workspace, "agent_id": agentID],
+                    as: MemoryConsolidationResponse.self
+                )
+                if workspacePathProvider() == workspace {
+                    await refreshWorkspaceKnowledge(agentID: agentID)
+                }
+                toastHandler(response.merged == 0
+                    ? "No duplicate memories found"
+                    : "Consolidated \(response.merged) duplicate memories")
+            } catch {
+                toastHandler("Could not consolidate memory: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func checkMemorySources(agentID: String = "primary") {
+        guard let backend, !isMemoryMaintenanceRunning else { return }
+        let workspace = workspacePathProvider()
+        isMemoryMaintenanceRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isMemoryMaintenanceRunning = false }
+            do {
+                let response: MemorySourceCheckResponse = try await backend.post(
+                    "/api/memory/check-sources",
+                    body: ["workspace": workspace, "agent_id": agentID],
+                    as: MemorySourceCheckResponse.self
+                )
+                if workspacePathProvider() == workspace {
+                    await refreshWorkspaceKnowledge(agentID: agentID)
+                }
+                toastHandler("Checked \(response.checked) memories; \(response.stale) need verification")
+            } catch {
+                toastHandler("Could not check memory sources: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func refreshMemorySources(_ memory: WorkspaceMemory, agentID: String = "primary") {
+        guard let backend, !isMemoryMaintenanceRunning else { return }
+        let workspace = workspacePathProvider()
+        isMemoryMaintenanceRunning = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isMemoryMaintenanceRunning = false }
+            do {
+                var body: [String: Any] = ["workspace": workspace, "agent_id": agentID]
+                if let revision = memory.revision { body["expected_revision"] = revision }
+                let _: WorkspaceMemoryResponse = try await backend.post(
+                    "/api/memory/\(memory.id)/refresh-sources",
+                    body: body,
+                    as: WorkspaceMemoryResponse.self
+                )
+                if workspacePathProvider() == workspace {
+                    await refreshWorkspaceKnowledge(agentID: agentID)
+                }
+                toastHandler("Memory source verification updated")
+            } catch {
+                toastHandler("Could not refresh memory sources: \(error.localizedDescription)")
             }
         }
     }
