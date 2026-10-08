@@ -61,27 +61,29 @@ extension AppModel {
             showToast(errors[0])
             return nil
         }
-        let routeErrors = AgentTeamValidation.routeErrors(
-            team: team,
-            profiles: agentProfiles,
-            accounts: providerAccounts,
-            accountModels: accountModels
-        )
-        guard routeErrors.isEmpty else {
-            showToast(routeErrors[0])
-            return nil
-        }
         let members = team.memberIDs.compactMap { id in agentProfiles.first(where: { $0.id == id }) }
+        var choicesByID: [UUID: [AgentProfile]] = [:]
         for profile in members {
-            guard let accountID = profile.route.accountID else { continue }
-            guard teamRoutingConsentAccountIDs.contains(accountID) else {
-                let label = providerAccounts.first(where: { $0.id == accountID })?.displayName
-                    ?? "hosted account"
-                showToast("Allow automatic team routing for \(label) in Agents & Teams")
+            let ready = readyAgentModelProfiles(profile).filter { candidate in
+                let consented = candidate.route.accountID.map { teamRoutingConsentAccountIDs.contains($0) } ?? true
+                if team.resolvedSwarmPolicy.engine == .openAIResponses, profile.id == team.dispatcherID {
+                    let account = candidate.route.accountID.flatMap { id in providerAccounts.first { $0.id == id } }
+                    return consented && account?.kind == .codex
+                        && (candidate.model.lowercased() == "gpt-5.6" || candidate.model.lowercased().hasPrefix("gpt-5.6-"))
+                }
+                return consented
+            }
+            guard !ready.isEmpty else {
+                showToast("No assigned model is ready for \(profile.name). Check its accounts and automatic team-routing permissions.")
                 return nil
             }
+            choicesByID[profile.id] = ready
         }
-        let routes: [[String: Any]] = members.compactMap { profile in
+        let selectedMembers = members.compactMap { choicesByID[$0.id]?.first }
+        let routeErrors = AgentTeamValidation.routeErrors(
+            team: team, profiles: selectedMembers, accounts: providerAccounts, accountModels: accountModels)
+        guard routeErrors.isEmpty else { showToast(routeErrors[0]); return nil }
+        let routes: [[String: Any]] = selectedMembers.compactMap { profile in
             var route: [String: Any]
             switch profile.route {
             case .localOllama:
@@ -132,6 +134,9 @@ extension AppModel {
                     : profile.metering.rawValue,
                 "route": route,
             ]
+            if profile.resolvedModelChoices.count > 1 {
+                entry["agent_model_choices"] = agentModelChoiceReferences(choicesByID[profile.id] ?? [])
+            }
             if let behavior = encodedJSONObject(profile.resolvedBehavior) {
                 entry["behavior"] = behavior
             }
@@ -659,10 +664,12 @@ extension AppModel {
             errors.append("Concurrent calls cannot exceed the model-call budget.")
         }
         for id in team.memberIDs {
-            if let accountID = profiles[id]?.route.accountID,
-               !teamRoutingConsentAccountIDs.contains(accountID)
-            {
-                errors.append("Hosted automatic-routing consent is missing.")
+            guard let profile = profiles[id] else { continue }
+            let eligible = readyAgentModelProfiles(profile).contains { candidate in
+                candidate.route.accountID.map { teamRoutingConsentAccountIDs.contains($0) } ?? true
+            }
+            if !eligible {
+                errors.append("An assigned model is unavailable or hosted automatic-routing consent is missing.")
                 break
             }
         }

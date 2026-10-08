@@ -178,12 +178,19 @@ extension AppModel {
 
     func selectModel(_ model: String) {
         if let reason = modelSelectionLockReason { showToast(reason); return }
-        let chatAccount = currentAgentChatProfile?.route.accountID.flatMap { id in providerAccounts.first { $0.id == id } }
-        if currentAgentChatProfile?.route.accountID != nil, chatAccount == nil {
+        if let route = currentChatModelRoute, route.provider != "ollama", route.accountID == nil {
             showToast("This chat’s selected account is unavailable. Choose another account in the model picker.")
             return
         }
-        if selectAgentChatModel(account: currentAgentChatProfile == nil ? activeAccount : chatAccount, model: model) { return }
+        let chatAccount = (currentChatModelRoute?.accountID ?? currentAgentChatProfile?.route.accountID).flatMap { id in providerAccounts.first { $0.id == id } }
+        if (currentChatModelRoute?.accountID ?? currentAgentChatProfile?.route.accountID) != nil, chatAccount == nil {
+            showToast("This chat’s selected account is unavailable. Choose another account in the model picker.")
+            return
+        }
+        let account: ProviderAccount?
+        if currentChatModelRoute != nil || currentAgentChatProfile != nil { account = chatAccount }
+        else { account = activeAccount }
+        if stageChatModelChange(account: account, model: model) { return }
         selectControlModel(model)
     }
 
@@ -212,7 +219,7 @@ extension AppModel {
     /// during a run is held and applied when the turn finishes.
     func selectModel(account: ProviderAccount?, model: String) {
         if let reason = modelSelectionLockReason { showToast(reason); return }
-        if selectAgentChatModel(account: account, model: model) { return }
+        if stageChatModelChange(account: account, model: model) { return }
         if account?.id != activeAccount?.id || model != selectedModel { pauseGoalForRouteChange() }
         rememberManualModelRoute(accountID: account?.id, model: model)
         let sameSource = account?.id.uuidString == settings.activeAccountID

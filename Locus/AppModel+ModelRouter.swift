@@ -131,7 +131,7 @@ extension AppModel {
         }
     }
 
-    private func requestModelRoutingDecision(
+    func requestModelRoutingDecision(
         candidates: [AutomaticModelRouteCandidate],
         tags: [String]
     ) async throws -> ModelRoutingDecision {
@@ -202,7 +202,7 @@ extension AppModel {
         return routes
     }
 
-    private static func modelRouteID(accountID: UUID?, model: String) -> String {
+    static func modelRouteID(accountID: UUID?, model: String) -> String {
         let source = accountID?.uuidString.lowercased() ?? "ollama"
         return "model-route:\(source):\(model.lowercased())"
     }

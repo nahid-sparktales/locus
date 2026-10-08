@@ -54,6 +54,14 @@ extension AppModel {
             "solo_swarm": true,
         ]
         if let account = activeAccount { execution["provider_account_id"] = account.id.uuidString }
+        if savedAgentProfileID(for: currentSessionID) == nil, selectedAgentTeam == nil {
+            do {
+                let route = try ordinaryChatRouteSnapshot()
+                execution["provider"] = route.provider
+                execution["model"] = route.model
+                execution["provider_account_id"] = route.accountID?.uuidString
+            } catch { showToast(error.localizedDescription); return }
+        }
         if let behavior = encodedJSONObject(primaryAgentBehavior) { execution["agent_config"] = behavior }
         if let profileID = savedAgentProfileID(for: currentSessionID) {
             do {

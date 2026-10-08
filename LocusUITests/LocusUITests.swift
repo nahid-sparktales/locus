@@ -2630,6 +2630,144 @@ final class LocusUITests: XCTestCase {
         anyElement("agent.cancel").click()
     }
 
+    func testStartedChatModelChangeRequiresConfirmationAndCancelPreservesItsRoute() {
+        app.terminate()
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_PROVIDER_CHOICES"] = "1"
+        app.launch()
+        let picker = anyElement("workspace.modelPicker")
+        XCTAssertTrue(picker.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertTrue(picker.label.contains("qwen3:8b"))
+        let originalLabel = picker.label
+        let originalReply = anyElement("message.00000000-0000-0000-0000-000000000102")
+        XCTAssertTrue(originalReply.exists)
+
+        func chooseChatGPT() {
+            picker.click()
+            let choice = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Use gpt-5.6-sol from ")).firstMatch
+            XCTAssertTrue(choice.waitForExistence(timeout: 3))
+            choice.click()
+        }
+
+        chooseChatGPT()
+        let confirm = anyElement("chat.modelChange.confirm")
+        let cancel = anyElement("chat.modelChange.cancel")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        XCTAssertTrue(cancel.exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "started-chat-model-change-warning"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        cancel.click()
+        XCTAssertTrue(waitForDisappearance(confirm))
+        XCTAssertEqual(picker.label, originalLabel, "Cancel must preserve this chat's selected route")
+        XCTAssertTrue(originalReply.exists)
+
+        chooseChatGPT()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.click()
+        XCTAssertTrue(waitForDisappearance(confirm))
+        XCTAssertTrue(waitUntil { picker.label.contains("gpt-5.6-sol") })
+        XCTAssertTrue(originalReply.exists, "A model switch keeps the conversation intact")
+
+        chooseChatGPT()
+        XCTAssertTrue(waitForDisappearance(anyElement("workspace.modelPicker.popover")))
+        XCTAssertFalse(confirm.exists, "Selecting the already selected route requires no new warning")
+        XCTAssertTrue(picker.label.contains("gpt-5.6-sol"))
+    }
+
+    func testUnusedAgentChatCanChooseItsModelWithoutAChangeWarning() {
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_PROVIDER_CHOICES"] = "1"
+        relaunchWithAgentFixture("saved-profile")
+        let picker = anyElement("workspace.modelPicker")
+        XCTAssertTrue(picker.waitForExistence(timeout: Self.launchContentTimeout))
+        XCTAssertTrue(picker.label.contains("fixture-model"))
+
+        for modelName in ["gpt-5.6-sol", "gpt-5.6-terra"] {
+            picker.click()
+            let choice = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Use \(modelName) from ")).firstMatch
+            XCTAssertTrue(choice.waitForExistence(timeout: 3))
+            choice.click()
+            XCTAssertTrue(waitForDisappearance(anyElement("workspace.modelPicker.popover")))
+            XCTAssertFalse(anyElement("chat.modelChange.confirm").exists,
+                "A chat with no task yet can select a model immediately")
+            XCTAssertTrue(waitUntil { picker.label.contains(modelName) })
+        }
+    }
+
+    func testAgentAssignedModelsSurviveSaveAndReopenAcrossProviders() {
+        app.launchEnvironment["LOCUS_UI_TESTING_AGENT_PROVIDER_CHOICES"] = "1"
+        relaunchWithAgentFixture("saved-profile")
+        revealSidebarForNavigation()
+        anyElement("sidebar.configureAgent").click()
+        let edit = anyElement("configureAgent.editProfile")
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.click()
+        XCTAssertTrue(anyElement("agent.editor").waitForExistence(timeout: 5))
+
+        let scroll = anyElement("agent.scroll")
+        let provider = anyElement("agent.providerRoute")
+        if !provider.exists {
+            let environment = anyElement("agent.environment")
+            revealSettingsControl(environment, in: scroll)
+            environment.click()
+        }
+        revealSettingsControl(provider, in: scroll)
+        provider.click()
+        app.menuItems["ChatGPT plan — ChatGPT fixture"].click()
+        XCTAssertTrue(waitUntil { "\(self.anyElement("agent.model.picker").value ?? "")".contains("gpt-5.6-sol") })
+
+        func addModel(providerTitle: String, model: String) {
+            let addModel = anyElement("agent.models.add")
+            revealSettingsControl(addModel, in: scroll)
+            addModel.click()
+            let assignedProvider = anyElement("agent.models.provider")
+            XCTAssertTrue(assignedProvider.waitForExistence(timeout: 3))
+            assignedProvider.click()
+            app.menuItems[providerTitle].click()
+            let assignedPicker = anyElement("agent.models.picker")
+            XCTAssertTrue(assignedPicker.waitForExistence(timeout: 3))
+            assignedPicker.click()
+            app.menuItems[model].click()
+            let confirm = anyElement("agent.models.confirm")
+            XCTAssertTrue(confirm.isEnabled)
+            confirm.click()
+            XCTAssertTrue(waitForDisappearance(confirm))
+        }
+
+        addModel(providerTitle: "Claude plan — Claude fixture", model: "sonnet")
+        addModel(providerTitle: "ChatGPT plan — ChatGPT fixture", model: "gpt-5.6-terra")
+        let removeButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agent.models.remove."))
+        XCTAssertEqual(removeButtons.count, 2)
+        let removeSecond = removeButtons.element(boundBy: 1)
+        revealSettingsControl(removeSecond, in: scroll)
+        removeSecond.click()
+        XCTAssertEqual(removeButtons.count, 1)
+        XCTAssertTrue(app.staticTexts["sonnet"].exists)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "agent-assigned-models-across-providers"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        anyElement("agent.save").click()
+        XCTAssertTrue(waitForDisappearance(anyElement("agent.editor")))
+        if !edit.exists { anyElement("sidebar.configureAgent").click() }
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.click()
+        XCTAssertTrue(anyElement("agent.editor").waitForExistence(timeout: 5))
+        if !provider.exists {
+            let environment = anyElement("agent.environment")
+            revealSettingsControl(environment, in: scroll)
+            environment.click()
+        }
+        revealSettingsControl(anyElement("agent.models.add"), in: scroll)
+        XCTAssertEqual(removeButtons.count, 1, "Only the remaining assigned alternative is saved")
+        XCTAssertTrue(app.staticTexts["sonnet"].exists)
+        XCTAssertFalse(app.staticTexts["gpt-5.6-terra"].exists)
+        XCTAssertTrue("\(anyElement("agent.model.picker").value ?? "")".contains("gpt-5.6-sol"),
+            "Assigning and removing alternatives leaves the primary model intact")
+        anyElement("agent.cancel").click()
+    }
+
     func testAgentDestinationKeepsNewChatAndShowsTheAgentOverview() {
         relaunchWithAgentFixture()
         revealSidebarForNavigation()

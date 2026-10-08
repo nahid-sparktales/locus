@@ -489,13 +489,22 @@ def _run_profile_turn(
     approved_plan: dict[str, Any] | None = None,
     capsule_context: dict[str, Any] | None = None,
     companion_context: bool = False,
+    model_choices: list[dict[str, str]] | None = None,
 ) -> None:
+    from .agent_model_routes import rank_task_choices, trusted_task_choices
     from .agent_profile_runtime import solo_profile_boundary
 
     with solo_profile_boundary(svc.core, profile) as configuration:
         previous = svc.core.companion_context
         previous_registry = svc.core.tool_registry.companion_context
+        previous_choices = getattr(svc.core, "_assigned_model_choices", None)
         try:
+            svc.core._assigned_model_choices = (trusted_task_choices(profile.id, model_choices, reserved_run_id)
+                                                if model_choices is not None else None)
+            if model_choices is not None and not svc.core._assigned_model_choices:
+                raise ValueError("Reconnect one of this agent's assigned model accounts.")
+            if capsule_context is not None and svc.core._assigned_model_choices:
+                svc.core._assigned_model_choices = rank_task_choices(svc.core._assigned_model_choices, text, svc.run_store)
             svc.core.companion_context = bool(companion_context and just_chat)
             svc.core.tool_registry.companion_context = svc.core.companion_context
             _run_user_turn(
@@ -507,6 +516,7 @@ def _run_profile_turn(
         finally:
             svc.core.companion_context = previous
             svc.core.tool_registry.companion_context = previous_registry
+            svc.core._assigned_model_choices = previous_choices
 
 
 def _expire_profile_turn(svc: ChatService) -> None:
@@ -577,6 +587,9 @@ def _run_user_turn(
         **({"companion_context": True} if companion_context else {}),
         **({"identity_mode": True} if private_identity else {}),
     }
+    if not private_identity:
+        from .agent_chat_routes import remember_chat_route
+        remember_chat_route(svc.core, automatic=bool(getattr(svc.core, "_assigned_model_choices", None)))
     approved_plan = approved_plan or existing_manifest.get("_approved_task_plan")
     if approved_plan is not None:
         run_manifest["_approved_task_plan"] = approved_plan
@@ -796,7 +809,10 @@ def _run_user_turn(
             profile_timer.start()
         try:
             _revalidate_memory_context(svc.core)
-            svc.core.run_turn(
+            from .agent_model_routes import run_with_model_fallback
+            run_with_model_fallback(
+                svc,
+                getattr(svc.core, "_assigned_model_choices", None) or [],
                 text,
                 svc.decide,
                 allow_tools=not just_chat or workflow_result_only or companion_context,
@@ -2168,9 +2184,25 @@ def _run_team_writer(
                     agent_id=writer.id,
                 )
             _revalidate_memory_context(core)
-            core.run_turn(
+            from dataclasses import replace
+
+            from .agent_model_routes import (
+                rank_task_choices,
+                run_with_model_fallback,
+                trusted_task_choices,
+            )
+            choices = (trusted_task_choices(writer.id, list(writer.task_model_choices))
+                       if getattr(writer, "task_model_choices", ()) else [])
+            if getattr(writer, "task_model_choices", ()) and not choices:
+                raise OrchestrationError("Reconnect one of this agent's assigned model accounts.")
+            choices = rank_task_choices(choices, goal, svc.run_store) if choices else []
+            run_with_model_fallback(
+                svc, choices,
                 prompt,
                 svc.decide,
+                core_override=core,
+                apply_route=lambda provider: _install_writer_route(core, replace(writer, model=provider["model"], route=provider)),
+                update_session_route=False,
                 allow_tools=True,
                 attachments=attachments,
                 persisted_user_text=persisted_user_text,
@@ -2268,7 +2300,30 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         raise ValueError("Private Identity tasks cannot change routes through delegation.")
     # Resolve the selected identity before mutating the running core. A missing
     # or invalid ChatGPT home must leave the previous route intact.
-    writer_client = client_for_profile(writer)
+    try:
+        writer_client = client_for_profile(writer)
+    except Exception as error:
+        from dataclasses import replace
+
+        from .agent_model_routes import initial_provider_failure, trusted_task_choices
+        if not getattr(writer, "task_model_choices", ()) or not initial_provider_failure(
+            error, managed=writer.route.get("provider") in {"chatgpt", "claude_plan"}
+        ):
+            raise
+        # Client construction happens before any core mutation or tool work.
+        # The task-level wrapper will rank this same authorized pool afterward.
+        for choice in trusted_task_choices(writer.id, list(writer.task_model_choices)):
+            candidate = replace(writer, model=choice["model"], route=choice)
+            try:
+                writer_client = client_for_profile(candidate)
+            except Exception as candidate_error:
+                if not initial_provider_failure(candidate_error, managed=choice["provider"] in {"chatgpt", "claude_plan"}):
+                    raise
+                continue
+            writer = candidate
+            break
+        else:
+            raise error
     snapshot = {
         "client": core.client,
         "provider": core.provider,
@@ -2323,6 +2378,7 @@ def _install_writer_route(core: AgentCore, writer: AgentProfile) -> dict[str, An
         core.client = client
         core.host = client.host
         core.provider = "ollama" if writer.route.get("provider") == "ollama" else "remote"
+        core.config["remote_account_id"] = str(writer.route.get("account_id") or "") if core.provider == "remote" else ""
         core.config["remote_account_label"] = str(
             writer.route.get("account_label") or writer.name
         ) if core.provider == "remote" else ""
@@ -2628,10 +2684,45 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             _command_error(svc, str(mtype), "Companion context requires an Ask conversation owned by its saved agent profile.")
             return
         if agent_profile is not None:
+            from .agent_chat_routes import (
+                validate_agent_chat_route,
+                validate_chat_route,
+                validate_model_choices,
+            )
+            from .agent_model_routes import provider_route, trusted_task_choices
+            try:
+                if "chat_route" in msg:
+                    raise ValueError("Saved-agent chats require their owned model selection.")
+                selected_route = (validate_agent_chat_route(msg["agent_chat_route"], saved_session_metadata)
+                                  if "agent_chat_route" in msg else None)
+                model_choices = (validate_model_choices(msg["agent_model_choices"])
+                                 if "agent_model_choices" in msg else None)
+                if model_choices is not None:
+                    if selected_route is not None and validate_chat_route({
+                        key: value for key, value in selected_route.items() if key != "profile_id"
+                    }) != model_choices[0]:
+                        raise ValueError("The selected agent model must lead its frozen task choices.")
+                    configured = trusted_task_choices(agent_profile.id, model_choices, str(msg.get("run_id") or ""))
+                    if not configured:
+                        raise ValueError("Reconnect one of this agent's assigned model accounts.")
+                    selected = provider_route(configured[0])
+                elif selected_route is not None:
+                    selected = validate_chat_route({key: value for key, value in selected_route.items()
+                                                    if key != "profile_id"})
+                else:
+                    selected = None
+                if selected is not None and selected != validate_chat_route({
+                    "provider": core.provider, "model": core.model,
+                    "provider_account_id": core.account_id or None,
+                }):
+                    raise ValueError("Reconnect this chat's selected model before sending the task.")
+            except (ValueError, TypeError) as exc:
+                _command_error(svc, str(mtype), str(exc))
+                return
             call = _run_profile_turn
             args = (svc, text, just_chat, attachments, agent_profile, mode or "work",
                     str(msg.get("run_id") or uuid.uuid4().hex), workflow_outputs,
-                    approved_plan, capsule_context, companion_context)
+                    approved_plan, capsule_context, companion_context, msg.get("agent_model_choices"))
         elif capsule_context is not None:
             call = _run_user_turn
             args = (svc, text, False, attachments, agent_config, mode or "plan",
@@ -2646,6 +2737,18 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             if workflow_outputs is not None:
                 args = (*args, workflow_outputs)
         else:
+            from .agent_chat_routes import validate_chat_route
+            try:
+                if "agent_model_choices" in msg or "agent_chat_route" in msg:
+                    raise ValueError("Assigned models require a saved agent profile.")
+                if "chat_route" in msg and validate_chat_route(msg["chat_route"]) != validate_chat_route({
+                    "provider": core.provider, "model": core.model,
+                    "provider_account_id": core.account_id or None,
+                }):
+                    raise ValueError("Reconnect this chat's selected model before sending the task.")
+            except ValueError as exc:
+                _command_error(svc, str(mtype), str(exc))
+                return
             reserved_run_id = str(msg.get("run_id") or "")
             adaptive_solo = not core.identity_mode and not just_chat and not text.startswith("/")
             args = (svc, text, just_chat, attachments, agent_config, mode or "work")

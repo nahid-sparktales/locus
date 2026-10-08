@@ -125,4 +125,89 @@ final class AgentProfileModelOptionsTests: XCTestCase {
         )
         XCTAssertEqual(options.choices, ["gpt-5.6-sol", "gpt-5.6-terra"])
     }
+
+    func testLegacyProfileWithoutAdditionalModelsKeepsItsOriginalRoute() throws {
+        let accountID = UUID()
+        let profile = AgentProfile(name: "Reviewer", route: .providerAccount(accountID), model: "gpt-5.6-sol")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any])
+        legacy.removeValue(forKey: "additionalModels")
+
+        let decoded = try JSONDecoder().decode(AgentProfile.self, from: JSONSerialization.data(withJSONObject: legacy))
+
+        XCTAssertNil(decoded.additionalModels)
+        XCTAssertEqual(decoded.resolvedModelChoices, [AgentModelChoice(route: .providerAccount(accountID), model: "gpt-5.6-sol")])
+        XCTAssertEqual(decoded.id, profile.id)
+        XCTAssertEqual(decoded.instructions, profile.instructions)
+    }
+
+    func testAssignedModelsRoundTripWithoutLosingAccountOrPreferenceOrder() throws {
+        let firstAccount = UUID()
+        let secondAccount = UUID()
+        var profile = AgentProfile(name: "Reviewer", route: .providerAccount(firstAccount), model: "gpt-5.6-sol")
+        profile.additionalModels = [
+            AgentModelChoice(route: .providerAccount(secondAccount), model: "opus[1m]"),
+            AgentModelChoice(route: .localOllama, model: "qwen3:8b"),
+        ]
+        profile.clamp()
+
+        let decoded = try JSONDecoder().decode(AgentProfile.self, from: JSONEncoder().encode(profile))
+
+        XCTAssertEqual(decoded, profile)
+        XCTAssertEqual(decoded.resolvedModelChoices, [
+            AgentModelChoice(route: .providerAccount(firstAccount), model: "gpt-5.6-sol"),
+            AgentModelChoice(route: .providerAccount(secondAccount), model: "opus[1m]"),
+            AgentModelChoice(route: .localOllama, model: "qwen3:8b"),
+        ])
+    }
+
+    func testSameModelAssignedThroughDifferentAccountsRemainsDistinct() {
+        let first = AgentModelChoice(route: .providerAccount(UUID()), model: "shared-model")
+        let second = AgentModelChoice(route: .providerAccount(UUID()), model: "shared-model")
+        let local = AgentModelChoice(route: .localOllama, model: "shared-model")
+        var profile = AgentProfile(name: "Reviewer", route: first.route, model: first.model)
+        profile.additionalModels = [second, local]
+        profile.clamp()
+
+        XCTAssertEqual(profile.resolvedModelChoices, [first, second, local])
+        XCTAssertEqual(Set(profile.resolvedModelChoices).count, 3)
+        XCTAssertEqual(Set(profile.resolvedModelChoices.map(\.id)).count, 3)
+    }
+
+    func testAssignedModelsTrimDropEmptyAndRemovePrimaryAndRepeatedChoices() {
+        let accountID = UUID()
+        var profile = AgentProfile(name: "Reviewer", route: .providerAccount(accountID), model: "primary-model")
+        profile.additionalModels = [
+            AgentModelChoice(route: .localOllama, model: " \n "),
+            AgentModelChoice(route: .providerAccount(accountID), model: " primary-model "),
+            AgentModelChoice(route: .localOllama, model: " qwen3:8b \n"),
+            AgentModelChoice(route: .localOllama, model: "qwen3:8b"),
+        ]
+        profile.clamp()
+
+        XCTAssertEqual(profile.additionalModels, [AgentModelChoice(route: .localOllama, model: "qwen3:8b")])
+        XCTAssertEqual(profile.resolvedModelChoices.count, 2)
+    }
+
+    func testAssignedModelsLimitPreservesPrimaryAndFirstSevenAlternatives() {
+        var profile = AgentProfile(name: "Reviewer", model: "primary-model")
+        profile.additionalModels = (1...12).map { AgentModelChoice(route: .localOllama, model: "alternative-\($0)") }
+        profile.clamp()
+
+        XCTAssertEqual(profile.resolvedModelChoices.map(\.model), ["primary-model"] + (1...7).map { "alternative-\($0)" })
+        XCTAssertEqual(profile.additionalModels?.count, 7)
+    }
+
+    func testChangingPrimaryProviderKeepsOtherAssignedModels() {
+        let account = ProviderAccount(kind: .chatGPT, preferredModel: "gpt-5.6-sol")
+        let extra = AgentModelChoice(route: .providerAccount(UUID()), model: "opus[1m]")
+        var profile = AgentProfile(name: "Reviewer", model: "qwen3:8b")
+        profile.additionalModels = [extra]
+        let options = AgentProfileModelOptions(account: account, reportedModels: ["gpt-5.6-sol"], hasAuthoritativeCatalog: true)
+
+        let selected = options.selecting(.providerAccount(account.id), in: profile)
+
+        XCTAssertEqual(selected.route, .providerAccount(account.id))
+        XCTAssertEqual(selected.model, "gpt-5.6-sol")
+        XCTAssertEqual(selected.additionalModels, [extra])
+    }
 }

@@ -70,6 +70,7 @@ extension AppModel {
                 browser.beginSession(info.sessionID)
                 syncBrowserProfile()
                 sessionInfo = info
+                rememberChatModelRoute(info)
                 knowledge.watchWorkspaceKnowledge(info.workspaceRoot ?? info.cwd)
                 activeTaskRecord = info.task
                 // Only when a reply is not mid-flight. `approx_tokens` counts
@@ -1018,6 +1019,7 @@ extension AppModel {
         computerControl.beginSession(info.sessionID)
         browser.beginSession(info.sessionID)
         sessionInfo = info
+        rememberChatModelRoute(info)
         applyUnusedChatInitialMode(info)
         syncBrowserProfile()
         if previousSessionID != info.sessionID {

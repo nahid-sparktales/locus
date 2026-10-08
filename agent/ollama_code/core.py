@@ -2032,6 +2032,7 @@ class AgentCore:
                 "starting_ref": str(self.task_metadata.get("starting_ref") or "HEAD"),
             })
         saved = SessionMeta.get(self.session.session_id)
+        saved_route = saved if saved.get("route_established") is True else {}
         initial_mode = saved.get("mode")
         saved_environment = saved.get("environment")
         if (isinstance(saved_environment, dict)
@@ -2043,7 +2044,7 @@ class AgentCore:
             if self.task_metadata is None and saved_environment.get("isolation") == "agent_task_folder":
                 environment["isolation"] = "agent_task_folder"
         return {
-            "model": self.model,
+            "model": saved_route.get("model") or self.model,
             "host": self.host,
             "cwd": self.workspace_root,
             "workspace_root": self.workspace_root,
@@ -2077,8 +2078,11 @@ class AgentCore:
             "usable_tokens": self.budget_tokens(),
             "has_project_context": bool(self.project_context),
             "permissions": self.perms.state(),
-            "provider": self.provider,
+            "provider": saved_route.get("provider") or self.provider,
             "account_label": self.account_label,
+            "provider_account_id": saved_route.get("provider_account_id") if saved_route else self.account_id or None,
+            "model_route_selection": saved.get("model_route_selection"),
+            "route_established": saved.get("route_established") is True,
         }
 
     def _canonical_repository(self) -> str:
@@ -2182,6 +2186,8 @@ class AgentCore:
     ) -> None:
         """Run one local-agent turn."""
         self._memory_turn_id = uuid.uuid4().hex
+        self._initial_provider_error = None
+        self._model_fallback_progress = False
         adapter = getattr(self, "memory_adapter", None)
         if adapter is not None:
             adapter.revalidate_before_use(self)
@@ -2440,7 +2446,8 @@ class AgentCore:
 
         if manager is None:
             reason = "error"
-            self._emit({"type": "error", "message": "The selected subscription runtime is unavailable."})
+            self._initial_provider_error = CodexAppServerError("The selected subscription runtime is unavailable.")
+            self._emit({"type": "error", "message": str(self._initial_provider_error)})
         else:
             try:
                 # The account home's config.toml must agree with the thread
@@ -2719,6 +2726,9 @@ class AgentCore:
                     params = event.get("params")
                     if not isinstance(params, dict):
                         return
+                    if method in {"item/started", "item/completed"} \
+                            and (params.get("item") or {}).get("type") != "userMessage":
+                        self._model_fallback_progress = True
                     if method == "turn/completed":
                         completed = params.get("turn") or {}
                         if completed.get("status") == "interrupted":
@@ -3109,6 +3119,7 @@ class AgentCore:
                 if self._interrupt.is_set():
                     reason = "interrupted"
             except (CodexAppServerError, RuntimeError, ValueError) as error:
+                self._initial_provider_error = error
                 reason = "interrupted" if self._interrupt.is_set() else "error"
                 self._emit({"type": "error", "message": str(error)})
                 # A crashed or incompatible helper thread is never silently
@@ -4094,6 +4105,7 @@ class AgentCore:
         except OllamaError as e:
             # Keep whatever already streamed: the user has read it on screen,
             # so it must exist in the conversation and the session file too.
+            self._initial_provider_error = e
             partial = think_filter.flush_all() if use_inline_thinking else "".join(visible_text)
             thought_tail = think_filter.take_thinking()
             if thought_tail:

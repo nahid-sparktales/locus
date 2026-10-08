@@ -409,6 +409,7 @@ extension AppModel {
                 refreshAnchoredRunsIfNeeded()
                 applyPendingSearchHitIfNeeded()
                 sessionInfo = response.sessionInfo
+                rememberChatModelRoute(response.sessionInfo)
                 applyUnusedChatInitialMode(response.sessionInfo)
                 activeTaskRecord = response.sessionInfo.task
                 sendComputerControlCapability()
@@ -518,6 +519,7 @@ extension AppModel {
         sendSimulatorControlCapability(to: runtime.service, sessionID: runtime.sessionID)
         queuedMessages = runtime.queuedMessages
         sessionInfo = runtime.sessionInfo
+        if let info = runtime.sessionInfo { rememberChatModelRoute(info) }
         if let info = runtime.sessionInfo { computerControl.beginSession(info.sessionID) }
         if let info = runtime.sessionInfo { browser.beginSession(info.sessionID) }
         syncBrowserProfile()

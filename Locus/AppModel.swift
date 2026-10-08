@@ -87,6 +87,7 @@ final class AppModel: ObservableObject {
     @Published var taskConversationStates: [String: TaskConversationState] = [:]  // internal(for: AppModel+UITestFixtures)
     let teamRunLive = TeamRunLiveModel()
     @Published var activeTaskRecord: TaskRecord?  // internal(for: AppModel+UITestFixtures)
+    @Published var pendingChatModelChange: PendingChatModelChange?
     var pendingProviderSwitch: (accountID: UUID?, model: String)?  // internal(for: AppModel extension files)
     let landingFlow = LandingFlowModel()
     let runs = OrchestrationRunsModel()
@@ -1551,7 +1552,7 @@ final class AppModel: ObservableObject {
     }
 
     var selectedModel: String {
-        sessionInfo?.model ?? models.first?.name ?? "No model"
+        currentChatModelRoute?.model ?? sessionInfo?.model ?? models.first?.name ?? "No model"
     }
 
     /// The provider account the agent is pointed at, or nil for local Ollama.
@@ -1583,6 +1584,7 @@ final class AppModel: ObservableObject {
         if let profile = currentAgentChatProfile {
             return account?.id == profile.route.accountID && model == profile.model
         }
+        if let route = currentChatModelRoute { return route.accountID == account?.id && route.model == model }
         return account?.id.uuidString == settings.activeAccountID && model == selectedModel
     }
 
@@ -1611,6 +1613,7 @@ final class AppModel: ObservableObject {
         }
         if selectedMode == .duo { return .duo }
         if let team = selectedAgentTeam { return .team(team) }
+        if let route = currentChatModelRoute { return .task(model: route.model, accountID: route.accountID, provider: route.provider) }
         if let profile = currentAgentChatProfile { return .agentChat(profile) }
         return .appWide
     }

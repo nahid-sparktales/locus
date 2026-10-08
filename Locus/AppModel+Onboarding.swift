@@ -43,9 +43,8 @@ extension AppModel {
         onboarding.configureCompanion(
             commit: { [weak self] draft in
                 guard let self else { throw CocoaError(.userCancelled) }
-                let route = settings.activeAccountID.flatMap(UUID.init(uuidString:))
-                    .map(AgentRoute.providerAccount) ?? .localOllama
-                return try agentTeamsModel.commitCompanion(draft, route: route, model: selectedModel)
+                let selected = newSavedAgentDraft()
+                return try agentTeamsModel.commitCompanion(draft, route: selected.route, model: selected.model)
             },
             primaryProfileID: { [weak self] in self?.agentTeamsModel.primaryCompanionID }
         )

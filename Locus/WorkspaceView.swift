@@ -2994,7 +2994,7 @@ private struct ModelPickerPopover: View {
                     Text("Changes apply to your next message in this chat with \(profile.name).")
                         .font(.locus(size: 10))
                         .foregroundStyle(viewColors.muted)
-                    if model.settings.agentChatModelSelections[model.currentSessionID] != nil {
+                    if model.hasManualChatModelSelection(sessionID: model.currentSessionID) {
                         Button("Use agent default") {
                             model.resetAgentChatModel()
                             dismiss()
@@ -3119,8 +3119,7 @@ private struct ModelPickerPopover: View {
             }
             ForEach(section.models, id: \.self) { name in
                 Button {
-                    if agentTeams.teamModeEnabled { agentTeams.selectAgentTeam(nil) }
-                    model.selectModel(account: section.account, model: name)
+                    model.requestModelChange(account: section.account, model: name)
                     dismiss()
                 } label: {
                     HStack(alignment: .top, spacing: 7) {

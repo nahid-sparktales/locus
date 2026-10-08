@@ -14,7 +14,8 @@ extension AppModel {
         savedAgentConversationCreationCounts[profileID, default: 0] += 1
         defer { savedAgentConversationCreationCounts[profileID, default: 0] -= 1 }
         let workspace = BoardStore.canonicalWorkspace(source.workspace)
-        let route = try agentProfileProvider(profile)
+        let readyProfile = try firstReadyAgentModelProfile(profile)
+        let route = try agentProfileProvider(readyProfile)
         try prepareSavedAgentWorkspace(profile, workspace: workspace)
         var scheduledDraft: ScheduleEditorDraft?
         if let date {
@@ -22,7 +23,7 @@ extension AppModel {
             var draft = ScheduleEditorDraft()
             draft.name = source.title; draft.prompt = prompt; draft.workspaceRoot = workspace
             draft.agentProfileID = profileID.uuidString; draft.mode = profile.defaultMode == .ask ? .ask : .work
-            draft.provider = route.provider; draft.providerAccountID = route.accountID; draft.model = profile.model
+            draft.provider = route.provider; draft.providerAccountID = route.accountID; draft.model = readyProfile.model
             draft.oneTimeDate = date; draft.workflow = .singleAgent(instruction: prompt, mode: draft.mode)
             if let issue = scheduleConfigurationIssue(for: draft) { throw SavedAgentConversationError.unavailable(issue) }
             scheduledDraft = draft
@@ -76,7 +77,9 @@ extension AppModel {
             throw SavedAgentConversationError.unavailable("Wait for this agent’s current work to finish before requesting changes.")
         }
         let mode: WorkMode = agentProfiles.first { $0.id == profileID }?.defaultMode == .ask ? .ask : .work
-        _ = try savedAgentProfileDispatch(profileID: profileID, mode: mode, sessionID: sessionID)
+        if let profile = agentProfiles.first(where: { $0.id == profileID }) {
+            _ = try firstReadyAgentModelProfile(agentChatProfile(profile, sessionID: sessionID))
+        }
         let runID = UUID().uuidString
         let ledger = AgentWorkLedger.shared
         var linked = ledger.records.last { $0.runID == run.id }

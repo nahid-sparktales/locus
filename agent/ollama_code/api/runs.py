@@ -14,7 +14,11 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from ..agent_chat_routes import validate_agent_chat_route
+from ..agent_chat_routes import (
+    validate_agent_chat_route,
+    validate_chat_route,
+    validate_model_choices,
+)
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError
@@ -160,6 +164,17 @@ def run_queue(
     if not session_id:
         raise HTTPException(422, "session_id is required")
     manifest = {"solo_swarm": body.get("solo_swarm") is True}
+    if "chat_route" in body:
+        try:
+            if "agent_chat_route" in body or SessionMeta.get(session_id).get("agent_profile_id"):
+                raise ValueError("Saved-agent chats require their owned model selection.")
+            manifest["chat_route"] = validate_chat_route(body["chat_route"])
+            mode = body.get("mode", "work")
+            if mode not in ("ask", "work", "plan", "grill"):
+                raise ValueError("The chat mode is invalid.")
+            manifest["mode"] = mode
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     if "agent_chat_route" in body:
         try:
             manifest["agent_chat_route"] = validate_agent_chat_route(
@@ -171,6 +186,16 @@ def run_queue(
             manifest["mode"] = mode
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+    if "agent_model_choices" in body:
+        try:
+            if "agent_chat_route" not in manifest:
+                raise ValueError("Assigned models require a saved-agent model selection.")
+            manifest["agent_model_choices"] = validate_model_choices(body["agent_model_choices"])
+            chosen = {key: value for key, value in manifest["agent_chat_route"].items() if key != "profile_id"}
+            if validate_chat_route(chosen) != manifest["agent_model_choices"][0]:
+                raise ValueError("The selected agent model must lead its frozen task choices.")
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     if "companion_context" in body:
         if not isinstance(body["companion_context"], bool) or body["companion_context"] and (
             "agent_chat_route" not in manifest or manifest.get("mode") != "ask"
@@ -179,6 +204,12 @@ def run_queue(
         if body["companion_context"]:
             manifest["companion_context"] = True
     run_id = str(body.get("run_id") or uuid.uuid4().hex)
+    if "agent_model_choices" in manifest:
+        from ..agent_model_routes import freeze_task_choices
+        try:
+            freeze_task_choices(manifest["agent_chat_route"]["profile_id"], manifest["agent_model_choices"], run_id)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     goal_id = str(body.get("goal_id") or "")
     if goal_id:
         _require_capability("persistent_goals_v1")
