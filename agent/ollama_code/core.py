@@ -2373,6 +2373,7 @@ class AgentCore:
             policy, ceiling, role = self.tool_registry.mcp_agent_policy_snapshot()
             apps_allowed = (getattr(self, "helper_allowed_tools", None) is None
                             and not getattr(self, "identity_mode", False)
+                            and not self.companion_context
                             and self.tool_registry._user_allows("search_extension_tools")
                             and self.tool_registry._user_allows("web_fetch")
                             and self.agent_mode not in {"plan", "grill"} and ceiling != "read_only" and role not in {"dispatcher", "reviewer"}
@@ -2880,7 +2881,8 @@ class AgentCore:
                         return "Error: Locus stopped this turn at its configured tool-step budget."
                     native_tool_requests += 1
                     if name == "__chatgpt_app_approval":
-                        if not thread_options or not thread_options.app_ids or self.agent_mode in {"plan", "grill"}:
+                        if (self.companion_context or not thread_options or not thread_options.app_ids
+                                or self.agent_mode in {"plan", "grill"}):
                             return "deny"
                         request_id = uuid.uuid4().hex[:12]
                         detail = json.dumps(arguments, ensure_ascii=False)[:32000]

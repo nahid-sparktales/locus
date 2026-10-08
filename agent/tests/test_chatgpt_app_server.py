@@ -1163,7 +1163,7 @@ def test_hosted_app_request_uses_only_native_one_time_approval(monkeypatch):
     assert responses == [{'answers': {'mcp_tool_call_approval_c1': {'answers': ['Allow']}}}]
 
 
-@pytest.mark.parametrize('restriction', ['none', 'plan', 'grill', 'read_only', 'mcp_off', 'network_off', 'identity', 'helper', 'just_chat'])
+@pytest.mark.parametrize('restriction', ['none', 'plan', 'grill', 'read_only', 'mcp_off', 'network_off', 'identity', 'helper', 'just_chat', 'companion'])
 def test_hosted_apps_respect_visible_agent_permissions(tmp_path, restriction):
     runtime = ParityFakeRuntime()
     runtime.codex_home = tmp_path / 'codex-home'
@@ -1182,6 +1182,9 @@ def test_hosted_apps_respect_visible_agent_permissions(tmp_path, restriction):
         core.identity_mode = True
     elif restriction == 'helper':
         core.helper_allowed_tools = {'read_file'}
+    elif restriction == 'companion':
+        core.companion_context = core.tool_registry.companion_context = True
+        core.configure_agent({}, mode='ask')
     core.run_turn('fixture', allow_tools=restriction != 'just_chat')
     if restriction == 'identity':
         assert runtime.start_kwargs == []
@@ -1190,6 +1193,27 @@ def test_hosted_apps_respect_visible_agent_permissions(tmp_path, restriction):
     assert options.app_ids == (('calendar',) if restriction == 'none' else ())
     if restriction == 'none':
         assert options.approval_policy == 'on-request'
+
+
+def test_companion_ask_rejects_hosted_app_approval_without_prompting(tmp_path):
+    class AppApprovalRuntime(ParityFakeRuntime):
+        def run_turn(self, *, tool_handler, **kwargs):
+            self.approval = tool_handler('__chatgpt_app_approval', {
+                'questions': [{'id': 'mcp_tool_call_approval_delete', 'question': 'Delete the calendar event?'}],
+            }, 'hosted-delete')
+            return super().run_turn(tool_handler=tool_handler, **kwargs)
+
+    runtime = AppApprovalRuntime()
+    runtime.codex_home = tmp_path / 'codex-home'
+    runtime.codex_home.mkdir()
+    (runtime.codex_home / 'locus-apps.json').write_text('["calendar"]')
+    core = _managed_core(tmp_path, runtime)
+    core.companion_context = core.tool_registry.companion_context = True
+    core.configure_agent({}, mode='ask')
+    prompts = []
+    core.run_turn('Tell me about my calendar', lambda *args: prompts.append(args) or 'once')
+    assert runtime.approval == 'deny'
+    assert prompts == []
 
 
 def test_hosted_app_calls_appear_in_chat_activity(tmp_path):
