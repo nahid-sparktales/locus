@@ -108,3 +108,82 @@ it. See the pinned
 [SPUUserDriver.h](https://github.com/sparkle-project/Sparkle/blob/ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a/Sparkle/SPUUserDriver.h).
 Manual replacement is the unambiguous recovery recommendation because the
 affected app may already have aborted its prepared update.
+
+## Follow-up: installed-app timeline and full model cleanup
+
+The subsequent report that Install and Restart still failed was investigated
+against the installed application's read-only unified logs. The update was
+handled by PID `34158`, previously observed running Locus 4.2.0. The narrowly
+relevant October 8 timeline is:
+
+| Local time | Observation |
+| --- | --- |
+| 02:32:56.923 | PID 34158 verified the new appcast signature. |
+| 02:33:07.432–433 | Sparkle verified and extracted the downloaded update. |
+| 02:33:21.156 | The installer's connection from PID 34158 closed. |
+| 02:33:25.540–810 | PID 34158 received a Quit AppleEvent, returned `NSTerminateNow`, and exited normally. |
+| 02:33:26 | The Sparkle installation directory was updated; the installer exited. |
+| 02:33:27 | The new installed Locus process, PID 80194, started. |
+
+The installed bundle was then confirmed as **4.2.1 (39)**. No later Sparkle
+update attempt by PID 80194 appeared in the inspected logs. This places the
+reported update attempt in the older process, before the restart fix was
+installed. The logs do not establish whether the later Quit AppleEvent was a
+manual recovery action, so that detail is not inferred.
+
+Two additional native tests exercise `ApplicationLifecycleCoordinator`
+connected to a real `AppModel`: idle cleanup resumes installation immediately,
+and a busy model whose worker never sends a completion still resumes after the
+existing bounded shutdown wait. They use an inert backend and do not launch
+provider work or touch the installed app. Both passed in the focused native
+verification run for 4.2.2.
+
+A second Developer ID signed Sparkle rehearsal also exercised the actual
+compiled app components. The source fixture linked the built
+`Locus.debug.dylib` and used the real `AppModel`,
+`ApplicationLifecycleCoordinator`, and `LocusApplicationDelegate`. Its busy
+flag was deliberately left set, and a real temporary Markdown output was
+queued for capture immediately before installation. There was no fake cleanup
+callback. The target was a complete Locus app executable and UI; a tiny fixture
+launcher set `LOCUS_UI_TESTING=1` before executing that unchanged binary, so
+the relaunched app used temporary/in-memory fixture storage.
+
+Observed results:
+
+- Source PID `87229` passed the first restart gate and postponed installation.
+- Actual app cleanup completed after **3.151 seconds**, saved **one output**,
+  and resumed despite the deliberately stale busy flag.
+- The second restart gate passed; the real application delegate returned
+  `terminateNow` and the source process exited.
+- Sparkle replaced fixture bundle version `1` with `2` and automatically
+  launched the complete Locus executable as PID `87303`.
+- PID-bound Accessibility and Window Server inspection confirmed launch had
+  finished, the app was not hidden, and its **1100 × 760 main window was
+  visible on screen**.
+
+The fixture identity was
+`io.sparktales.full-updater-fixture.33216a303cf74c03b3e8a7bc72729c13`.
+Both versions and their embedded code were Developer ID signed, the local
+archive/feed used a fresh Ed25519 key, and the private key was removed before
+launch. The linked production-code dylib SHA-256 was
+`f7936e0132bde33e549bec07db697c8a366746b4ec6da3b87dd50122886de889`.
+This was an isolated identity and temporary data under the current macOS login,
+not a separate OS account. No installed Locus process was running when this
+rehearsal launched. Only the verified fixture PID was terminated afterward,
+and the copied app was unregistered from Launch Services.
+
+Limits: no live provider task or real foreground terminal job was interrupted.
+The archive was not notarized. A concurrent UI test runner held focus during
+the final observation, so foreground activation is **not** claimed. The
+runner's initial process monitor compared `/tmp` and `/private/tmp` literally
+and missed the successfully relaunched process; separate exact-PID checks
+verified the replacement and visible window before cleanup. The retained
+runner now canonicalizes those paths, but was not rerun after that monitor
+repair.
+
+Evidence is retained in
+`/tmp/locus-422-full-update-e52d8936e0/result.json`, `events.jsonl`, and
+`relaunch-ax.json`; fixture source and runners are under
+`/tmp/locus-422-full-updater/`. This verification did not reproduce another
+production updater defect, so no speculative updater behavior change was
+added for 4.2.2.

@@ -209,7 +209,11 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(element("inspector.tab.agent").waitForExistence(timeout: 5),
                       "Opening the overview from the companion chat selects the Agent inspector")
         XCTAssertEqual(element("inspector.tab.agent").value as? String, "Selected")
-        XCTAssertTrue(element("companion.panel.overview").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("companion.panel.connection").waitForExistence(timeout: 5))
+        XCTAssertEqual(element("companion.panel").label, "Companion overview panel")
+        XCTAssertTrue(element("companion.panel.context").exists)
+        XCTAssertFalse(element("companion.panel.transcript").exists)
+        XCTAssertFalse(element("companion.panel.input").exists)
         XCTAssertFalse(element("companion.panel.character").exists,
                        "The Agent inspector summarizes the companion without repeating its full profile hero")
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "companion.profile").count, 1)
