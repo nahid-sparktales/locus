@@ -140,7 +140,7 @@ struct CompanionDesktopView: View {
                 Button { chatShown.toggle() } label: {
                     AgentAvatarView(profileID: profile.id, name: profile.name, size: controller.characterSize)
                 }
-                .buttonStyle(.plain).accessibilityLabel("Open \(profile.name)’s chat")
+                .buttonStyle(.locus(.quiet)).accessibilityLabel("Open \(profile.name)’s chat")
                 .accessibilityIdentifier("companion.desktop.character")
                 Text(profile.name).font(.headline)
                 CompanionDesktopStatus(source: model.companionActivityPresentation, profileID: profile.id)

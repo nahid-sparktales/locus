@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+## 4.2.0 — 2026-10-07
+
+### Added
+
+- Companion keeps one ongoing conversation and shared draft across the main
+  chat, inspector, menu bar, and new movable desktop window. Clear chat archives
+  the previous conversation, and the desktop offers size, edge snapping,
+  always-on-top, and a Control–Option–Command–C shortcut.
+- Companion tools offer reviewed context sharing from text, files, browser pages,
+  applications, and screenshot regions; saved-progress catch-up; voice controls;
+  activity preferences; memory review; focus and learning sessions; specialist
+  handoffs; guided setup; and validated custom animation packs.
+- Memory recall, learning, and saving default on while preserving existing
+  explicit settings. Automatic saving applies to new eligible suggestions;
+  disabling it keeps suggestions in the Memory Inbox for review. Existing
+  pending suggestions are not automatically approved.
+- Personal, workspace, and agent memories have editable Markdown files with
+  user-only permissions. These files are plaintext; the encrypted memory store
+  retains revision history and deletion controls. Memory maintenance consolidates
+  conservative duplicates and marks workspace facts stale when their sources
+  change.
+- Shared memory settings let connected Macs view and edit one remote host's
+  memory through the existing authenticated connection. The host must be online;
+  local chats continue using their local memory profile.
+- Workspace search combines keywords with optional local embeddings and
+  reranking, preserves original file and document citations, and resumes pending
+  embedding work. Optional models must already be installed; keyword search
+  remains available when local models cannot respond.
+- Adaptive retrieval searches permitted memory, workspace files, and opted-in
+  documents, with one focused follow-up per turn. The chat inspector shows
+  sources, delivery state, omissions, and fallbacks; current permissions and
+  source versions are checked before delivery.
+- Clean chat context saves eligible durable memories and an unfinished-work
+  checkpoint before shortening model context. The visible history stays
+  available, and the Context inspector reports saved, pending, and skipped
+  outcomes. Interrupted cleanup can resume without duplicating confirmed saves.
+
+### Fixed
+
+- Companion pointer reactions stay inside the right tab, and opening its other
+  surfaces preserves the ongoing conversation and draft.
+- Failed context cleanup retains the working chat context; resumed turns use
+  the committed checkpoint and freshly checked retrieval sources.
+- Companion context-sharing and desktop buttons follow shared Locus styles.
+  Secret scanning recognizes the public notification-preference key without
+  exempting other source content.
+
 ## 4.1.0 — 2026-10-06
 
 ### Added
