@@ -5,6 +5,62 @@ import XCTest
 
 @MainActor
 final class CompanionPanelTests: XCTestCase {
+    func testCompanionOverviewPreservesRunningWorkDraftAndInspector() throws {
+        let (app, profile, _) = try fixture()
+        defer { cleanup(app) }
+        app.isBusy = true
+        app.handleEventForTesting(["type": "permission_request", "id": "tool", "tool": "write_file", "request_id": "center-approval"])
+        app.selectInspectorTab(.companion)
+        let ownership = app.transcriptPresentation.sessionOwnershipToken
+        app.openCompanionOverview()
+        XCTAssertEqual(app.savedAgentOverviewID, profile.id)
+        XCTAssertEqual(app.sidebarDestination, .agents)
+        XCTAssertEqual(app.currentSessionID, "center")
+        XCTAssertEqual(app.draftText, "Central draft")
+        XCTAssertEqual(app.activePermissionRequest?.requestID, "center-approval")
+        XCTAssertTrue(app.isBusy)
+        XCTAssertEqual(app.transcriptPresentation.sessionOwnershipToken, ownership)
+        XCTAssertEqual(app.inspectorTab, .companion)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains { $0.hasSuffix("/resume") })
+    }
+
+    func testCompanionOverviewSelectsAgentInspectorWithoutReloadingItsCurrentChat() throws {
+        let (app, profile, chat) = try fixture()
+        defer { cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [ChatBlock(kind: .assistant, text: "Keep this answer")])
+        app.draftText = "Keep my companion draft"
+        app.selectInspectorTab(.companion)
+        app.inspectorCollapsed = true
+        let ownership = app.transcriptPresentation.sessionOwnershipToken
+        app.openCompanionOverview()
+        XCTAssertEqual(app.savedAgentOverviewID, profile.id)
+        XCTAssertEqual(app.selectedSavedAgentID, profile.id)
+        XCTAssertEqual(app.inspectorTab, .agent)
+        XCTAssertFalse(app.inspectorCollapsed)
+        XCTAssertTrue(app.openInspectorTabs.contains(.agent))
+        XCTAssertEqual(app.currentSessionID, chat.id)
+        XCTAssertEqual(app.draftText, "Keep my companion draft")
+        XCTAssertEqual(app.blocks.last?.text, "Keep this answer")
+        XCTAssertEqual(app.transcriptPresentation.sessionOwnershipToken, ownership)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains { $0.hasSuffix("/resume") })
+        app.openCompanionMainConversation()
+        XCTAssertNil(app.savedAgentOverviewID)
+        XCTAssertEqual(app.currentSessionID, chat.id)
+        XCTAssertEqual(app.draftText, "Keep my companion draft")
+    }
+
+    func testOrdinaryAgentOverviewDoesNotSwitchTheCompanionInspector() throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        let ordinary = AgentProfile(name: "Worker", model: "fixture")
+        app.agentProfiles.append(ordinary)
+        app.installTranscriptSession(chat.id, blocks: [])
+        app.selectInspectorTab(.companion)
+        app.selectSavedAgent(ordinary)
+        XCTAssertEqual(app.savedAgentOverviewID, ordinary.id)
+        XCTAssertEqual(app.inspectorTab, .companion)
+    }
+
     func testReopeningAlreadyVisibleCompanionClearsManualUnreadWithoutReloadingChat() throws {
         let (app, _, chat) = try fixture()
         defer { cleanup(app) }

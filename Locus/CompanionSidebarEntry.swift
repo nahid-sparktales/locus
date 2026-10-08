@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The dedicated companion spot in Agent, with a compact shortcut in Work.
+/// The overview shortcut and the dedicated ongoing-chat entry have distinct destinations.
 struct CompanionSidebarEntry: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -14,7 +14,10 @@ struct CompanionSidebarEntry: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { model.openCompanionMainConversation() } label: {
+            Button {
+                if featured { model.openCompanionMainConversation() }
+                else { model.openCompanionOverview() }
+            } label: {
                 HStack(spacing: 8) {
                     if let profile {
                         AgentAvatarView(profileID: profile.id, name: profile.name, size: featured ? 34 : 24)
@@ -32,7 +35,7 @@ struct CompanionSidebarEntry: View {
                         }
                     }
                     Spacer(minLength: 4)
-                    if model.companionHasUnread {
+                    if featured, model.companionHasUnread {
                         Circle().fill(colors.accentAction).frame(width: 6, height: 6)
                             .accessibilityLabel("Unread companion conversation")
                             .accessibilityIdentifier("sidebar.companion.unread")
@@ -43,10 +46,10 @@ struct CompanionSidebarEntry: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.locus())
-            .help("Open your companion in the main conversation")
+            .help(featured ? "Open your companion in the main conversation" : "Open your companion’s overview")
             .accessibilityLabel("Companion")
             .accessibilityValue(model.companionHasUnread ? "Unread" : "Read")
-            .accessibilityIdentifier("sidebar.companion")
+            .accessibilityIdentifier(featured ? "sidebar.companion" : "sidebar.companion.overview")
             if featured, profile != nil {
                 Menu { actions } label: {
                     Image(systemName: "ellipsis").frame(width: 24, height: 32)

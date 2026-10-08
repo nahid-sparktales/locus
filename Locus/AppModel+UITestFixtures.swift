@@ -16,8 +16,14 @@ private final class CompanionChatUITestProtocol: URLProtocol {
     static func workspace(_ id: String) -> String { id == companionSessionID ? homePath : "/tmp" }
 
     static func messages(_ id: String) -> [[String: String]] {
-        guard id == companionSessionID,
-              ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_HISTORY"] == "1" else { return [] }
+        guard id == companionSessionID else { return [] }
+        if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_LONG_HISTORY"] == "1" {
+            return (1...24).flatMap { index in
+                [["role": "user", "content": "Companion history question \(index)."],
+                 ["role": "assistant", "content": "Companion history reply \(index)."]]
+            }
+        }
+        guard ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_HISTORY"] == "1" else { return [] }
         return [["role": "user", "content": "Hello, Pitou."],
                 ["role": "assistant", "content": "We can keep talking here."]]
     }

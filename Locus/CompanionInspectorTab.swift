@@ -20,6 +20,7 @@ private struct CompanionInspectorContent: View {
     @EnvironmentObject private var runtime: RuntimeStatusModel
     @EnvironmentObject private var activity: ActivityCenterModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
+    @EnvironmentObject private var accounts: ProviderAccountsModel
     @Environment(\.locusViewColors) private var colors
     @Environment(\.companionActivityPresentation) private var activitySource
     @ObservedObject var panel: CompanionPanelModel
@@ -140,32 +141,76 @@ private struct CompanionInspectorContent: View {
 
     private func overview(_ profile: AgentProfile) -> some View {
         let activeProfile = panel.selectedSessionID.map { model.agentChatProfile(profile, sessionID: $0) } ?? profile
-        return VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Your companion at a glance")
-                    .font(.locus(size: 13, weight: .semibold))
-                LabeledContent("Role", value: activeProfile.role.title)
-                LabeledContent("Model", value: activeProfile.model.nilIfEmpty ?? "Choose a model")
-                    .lineLimit(2).textSelection(.enabled)
-                HStack(spacing: 12) {
-                    Button { tool = .context; toolsPresented = true } label: {
-                        Label("Companion tools", systemImage: "square.grid.2x2")
+        let route = SavedAgentOverviewSnapshot.route(profile: activeProfile, accounts: accounts.providerAccounts,
+            readyAccountIDs: Set(accounts.accountStatus.compactMap { $0.value.isHealthy ? $0.key : nil }),
+            models: accounts.accountModels, statuses: accounts.accountStatus,
+            localModels: accounts.localModels.map(\.name))
+        return ScrollView {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Your companion at a glance").font(.locus(size: 13, weight: .semibold))
+                        Spacer(minLength: 0)
+                        Button("Profile") { revealMainWindow(); model.selectSavedAgent(profile) }
+                            .accessibilityIdentifier("companion.panel.profile")
                     }
-                    .accessibilityIdentifier("companion.panel.tools")
-                    Spacer(minLength: 0)
-                    Button("Profile") { revealMainWindow(); model.selectSavedAgent(profile) }
-                        .accessibilityIdentifier("companion.panel.profile")
+                    LabeledContent("Mode", value: "Ask")
+                    LabeledContent("Role", value: activeProfile.role.title)
+                    LabeledContent("Provider", value: route.title)
+                    LabeledContent("Model", value: route.model.nilIfEmpty ?? "Choose a model")
+                        .textSelection(.enabled)
+                    Label(route.issue ?? "Connected", systemImage: route.issue == nil ? "checkmark.circle" : "exclamationmark.circle")
+                        .foregroundStyle(route.issue == nil ? colors.textSecondary : colors.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let conversation = model.companionConversation {
+                        Divider()
+                        LabeledContent("Conversation", value: "1 ongoing chat")
+                        Text("Last active \(Date(timeIntervalSince1970: conversation.mtime).formatted(date: .abbreviated, time: .shortened))")
+                            .foregroundStyle(colors.textSecondary)
+                    }
                 }
-                .buttonStyle(.locus(.quiet))
-                .foregroundStyle(colors.accentAction)
+                .font(.locus(size: 11)).padding(16)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("companion.panel.connection")
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Connected to your Locus", systemImage: "square.stack.3d.up")
+                        .font(.locus(size: 13, weight: .semibold))
+                    Text("Ask about other chats and sessions, explore your connected tools, or pick up earlier work.")
+                        .foregroundStyle(colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                              alignment: .leading, spacing: 12) {
+                        overviewTool(.context, title: "Companion tools", symbol: "square.grid.2x2", identifier: "tools")
+                        overviewTool(.memory, title: "Memory", symbol: "brain", identifier: "memory")
+                        overviewTool(.continuity, title: "Catch up", symbol: "clock.arrow.circlepath", identifier: "catchUp")
+                        overviewTool(.focus, title: "Focus", symbol: "scope", identifier: "focus")
+                    }
+                    Button { model.companionDesktop.show() } label: {
+                        Label("Show desktop companion", systemImage: "macwindow")
+                    }
+                    .accessibilityIdentifier("companion.panel.desktop")
+                }
+                .font(.locus(size: 11)).padding(16)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("companion.panel.context")
+                Divider()
+                CompanionActivityCardsView(revealMainWindow: revealMainWindow, scrolls: false,
+                                           minimumWidth: 0, minimumHeight: 0)
             }
-            .font(.locus(size: 11)).padding(16)
-            Divider()
-            CompanionActivityCardsView(revealMainWindow: revealMainWindow, minimumWidth: 0, minimumHeight: 0)
+            .buttonStyle(.locus(.quiet))
+            .tint(colors.accentAction)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("companion.panel.overview")
+    }
+
+    private func overviewTool(_ selection: CompanionTool, title: String, symbol: String, identifier: String) -> some View {
+        Button { tool = selection; toolsPresented = true } label: {
+            Label(title, systemImage: symbol).fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("companion.panel.\(identifier)")
     }
 
     private var conversationControls: some View {

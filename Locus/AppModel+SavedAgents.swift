@@ -339,6 +339,9 @@ extension AppModel {
         sidebarDestination = .agents
         activity.activityCenterPresented = false
         dismissOverview()
+        if profile.id == agentTeamsModel.primaryCompanionID, currentCompanionConversationProfile != nil {
+            selectInspectorTab(.agent)
+        }
     }
 
     func savedAgentChats(_ profileID: UUID) -> [SessionSummary] {

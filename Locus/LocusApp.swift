@@ -793,6 +793,7 @@ struct RootView: View {
     var body: some View {
         GeometryReader { proxy in
             let duplicateAgentOverview = model.savedAgentOverviewProfile != nil
+                && model.savedAgentOverviewProfile?.id != model.currentCompanionConversationProfile?.id
                 && model.inspectorTab == .agent && agentInspector.context == .fleet
             let inspectorOpen = !model.inspectorCollapsed && !model.justChatEnabled && !duplicateAgentOverview
             let railWidth = model.justChatEnabled ? 0 : inspectorRailWidth

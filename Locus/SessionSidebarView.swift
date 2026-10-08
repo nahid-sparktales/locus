@@ -860,7 +860,7 @@ struct SessionSidebarView: View {
                 }
             }
 
-            if model.sidebarDestination != .agents { CompanionSidebarEntry() }
+            CompanionSidebarEntry()
 
             navigationRow(
                 symbol: "person.crop.circle",
