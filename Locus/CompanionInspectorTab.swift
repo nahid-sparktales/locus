@@ -107,7 +107,7 @@ private struct CompanionInspectorContent: View {
                     Button("Models & Providers") { revealMainWindow(); model.presentSettings(.accounts) }
                     Divider()
                     Button(model.companionHasUnread ? "Mark as read" : "Mark as unread") {
-                        model.markCompanionRead(!model.companionHasUnread)
+                        model.markCompanionRead(model.companionHasUnread)
                     }
                     .disabled(panel.selectedSessionID == nil)
                     .accessibilityIdentifier("companion.panel.markReadState")

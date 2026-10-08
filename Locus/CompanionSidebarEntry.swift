@@ -64,7 +64,7 @@ struct CompanionSidebarEntry: View {
     @ViewBuilder private var actions: some View {
         if model.companionConversation != nil {
             Button(model.companionHasUnread ? "Mark as read" : "Mark as unread") {
-                model.markCompanionRead(!model.companionHasUnread)
+                model.markCompanionRead(model.companionHasUnread)
             }
             .accessibilityIdentifier("companion.markReadState")
         }

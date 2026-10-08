@@ -309,7 +309,12 @@ final class CompanionOnboardingUITests: XCTestCase {
         if element("companion.panel").exists { element("inspector.rail.companion").click() }
         let overview = element("savedAgent.overview")
         let hero = element("companion.profile.hero")
-        XCTAssertTrue(overview.frame.contains(hero.frame))
+        let heroFits = NSPredicate { _, _ in
+            overview.frame.insetBy(dx: -1, dy: -1).contains(hero.frame)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: heroFits,
+                                object: nil)], timeout: 5), .completed,
+                       "Profile hero \(hero.frame) should fit its viewport \(overview.frame) after the inspector settles")
         XCTAssertTrue(element("companion.profile.continue").isHittable)
         XCTAssertFalse(element("savedAgent.newChat").exists)
         XCTAssertFalse(element("savedAgent.newAutomation").exists)
@@ -358,26 +363,40 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertFalse(element("sidebar.groupChats.header").exists)
         XCTAssertFalse(element("agent.C0111111-1111-4111-8111-111111111111").exists)
         XCTAssertFalse(element("session.companion-fixture-chat").exists)
-        XCTAssertFalse(element("sidebar.companion.unread").exists)
+        // The button exposes its state to accessibility; macOS merges its
+        // decorative unread dot into the button instead of a separate node.
+        XCTAssertEqual(companion.value as? String, "Read")
         companion.rightClick()
         let markUnread = app.menuItems["Mark as unread"].firstMatch
         XCTAssertTrue(markUnread.waitForExistence(timeout: 3))
         markUnread.click()
-        XCTAssertTrue(element("sidebar.companion.unread").waitForExistence(timeout: 3))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Unread"), object: companion)], timeout: 3), .completed)
         let composer = element("composer.input")
         composer.click()
         composer.typeText("A draft while this chat is marked unread")
-        XCTAssertTrue(element("sidebar.companion.unread").exists,
+        XCTAssertEqual(companion.value as? String, "Unread",
                        "Manual unread stays set while the conversation remains open")
         capture("Companion has its own sidebar entry and unread marker")
         element("sidebar.mode.ask").click()
-        XCTAssertTrue(element("sidebar.companion.unread").exists)
+        XCTAssertEqual(companion.value as? String, "Unread")
         companion.click()
         XCTAssertTrue(waitForComposerValue("A draft while this chat is marked unread"))
-        XCTAssertTrue(element("sidebar.companion.unread").waitForNonExistence(timeout: 3))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Read"), object: companion)], timeout: 3), .completed)
         companion.rightClick()
         XCTAssertTrue(app.menuItems["Mark as unread"].firstMatch.waitForExistence(timeout: 3))
         app.typeKey(.escape, modifierFlags: [])
+        element("inspector.rail.companion").click()
+        XCTAssertTrue(element("companion.panel.overview").waitForExistence(timeout: 5))
+        element("companion.panel.options").click()
+        app.menuItems["Mark as unread"].firstMatch.click()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Unread"), object: companion)], timeout: 3), .completed)
+        element("companion.panel.options").click()
+        app.menuItems["Mark as read"].firstMatch.click()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Read"), object: companion)], timeout: 3), .completed)
     }
 
     func testMenuBarCompanionPreservesDraftAcrossDismissalAndOpensLocus() throws {
