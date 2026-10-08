@@ -105,7 +105,7 @@ private struct CompanionInspectorContent: View {
                     Button("Profile and activity") { revealMainWindow(); model.selectSavedAgent(profile) }
                     Button("Edit companion") { revealMainWindow(); model.presentSavedAgentEditor(profile) }
                     Button("Models & Providers") { revealMainWindow(); model.presentSettings(.accounts) }
-                Divider()
+                    Divider()
                     Button(model.companionHasUnread ? "Mark as read" : "Mark as unread") {
                         model.markCompanionRead(!model.companionHasUnread)
                     }

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 4.2.1 — 2026-10-08
+
+### Fixed
+
+- Install and Restart now resumes Sparkle installation after Locus finishes
+  saving and stopping active work. Failed or cancelled installs can be retried.
+- Companion always uses Ask and can search, list, and read saved Locus chats
+  across workspaces and agents, including archived conversations, with read-only
+  tools. Private Identity chats remain in the vault.
+- The right Companion tab shows its profile and activity when its ongoing chat
+  is open in the center. Its dedicated sidebar spot replaces Group chats, with
+  an unread dot and Mark as read/unread controls.
+- Companion has a distinct profile for its one ongoing conversation. Its larger
+  character scrolls with the chat, keeping messages visible, and Look at this
+  aligns with the composer controls.
+- Companion follows the pointer for eight seconds after a hover, pass, or scroll
+  over its character. It stays neutral until engaged and respects reduced motion.
+
+If Install and Restart stalls in an older version, quit Locus and install the
+new download manually. The restart correction takes effect once 4.2.1 is installed.
+
 ## 4.2.0 — 2026-10-07
 
 ### Added
