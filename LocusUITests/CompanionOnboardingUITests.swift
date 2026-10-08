@@ -206,9 +206,12 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(waitForComposerValue("Main companion draft"))
         overviewShortcut.click()
         XCTAssertTrue(element("companion.profile").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("inspector.tab.agent").exists,
+        XCTAssertTrue(element("inspector.tab.agent").waitForExistence(timeout: 5),
                       "Opening the overview from the companion chat selects the Agent inspector")
-        XCTAssertFalse(element("companion.panel").exists)
+        XCTAssertTrue(element("companion.panel.overview").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("companion.panel.character").exists,
+                       "The Agent inspector summarizes the companion without repeating its full profile hero")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "companion.profile").count, 1)
         capture("Companion overview shortcut and dedicated chat entry")
     }
 
@@ -377,11 +380,16 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(character.waitForExistence(timeout: 5))
         let finalReply = app.textViews.matching(NSPredicate(
             format: "value == %@", "Companion history reply 24.")).firstMatch
-        XCTAssertTrue(finalReply.waitForExistence(timeout: 5))
         let characterFrame = character.frame
+        for _ in 0..<10 where !finalReply.isHittable {
+            transcript.scroll(byDeltaX: 0, deltaY: -520)
+        }
+        XCTAssertTrue(finalReply.isHittable, "Scroll to the latest reply before checking the character")
         let finalReplyY = finalReply.frame.midY
         XCTAssertEqual(characterFrame.midX, transcript.frame.midX, accuracy: 3)
         XCTAssertGreaterThanOrEqual(characterFrame.minY, transcript.frame.minY)
+        XCTAssertEqual(character.frame.minY, characterFrame.minY, accuracy: 2)
+        capture("Companion remains above the latest messages")
         let firstReply = app.textViews.matching(NSPredicate(
             format: "value == %@", "Companion history reply 1.")).firstMatch
         for _ in 0..<10 where !firstReply.isHittable {

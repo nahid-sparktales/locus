@@ -38,7 +38,14 @@ private struct AgentInspectorSelectionView: View {
     var body: some View {
         Group {
             if showsSavedProfile, let profile {
-                SavedAgentInspectorView(profile: profile)
+                if model.savedAgentOverviewProfile?.id == profile.id,
+                   model.currentCompanionConversationProfile?.id == profile.id {
+                    // The full companion profile owns the center; keep a
+                    // useful, compact connection/tools/activity summary beside it.
+                    CompanionInspectorTab(showsCharacterHeader: false)
+                } else {
+                    SavedAgentInspectorView(profile: profile)
+                }
             } else {
                 AgentInspectorPanel(automation: model.eventAutomations, schedule: schedule,
                     sessionCatalog: sessionCatalog, inspector: model.agentInspector)
