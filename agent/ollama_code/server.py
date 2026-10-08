@@ -488,16 +488,25 @@ def _run_profile_turn(
     workflow_outputs: list[dict[str, Any]] | None = None,
     approved_plan: dict[str, Any] | None = None,
     capsule_context: dict[str, Any] | None = None,
+    companion_context: bool = False,
 ) -> None:
     from .agent_profile_runtime import solo_profile_boundary
 
     with solo_profile_boundary(svc.core, profile) as configuration:
-        _run_user_turn(
-            svc, text, just_chat, attachments, configuration, mode,
-            reserved_run_id, solo_swarm_enabled=not just_chat and capsule_context is None,
-            agent_profile=profile, approved_plan=approved_plan, capsule_context=capsule_context,
-            workflow_outputs=workflow_outputs,
-        )
+        previous = svc.core.companion_context
+        previous_registry = svc.core.tool_registry.companion_context
+        try:
+            svc.core.companion_context = bool(companion_context and just_chat)
+            svc.core.tool_registry.companion_context = svc.core.companion_context
+            _run_user_turn(
+                svc, text, just_chat, attachments, configuration, mode,
+                reserved_run_id, solo_swarm_enabled=not just_chat and capsule_context is None,
+                agent_profile=profile, approved_plan=approved_plan, capsule_context=capsule_context,
+                workflow_outputs=workflow_outputs,
+            )
+        finally:
+            svc.core.companion_context = previous
+            svc.core.tool_registry.companion_context = previous_registry
 
 
 def _expire_profile_turn(svc: ChatService) -> None:
@@ -545,6 +554,7 @@ def _run_user_turn(
                             run_team=_run_team_turn)
         return
     private_identity = svc.core.identity_mode
+    companion_context = bool(svc.core.companion_context and just_chat and agent_profile is not None)
     if private_identity:
         solo_swarm_enabled = False
         workflow_outputs = None
@@ -564,6 +574,7 @@ def _run_user_turn(
         "solo_swarm": bool(solo_swarm_enabled and not just_chat),
         "memory_agent_id": agent_profile.id if agent_profile is not None else "primary",
         "memory_policy": AgentConfiguration.parse(agent_config).memory_policy.__dict__,
+        **({"companion_context": True} if companion_context else {}),
         **({"identity_mode": True} if private_identity else {}),
     }
     approved_plan = approved_plan or existing_manifest.get("_approved_task_plan")
@@ -751,7 +762,7 @@ def _run_user_turn(
     svc.emit({"type": "delegation_availability", "available": swarm is not None,
               "policy_version": POLICY_VERSION if bridge else "legacy-v1",
               "provider": svc.core.provider, "model": svc.core.model,
-              "tool_names": [s["function"]["name"] for s in advertised] if not just_chat else [],
+              "tool_names": [s["function"]["name"] for s in advertised] if not just_chat or companion_context else [],
               "reason": "ready" if swarm else "unavailable" if solo_swarm_enabled else "disabled_for_turn"})
     svc.core.reset_system_message()
     previous_suppress = svc.core._suppress_turn_done
@@ -788,7 +799,7 @@ def _run_user_turn(
             svc.core.run_turn(
                 text,
                 svc.decide,
-                allow_tools=not just_chat or workflow_result_only,
+                allow_tools=not just_chat or workflow_result_only or companion_context,
                 attachments=attachments,
                 persisted_user_metadata=persisted_metadata,
                 **({"model_call_limit": model_call_limit} if model_call_limit is not None else {}),
@@ -2609,11 +2620,18 @@ async def _handle_client_message(svc: ChatService, msg: dict[str, Any]) -> None:
             except (ValueError, TypeError) as exc:
                 _command_error(svc, str(mtype), str(exc))
                 return
+        companion_context = msg.get("companion_context", False)
+        if not isinstance(companion_context, bool) or companion_context and (
+            not just_chat or agent_profile is None or not bound_profile
+            or core.identity_mode or capsule_context is not None or workflow_outputs is not None
+        ):
+            _command_error(svc, str(mtype), "Companion context requires an Ask conversation owned by its saved agent profile.")
+            return
         if agent_profile is not None:
             call = _run_profile_turn
             args = (svc, text, just_chat, attachments, agent_profile, mode or "work",
                     str(msg.get("run_id") or uuid.uuid4().hex), workflow_outputs,
-                    approved_plan, capsule_context)
+                    approved_plan, capsule_context, companion_context)
         elif capsule_context is not None:
             call = _run_user_turn
             args = (svc, text, False, attachments, agent_config, mode or "plan",

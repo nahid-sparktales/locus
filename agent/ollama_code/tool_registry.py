@@ -11,6 +11,7 @@ from typing import Any
 
 from . import product_build
 from .capabilities import enabled as capability_enabled
+from .chat_history_tools import CHAT_HISTORY_SCHEMAS, CHAT_HISTORY_TOOLS
 from .collaboration_tools import (
     ASK_QUESTION_ASYNC_SCHEMA,
     COLLABORATION_NAMES,
@@ -49,6 +50,7 @@ _WORKSPACE_WRITE_TOOLS = {
 }
 _SHELL_TOOLS = {"bash", "background_service"}
 _READ_ONLY_BUILTIN_TOOLS = {
+    *CHAT_HISTORY_TOOLS,
     *_WORKSPACE_READ_TOOLS,
     *_SAFE_EXTENSION_TOOLS,
     "search_memory", "search_context",
@@ -56,6 +58,7 @@ _READ_ONLY_BUILTIN_TOOLS = {
 }
 _READ_ONLY_CONNECTOR_TOOLS = {"gmail_fetch_thread"}
 _PARALLEL_SAFE_BUILTIN_TOOLS = {
+    *CHAT_HISTORY_TOOLS,
     "read_file", "glob", "grep", "list_dir", "git_status", "git_diff",
     "search_workspace_knowledge", "search_memory", "search_context", "web_fetch", "read_skill_file",
 }
@@ -1130,6 +1133,8 @@ class ToolRegistry:
         self.adaptive_retrieval_enabled = False
         self.memory_search_enabled = True
         self.memory_proposals_enabled = True
+        self.cross_chat_context_enabled = True
+        self.companion_context = False
         self.runtime_wait_enabled = False
         #: Off until a `ChatService` announces a live chat, exactly like
         #: `computer_enabled`. Nothing else has a user on the other end.
@@ -1342,6 +1347,10 @@ class ToolRegistry:
 
     def _user_allows(self, name: str) -> bool:
         policy = self._user_capability_policy
+        if self.companion_context and not self.companion_tool_allowed(name):
+            return False
+        if name in CHAT_HISTORY_TOOLS:
+            return self.companion_context and self.cross_chat_context_enabled and capability_enabled("transcript_search")
         if name == "search_context":
             return self.adaptive_retrieval_enabled and (
                 self.memory_search_enabled or policy.get("workspace_read", True))
@@ -1370,6 +1379,18 @@ class ToolRegistry:
         ) and not policy.get("mcp", True):
             return False
         return True
+
+    def companion_tool_allowed(self, name: str) -> bool:
+        """Companion Ask can inspect context but cannot mutate or delegate."""
+        if name in (_READ_ONLY_BUILTIN_TOOLS | _READ_ONLY_COMPUTER_TOOLS
+                    | _READ_ONLY_SIMULATOR_TOOLS | _READ_ONLY_BROWSER_TOOLS
+                    | _READ_ONLY_NOTES_TOOLS | _READ_ONLY_CALENDAR_TOOLS
+                    | _READ_ONLY_BOARD_TOOLS | _READ_ONLY_CONNECTOR_TOOLS):
+            return True
+        tool = self._mcp_by_qualified.get(name)
+        annotations = (tool or {}).get("annotations") or {}
+        return (isinstance(annotations, dict) and annotations.get("readOnlyHint") is True
+                and annotations.get("destructiveHint") is not True)
 
     def end_turn(self) -> None:
         self._active_mcp.clear()
@@ -1479,7 +1500,7 @@ class ToolRegistry:
                     "parameters": input_schema,
                 },
             })
-        return schemas
+        return [schema for schema in schemas if self._user_allows(schema["function"]["name"])]
 
     def parity_schemas(self, plan_mode: bool = False, memory_enabled: bool = False) -> list[dict[str, Any]]:
         """The Codex-parity tool surface for a native-mode ChatGPT turn.
@@ -1517,6 +1538,8 @@ class ToolRegistry:
         )
         if self.adaptive_retrieval_enabled and self._user_allows("search_context"):
             schemas.extend(schema for schema in TOOL_SCHEMAS if schema["function"]["name"] == "search_context")
+        schemas.extend(schema for schema in CHAT_HISTORY_SCHEMAS
+                       if self._user_allows(schema["function"]["name"]))
         if memory_enabled:
             # Reuse the full schema gates; direct tool execution still rechecks
             # the agent's search/proposal switches and scopes in ToolContext.
@@ -1605,6 +1628,10 @@ class ToolRegistry:
             name = schema["function"]["name"]
             if not self.browser_tool_allowed(name):
                 continue
+            if self.companion_context and name == "browser_tabs":
+                schema = copy.deepcopy(schema)
+                schema["function"]["description"] = "List the companion's Locus browser tabs."
+                schema["function"]["parameters"]["properties"]["action"]["enum"] = ["list"]
             if name == "browser_autofill":
                 schema = copy.deepcopy(schema)
                 schema["function"]["parameters"]["properties"]["category"]["enum"] = sorted(
@@ -1932,6 +1959,8 @@ class ToolRegistry:
         terms = [term for term in re.split(r"\W+", query) if term]
         scored: list[tuple[int, str, dict[str, Any]]] = []
         for name, tool in self._mcp_by_qualified.items():
+            if not self._user_allows(name):
+                continue
             if not self._allows_mcp_item(tool, "tools", qualified=name):
                 continue
             haystack = " ".join(

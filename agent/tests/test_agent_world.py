@@ -275,6 +275,56 @@ def test_profile_runs_through_existing_worker_with_exact_identity(tmp_path, monk
     assert service.active_run_id is None
 
 
+def test_companion_ask_keeps_read_tools_scoped_to_its_profile_turn(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    profile = parse_solo_profile(_profile(access_ceiling="computer_control", role="generalist"), "fixture")
+    monkeypatch.setattr(server, "_automatic_memory_context", lambda *args, **kwargs: "")
+    monkeypatch.setattr(server, "_automatic_continuity_context", lambda *args, **kwargs: "")
+    observed = []
+
+    def run_turn(_text, _decider, **kwargs):
+        core = service.core
+        observed.append(kwargs)
+        assert kwargs["allow_tools"] is True
+        assert core.agent_mode == "ask"
+        assert core.companion_context is True
+        assert core.tool_ctx.cross_chat_context_enabled is True
+        names = {item["function"]["name"] for item in core.tool_registry.schemas()}
+        assert {"list_locus_chats", "search_locus_chats", "read_locus_chat", "read_file", "search_extension_tools"} <= names
+        assert not names & {"bash", "write_file", "delegate_read_only", "propose_memory", "capture_context_snapshot"}
+        assert "disabled" in core.tool_registry.execute("write_file", {"path": "forbidden", "content": "write"}, core.tool_ctx)
+        assert not (tmp_path / "forbidden").exists()
+        assert "companion in Ask mode" in core.system_message()["content"]
+        core.last_turn_result = {"type": "turn_done", "reason": "complete", "duration_ms": 0}
+        core._emit(core.last_turn_result)
+
+    monkeypatch.setattr(service.core, "run_turn", run_turn)
+    server._run_profile_turn(service, "Find my image chats", True, [], profile, "ask", "", companion_context=True)
+    assert len(observed) == 1
+    assert not service.core.companion_context
+    assert not service.core.tool_registry.companion_context
+    assert service.core.agent_id == "primary"
+
+
+def test_companion_request_flag_requires_matching_saved_profile_and_ask_mode(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    profile = _profile()
+    calls, events = [], []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: calls.append((call, args)) or True)
+    monkeypatch.setattr(service, "queue_event", events.append)
+    message = {"type": "user_message", "text": "Find another chat", "mode": "ask",
+               "agent_profile": profile, "companion_context": True}
+    asyncio.run(server._handle_client_message(service, message))
+    assert not calls
+    SessionMeta.update(service.core.session.session_id, agent_profile_id=profile["id"])
+    asyncio.run(server._handle_client_message(service, {**message, "mode": "work"}))
+    assert not calls
+    asyncio.run(server._handle_client_message(service, message))
+    assert len(calls) == 1
+    assert calls[0][0] == server._run_profile_turn
+    assert calls[0][1][-1] is True
+
+
 def test_saved_agent_automation_retains_workflow_outputs_and_profile_boundary(tmp_path, monkeypatch):
     service = _service(tmp_path)
     profile = _profile()

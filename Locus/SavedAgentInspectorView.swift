@@ -277,6 +277,7 @@ struct AgentWorkspacePreferencesEditor: View {
 /// callbacks preserve the world's project and selected resident.
 struct SavedAgentInspectorView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
     let profile: AgentProfile
     var workspace: String? = nil
     var newChat: (() -> Void)? = nil
@@ -285,10 +286,250 @@ struct SavedAgentInspectorView: View {
     var inspectActivity: ((AgentInspectorContext) -> Void)? = nil
 
     var body: some View {
-        SavedAgentOverviewContent(initialProfile: profile, workspace: workspace, newChat: newChat,
-            openChat: openChat, newChatDisabled: newChatDisabled, inspectActivity: inspectActivity,
-            automation: model.eventAutomations)
+        if agentTeams.primaryCompanionID == profile.id {
+            CompanionProfileOverview(initialProfile: profile, activity: model.companionActivityPresentation)
+        } else {
+            SavedAgentOverviewContent(initialProfile: profile, workspace: workspace, newChat: newChat,
+                openChat: openChat, newChatDisabled: newChatDisabled, inspectActivity: inspectActivity,
+                automation: model.eventAutomations)
+        }
     }
+}
+
+/// The companion has one durable conversation and its own home within Locus.
+/// Earlier saved-agent chats stay in storage; this surface only opens the
+/// canonical companion conversation and never creates a parallel chat.
+private struct CompanionProfileOverview: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var agentTeams: AgentTeamsModel
+    @EnvironmentObject private var sessions: SessionCatalogModel
+    @EnvironmentObject private var accounts: ProviderAccountsModel
+    @Environment(\.locusViewColors) private var colors
+    let initialProfile: AgentProfile
+    @ObservedObject var activity: CompanionActivityPresentation
+    @State private var choosingPicture = false
+    @State private var toolsPresented = false
+    @State private var selectedTool: CompanionTool = .context
+    @State private var showsPersonality = false
+
+    private var profile: AgentProfile {
+        agentTeams.agentProfiles.first { $0.id == initialProfile.id } ?? initialProfile
+    }
+    private var conversation: SessionSummary? {
+        // Read the catalog through its observed store so the last-active card
+        // updates independently of the broad AppModel observation boundary.
+        guard let id = model.companionConversation?.id else { return nil }
+        return sessions.snapshot.sessionsByID[id]
+    }
+    private var summary: CompanionActivitySummary {
+        activity.summary(profileID: profile.id) ?? model.companionActivitySummary(profileID: profile.id)
+    }
+    private var route: SavedAgentOverviewSnapshot.Route {
+        let active = conversation.map { model.agentChatProfile(profile, sessionID: $0.id) } ?? profile
+        return SavedAgentOverviewSnapshot.route(profile: active, accounts: accounts.providerAccounts,
+            readyAccountIDs: Set(accounts.accountStatus.compactMap { $0.value.isHealthy ? $0.key : nil }),
+            models: accounts.accountModels, statuses: accounts.accountStatus,
+            localModels: accounts.localModels.map(\.name))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let roomy = geometry.size.width >= 760
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    hero(horizontal: geometry.size.width >= 540)
+                    if roomy {
+                        HStack(alignment: .top, spacing: 22) {
+                            VStack(spacing: 22) { conversationCard; contextCard }
+                                .frame(maxWidth: .infinity)
+                            VStack(spacing: 22) { modelCard; personalityCard }
+                                .frame(width: 300)
+                        }
+                    } else {
+                        conversationCard
+                        contextCard
+                        modelCard
+                        personalityCard
+                    }
+                }
+                .frame(maxWidth: 980, alignment: .leading)
+                .padding(roomy ? 32 : 20)
+                .frame(maxWidth: .infinity, alignment: .top)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("companion.profile")
+            }
+            .background(colors.surfaceCanvas)
+        }
+        .foregroundStyle(colors.ink)
+        .accessibilityIdentifier("savedAgent.overview")
+        .companionPointerScope()
+        .locusSheet(isPresented: $choosingPicture) {
+            AgentPicturePicker(profile: profile, currentData: agentTeams.agentAvatarData[profile.id],
+                currentAppearance: agentTeams.agentAppearances[profile.id],
+                animationsEnabled: agentTeams.companionAnimationsEnabled).id(profile.id)
+        }
+        .sheet(isPresented: $toolsPresented) { CompanionToolsView(initialTool: selectedTool) }
+    }
+
+    private func hero(horizontal: Bool) -> some View {
+        Group {
+            if horizontal {
+                HStack(alignment: .center, spacing: 28) { character; introduction }
+            } else {
+                VStack(alignment: .leading, spacing: 20) { character; introduction }
+            }
+        }
+        .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+        .background(colors.accentAction.opacity(0.055), in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(colors.accentAction.opacity(0.16), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("companion.profile.hero")
+    }
+
+    private var character: some View {
+        Button { choosingPicture = true } label: {
+            AgentAvatarView(profileID: profile.id, name: profile.name, size: 148)
+                .background(colors.accentAction.opacity(0.07), in: Circle())
+        }
+        .buttonStyle(.locus(.quiet)).fixedSize()
+        .help("Change \(profile.name)’s character")
+        .accessibilityLabel("Change \(profile.name)’s character")
+        .accessibilityIdentifier("savedAgent.avatar")
+    }
+
+    private var introduction: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Your companion", systemImage: "sparkle")
+                .font(.locus(size: 12, weight: .semibold)).foregroundStyle(colors.accentAction)
+            Text(profile.name).font(.locusExact(size: 34, weight: .semibold)).tracking(-0.7)
+                .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("savedAgent.name")
+            Text("One ongoing conversation, wherever you open Locus.")
+                .font(.locus(size: 14)).foregroundStyle(colors.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 7) {
+                Circle().fill(summary.availability.isAvailable ? colors.success : colors.warning)
+                    .frame(width: 6, height: 6).accessibilityHidden(true)
+                Text(summary.statusText).font(.locus(size: 12, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine).accessibilityIdentifier("savedAgent.status")
+            if !summary.activityText.isEmpty {
+                Text(summary.activityText).font(.locus(size: 11)).foregroundStyle(colors.inkSoft)
+                    .accessibilityIdentifier("savedAgent.companionActivity")
+            }
+            Button { model.openCompanionMainConversation() } label: {
+                Label(conversation == nil ? "Start conversation" : "Continue conversation", systemImage: "bubble.left.and.bubble.right")
+            }
+            .buttonStyle(.locus(.primary)).disabled(!model.canSwitchToCompanionChat)
+            .accessibilityIdentifier("companion.profile.continue")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var conversationCard: some View {
+        card("Your conversation", symbol: "bubble.left.and.bubble.right") {
+            if let conversation {
+                Text(conversation.displayTitle).font(.locus(size: 17, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("companion.profile.conversation.title")
+                Label("1 ongoing chat", systemImage: "bubble.left")
+                    .font(.locus(size: 12)).foregroundStyle(colors.inkSoft)
+                Text("Last active \(Date(timeIntervalSince1970: conversation.mtime).formatted(date: .abbreviated, time: .shortened))")
+                    .font(.locus(size: 12)).foregroundStyle(colors.inkSoft)
+                if !conversation.preview.isEmpty {
+                    Text(ChatTranscriptBuilder.displayUserText(conversation.preview))
+                        .font(.locus(size: 13)).foregroundStyle(colors.inkSoft).lineLimit(3)
+                }
+            } else {
+                Text("A place to pick up where you left off.")
+                    .font(.locus(size: 15, weight: .medium))
+                Text("Start once, then keep the same conversation in the main chat, side panel, and menu bar.")
+                    .font(.locus(size: 13)).foregroundStyle(colors.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            Label(model.savedAgentWorkspaceTitle(profile, path: model.companionWorkspacePath), systemImage: "house")
+                .font(.locus(size: 12)).foregroundStyle(colors.inkSoft)
+                .lineLimit(1).truncationMode(.middle).help(model.companionWorkspacePath)
+            Button("Open companion folder") {
+                model.revealSavedAgentWorkspace(profile, path: model.companionWorkspacePath)
+            }.buttonStyle(.locus(.quiet)).foregroundStyle(colors.accentAction)
+        }
+        .accessibilityIdentifier("companion.profile.conversation")
+    }
+
+    private var contextCard: some View {
+        card("Connected to your Locus", symbol: "square.stack.3d.up") {
+            Text("Ask about your chats, sessions, and connected tools. Share a page or a specific piece of work when you want to focus the conversation.")
+                .font(.locus(size: 13)).foregroundStyle(colors.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { contextActions }
+                VStack(alignment: .leading, spacing: 12) { contextActions }
+            }
+            Divider()
+            Button { model.companionDesktop.show() } label: {
+                Label("Show desktop companion", systemImage: "macwindow")
+            }.buttonStyle(.locus(.quiet)).foregroundStyle(colors.accentAction)
+        }
+        .accessibilityIdentifier("companion.profile.context")
+    }
+
+    @ViewBuilder private var contextActions: some View {
+        Button { showTool(.context) } label: { Label("Companion tools", systemImage: "square.grid.2x2") }
+            .accessibilityIdentifier("companion.profile.tools")
+        Button("Memory") { showTool(.memory) }
+            .accessibilityIdentifier("companion.profile.memory")
+    }
+
+    private var modelCard: some View {
+        card("Model & connection", symbol: "network") {
+            Text(route.title).font(.locus(size: 14, weight: .semibold))
+            Text(route.model.nilIfEmpty ?? "Choose a model")
+                .font(.locus(size: 12)).foregroundStyle(colors.inkSoft)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(route.issue ?? summary.availability.detail)
+                .font(.locus(size: 12)).foregroundStyle(route.issue == nil ? colors.inkSoft : colors.warning)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Models & Providers") { model.presentSettings(.accounts) }
+                .buttonStyle(.locus(.quiet)).foregroundStyle(colors.accentAction)
+                .accessibilityIdentifier("companion.profile.models")
+        }
+        .accessibilityIdentifier("companion.profile.connection")
+    }
+
+    private var personalityCard: some View {
+        let personality = profile.resolvedBehavior.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        return card("Personality", symbol: "sparkles") {
+            Text(personality.nilIfEmpty ?? profile.resolvedBehavior.selfDescription)
+                .font(.locus(size: 13)).foregroundStyle(colors.inkSoft).lineSpacing(4)
+                .lineLimit(showsPersonality ? nil : 4).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("companion.profile.personality.content")
+            if personality.count > 180 || personality.contains("\n") {
+                Button(showsPersonality ? "Show less" : "Read more") { showsPersonality.toggle() }
+                    .buttonStyle(.locus(.quiet)).foregroundStyle(colors.accentAction)
+            }
+            Button("Edit companion") { model.presentSavedAgentEditor(profile) }
+                .buttonStyle(.locus(.quiet)).foregroundStyle(colors.accentAction)
+                .accessibilityIdentifier("companion.profile.edit")
+        }
+        .accessibilityIdentifier("companion.profile.personality")
+    }
+
+    private func card<Content: View>(_ title: String, symbol: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: symbol).font(.locus(size: 14, weight: .semibold))
+            content()
+        }
+        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        .locusSurface(.floating, radius: 18)
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(colors.line.opacity(0.55), lineWidth: 1)
+            .allowsHitTesting(false).accessibilityHidden(true))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func showTool(_ tool: CompanionTool) { selectedTool = tool; toolsPresented = true }
 }
 
 private struct SavedAgentResultExcerptView: View {

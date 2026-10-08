@@ -181,7 +181,7 @@ class RuntimeAutomation:
         command["runtime_configuration"] = configuration
         if runtime.store.worker(session_id)["state"] in {"waiting_for_account", "waiting_for_locus"}:
             runtime.store.state(session_id, "idle")
-        for key in ("agent_config", "goal_id", "goal_revision", "workflow_outputs"):
+        for key in ("agent_config", "goal_id", "goal_revision", "workflow_outputs", "companion_context"):
             if key in manifest:
                 command[key] = manifest[key]
         if profile_configuration:

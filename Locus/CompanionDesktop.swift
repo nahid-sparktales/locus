@@ -145,7 +145,7 @@ struct CompanionDesktopView: View {
                 Text(profile.name).font(.headline)
                 CompanionDesktopStatus(source: model.companionActivityPresentation, profileID: profile.id)
                 if chatShown {
-                    CompanionInspectorTab(tracksPointer: false, showsCharacterHeader: false, showsForegroundComposer: false).frame(width: 370, height: 360)
+                    CompanionInspectorTab(tracksPointer: false, showsCharacterHeader: false).frame(width: 370, height: 360)
                     CompanionDesktopForegroundComposer(panel: model.companionPanel).frame(width: 370)
                 }
                 HStack {

@@ -39,6 +39,65 @@ struct CompanionPointerResponse: Equatable {
     }
 }
 
+/// A brief greeting to the pointer, activated by passing over the character.
+/// Movement elsewhere never starts or prolongs the response.
+struct CompanionPointerEngagement {
+    static let defaultDuration: TimeInterval = 8
+    let duration: TimeInterval
+    private(set) var deadline: TimeInterval?
+    private var previousPoint: CGPoint?
+    private var wasOverCharacter = false
+
+    init(duration: TimeInterval = Self.defaultDuration) { self.duration = duration }
+
+    func isFollowing(at time: TimeInterval) -> Bool {
+        deadline.map { time < $0 } ?? false
+    }
+
+    /// Returns true only when a fresh engagement needs a one-shot expiry.
+    mutating func update(at point: CGPoint, in character: CGRect, time: TimeInterval) -> Bool {
+        let isOverCharacter = character.contains(point)
+        let crossedCharacter = !wasOverCharacter && previousPoint.map {
+            Self.crosses(character, from: $0, to: point)
+        } == true
+        let activated = (!wasOverCharacter && isOverCharacter) || crossedCharacter
+        previousPoint = point
+        wasOverCharacter = isOverCharacter
+        if activated { deadline = time + duration }
+        return activated
+    }
+
+    mutating func reset() {
+        deadline = nil
+        previousPoint = nil
+        wasOverCharacter = false
+    }
+
+    /// Check the segment so a fast pass still counts when neither event lands
+    /// inside the avatar. A bounding-box overlap alone admits diagonal misses.
+    private static func crosses(_ rect: CGRect, from start: CGPoint, to end: CGPoint) -> Bool {
+        guard !rect.isEmpty, start.x.isFinite, start.y.isFinite,
+              end.x.isFinite, end.y.isFinite else { return false }
+        var lower: CGFloat = 0
+        var upper: CGFloat = 1
+        for (origin, delta, minimum, maximum) in [
+            (start.x, end.x - start.x, rect.minX, rect.maxX),
+            (start.y, end.y - start.y, rect.minY, rect.maxY),
+        ] {
+            if delta == 0 {
+                if origin < minimum || origin > maximum { return false }
+            } else {
+                let first = (minimum - origin) / delta
+                let second = (maximum - origin) / delta
+                lower = max(lower, min(first, second))
+                upper = min(upper, max(first, second))
+                if lower > upper { return false }
+            }
+        }
+        return true
+    }
+}
+
 extension EnvironmentValues {
     @Entry var companionPointerResponse = CompanionPointerResponse.neutral
 }
@@ -111,12 +170,17 @@ final class CompanionPointerTrackingView: NSView {
     private var delivered = CompanionPointerResponse.neutral
     private var deliveryScheduled = false
     private var generation = 0
+    private var engagement: CompanionPointerEngagement
+    private var expiry: DispatchWorkItem?
+    var hasPendingExpiry: Bool { expiry != nil }
 
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    init(changed: @escaping (CompanionPointerResponse) -> Void) {
+    init(followDuration: TimeInterval = CompanionPointerEngagement.defaultDuration,
+         changed: @escaping (CompanionPointerResponse) -> Void) {
         self.changed = changed
+        engagement = CompanionPointerEngagement(duration: followDuration)
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError("CompanionPointerTrackingView is programmatic") }
@@ -143,7 +207,7 @@ final class CompanionPointerTrackingView: NSView {
         addTrackingArea(area)
         self.area = area
         isTracking = true
-        movementMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+        movementMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel]) { [weak self] event in
             MainActor.assumeIsolated {
                 // A nonactivating menu-bar panel can be key while Locus is inactive.
                 // This app-local monitor still accepts only its own key window's events.
@@ -159,7 +223,7 @@ final class CompanionPointerTrackingView: NSView {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if notification.name == NSWindow.willCloseNotification { self.detach() }
-                    else { self.publish(.neutral) }
+                    else { self.stopFollowing() }
                 }
             })
         }
@@ -168,14 +232,39 @@ final class CompanionPointerTrackingView: NSView {
 
     override func mouseEntered(with event: NSEvent) { updatePointer(event) }
     override func mouseMoved(with event: NSEvent) { updatePointer(event) }
-    override func mouseExited(with event: NSEvent) { publish(.neutral) }
+    override func mouseExited(with event: NSEvent) { stopFollowing() }
 
     private func updatePointer(_ event: NSEvent) {
         guard isTracking, enabled, event.window === window,
               window?.isKeyWindow == true, !isHiddenOrHasHiddenAncestor else { return }
         let point = convert(event.locationInWindow, from: nil)
-        guard bounds.contains(point), visibleRect.contains(point) else { publish(.neutral); return }
-        publish(.response(at: point, in: responseBounds ?? bounds))
+        guard bounds.contains(point), visibleRect.contains(point) else { stopFollowing(); return }
+        let characterBounds = responseBounds ?? bounds
+        let now = ProcessInfo.processInfo.systemUptime
+        if engagement.update(at: point, in: characterBounds, time: now) {
+            scheduleExpiry()
+        }
+        publish(engagement.isFollowing(at: now) ? .response(at: point, in: characterBounds) : .neutral)
+    }
+
+    private func scheduleExpiry() {
+        expiry?.cancel()
+        let expiry = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.expiry = nil
+            // Preserve the last hover position: remaining over the character
+            // must not immediately restart a finished engagement.
+            self.publish(.neutral)
+        }
+        self.expiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + engagement.duration, execute: expiry)
+    }
+
+    private func stopFollowing() {
+        expiry?.cancel()
+        expiry = nil
+        engagement.reset()
+        publish(.neutral)
     }
 
     private func publish(_ response: CompanionPointerResponse) {
@@ -204,9 +293,10 @@ final class CompanionPointerTrackingView: NSView {
         observationCount = 0
         generation += 1
         deliveryScheduled = false
-        publish(.neutral)
+        stopFollowing()
     }
     deinit {
+        expiry?.cancel()
         if let movementMonitor { NSEvent.removeMonitor(movementMonitor) }
         observers.forEach(NotificationCenter.default.removeObserver)
     }

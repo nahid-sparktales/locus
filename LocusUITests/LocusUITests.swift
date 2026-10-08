@@ -2570,21 +2570,20 @@ final class LocusUITests: XCTestCase {
         XCTAssertTrue(anyElement("configureAgent.create.price").exists)
     }
 
-    func testGroupChatsAreSeparateFromIndividualAgents() {
+    func testCompanionSpotReplacesGroupChatsAboveIndividualAgents() {
         relaunchWithAgentFixture("saved-profile")
         revealSidebarForNavigation()
-        let header = anyElement("sidebar.groupChats.header")
-        let crew = anyElement("sidebar.crewChat")
+        let header = anyElement("sidebar.companion.header")
+        let companion = anyElement("sidebar.companion")
         let agents = anyElement("sidebar.agentFilter")
         XCTAssertTrue(header.waitForExistence(timeout: 3))
-        XCTAssertTrue(crew.exists)
+        XCTAssertTrue(companion.exists)
+        XCTAssertFalse(anyElement("sidebar.groupChats.header").exists)
+        XCTAssertFalse(anyElement("sidebar.crewChat").exists)
         XCTAssertTrue(agents.exists)
-        XCTAssertLessThan(header.frame.maxY, crew.frame.minY)
-        XCTAssertLessThan(crew.frame.maxY, agents.frame.minY)
-        XCTAssertTrue(waitUntilHittable(crew))
-        crew.click()
-        XCTAssertTrue(anyElement("crewChat.workspace").waitForExistence(timeout: 3))
-        XCTAssertEqual(crew.value as? String, "Selected")
+        XCTAssertLessThan(header.frame.maxY, companion.frame.minY)
+        XCTAssertLessThan(companion.frame.maxY, agents.frame.minY)
+        XCTAssertTrue(waitUntilHittable(companion))
     }
 
     func testAgentProviderSwitchKeepsItsOwnModelChoices() {

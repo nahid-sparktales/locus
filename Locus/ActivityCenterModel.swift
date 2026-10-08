@@ -60,6 +60,7 @@ final class ActivityCenterModel: ObservableObject {
     @Published private(set) var activitySeenUpdates: [String: Double] = [:]
     @Published private(set) var dismissedActivityRunIDs: Set<String> = []
     @Published private(set) var acknowledgedWarningRunIDs: Set<String> = []
+    @Published private(set) var manuallyUnreadCompanionSessionIDs: Set<String> = []
 
     var runsDidRefresh: ([OrchestrationRun]) -> Void = { _ in }
     private var backend: BackendService?
@@ -202,6 +203,7 @@ final class ActivityCenterModel: ObservableObject {
         }
         viewedCompletionRunIDs = Set(defaults.stringArray(forKey: "Locus.viewedCompletionRunIDs") ?? [])
         companionCompletionRunIDs = Set(defaults.stringArray(forKey: "Locus.companionCompletionRunIDs.v1") ?? [])
+        manuallyUnreadCompanionSessionIDs = Set(defaults.stringArray(forKey: "Locus.companionUnreadSessions.v1") ?? [])
         dismissedActivityRunIDs = Set(
             defaults.stringArray(forKey: "Locus.dismissedActivityRunIDs") ?? []
         )
@@ -367,6 +369,27 @@ final class ActivityCenterModel: ObservableObject {
         persistActivityPresentationState()
     }
 
+    func companionConversationIsUnread(sessionID: String, runs: [OrchestrationRun]) -> Bool {
+        manuallyUnreadCompanionSessionIDs.contains(sessionID) || runs.contains {
+            $0.sessionID == sessionID && TeamRunState(rawValue: $0.state)?.isTerminal == true && activityIsUnseen($0)
+        }
+    }
+
+    func markCompanionConversation(sessionID: String, read: Bool, runs: [OrchestrationRun]) {
+        guard !sessionID.isEmpty else { return }
+        if read {
+            if manuallyUnreadCompanionSessionIDs.contains(sessionID) {
+                manuallyUnreadCompanionSessionIDs.remove(sessionID)
+            }
+            for run in runs where run.sessionID == sessionID && TeamRunState(rawValue: run.state)?.isTerminal == true {
+                markActivitySeen(run)
+            }
+        } else {
+            manuallyUnreadCompanionSessionIDs.insert(sessionID)
+        }
+        persistActivityPresentationState()
+    }
+
     func acknowledgeRunWarning(_ runID: String) {
         guard !runID.isEmpty, acknowledgedWarningRunIDs.insert(runID).inserted else { return }
         persistActivityPresentationState()
@@ -425,6 +448,7 @@ final class ActivityCenterModel: ObservableObject {
     private func persistActivityPresentationState() {
         guard persistenceEnabled else { return }
         defaults.set(Array(companionCompletionRunIDs.sorted().suffix(2_000)), forKey: "Locus.companionCompletionRunIDs.v1")
+        defaults.set(Array(manuallyUnreadCompanionSessionIDs.sorted().suffix(1_000)), forKey: "Locus.companionUnreadSessions.v1")
         defaults.set(Array(viewedCompletionRunIDs.prefix(1_000)), forKey: "Locus.viewedCompletionRunIDs")
         if activitySeenUpdates.count > 1_000 {
             activitySeenUpdates = Dictionary(

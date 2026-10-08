@@ -159,6 +159,7 @@ final class CompanionContextSharingModel: ObservableObject {
 
 struct CompanionContextSharingView: View {
     @ObservedObject var model: CompanionContextSharingModel
+    var compact = false
     @State private var textEntry = false
     @State private var ownsPreview = false
     @State private var selectedText = ""
@@ -175,22 +176,11 @@ struct CompanionContextSharingView: View {
                 Button("Last active application") { beginPreview { model.previewApplication() } }
                 Button("Screenshot region…") { beginPreview { model.previewRegion() } }
             } label: { Label(model.isPreparing ? "Preparing context…" : "Look at this", systemImage: "paperclip") }
+                .font(compact ? .locus(size: 10, weight: .medium) : .body)
+                .frame(height: compact ? 30 : nil)
                 .disabled(model.scope == nil || model.isPreparing)
                 .accessibilityIdentifier("companion.context.add")
-            ForEach(model.attachments) { item in
-                HStack {
-                    Label(item.name, systemImage: item.kind == .text ? "doc.text" : "photo")
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    Button { model.remove(item.id) } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).accessibilityLabel("Remove \(item.name)")
-                }.font(.caption)
-            }
-            if !model.attachments.isEmpty {
-                Text("Shared with your next Companion message · This conversation only")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            if !compact { CompanionContextSharingAttachmentsView(model: model) }
         }
         // Entry and review occupy one sheet. Two sibling sheets can dismiss
         // each other's data during the presentation handoff. Only the surface
@@ -269,5 +259,30 @@ struct CompanionContextSharingView: View {
                         .keyboardShortcut(.defaultAction).accessibilityIdentifier("companion.context.confirm")
                 }
         }.padding(20).frame(width: 480)
+    }
+}
+
+struct CompanionContextSharingAttachmentsView: View {
+    @ObservedObject var model: CompanionContextSharingModel
+
+    var body: some View {
+        if !model.attachments.isEmpty || model.notice != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(model.attachments) { item in
+                    HStack {
+                        Label(item.name, systemImage: item.kind == .text ? "doc.text" : "photo")
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        Button { model.remove(item.id) } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel("Remove \(item.name)")
+                    }.font(.caption)
+                }
+                if !model.attachments.isEmpty {
+                    Text("Shared with your next Companion message · This conversation only")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

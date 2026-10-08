@@ -455,9 +455,8 @@ struct ComposerView: View {
                     )
 
                     if model.currentCompanionConversationProfile != nil {
-                        CompanionContextSharingView(model: companionContext)
+                        CompanionContextSharingAttachmentsView(model: companionContext)
                             .padding(.horizontal, 12).padding(.bottom, 8)
-                            .task(id: model.companionScope) { companionContext.activate(model.companionScope) }
                     }
                     if model.hasComposerContextChips {
                         attachmentChipsRow
@@ -993,7 +992,16 @@ struct ComposerView: View {
             ComposerAttachmentSourceMenu()
                 .environmentObject(model)
 
-            if model.justChatEnabled {
+            if model.currentCompanionConversationProfile != nil {
+                Label("Ask", systemImage: "bubble.left")
+                    .font(.locus(size: 10, weight: .medium))
+                    .foregroundStyle(viewColors.muted)
+                    .padding(.horizontal, 8)
+                    .frame(height: 30)
+                    .accessibilityIdentifier("composer.companionMode")
+                CompanionContextSharingView(model: companionContext, compact: true)
+                    .task(id: model.companionScope) { companionContext.activate(model.companionScope) }
+            } else if model.justChatEnabled {
                 Label("Chat only", systemImage: "lock.fill")
                     .font(.locus(size: 10, weight: .medium))
                     .foregroundStyle(viewColors.muted)

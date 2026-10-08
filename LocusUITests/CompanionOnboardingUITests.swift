@@ -178,12 +178,17 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertFalse(element("sidebar.mode.companion").exists)
         let character = element("companion.conversation.character")
         XCTAssertTrue(character.waitForExistence(timeout: 5))
-        XCTAssertTrue(element("session.companion-fixture-chat").exists)
+        XCTAssertTrue(element("sidebar.companion").exists)
+        XCTAssertTrue(element("sidebar.companion.header").exists)
+        XCTAssertFalse(element("sidebar.groupChats.header").exists)
+        XCTAssertFalse(element("session.companion-fixture-chat").exists,
+                       "The Companion has its own spot instead of a second agent chat row")
         XCTAssertFalse(element("session.companion-fixture-project").exists,
                        "The normal sidebar exposes only the current Companion chat")
         let transcript = element("conversation.scroll")
         XCTAssertEqual(character.frame.midX, transcript.frame.midX, accuracy: 3)
-        XCTAssertLessThanOrEqual(character.frame.maxY, transcript.frame.minY + 3)
+        XCTAssertGreaterThanOrEqual(character.frame.minY, transcript.frame.minY - 3)
+        XCTAssertLessThanOrEqual(character.frame.maxY, transcript.frame.maxY + 3)
         XCTAssertFalse(element("conversation.welcome").exists)
         composer.click()
         composer.typeText("Main companion draft")
@@ -199,6 +204,7 @@ final class CompanionOnboardingUITests: XCTestCase {
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
         app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1200"
+        app.launchEnvironment["LOCUS_UI_TESTING_INSPECTOR_WIDTH"] = "280"
         app.launch()
         let composer = element("composer.input")
         XCTAssertTrue(composer.waitForExistence(timeout: 15))
@@ -213,8 +219,12 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertFalse(element("companion.panel.history").exists)
         XCTAssertFalse(element("companion.panel.new").exists)
         XCTAssertTrue(element("companion.panel.clear").exists)
+        XCTAssertTrue(element("companion.panel.transcript").exists)
+        XCTAssertFalse(element("companion.panel.overview").exists)
+        XCTAssertFalse(element("companion.panel.mode").exists, "The companion always answers in Ask mode")
         let character = element("companion.panel.character")
         XCTAssertTrue(character.exists)
+        let panelWidth = element("companion.panel").frame.width
         XCTAssertEqual(character.frame.midX, element("companion.panel").frame.midX, accuracy: 3)
         XCTAssertEqual(element("companion.panel.name").frame.midX,
                        element("companion.panel").frame.midX, accuracy: 3)
@@ -227,6 +237,17 @@ final class CompanionOnboardingUITests: XCTestCase {
         app.menuItems["Open full conversation"].click()
         XCTAssertTrue(element("companion.conversation.character").waitForExistence(timeout: 5))
         XCTAssertTrue(waitForComposerValue("One companion draft"))
+        XCTAssertTrue(element("companion.panel.overview").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("companion.panel.tools").exists)
+        XCTAssertEqual(element("companion.panel").frame.width, panelWidth, accuracy: 1,
+                       "The overview fits the existing inspector width")
+        XCTAssertTrue(element("companion.panel.tools").isHittable)
+        XCTAssertTrue(element("companion.panel.profile").isHittable)
+        XCTAssertFalse(element("companion.panel.transcript").exists,
+                       "The inspector shows companion details when its chat is open in the center")
+        XCTAssertFalse(input.exists, "Only the main conversation should expose a companion composer")
+        XCTAssertFalse(element("companion.panel.clear").exists)
+        capture("Companion overview beside its main conversation")
         composer.click()
         app.typeKey("a", modifierFlags: .command)
         composer.typeText("Updated companion draft")
@@ -234,6 +255,9 @@ final class CompanionOnboardingUITests: XCTestCase {
         XCTAssertTrue(waitForComposerValue("Keep my work draft"))
         if !element("companion.panel").exists { element("inspector.rail.companion").click() }
         XCTAssertTrue(input.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("companion.panel.transcript").exists)
+        XCTAssertTrue(element("companion.panel.clear").exists)
+        XCTAssertFalse(element("companion.panel.overview").exists)
         let updatedDraft = NSPredicate(format: "value == %@", "Updated companion draft")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: updatedDraft,
                                 object: input)], timeout: 5), .completed)
@@ -257,10 +281,103 @@ final class CompanionOnboardingUITests: XCTestCase {
         let reply = app.textViews.matching(NSPredicate(
             format: "value == %@", "We can keep talking here.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 5))
-        XCTAssertEqual(character.frame.midX, element("conversation.scroll").frame.midX, accuracy: 3)
-        XCTAssertLessThanOrEqual(character.frame.maxY, element("conversation.scroll").frame.minY + 3)
+        let transcript = element("conversation.scroll")
+        XCTAssertEqual(character.frame.midX, transcript.frame.midX, accuracy: 3)
+        XCTAssertGreaterThanOrEqual(character.frame.minY, transcript.frame.minY - 3)
+        XCTAssertLessThanOrEqual(character.frame.maxY, transcript.frame.maxY + 3)
+        XCTAssertLessThanOrEqual(character.frame.maxY, reply.frame.minY + 3)
         XCTAssertFalse(element("conversation.welcome").exists)
         capture("Companion stays centered above chat history")
+    }
+
+    func testCompanionProfileKeepsOneConversationAndOffersDedicatedTools() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_WIDTH"] = "1440"
+        app.launchEnvironment["LOCUS_UI_TESTING_WINDOW_HEIGHT"] = "950"
+        app.launch()
+        let composer = element("composer.input")
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        composer.click()
+        composer.typeText("Keep the work draft while viewing my companion")
+        element("inspector.rail.companion").click()
+        XCTAssertTrue(element("companion.panel.options").waitForExistence(timeout: 5))
+        element("companion.panel.options").click()
+        app.menuItems["Profile and activity"].click()
+        XCTAssertTrue(element("companion.profile").waitForExistence(timeout: 5))
+        if element("companion.panel").exists { element("inspector.rail.companion").click() }
+        let overview = element("savedAgent.overview")
+        let hero = element("companion.profile.hero")
+        XCTAssertTrue(overview.frame.contains(hero.frame))
+        XCTAssertTrue(element("companion.profile.continue").isHittable)
+        XCTAssertFalse(element("savedAgent.newChat").exists)
+        XCTAssertFalse(element("savedAgent.newAutomation").exists)
+        XCTAssertFalse(element("savedAgent.automations").exists)
+        XCTAssertFalse(element("savedAgent.chats").exists)
+        let title = element("companion.profile.conversation.title")
+        XCTAssertTrue([title.label, title.value as? String].compactMap { $0 }
+            .joined(separator: " ").contains("Companion UI fixture"))
+        XCTAssertFalse(element("savedAgent.chat.companion-fixture-project").exists)
+        XCTAssertTrue(element("companion.profile.connection").exists)
+        XCTAssertTrue(element("companion.profile.personality").exists)
+        capture("Companion profile — one ongoing conversation")
+        let tools = element("companion.profile.tools")
+        for _ in 0..<8 where !tools.isHittable {
+            overview.scroll(byDeltaX: 0, deltaY: -180)
+        }
+        XCTAssertTrue(tools.isHittable)
+        tools.click()
+        XCTAssertTrue(app.buttons["Done"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.radioButtons["Memory"].firstMatch.exists)
+        app.buttons["Done"].firstMatch.click()
+        let continueConversation = element("companion.profile.continue")
+        for _ in 0..<8 where !continueConversation.isHittable {
+            overview.scroll(byDeltaX: 0, deltaY: 180)
+        }
+        continueConversation.click()
+        XCTAssertTrue(element("companion.conversation.character").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("companion.profile").exists)
+        let sessionTitle = element("workspace.sessionTitle")
+        XCTAssertTrue([sessionTitle.label, sessionTitle.value as? String].compactMap { $0 }
+            .joined(separator: " ").contains("Companion UI fixture"))
+        element("sidebar.mode.ask").click()
+        XCTAssertTrue(waitForComposerValue("Keep the work draft while viewing my companion"))
+    }
+
+    func testDedicatedCompanionUnreadStateSurvivesUntilReopening() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launch()
+        let companion = element("sidebar.companion")
+        XCTAssertTrue(companion.waitForExistence(timeout: 15))
+        companion.click()
+        XCTAssertTrue(element("companion.conversation.character").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("sidebar.companion.header").exists)
+        XCTAssertFalse(element("sidebar.groupChats.header").exists)
+        XCTAssertFalse(element("agent.C0111111-1111-4111-8111-111111111111").exists)
+        XCTAssertFalse(element("session.companion-fixture-chat").exists)
+        XCTAssertFalse(element("sidebar.companion.unread").exists)
+        companion.rightClick()
+        let markUnread = app.menuItems["Mark as unread"].firstMatch
+        XCTAssertTrue(markUnread.waitForExistence(timeout: 3))
+        markUnread.click()
+        XCTAssertTrue(element("sidebar.companion.unread").waitForExistence(timeout: 3))
+        let composer = element("composer.input")
+        composer.click()
+        composer.typeText("A draft while this chat is marked unread")
+        XCTAssertTrue(element("sidebar.companion.unread").exists,
+                       "Manual unread stays set while the conversation remains open")
+        capture("Companion has its own sidebar entry and unread marker")
+        element("sidebar.mode.ask").click()
+        XCTAssertTrue(element("sidebar.companion.unread").exists)
+        companion.click()
+        XCTAssertTrue(waitForComposerValue("A draft while this chat is marked unread"))
+        XCTAssertTrue(element("sidebar.companion.unread").waitForNonExistence(timeout: 3))
+        companion.rightClick()
+        XCTAssertTrue(app.menuItems["Mark as unread"].firstMatch.waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     func testMenuBarCompanionPreservesDraftAcrossDismissalAndOpensLocus() throws {

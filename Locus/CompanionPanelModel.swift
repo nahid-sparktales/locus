@@ -13,7 +13,7 @@ final class CompanionPanelModel: ObservableObject {
     @Published private(set) var isClearing = false
     @Published private var sendingSessionIDs: Set<String> = []
     @Published var error: String?
-    @Published var mode: WorkMode = .ask
+    let mode: WorkMode = .ask
 
     private weak var app: AppModel?
     private var selectionRevision = UUID()
@@ -88,11 +88,16 @@ final class CompanionPanelModel: ObservableObject {
         selectionIsCurrent && selectedSessionID != nil && loadedSessionID == selectedSessionID && !isLoading && !isSending
             && !isCreating && !isClearing && !state.busy && availabilityIssue == nil
             && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(app?.companionContext.attachments.isEmpty ?? true))
-            && [.ask, .work].contains(mode)
     }
     var canRetryLoading: Bool {
         selectionIsCurrent && selectedSessionID != nil && loadedSessionID != selectedSessionID
             && !isLoading && app?.isAgentOnline == true
+    }
+    /// Read receipts require the current owner's successfully loaded transcript.
+    /// A selected ID alone may still be opening, offline, or have failed validation.
+    var hasLoadedConversation: Bool {
+        selectionIsCurrent && selectedSessionID != nil && loadedSessionID == selectedSessionID
+            && !isLoading && !isCreating && !isClearing
     }
     private var scopeIsCurrent: Bool {
         guard let app, profile != nil else { return false }

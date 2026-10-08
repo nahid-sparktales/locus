@@ -55,7 +55,8 @@ extension AppModel {
             throw SavedAgentConversationError.unavailable("This queued chat’s model account changed. Choose an account and send again.")
         }
         var dispatch = TaskCapsuleDispatch(profile: profile, provider: route.provider, accountID: route.accountID,
-                                          providerBody: route.body, context: [:], mode: mode)
+                                          providerBody: route.body, context: [:],
+                                          mode: sessionID.map { conversationMode(mode, sessionID: $0) } ?? mode)
         dispatch.profileOnly = true
         return dispatch
     }
@@ -102,6 +103,8 @@ extension AppModel {
     /// an explicit model choice saved for this conversation.
     func sendSavedAgentTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode, runID: String = UUID().uuidString,
                             preservingForeground: Bool = false, attachments: [ChatAttachment] = []) async throws {
+        let companionTurn = usesCompanionContext(sessionID: sessionID, profileID: profileID)
+        let mode: WorkMode = companionTurn ? .ask : mode
         guard [.ask, .work].contains(mode), !isShuttingDown,
               let profile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw SavedAgentConversationError.unavailable("This agent profile is unavailable.")
@@ -117,7 +120,7 @@ extension AppModel {
         }
         let dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID)
         let payload = attachments.isEmpty ? text : Self.decoratedPrompt(text, mode: mode,
-            chatAttachments: attachments, contextFiles: [], restoredTranscriptContext: nil)
+            chatAttachments: attachments, contextFiles: [], restoredTranscriptContext: nil, companionContext: companionTurn)
         let imageAttachments: [[String: Any]] = attachments.compactMap { attachment in
             guard attachment.isAvailable, attachment.kind != .text,
                   let data = attachment.imageData, let mime = attachment.mimeType else { return nil }
@@ -142,6 +145,7 @@ extension AppModel {
                 if let route = try await prepareAgentChatQueueRoute(dispatch, sessionID: sessionID) {
                     queueBody["agent_chat_route"] = route
                     queueBody["mode"] = mode.rawValue
+                    if companionTurn { queueBody["companion_context"] = true }
                 }
                 let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
                 let previous = taskConversationStates[sessionID]
@@ -172,6 +176,7 @@ extension AppModel {
                     "agent_profile": Self.savedAgentProfileBody(dispatch.profile),
                     "agent_config": encodedJSONObject(dispatch.profile.resolvedBehavior) ?? [:],
                 ]
+                if companionTurn { request["companion_context"] = true }
                 if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
                 if allowsSpecialists { request["solo_swarm"] = ["enabled": true] }
                 if currentSessionID == sessionID {

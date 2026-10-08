@@ -829,7 +829,8 @@ extension AppModel {
             liveApplication: mode == .ask ? nil : currentLiveApplicationTarget.flatMap {
                 applicationContext.isConnected($0) ? $0 : nil
             },
-            simulator: mode == .ask ? nil : currentSimulatorTarget
+            simulator: mode == .ask ? nil : currentSimulatorTarget,
+            companionContext: usesCompanionContext(sessionID: currentSessionID)
         )
     }
 
@@ -840,11 +841,14 @@ extension AppModel {
         contextFiles: [ContextFile],
         restoredTranscriptContext: String?,
         liveApplication: ApplicationTarget? = nil,
-        simulator: SimulatorTarget? = nil
+        simulator: SimulatorTarget? = nil,
+        companionContext: Bool = false
     ) -> String {
         var sections = [
             "[Locus mode: \(mode.rawValue.capitalized)]",
-            mode.instruction,
+            mode == .ask && companionContext
+                ? "Answer questions using the conversation, explicitly shared context, and permitted read-only Locus tools. Search Locus chats and read relevant sessions when the user asks about past work. Do not modify files, run commands, or change Locus state."
+                : mode.instruction,
         ]
 
         let included = contextFiles.filter { $0.isIncluded && $0.isAvailable }
@@ -871,7 +875,7 @@ extension AppModel {
             }.joined(separator: "\n\n")
             // Just Chat keeps its isolation contract; agentic modes treat the
             // same files as evidence the agent may relate to the workspace.
-            let guidance = mode == .ask
+            let guidance = mode == .ask && !companionContext
                 ? "The user explicitly attached the following files to this message. "
                     + "Analyze only the supplied content; do not inspect their paths or access "
                     + "any other workspace data:"

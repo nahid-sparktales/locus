@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import USER_AGENT, proxy
+from .chat_history_tools import CHAT_HISTORY_SCHEMAS, CHAT_HISTORY_TOOLS, execute_chat_history_tool
 from .response_parts import ATTACH_OUTPUT_PARTS_SCHEMA
 from .task_state import CHECK_SCHEMA
 
@@ -50,6 +51,7 @@ IGNORE_DIRS = {
 
 #: Read-only tools that never require permission.
 SAFE_TOOLS = {
+    *CHAT_HISTORY_TOOLS,
     "read_file", "glob", "grep", "list_dir", "todo_write", "submit_plan",
     "ask_user_question", "attach_output_parts",
     # Asking the user a question mutates nothing, so it never prompts.
@@ -1403,6 +1405,13 @@ _IMPLS: dict[str, Callable[[dict[str, Any], ToolContext], str]] = {
 def execute_tool(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
     """Run a tool by name. Never raises; errors are returned as text."""
     from .collaboration_tools import COLLABORATION_NAMES
+    if name in CHAT_HISTORY_TOOLS:
+        if not isinstance(arguments, dict):
+            return "Error: tool arguments must be an object."
+        try:
+            return execute_chat_history_tool(name, arguments, ctx)
+        except Exception as error:  # Tool errors must not crash the active turn.
+            return f"Error: saved-chat access failed: {error}"
     if name in {"get_goal", "update_goal"}:
         if ctx.goal is None:
             return "Error: goal tools are available only to the active goal coordinator."
@@ -1458,6 +1467,7 @@ def _schema(name: str, description: str, properties: dict[str, Any], required: l
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
+    *CHAT_HISTORY_SCHEMAS,
     _schema(
         "record_skill_observation",
         "Record one evidence-backed skill improvement opportunity in Locus app data for user review; never changes a skill automatically.",
@@ -1490,6 +1500,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _schema(
         "search_context",
         "Search permitted approved memory, indexed workspace code/text and opted-in documents together. "
+        "For saved conversation history use search_locus_chats instead when available. "
         "An initial search is automatic. If the reference evidence cannot support the requested answer, "
         "name the missing information and request ONE focused follow-up. The host enforces two rounds "
         "total across retries and helpers. Search scores do not establish sufficiency. If evidence is "

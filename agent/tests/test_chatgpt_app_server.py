@@ -643,6 +643,29 @@ class ParityFakeRuntime(FakeManagedRuntime):
         return super().run_turn(text=text, event_handler=event_handler)
 
 
+def test_companion_ask_registers_and_executes_history_tools_on_chatgpt(tmp_path):
+    from ollama_code.sessions import SessionStore
+
+    saved = SessionStore(str(tmp_path / "other-project"))
+    saved.append({"type": "message", "message": {"role": "user", "content": "Generate a lighthouse illustration"}})
+    runtime = ParityFakeRuntime(tool_calls=[("read_locus_chat", {"session_id": saved.session_id})])
+    core = _managed_core(tmp_path, runtime)
+    events = []
+    core.on_event(events.append)
+    core.companion_context = core.tool_registry.companion_context = True
+    core.configure_agent({}, mode="ask")
+    core.run_turn("What image did we discuss in the other chat?", allow_tools=True)
+    start = runtime.start_kwargs[-1]
+    names = {item["function"]["name"] for item in start["tools"]}
+    assert {"search_locus_chats", "read_locus_chat", "list_locus_chats"} <= names
+    assert "bash" not in names and "write_file" not in names
+    assert "companion in Ask mode" in start["base_instructions"]
+    assert not core.chatgpt_parity_active()
+    results = [event for event in events if event.get("type") == "tool_result" and event.get("tool") == "read_locus_chat"]
+    assert results
+    assert "lighthouse" in str(results)
+
+
 DECORATED = (
     "[Locus mode: Work]\n\n"
     "Solve the request using the workspace and tools when useful.\n\n"

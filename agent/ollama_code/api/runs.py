@@ -171,6 +171,13 @@ def run_queue(
             manifest["mode"] = mode
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+    if "companion_context" in body:
+        if not isinstance(body["companion_context"], bool) or body["companion_context"] and (
+            "agent_chat_route" not in manifest or manifest.get("mode") != "ask"
+        ):
+            raise HTTPException(422, "Companion context requires a saved-agent Ask conversation.")
+        if body["companion_context"]:
+            manifest["companion_context"] = True
     run_id = str(body.get("run_id") or uuid.uuid4().hex)
     goal_id = str(body.get("goal_id") or "")
     if goal_id:

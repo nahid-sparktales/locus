@@ -5,6 +5,113 @@ import XCTest
 
 @MainActor
 final class CompanionPanelTests: XCTestCase {
+    func testReopeningAlreadyVisibleCompanionClearsManualUnreadWithoutReloadingChat() throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [])
+        app.markCompanionRead(false)
+        XCTAssertTrue(app.companionHasUnread)
+        app.openCompanionMainConversation()
+        XCTAssertFalse(app.companionHasUnread)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains { $0.hasSuffix("/resume") })
+    }
+
+    func testCompanionAskPromptAllowsReadOnlyRetrievalWithoutChangingOrdinaryAsk() {
+        let attachment = CompanionContextSharingModel.textAttachment("Reference", name: "Example")
+        let companion = AppModel.decoratedPrompt("Find related chats", mode: .ask,
+            chatAttachments: [attachment], contextFiles: [], restoredTranscriptContext: nil, companionContext: true)
+        let ordinary = AppModel.decoratedPrompt("Find related chats", mode: .ask,
+            chatAttachments: [attachment], contextFiles: [], restoredTranscriptContext: nil)
+        XCTAssertTrue(companion.contains("permitted read-only Locus tools"))
+        XCTAssertFalse(companion.contains("Do not call tools"))
+        XCTAssertTrue(companion.contains("Do not modify files"))
+        XCTAssertTrue(ordinary.contains("Do not call tools"))
+        XCTAssertTrue(ordinary.contains("any other workspace data"))
+    }
+
+    func testCompanionModeRemainsAskAcrossCommandsAndSplitRestorationWithoutChangingOtherChats() throws {
+        let (app, profile, chat) = try fixture()
+        defer { cleanup(app) }
+        app.inspectorCollapsed = false
+        app.installTranscriptSession(chat.id, blocks: [])
+        XCTAssertEqual(app.selectedMode, .ask)
+        XCTAssertFalse(app.justChatEnabled, "Companion Ask must keep its Locus context inspector available")
+        XCTAssertFalse(app.inspectorCollapsed)
+        for requested in WorkMode.allCases {
+            app.selectedMode = requested
+            XCTAssertEqual(app.selectedMode, .ask)
+            XCTAssertEqual(try app.savedAgentProfileDispatch(profileID: profile.id, mode: requested, sessionID: chat.id).mode, .ask)
+        }
+        app.splitPaneModes["center"] = .plan
+        app.prepareSplitSelection("center")
+        app.installTranscriptSession("center", blocks: [])
+        XCTAssertEqual(app.selectedMode, .plan, "Leaving Companion restores the other chat's saved mode")
+        app.selectedMode = .work
+        XCTAssertEqual(app.selectedMode, .work)
+        app.splitPaneModes[chat.id] = .grill
+        app.prepareSplitSelection(chat.id)
+        app.installTranscriptSession(chat.id, blocks: [])
+        XCTAssertEqual(app.selectedMode, .ask, "Old saved companion modes must not restore")
+        XCTAssertTrue(app.usesCompanionContext(sessionID: chat.id, profileID: profile.id))
+        XCTAssertFalse(app.usesCompanionContext(sessionID: "center", profileID: profile.id))
+        XCTAssertFalse(app.usesCompanionContext(sessionID: chat.id, profileID: UUID()))
+    }
+
+    func testCompanionChatCreationOverridesAgentDefaultToAsk() async throws {
+        let (app, original, _) = try fixture()
+        defer { cleanup(app) }
+        var profile = original
+        profile.defaultMode = .work
+        app.agentProfiles = [profile]
+        let created = try await app.createSavedAgentConversation(profile, workspace: "/tmp", preservingForeground: true)
+        XCTAssertEqual(CompanionPanelURLProtocol.bodies(for: "/api/sessions/detached").last?["mode"] as? String, "ask")
+        XCTAssertEqual(app.splitPaneModes[created.id], .ask)
+        XCTAssertEqual(app.currentSessionID, "center")
+    }
+
+    func testBackgroundAndMainCompanionDispatchPersistAskContextInQueue() async throws {
+        for foreground in [false, true] {
+            let (app, profile, chat) = try fixture()
+            defer { cleanup(app) }
+            if foreground {
+                app.installTranscriptSession(chat.id, blocks: [])
+                app.sessionInfo = SessionInfo(model: "fixture", host: "localhost", cwd: "/tmp", session: chat.id,
+                    sessionID: chat.id, messages: 2, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+                    maxIterations: 10, hasProjectContext: false, permissions: SessionPermissions(skipAll: false, allowed: []))
+                app.selectedMode = .work
+                app.send("Find my earlier image generation chat")
+                XCTAssertEqual(app.turnDispatchedMode, .ask)
+                await app.pendingChatTurns[chat.id]?.value
+            } else {
+                do {
+                    try await app.sendSavedAgentTurn(sessionID: chat.id, workspace: "/tmp", profileID: profile.id,
+                                                    text: "Find my earlier image generation chat", mode: .work)
+                } catch { /* The fixture rejects queue admission before a real worker could launch. */ }
+            }
+            let body = try XCTUnwrap(CompanionPanelURLProtocol.bodies(for: "/api/runs/queue").last)
+            XCTAssertEqual(body["mode"] as? String, "ask")
+            XCTAssertEqual(body["companion_context"] as? Bool, true)
+            XCTAssertEqual((body["agent_chat_route"] as? [String: Any])?["profile_id"] as? String, profile.id.uuidString)
+            XCTAssertEqual(body["solo_swarm"] as? Bool, false)
+        }
+    }
+
+    func testOrdinarySavedAgentDispatchKeepsWorkWithoutCompanionContext() async throws {
+        let (app, _, _) = try fixture()
+        defer { cleanup(app) }
+        let ordinary = AgentProfile(name: "Worker", model: "fixture")
+        app.agentProfiles.append(ordinary)
+        app.sessions.append(SessionSummary(id: "ordinary-agent", name: "Worker", preview: "", mtime: 3,
+            size: 0, cwd: "/tmp", agentProfileID: ordinary.id.uuidString))
+        do {
+            try await app.sendSavedAgentTurn(sessionID: "ordinary-agent", workspace: "/tmp", profileID: ordinary.id,
+                                            text: "Continue the task", mode: .work)
+        } catch { /* The fixture rejects queue admission before a real worker could launch. */ }
+        let body = try XCTUnwrap(CompanionPanelURLProtocol.bodies(for: "/api/runs/queue").last)
+        XCTAssertEqual(body["mode"] as? String, "work")
+        XCTAssertNil(body["companion_context"])
+    }
+
     func testOpeningAndLoadingPanelPreservesCentralDraftTaskAndApproval() async throws {
         let (app, profile, chat) = try fixture()
         defer { cleanup(app) }
@@ -34,17 +141,22 @@ final class CompanionPanelTests: XCTestCase {
     func testFailedLoadRetriesWithoutTouchingCenter() async throws {
         let (app, _, _) = try fixture(failures: 1)
         defer { cleanup(app) }
+        app.markCompanionRead(false)
         app.companionPanel.activate()
         XCTAssertFalse(app.companionPanel.canRetryLoading, "An in-flight read cannot be restarted")
+        XCTAssertFalse(app.companionPanel.hasLoadedConversation, "Selecting a conversation is not a read receipt")
         await app.companionPanel.loadTask?.value
         XCTAssertNotNil(app.companionPanel.error)
         XCTAssertTrue(app.companionPanel.blocks.isEmpty)
         XCTAssertTrue(app.companionPanel.canRetryLoading)
+        XCTAssertFalse(app.companionPanel.hasLoadedConversation, "A failed request cannot acknowledge unseen messages")
+        XCTAssertTrue(app.companionHasUnread)
         app.companionPanel.retryLoading()
         await app.companionPanel.loadTask?.value
         XCTAssertNil(app.companionPanel.error)
         XCTAssertEqual(app.companionPanel.blocks.last?.text, "Saved companion answer")
         XCTAssertFalse(app.companionPanel.canRetryLoading, "A loaded transcript does not show Retry")
+        XCTAssertTrue(app.companionPanel.hasLoadedConversation)
         XCTAssertEqual(app.currentSessionID, "center")
         XCTAssertEqual(app.draftText, "Central draft")
     }
@@ -58,6 +170,7 @@ final class CompanionPanelTests: XCTestCase {
             XCTAssertEqual(app.companionPanel.selectedSessionID, chat.id)
             XCTAssertNotNil(app.companionPanel.error, mismatch)
             XCTAssertTrue(app.companionPanel.blocks.isEmpty, mismatch)
+            XCTAssertFalse(app.companionPanel.hasLoadedConversation, mismatch)
             XCTAssertNil(app.splitPaneBlocks[chat.id], mismatch)
             XCTAssertFalse(app.companionPanel.canSend)
         }
@@ -215,8 +328,10 @@ final class CompanionPanelTests: XCTestCase {
         app.agentProfiles = [profile]
         app.settings.agentChatModelSelections[chat.id] = .init(profileID: profile.id, accountID: nil, model: "healthy-local")
         var dispatchedModel: String?
+        var dispatchedMode: WorkMode?
         app.companionPanel.configure(app: app) { id, _, owner, _, mode, _ in
             dispatchedModel = try app.savedAgentProfileDispatch(profileID: owner, mode: mode, sessionID: id).profile.model
+            dispatchedMode = mode
         }
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
@@ -227,6 +342,7 @@ final class CompanionPanelTests: XCTestCase {
         app.companionPanel.send()
         await app.companionPanel.sendingTask?.value
         XCTAssertEqual(dispatchedModel, "healthy-local")
+        XCTAssertEqual(dispatchedMode, .ask, "Companion retrieval always runs in Ask mode")
         XCTAssertEqual(app.companionPanel.draft, "")
         XCTAssertEqual(app.agentProfiles.first, profile, "The per-chat override must not replace the owner's default")
         XCTAssertEqual(app.draftText, "Central draft")
@@ -285,7 +401,7 @@ final class CompanionPanelTests: XCTestCase {
         app.companionPanel.activate()
         await app.companionPanel.loadTask?.value
         app.companionPanel.draft = "  Hello companion  "
-        app.companionPanel.mode = .ask
+        XCTAssertEqual(app.companionPanel.mode, .ask)
         app.isBusy = true
         app.companionPanel.send()
         await app.companionPanel.sendingTask?.value
@@ -709,6 +825,7 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     private static var failures = 0
     private static var mismatch: String?
     private static var requestedPaths: [String] = []
+    private static var requestedBodies: [String: [[String: Any]]] = [:]
     private static var created = false
     private static var archived: Set<String> = []
     private static var rejectCreation = false
@@ -716,10 +833,14 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     static func reset(profileID: UUID, failures: Int, mismatch: String?, context: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         self.profileID = profileID; self.failures = failures; self.mismatch = mismatch; requestedPaths = []; created = false
+        requestedBodies = [:]
         sessionContext = context
         archived = []; rejectCreation = false
     }
     static func paths() -> [String] { lock.lock(); defer { lock.unlock() }; return requestedPaths }
+    static func bodies(for path: String) -> [[String: Any]] {
+        lock.lock(); defer { lock.unlock() }; return requestedBodies[path] ?? []
+    }
     static func archivedIDs() -> Set<String> { lock.lock(); defer { lock.unlock() }; return archived }
     static func failNextCreation() { lock.lock(); defer { lock.unlock() }; rejectCreation = true }
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -729,7 +850,20 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         Self.lock.lock()
         let path = request.url!.path
         Self.requestedPaths.append(path)
-        let status = Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: bytes.prefix(count))
+            }
+        }
+        if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            Self.requestedBodies[path, default: []].append(body)
+        }
+        let status = path == "/api/runs/queue" || Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
         Self.failures = max(0, Self.failures - 1)
         let owner = Self.mismatch == "owner" ? UUID() : Self.profileID
         let archived = Self.mismatch == "archive"

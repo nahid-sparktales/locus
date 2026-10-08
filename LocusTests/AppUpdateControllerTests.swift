@@ -236,6 +236,83 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertEqual(continuations, 1)
     }
 
+    func testSparkleInstallContinuationCanPassItsSecondRelaunchCheck() {
+        let lifecycle = ApplicationLifecycleCoordinator()
+        var installationResumed = false
+
+        // Sparkle 2.9.6's installWithToolAndRelaunch checks permission, asks
+        // to postpone, then recursively checks permission in installHandler.
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch {
+            installationResumed = lifecycle.shouldAllowUpdateRelaunch()
+        }
+
+        XCTAssertTrue(installationResumed, "Rejecting the second check silently cancels Install and Restart")
+        XCTAssertEqual(lifecycle.applicationShouldTerminate(.shared), .terminateNow)
+    }
+
+    func testDeferredUpdateCleanupResumesInstallationOnceAfterWorkStops() throws {
+        var finishCleanup: (@MainActor () -> Void)?
+        var cleanupCount = 0
+        let lifecycle = ApplicationLifecycleCoordinator { completion in
+            cleanupCount += 1
+            finishCleanup = completion
+        }
+        var installationCount = 0
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch {
+            if lifecycle.shouldAllowUpdateRelaunch() { installationCount += 1 }
+        }
+        XCTAssertEqual(lifecycle.state, .preparingUpdate)
+        XCTAssertFalse(lifecycle.shouldAllowUpdateRelaunch())
+        XCTAssertEqual(installationCount, 0)
+        lifecycle.prepareForUpdateRelaunch { XCTFail("A second postpone must not replace the pending install") }
+        let complete = try XCTUnwrap(finishCleanup)
+        complete()
+        complete()
+        XCTAssertEqual(cleanupCount, 1)
+        XCTAssertEqual(installationCount, 1)
+        XCTAssertEqual(lifecycle.state, .relaunching)
+    }
+
+    func testAbortedUpdateDropsOldCleanupAndAllowsAFreshAttempt() throws {
+        var cleanupCompletions: [@MainActor () -> Void] = []
+        let lifecycle = ApplicationLifecycleCoordinator { cleanupCompletions.append($0) }
+        var obsoleteInstallation = 0
+        var freshInstallation = 0
+        lifecycle.prepareForUpdateRelaunch { obsoleteInstallation += 1 }
+        lifecycle.updateCycleDidFinish()
+        XCTAssertEqual(lifecycle.state, .idle)
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch { freshInstallation += 1 }
+        XCTAssertEqual(cleanupCompletions.count, 2)
+        cleanupCompletions[0]()
+        XCTAssertEqual(obsoleteInstallation, 0)
+        XCTAssertEqual(freshInstallation, 0, "Late cleanup from an aborted cycle must not resume a newer install")
+        XCTAssertEqual(lifecycle.state, .preparingUpdate)
+        cleanupCompletions[1]()
+        XCTAssertEqual(freshInstallation, 1)
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.updateCycleDidFinish()
+        XCTAssertEqual(lifecycle.state, .idle)
+    }
+
+    func testSparkleCycleCompletionResetsLifecycleForAnotherInstall() throws {
+        let driver = SparkleUpdateDriver(
+            configuration: try XCTUnwrap(AppUpdateConfiguration(info: automaticInfo)), startImmediately: false)
+        let userDriver = SPUStandardUserDriver(hostBundle: .main, delegate: nil)
+        let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: userDriver, delegate: driver)
+        let lifecycle = ApplicationLifecycleCoordinator()
+        driver.relaunchHandler = lifecycle
+        lifecycle.prepareForUpdateRelaunch {}
+        XCTAssertEqual(lifecycle.state, .relaunching)
+        driver.updater(updater, didFinishUpdateCycleFor: .updates,
+                       error: NSError(domain: "UpdaterFixture", code: 1))
+        XCTAssertEqual(lifecycle.state, .idle)
+        XCTAssertTrue(driver.updaterShouldRelaunchApplication(updater))
+        XCTAssertFalse(updater.canCheckForUpdates, "The regression must not start Sparkle or touch the installed app")
+    }
+
     func testInvalidOpenSettingsAbortRelaunchBeforeCleanup() {
         let model = AppModel(startImmediately: false)
         let registrationID = UUID()

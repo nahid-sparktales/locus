@@ -452,6 +452,12 @@ extension AppModel {
     }
 
     func applyUnusedChatInitialMode(_ info: SessionInfo) {
+        if usesCompanionContext(sessionID: info.sessionID) {
+            splitPaneModes[info.sessionID] = .ask
+            paneState(containing: info.sessionID)?.mode = .ask
+            if currentSessionID == info.sessionID { selectedMode = .ask }
+            return
+        }
         // The runtime counts its initial system message; initialMode is only
         // emitted while the durable user/assistant transcript is still empty.
         guard info.messages <= 1, let mode = info.initialMode, mode != .duo,
