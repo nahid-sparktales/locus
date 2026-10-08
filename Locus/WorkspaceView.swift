@@ -3432,9 +3432,12 @@ private struct ConversationView: View {
             }
             ScrollView {
                 TranscriptLayoutStack(itemCount: items.count) {
-                    if let profile = model.currentCompanionConversationProfile {
-                        CompanionConversationCharacter(profile: profile, size: 80, showsPrompt: transcript.isEmpty)
-                            .padding(.top, 8).padding(.bottom, 24)
+                    if model.currentCompanionConversationProfile != nil {
+                        // Initial breathing room scrolls away; the transparent
+                        // character stays above the transcript viewport.
+                        Color.clear.frame(height: transcript.isEmpty ? 160 : 130)
+                            .accessibilityHidden(true)
+                        if !transcript.isEmpty { CompanionConversationCatchUp().padding(.bottom, 24) }
                     }
                     if transcript.isEmpty, model.currentCompanionConversationProfile == nil {
                         EmptyConversationView()
@@ -3512,6 +3515,18 @@ private struct ConversationView: View {
                 }
             }
             .chatAttachmentDropTarget()
+            .overlay(alignment: .top) {
+                if let profile = model.currentCompanionConversationProfile {
+                    CompanionConversationCharacter(profile: profile, size: 80, showsPrompt: transcript.isEmpty)
+                        .padding(.top, 14)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if model.currentCompanionConversationProfile != nil {
+                    CompanionToolsButton().padding(12)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !transcript.isEmpty {
                     Button {
@@ -5701,33 +5716,37 @@ private struct TranscriptSearchBar: View {
 }
 
 private struct CompanionConversationCharacter: View {
-    @EnvironmentObject private var model: AppModel
     @Environment(\.locusViewColors) private var colors
-    @State private var focusPresented = false
     let profile: AgentProfile
     let size: CGFloat
     let showsPrompt: Bool
 
     var body: some View {
         VStack(spacing: 8) {
-            VStack(spacing: 8) {
-                AgentAvatarView(profileID: profile.id, name: profile.name, size: size * 1.175)
-                    .frame(width: size, height: size)
-                Text(profile.name)
-                    .font(.locus(size: 15, weight: .semibold))
-                    .foregroundStyle(colors.ink)
-                if showsPrompt {
-                    Text("What would you like to talk about?")
-                        .font(.locus(size: 13)).foregroundStyle(colors.textSecondary)
-                }
+            AgentAvatarView(profileID: profile.id, name: profile.name, size: size * 1.175)
+                .frame(width: size, height: size)
+            Text(profile.name)
+                .font(.locus(size: 15, weight: .semibold))
+                .foregroundStyle(colors.ink)
+            if showsPrompt {
+                Text("What would you like to talk about?")
+                    .font(.locus(size: 13)).foregroundStyle(colors.textSecondary)
             }
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(profile.name), your companion")
-            .accessibilityIdentifier("companion.conversation.character")
-            .overlay(alignment: .topTrailing) { CompanionToolsButton().padding(.horizontal, 16) }
-            if !showsPrompt, let scope = model.companionScope {
+        }
+        .multilineTextAlignment(.center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(profile.name), your companion")
+        .accessibilityIdentifier("companion.conversation.character")
+    }
+}
+
+private struct CompanionConversationCatchUp: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var focusPresented = false
+
+    var body: some View {
+        Group {
+            if let scope = model.companionScope {
                 CompanionCatchUpView(backend: model.backend, scope: scope,
                     openConversation: { model.openCompanionMainConversation() },
                     reviewChanges: { model.showTaskDetail(sessionID: scope.sessionID) },

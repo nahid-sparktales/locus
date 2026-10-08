@@ -119,7 +119,7 @@ struct CompanionToolsView: View {
                     if saved.goal?.isCompanionSession == true { selected = .focus }
                     else { model.resumeCompanionTask(saved, scope: scope) }
                 })
-        case .activity: CompanionActivityCardsView()
+        case .activity: CompanionActivityCardsView(revealMainWindow: { dismiss() })
         case .memory:
             CompanionMemoryNotebookView(backend: model.backend, scope: scope,
                 openSource: { id in dismiss(); model.openCompanionMemorySource(id) })

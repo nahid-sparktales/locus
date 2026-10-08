@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 4.2.2 — 2026-10-08
+
+### Fixed
+
+- Restored the Companion shortcut above Manage Accounts for its overview. The
+  dedicated Companion entry under Agents opens the same ongoing main chat.
+  Opening the companion profile from that chat also selects the Agent tab.
+- The companion stays visible at the top of its chat on a transparent overlay.
+  Messages scroll underneath, and the character does not intercept text selection.
+- The right Companion panel adds connection details, last activity, and shortcuts
+  for memory, catch-up, focus, and the desktop companion.
+- Show all activity and review actions keep the main window open. Popover and
+  tool-sheet actions dismiss only their own temporary presentation.
+
 ## 4.2.1 — 2026-10-08
 
 ### Fixed

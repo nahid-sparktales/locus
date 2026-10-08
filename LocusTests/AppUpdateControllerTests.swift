@@ -251,6 +251,45 @@ final class AppUpdateControllerTests: XCTestCase {
         XCTAssertEqual(lifecycle.applicationShouldTerminate(.shared), .terminateNow)
     }
 
+    func testRealAppModelIdleCleanupResumesTheInstallContinuation() {
+        let model = AppModel(startImmediately: false)
+        let lifecycle = ApplicationLifecycleCoordinator()
+        lifecycle.connect(model: model)
+        var continuations = 0
+
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch {
+            XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+            continuations += 1
+        }
+
+        XCTAssertEqual(continuations, 1)
+        XCTAssertEqual(lifecycle.state, .relaunching)
+        XCTAssertEqual(lifecycle.applicationShouldTerminate(.shared), .terminateNow)
+    }
+
+    func testRealAppModelBusyCleanupIsBoundedBeforeResumingInstallation() async {
+        let model = AppModel(startImmediately: false)
+        // A disconnected worker cannot deliver its completion event. Exercise
+        // the real shutdown wait rather than supplying a fake cleanup closure.
+        model.isBusy = true
+        let lifecycle = ApplicationLifecycleCoordinator()
+        lifecycle.connect(model: model)
+        let resumed = expectation(description: "Real app cleanup resumes installation")
+        resumed.assertForOverFulfill = true
+
+        XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+        lifecycle.prepareForUpdateRelaunch {
+            XCTAssertTrue(lifecycle.shouldAllowUpdateRelaunch())
+            resumed.fulfill()
+        }
+        XCTAssertEqual(lifecycle.state, .preparingUpdate)
+        await fulfillment(of: [resumed], timeout: 6)
+
+        XCTAssertEqual(lifecycle.state, .relaunching)
+        XCTAssertEqual(lifecycle.applicationShouldTerminate(.shared), .terminateNow)
+    }
+
     func testDeferredUpdateCleanupResumesInstallationOnceAfterWorkStops() throws {
         var finishCleanup: (@MainActor () -> Void)?
         var cleanupCount = 0

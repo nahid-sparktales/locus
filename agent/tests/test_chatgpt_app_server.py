@@ -666,6 +666,84 @@ def test_companion_ask_registers_and_executes_history_tools_on_chatgpt(tmp_path)
     assert "lighthouse" in str(results)
 
 
+@pytest.mark.parametrize("previous_mode", ["ask", "work"])
+def test_reopened_legacy_companion_chat_rebuilds_provider_tools_and_reads_other_chats(tmp_path, monkeypatch, previous_mode):
+    """An old denial or Work thread cannot retain its former tool contract."""
+    import asyncio
+    import json
+    import uuid
+
+    from ollama_code import server
+    from ollama_code.chat_service import ChatService
+    from ollama_code.sessions import SessionMeta, SessionStore
+
+    class HistoryRuntime(ParityFakeRuntime):
+        find_history = False
+        retrieved = None
+
+        def run_turn(self, *, tool_handler=None, **kwargs):
+            if self.find_history:
+                search = json.loads(tool_handler("search_locus_chats", {"query": "lighthouse"}, "history-search"))
+                hit = next(row for row in search["results"] if row["session_id"] == other.session_id)
+                self.retrieved = json.loads(tool_handler("read_locus_chat", {
+                    "session_id": hit["session_id"], "start_message": hit["message_index"],
+                }, "history-read"))
+                self.answer = self.retrieved["messages"][0]["content"]
+            return super().run_turn(tool_handler=tool_handler, **kwargs)
+
+    other = SessionStore(str(tmp_path / "another-project"))
+    other.append({"type": "message", "message": {"role": "user", "content": "Generate an amber lighthouse illustration."}})
+    SessionMeta.update(other.session_id, title="Image ideas", archived=True, agent_profile_id=str(uuid.uuid4()), agent_name="Artist")
+    runtime = HistoryRuntime()
+    runtime.answer = "I cannot search your chats in Just Chat mode." if previous_mode == "ask" else "Only this chat was found."
+    original = _managed_core(tmp_path, runtime)
+    original.configure_agent({}, mode=previous_mode)
+    original.run_turn("Find prior image chats", allow_tools=previous_mode != "ask")
+    session_id = original.session.session_id
+    profile = {"id": str(uuid.uuid4()), "name": "Companion", "model": "gpt-test", "role": "generalist",
+               "instructions": "Answer conversationally.", "access_ceiling": "workspace_write",
+               "timeout_seconds": 120, "token_limit": 32_768}
+    SessionMeta.update(session_id, agent_profile_id=profile["id"], agent_world_profile_id=profile["id"])
+    assert runtime.started == ["thread-1"]
+
+    reopened = _managed_core(tmp_path, runtime)
+    reopened.resume_session(session_id)
+    service = ChatService(reopened)
+    # ChatService installs its production account manager; retain the local
+    # protocol fixture while exercising the real admission/profile path.
+    reopened.codex_manager = runtime
+    events = []
+    reopened.on_event(events.append)
+    monkeypatch.setattr(server, "_automatic_memory_context", lambda *args, **kwargs: "")
+    monkeypatch.setattr(server, "_automatic_continuity_context", lambda *args, **kwargs: "")
+    queued = []
+    monkeypatch.setattr(service, "start_turn", lambda _loop, call, *args: queued.append((call, args)) or True)
+    runtime.find_history = True
+    asyncio.run(server._handle_client_message(service, {
+        "type": "user_message", "text": "What image did we discuss in another chat?", "mode": "ask",
+        "companion_context": True, "conversation_profile_id": profile["id"], "agent_profile": profile,
+    }))
+    assert len(queued) == 1
+    call, args = queued[0]
+    call(*args)
+
+    assert runtime.started == ["thread-1", "thread-2"], [event for event in events if event.get("type") in {"error", "note"}]
+    assert runtime.resumed == [], "The old provider thread has an incompatible tool fingerprint"
+    start = runtime.start_kwargs[-1]
+    names = {item["function"]["name"] for item in start["tools"]}
+    assert {"list_locus_chats", "search_locus_chats", "read_locus_chat"} <= names
+    assert not names & {"bash", "shell", "write_file", "apply_patch"}
+    assert "companion in Ask mode" in start["base_instructions"]
+    assert "Canonical Locus transcript" in runtime.turn_texts[-1]
+    assert runtime.retrieved["title"] == "Image ideas"
+    assert runtime.retrieved["archived"] is True
+    assert runtime.retrieved["agent_name"] == "Artist"
+    assert runtime.retrieved["workspace"] == str(tmp_path / "another-project")
+    assert reopened.messages[-1]["content"] == "Generate an amber lighthouse illustration."
+    assert reopened.session.session_id == session_id
+    assert not reopened.companion_context and not reopened.tool_registry.companion_context
+
+
 DECORATED = (
     "[Locus mode: Work]\n\n"
     "Solve the request using the workspace and tools when useful.\n\n"

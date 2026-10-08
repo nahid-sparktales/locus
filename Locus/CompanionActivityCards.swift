@@ -24,8 +24,8 @@ struct CompanionActivityCardsView: View {
     @EnvironmentObject private var activity: ActivityCenterModel
     @EnvironmentObject private var sessions: SessionCatalogModel
     @State private var preferences = false
-    @Environment(\.dismiss) private var dismiss
     var revealMainWindow: () -> Void = {}
+    var scrolls = true
     var minimumWidth: CGFloat = 320
     var minimumHeight: CGFloat = 240
     private var snapshot: CompanionMenuBarActivity {
@@ -46,7 +46,7 @@ struct CompanionActivityCardsView: View {
                 activity.companionNotificationPolicy.includes(ActivityFilter.Kind.kind(for: $0))
                     && !activity.companionNotificationPolicy.isSnoozed($0.id, at: context.date)
             }
-            ScrollView {
+            container {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
                         Text("Companion activity").font(.headline)
@@ -70,7 +70,7 @@ struct CompanionActivityCardsView: View {
                                 Text(item.detail).font(.caption).foregroundStyle(.secondary)
                                 HStack {
                                     Button("Review request") {
-                                        dismiss(); revealMainWindow()
+                                        revealMainWindow()
                                         activity.openActivityCenter(focus: item.workflowExecutionID.map(ActivityCenterModel.Focus.workflow)
                                             ?? item.runID.map(ActivityCenterModel.Focus.run))
                                     }
@@ -89,7 +89,7 @@ struct CompanionActivityCardsView: View {
                                         Text(run.state == "completed" ? "Finished and ready for your review." : "Work stopped and may need recovery.")
                                             .font(.caption).foregroundStyle(.secondary)
                                         HStack {
-                                            Button("Review result") { dismiss(); revealMainWindow(); app.openActivityRun(run) }
+                                            Button("Review result") { revealMainWindow(); app.openActivityRun(run) }
                                             snooze(run.id)
                                         }
                                     }.padding(.vertical, 8)
@@ -101,20 +101,26 @@ struct CompanionActivityCardsView: View {
                         DisclosureGroup("Work in progress · \(snapshot.inProgressRuns.count)") {
                             ForEach(snapshot.inProgressRuns) { run in
                                 Button(ChatTranscriptBuilder.displayUserText(run.request)) {
-                                    dismiss(); revealMainWindow(); app.openActivityRun(run)
+                                    revealMainWindow(); app.openActivityRun(run)
                                 }.lineLimit(2).font(.caption)
                             }
                         }
                     }
                     Button("Refresh") { Task { await activity.refreshActivityRuns(announceFailure: false) } }
                         .disabled(activity.isRefreshing)
-                    Button("Show all activity") { dismiss(); revealMainWindow(); activity.openActivityCenter() }
+                    Button("Show all activity") { revealMainWindow(); activity.openActivityCenter() }
+                        .accessibilityIdentifier("companion.activity.showAll")
                 }.padding(16)
             }
         }
         .frame(minWidth: minimumWidth, idealWidth: 420, minHeight: minimumHeight)
         .task { await activity.refreshActivityRuns(announceFailure: false) }
     }
+    @ViewBuilder private func container<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if scrolls { ScrollView { content() } }
+        else { content() }
+    }
+
     private func snooze(_ id: String) -> some View {
         Menu("Snooze") {
             ForEach([15, 60, 240], id: \.self) { minutes in

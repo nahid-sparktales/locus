@@ -102,7 +102,15 @@ extension AppModel {
         }
     }
 
-    /// Both companion entry points open the same profile-bound conversation.
+    func openCompanionOverview() {
+        guard let profile = primaryCompanionProfile else {
+            onboarding.beginCompanionSetup()
+            return
+        }
+        selectSavedAgent(profile)
+    }
+
+    /// The dedicated chat entry opens the durable profile-bound conversation.
     func openCompanionMainConversation() {
         guard let profile = primaryCompanionProfile else {
             onboarding.beginCompanionSetup()
