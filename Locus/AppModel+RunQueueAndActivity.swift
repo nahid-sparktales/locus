@@ -614,7 +614,10 @@ extension AppModel {
                 clearUndispatchedGoalPresentation(sessionID: sessionID, runID: run.id)
             }
         }
-        let mode = run.manifest?["mode"]?.string.flatMap { WorkMode.canonical($0) } ?? .work
+        let companionTurn = profileDispatch.map {
+            usesCompanionContext(sessionID: sessionID, profileID: $0.profile.id)
+        } ?? false
+        let mode = companionTurn ? WorkMode.ask : run.manifest?["mode"]?.string.flatMap { WorkMode.canonical($0) } ?? .work
         worker.reservedRunID = run.id
         worker.lastError = nil
         worker.dispatchedMode = mode
@@ -665,12 +668,13 @@ extension AppModel {
                 "type": "user_message",
                 "text": Self.decoratedPrompt(
                     run.request, mode: mode, chatAttachments: [], contextFiles: [],
-                    restoredTranscriptContext: nil
+                    restoredTranscriptContext: nil, companionContext: companionTurn
                 ),
                 "mode": mode.rawValue,
                 "run_id": run.id,
                 "request_id": run.id,
             ]
+            if companionTurn { request["companion_context"] = true }
             if let saved = run.manifest?["agent_config"], let config = encodedJSONValue(saved) {
                 request["agent_config"] = config
             } else if let config = encodedJSONObject(primaryAgentBehavior) {
@@ -678,7 +682,7 @@ extension AppModel {
             }
             if let profileDispatch {
                 request["conversation_profile_id"] = profileDispatch.profile.id.uuidString
-                if run.runKind != "team" {
+                if companionTurn || run.runKind != "team" {
                     request["agent_profile"] = Self.savedAgentProfileBody(profileDispatch.profile)
                 }
                 request["agent_config"] = encodedJSONObject(profileDispatch.profile.resolvedBehavior)
@@ -691,7 +695,7 @@ extension AppModel {
                let encoded = encodedJSONValue(outputs) {
                 request["workflow_outputs"] = encoded
             }
-            if run.runKind == "team" {
+            if run.runKind == "team", !companionTurn {
                 guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
                       var manifest = teamManifest(for: run.request, teamID: teamID) else {
                     finishChatRuntime(
@@ -706,7 +710,7 @@ extension AppModel {
                 worker.executionState = .dispatching
             } else {
                 worker.executionState = .running
-                if run.isSoloSwarm {
+                if run.isSoloSwarm, !companionTurn {
                     request["solo_swarm"] = ["enabled": true]
                 }
             }

@@ -11,8 +11,10 @@ import UserNotifications
 extension AppModel {
     func applyWorkspaceProfileIfNeeded(for info: SessionInfo) {
         let wasRestoring = isRestoringManualModelRoute
+        let previousModeSession = restoringModeSessionID
         isRestoringManualModelRoute = true
-        defer { isRestoringManualModelRoute = wasRestoring }
+        restoringModeSessionID = info.sessionID
+        defer { isRestoringManualModelRoute = wasRestoring; restoringModeSessionID = previousModeSession }
         let path = SessionSummary.canonicalWorkspacePath(info.cwd)
         guard appliedWorkspacePath != path || pendingWorkspacePath == path else { return }
         let changedWorkspace = appliedWorkspacePath != nil && appliedWorkspacePath != path

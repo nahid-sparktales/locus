@@ -46,6 +46,23 @@ def queued_command(runtime, run):
     return commands
 
 
+def test_companion_ask_context_survives_queued_runtime_dispatch(chat_runtime):
+    runtime, profile, _ = chat_runtime
+    run = queue_selected(runtime, profile, companion_context=True)
+    assert run["manifest"]["companion_context"] is True
+    command = queued_command(runtime, run)[0]
+    assert command["companion_context"] is True
+    assert command["mode"] == "ask"
+    assert command["agent_profile"]["id"] == profile["id"]
+
+
+@pytest.mark.parametrize("fields", [{"mode": "work"}, {"companion_context": "yes"}])
+def test_companion_context_requires_valid_ask_queue_route(chat_runtime, fields):
+    runtime, profile, _ = chat_runtime
+    with pytest.raises(HTTPException):
+        queue_selected(runtime, profile, **{"companion_context": True, **fields})
+
+
 @pytest.mark.parametrize("provider", ["ollama", "chatgpt"])
 @pytest.mark.parametrize("default_unavailable", [False, True])
 def test_saved_chat_route_survives_runtime_restart(chat_runtime, provider, default_unavailable):

@@ -1,16 +1,15 @@
 import SwiftUI
 
-/// A second view of canonical saved-agent chats. The panel's presentation owner
-/// uses the existing background workers without taking over the central chat.
+/// A companion conversation beside other work, or its overview while that same
+/// conversation is already open in the center.
 struct CompanionInspectorTab: View {
     @EnvironmentObject private var model: AppModel
     var revealMainWindow: () -> Void = {}
     var tracksPointer = true
     var showsCharacterHeader = true
-    var showsForegroundComposer = true
 
     var body: some View {
-        CompanionInspectorContent(panel: model.companionPanel, context: model.companionContext, revealMainWindow: revealMainWindow, showsCharacterHeader: showsCharacterHeader, showsForegroundComposer: showsForegroundComposer)
+        CompanionInspectorContent(panel: model.companionPanel, context: model.companionContext, revealMainWindow: revealMainWindow, showsCharacterHeader: showsCharacterHeader)
             .companionPointerScope(enabled: tracksPointer)
     }
 }
@@ -19,13 +18,14 @@ private struct CompanionInspectorContent: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @EnvironmentObject private var runtime: RuntimeStatusModel
+    @EnvironmentObject private var activity: ActivityCenterModel
+    @EnvironmentObject private var runs: OrchestrationRunsModel
     @Environment(\.locusViewColors) private var colors
     @Environment(\.companionActivityPresentation) private var activitySource
     @ObservedObject var panel: CompanionPanelModel
     @ObservedObject var context: CompanionContextSharingModel
     let revealMainWindow: () -> Void
     let showsCharacterHeader: Bool
-    let showsForegroundComposer: Bool
     @StateObject private var selection = TranscriptSelectionStore()
     @StateObject private var scroll = TranscriptScrollCoordinator()
     @FocusState private var composerFocused: Bool
@@ -41,9 +41,13 @@ private struct CompanionInspectorContent: View {
         VStack(spacing: 0) {
             if let profile = panel.profile {
                 if showsCharacterHeader { header(profile); Divider() }
-                conversationControls
-                transcript
-                if !panel.isForegroundConversation || showsForegroundComposer { composer(profile) }
+                if panel.isForegroundConversation {
+                    overview(profile)
+                } else {
+                    conversationControls
+                    transcript
+                    composer(profile)
+                }
             } else {
                 VStack(spacing: 14) {
                     Text("Your companion").font(.locus(size: 20, weight: .semibold))
@@ -62,7 +66,7 @@ private struct CompanionInspectorContent: View {
         }
         .locusWorkspaceBackground()
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Companion conversation panel")
+        .accessibilityLabel(panel.isForegroundConversation ? "Companion overview panel" : "Companion conversation panel")
         .accessibilityIdentifier("companion.panel")
         .task(id: scopeKey) { panel.activate() }
         .onChange(of: runtime.agentPhase.isOnline) { _, online in
@@ -102,6 +106,11 @@ private struct CompanionInspectorContent: View {
                     Button("Edit companion") { revealMainWindow(); model.presentSavedAgentEditor(profile) }
                     Button("Models & Providers") { revealMainWindow(); model.presentSettings(.accounts) }
                     Divider()
+                    Button(model.companionHasUnread ? "Mark as read" : "Mark as unread") {
+                        model.markCompanionRead(model.companionHasUnread)
+                    }
+                    .disabled(panel.selectedSessionID == nil)
+                    .accessibilityIdentifier("companion.panel.markReadState")
                     Button("Open full conversation") { revealMainWindow(); panel.openFullConversation() }
                         .disabled(panel.selectedSessionID == nil || panel.isLoading)
                 } label: {
@@ -112,7 +121,8 @@ private struct CompanionInspectorContent: View {
                 .accessibilityIdentifier("companion.panel.options")
             }
             HStack {
-                AgentAvatarView(profileID: profile.id, name: profile.name, size: 80)
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: 94)
+                    .frame(width: 80, height: 80)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(profile.name), your companion")
@@ -126,6 +136,36 @@ private struct CompanionInspectorContent: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    private func overview(_ profile: AgentProfile) -> some View {
+        let activeProfile = panel.selectedSessionID.map { model.agentChatProfile(profile, sessionID: $0) } ?? profile
+        return VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Your companion at a glance")
+                    .font(.locus(size: 13, weight: .semibold))
+                LabeledContent("Role", value: activeProfile.role.title)
+                LabeledContent("Model", value: activeProfile.model.nilIfEmpty ?? "Choose a model")
+                    .lineLimit(2).textSelection(.enabled)
+                HStack(spacing: 12) {
+                    Button { tool = .context; toolsPresented = true } label: {
+                        Label("Companion tools", systemImage: "square.grid.2x2")
+                    }
+                    .accessibilityIdentifier("companion.panel.tools")
+                    Spacer(minLength: 0)
+                    Button("Profile") { revealMainWindow(); model.selectSavedAgent(profile) }
+                        .accessibilityIdentifier("companion.panel.profile")
+                }
+                .buttonStyle(.locus(.quiet))
+                .foregroundStyle(colors.accentAction)
+            }
+            .font(.locus(size: 11)).padding(16)
+            Divider()
+            CompanionActivityCardsView(revealMainWindow: revealMainWindow, minimumWidth: 0, minimumHeight: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("companion.panel.overview")
     }
 
     private var conversationControls: some View {
@@ -222,6 +262,9 @@ private struct CompanionInspectorContent: View {
         }
         .frame(minHeight: 0, maxHeight: .infinity)
         .accessibilityIdentifier("companion.panel.transcript")
+        .task(id: "\(panel.selectedSessionID ?? "")|\(panel.hasLoadedConversation)|\(model.companionReadRevision)") {
+            if panel.hasLoadedConversation { model.markCompanionRead() }
+        }
     }
 
     private func syncSelection() {
@@ -282,12 +325,6 @@ private struct CompanionInspectorContent: View {
                     })
                     .disabled(panel.selectedSessionID == nil || panel.isLoading || panel.isForegroundConversation)
                 HStack(spacing: 6) {
-                    Picker("Companion mode", selection: $panel.mode) {
-                        Text("Ask").tag(WorkMode.ask)
-                        Text("Work").tag(WorkMode.work)
-                    }
-                    .labelsHidden().pickerStyle(.menu).fixedSize()
-                    .accessibilityLabel("Companion mode").accessibilityIdentifier("companion.panel.mode")
                     Spacer(minLength: 0)
                     if panel.state.busy || panel.isSending {
                         Text(panel.state.status == "queued" ? "Queued" : panel.state.status == "needs_attention" ? "Needs attention" : panel.state.busy ? "Working" : "Sending…")

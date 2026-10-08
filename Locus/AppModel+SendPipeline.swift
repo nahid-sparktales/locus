@@ -35,6 +35,8 @@ extension AppModel {
     ) {
         guard admitTranscriptInput() else { return }
         let residentProfileID = savedAgentProfileID(for: currentSessionID)
+        let companionTurn = usesCompanionContext(sessionID: currentSessionID, profileID: residentProfileID)
+        if companionTurn { selectedMode = .ask }
         var residentDispatch: TaskCapsuleDispatch?
         if let residentProfileID {
             do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
@@ -44,9 +46,9 @@ extension AppModel {
             sendDuo(rawText, includeAttachments: includeAttachments)
             return
         }
-        let pendingCapsule = (selectedMode != .duo && duoTask != nil)
+        let pendingCapsule = companionTurn || (selectedMode != .duo && duoTask != nil)
             ? nil : taskCapsules.pendingPlanningRequest(for: currentSessionID)
-        let workflowDispatch = explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
+        let workflowDispatch = companionTurn ? nil : explicitCapsuleDispatch ?? pendingCapsule.flatMap(capsulePlanningDispatch)
         if pendingCapsule != nil, workflowDispatch == nil { return }
         // A saved agent owns the conversation. Explicit Duo/capsule stages use
         // their selected specialist; ordinary messages return to the owner.
@@ -142,7 +144,7 @@ extension AppModel {
         // Capture the mode before any asynchronous context work. A user can
         // change the picker while that work is pending; the dispatched turn
         // must keep the safety contract it started with.
-        let dispatchedMode: WorkMode = privateIdentity ? .work : capsuleDispatch?.mode ?? selectedMode
+        let dispatchedMode: WorkMode = companionTurn ? .ask : privateIdentity ? .work : capsuleDispatch?.mode ?? selectedMode
         let savedGoal = !isCapsuleStage && !privateIdentity && !isSlashPassthrough
             && dispatchedMode == .work ? goals.goal(for: currentSessionID).flatMap {
                 $0.status == .active ? $0 : nil
@@ -351,6 +353,7 @@ extension AppModel {
                    let route = try await self.prepareAgentChatQueueRoute(capsuleDispatch, sessionID: dispatchedSessionID) {
                     queuedBody["agent_chat_route"] = route
                     queuedBody["mode"] = dispatchedMode.rawValue
+                    if companionTurn { queuedBody["companion_context"] = true }
                 }
                 if let dispatchedGoalID {
                     guard let goal = await self.goals.flushUserInput(sessionID: dispatchedSessionID),
@@ -420,7 +423,8 @@ extension AppModel {
                     contextFiles: refreshedContextFiles,
                     restoredTranscriptContext: dispatchedRestoredContext,
                     liveApplication: dispatchedLiveApplication,
-                    simulator: dispatchedSimulator
+                    simulator: dispatchedSimulator,
+                    companionContext: companionTurn
                 )
             var request: [String: Any] = [
                 "type": "user_message",
@@ -429,6 +433,7 @@ extension AppModel {
                 "request_id": reservedRunID,
             ]
             if privateIdentity { request["identity_mode"] = true }
+            if companionTurn { request["companion_context"] = true }
             if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
             if let residentProfileID { request["conversation_profile_id"] = residentProfileID.uuidString }
             if let capsuleDispatch {
@@ -777,8 +782,14 @@ extension AppModel {
             showToast("Queued — sends when this turn finishes")
             return
         }
-        guard isAgentOnline,
-              conversationBackend.send(["type": "user_message", "text": text])
+        var request: [String: Any] = ["type": "user_message", "text": text]
+        if usesCompanionContext(sessionID: currentSessionID), let profile = currentCompanionConversationProfile {
+            request["mode"] = WorkMode.ask.rawValue
+            request["companion_context"] = true
+            request["agent_profile"] = Self.savedAgentProfileBody(profile)
+            request["conversation_profile_id"] = profile.id.uuidString
+        }
+        guard isAgentOnline, conversationBackend.send(request)
         else {
             showToast("Reconnect the local agent to run \(text)")
             return

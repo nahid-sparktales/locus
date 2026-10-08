@@ -25,6 +25,7 @@ protocol AppUpdateRelaunchHandling: AnyObject {
     func shouldAllowUpdateRelaunch() -> Bool
     func prepareForUpdateRelaunch(continuation: @escaping @MainActor () -> Void)
     func updaterWillRelaunch()
+    func updateCycleDidFinish()
 }
 
 @MainActor
@@ -240,10 +241,14 @@ final class SparkleUpdateDriver: NSObject, AppUpdateDriving, SPUUpdaterDelegate 
         }
     }
 
-    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
-        requestedSafetyUpdate = false
-    }
     #endif
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        #if LOCUS_WALLET
+        requestedSafetyUpdate = false
+        #endif
+        relaunchHandler?.updateCycleDidFinish()
+    }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
         #if LOCUS_WALLET

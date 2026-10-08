@@ -35,6 +35,51 @@ final class CompanionPointerTests: XCTestCase {
         XCTAssertNil(CompanionPointerResponse(x: .nan, y: 1).directionIndex)
     }
 
+    func testFollowingRequiresCharacterContactAndEndsAfterEightSeconds() {
+        let character = CGRect(x: 100, y: 100, width: 80, height: 80)
+        var engagement = CompanionPointerEngagement()
+        XCTAssertFalse(engagement.update(at: .init(x: 220, y: 120), in: character, time: 1))
+        XCTAssertFalse(engagement.isFollowing(at: 1))
+        XCTAssertTrue(engagement.update(at: .init(x: 150, y: 120), in: character, time: 2))
+        XCTAssertEqual(engagement.deadline, 10)
+        XCTAssertTrue(engagement.isFollowing(at: 9.99))
+        XCTAssertFalse(engagement.update(at: .init(x: 160, y: 120), in: character, time: 9))
+        XCTAssertEqual(engagement.deadline, 10, "Moving over the character must not prolong following")
+        XCTAssertFalse(engagement.isFollowing(at: 10))
+        XCTAssertFalse(engagement.update(at: .init(x: 165, y: 120), in: character, time: 11))
+        XCTAssertFalse(engagement.update(at: .init(x: 220, y: 120), in: character, time: 12))
+        XCTAssertFalse(engagement.isFollowing(at: 12), "Movement elsewhere must not restart following")
+        XCTAssertTrue(engagement.update(at: .init(x: 150, y: 120), in: character, time: 13))
+        XCTAssertEqual(engagement.deadline, 21, "A new pass over the character starts another brief response")
+    }
+
+    func testFastPassOverCharacterActivatesButNearbyDiagonalMissDoesNot() {
+        let character = CGRect(x: 100, y: 100, width: 80, height: 80)
+        var engagement = CompanionPointerEngagement()
+        XCTAssertFalse(engagement.update(at: .init(x: 80, y: 140), in: character, time: 1))
+        XCTAssertTrue(engagement.update(at: .init(x: 200, y: 140), in: character, time: 2))
+        XCTAssertTrue(engagement.isFollowing(at: 3))
+        engagement.reset()
+        XCTAssertFalse(engagement.update(at: .init(x: 80, y: 110), in: character, time: 4))
+        XCTAssertFalse(engagement.update(at: .init(x: 110, y: 80), in: character, time: 5))
+        XCTAssertFalse(engagement.isFollowing(at: 5))
+    }
+
+    func testRepeatedContactDoesNotRestartAfterExpiryAndResetRequiresFreshContact() {
+        let character = CGRect(x: 100, y: 100, width: 80, height: 80)
+        var engagement = CompanionPointerEngagement()
+        XCTAssertFalse(engagement.update(at: .init(x: 220, y: 120), in: character, time: 1))
+        XCTAssertTrue(engagement.update(at: .init(x: 150, y: 120), in: character, time: 2))
+        XCTAssertFalse(engagement.update(at: .init(x: 150, y: 120), in: character, time: 9))
+        XCTAssertEqual(engagement.deadline, 10)
+        XCTAssertFalse(engagement.update(at: .init(x: 150, y: 120), in: character, time: 11),
+            "Repeated mouse or scroll events at the same position must not restart following")
+        engagement.reset()
+        XCTAssertNil(engagement.deadline)
+        XCTAssertFalse(engagement.isFollowing(at: 11))
+        XCTAssertFalse(engagement.update(at: .init(x: 220, y: 120), in: character, time: 12))
+    }
+
     func testTaskAndAvailabilityStatesAlwaysTakePriorityOverPointer() {
         XCTAssertTrue(CompanionPointerResponse.allowsReaction(canAnimate: true, pose: .idle))
         XCTAssertFalse(CompanionPointerResponse.allowsReaction(canAnimate: false, pose: .idle))
@@ -132,7 +177,9 @@ final class CompanionPointerTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         XCTAssertTrue(delivered.isEmpty)
         tracker.mouseMoved(with: movement)
+        XCTAssertTrue(tracker.hasPendingExpiry)
         tracker.setEnabled(false)
+        XCTAssertFalse(tracker.hasPendingExpiry)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         XCTAssertTrue(delivered.isEmpty, "A queued reaction must not survive disabling animation")
         tracker.setEnabled(true)
@@ -144,6 +191,7 @@ final class CompanionPointerTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         XCTAssertEqual(delivered.count, 1, "Native tracking and local listener callbacks must coalesce")
         tracker.mouseExited(with: movement)
+        XCTAssertFalse(tracker.hasPendingExpiry)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         XCTAssertEqual(delivered.last, .neutral)
         tracker.mouseMoved(with: movement)
@@ -151,6 +199,38 @@ final class CompanionPointerTests: XCTestCase {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         XCTAssertEqual(delivered.last, .neutral)
         XCTAssertFalse(tracker.isTracking)
+        XCTAssertFalse(tracker.hasPendingExpiry)
+    }
+
+    func testEngagementExpiresWithoutAnotherMouseEventAndResignKeyCancelsExpiry() throws {
+        let window = CompanionPointerKeyWindow(contentRect: .init(x: 0, y: 0, width: 300, height: 300),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        var delivered: [CompanionPointerResponse] = []
+        let tracker = CompanionPointerTrackingView(followDuration: 0.05) { delivered.append($0) }
+        tracker.frame = .init(x: 0, y: 0, width: 180, height: 180)
+        window.contentView?.addSubview(tracker)
+        tracker.setEnabled(true)
+        let movement = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: .init(x: 150, y: 90),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 0, pressure: 0))
+        tracker.mouseMoved(with: movement)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        XCTAssertNotEqual(delivered.last, .neutral)
+        XCTAssertTrue(tracker.hasPendingExpiry)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertEqual(delivered.last, .neutral, "Stationary pointers must also stop being followed")
+        XCTAssertFalse(tracker.hasPendingExpiry)
+        tracker.mouseMoved(with: movement)
+        XCTAssertFalse(tracker.hasPendingExpiry, "Hover movement alone must not restart an expired response")
+        tracker.mouseExited(with: movement)
+        tracker.mouseMoved(with: movement)
+        XCTAssertTrue(tracker.hasPendingExpiry)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        XCTAssertFalse(tracker.hasPendingExpiry)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        XCTAssertEqual(delivered.last, .neutral)
     }
 
     func testHostedScopeTracksAroundCharacterOnlyInsideTabAndReleasesLocalListener() throws {
@@ -226,6 +306,12 @@ final class CompanionPointerTests: XCTestCase {
         // Test native queue dispatch, not a direct mouseMoved call. An app-local
         // listener works across NSHostingView's own tracking-area management.
         window.acceptsMouseMovedEvents = false
+        let passOverCharacter = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved,
+            location: .init(x: 170, y: 48), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        NSApp.postEvent(passOverCharacter, atStart: false)
+        pumpEvents { tracker.hasPendingExpiry }
+        XCTAssertTrue(tracker.hasPendingExpiry, "Passing over the avatar starts the brief following window")
         for (point, direction) in [(CGPoint(x: 350, y: 48), 4), (CGPoint(x: 148, y: 250), 0)] {
             delivered.removeAll()
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved,

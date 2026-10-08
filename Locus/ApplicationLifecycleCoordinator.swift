@@ -18,14 +18,17 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
     private var hasRunningWork: () -> Bool = { false }
     private var terminalHasForegroundJob: () -> Bool = { false }
     private var hasCaptureWork: () -> Bool = { false }
-    private var stopRunningWork: (@escaping @MainActor () -> Void) -> Void = { completion in
-        completion()
-    }
+    private var stopRunningWork: @MainActor (@escaping @MainActor () -> Void) -> Void
     private var prepareOpenSettings: () -> Bool = { true }
     private var prepareNotesForShutdown: () -> Bool = { true }
     private var lockSensitiveServices: () -> Void = {}
     private weak var pendingTerminationApplication: NSApplication?
     private var updateContinuation: (@MainActor () -> Void)?
+    private var updatePreparationID = UUID()
+
+    init(stopRunningWork: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { $0() }) {
+        self.stopRunningWork = stopRunningWork
+    }
 
     func connect(model: AppModel) {
         hasRunningWork = { [weak model] in model?.hasRunningWorkForQuit == true }
@@ -67,10 +70,13 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
     func prepareForUpdateRelaunch(continuation: @escaping @MainActor () -> Void) {
         guard state == .idle else { return }
         state = .preparingUpdate
+        let preparationID = UUID()
+        updatePreparationID = preparationID
         updateContinuation = continuation
         lockSensitiveServices()
         stopRunningWork { [weak self] in
-            guard let self, self.state == .preparingUpdate else { return }
+            guard let self, self.state == .preparingUpdate,
+                  self.updatePreparationID == preparationID else { return }
             self.state = .relaunching
             if let application = self.pendingTerminationApplication {
                 self.pendingTerminationApplication = nil
@@ -82,13 +88,28 @@ final class ApplicationLifecycleCoordinator: ObservableObject, AppUpdateRelaunch
         }
     }
 
-    /// Sparkle checks this before entering its postponed relaunch path. This
-    /// is the only point where returning false cleanly aborts the installation,
-    /// so staged Settings validation belongs here rather than in the retained
-    /// continuation.
+    /// Sparkle checks this both before postponing and when the retained install
+    /// continuation re-enters its installer. The prepared continuation must be
+    /// allowed through; rejecting it silently cancels Install and Restart.
     func shouldAllowUpdateRelaunch() -> Bool {
-        guard state == .idle else { return false }
-        return prepareOpenSettings() && prepareNotesForShutdown()
+        switch state {
+        case .idle: return prepareOpenSettings() && prepareNotesForShutdown()
+        case .relaunching: return true
+        case .preparingUpdate, .quitting: return false
+        }
+    }
+
+    /// An installation that ends while this process remains alive must not
+    /// retain a stale continuation or bypass preflight on its next attempt.
+    func updateCycleDidFinish() {
+        guard state == .preparingUpdate || state == .relaunching else { return }
+        updatePreparationID = UUID()
+        updateContinuation = nil
+        state = .idle
+        if let application = pendingTerminationApplication {
+            pendingTerminationApplication = nil
+            application.reply(toApplicationShouldTerminate: false)
+        }
     }
 
     func updaterWillRelaunch() {

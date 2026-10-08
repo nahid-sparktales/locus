@@ -26,6 +26,8 @@ struct CompanionActivityCardsView: View {
     @State private var preferences = false
     @Environment(\.dismiss) private var dismiss
     var revealMainWindow: () -> Void = {}
+    var minimumWidth: CGFloat = 320
+    var minimumHeight: CGFloat = 240
     private var snapshot: CompanionMenuBarActivity {
         CompanionMenuBarActivity(profileID: app.primaryCompanionProfile?.id,
             workspace: app.companionWorkspacePath, sessionsByID: sessions.snapshot.sessionsByID,
@@ -110,7 +112,7 @@ struct CompanionActivityCardsView: View {
                 }.padding(16)
             }
         }
-        .frame(minWidth: 320, idealWidth: 420, minHeight: 240)
+        .frame(minWidth: minimumWidth, idealWidth: 420, minHeight: minimumHeight)
         .task { await activity.refreshActivityRuns(announceFailure: false) }
     }
     private func snooze(_ id: String) -> some View {

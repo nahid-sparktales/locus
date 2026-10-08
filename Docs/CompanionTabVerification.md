@@ -1,5 +1,9 @@
 # Companion panel, Scout, and cursor reactions
 
+For the current companion behavior and October 8 checks, see
+[Companion 4.2.1 verification](Verification/Companion-4.2.1.md).
+The material below records the earlier October 5 release.
+
 Updated October 5, 2026 with Xcode 26.6 on macOS. The deployment target remains
 macOS 14. This follows the original [companion verification](YourCompanionVerification.md).
 The completed full run passed **1,966 native tests** and **seven companion UI

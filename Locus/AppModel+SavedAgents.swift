@@ -395,13 +395,14 @@ extension AppModel {
         let workspace = SessionSummary.canonicalWorkspacePath(workspace)
         struct Created: Decodable { let session_id: String }
         let count = sessionCatalog.snapshot.sessions.filter { $0.savedAgentProfileID == profile.id }.count
+        let mode: WorkMode = profile.id == primaryCompanionProfile?.id ? .ask : profile.defaultMode ?? .work
         let response = try await backend.post("/api/sessions/detached", body: [
             "cwd": workspace, "title": "Chat \(count + 1)", "agent_profile_id": profile.id.uuidString,
             "execution_environment": "automatic",
             "agent_home": workspace == savedAgentHomePath(profile),
-            "mode": (profile.defaultMode ?? .work).rawValue,
+            "mode": mode.rawValue,
         ], as: Created.self)
-        splitPaneModes[response.session_id] = profile.defaultMode ?? .work
+        splitPaneModes[response.session_id] = mode
         savedAgentConversations.bind(response.session_id, workspace: workspace, profileID: profile.id)
         if preservingForeground { try await refreshCompanionConversationCatalog() }
         else { await refreshMetadata() }

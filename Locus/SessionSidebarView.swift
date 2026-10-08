@@ -860,7 +860,7 @@ struct SessionSidebarView: View {
                 }
             }
 
-            CompanionSidebarEntry()
+            if model.sidebarDestination != .agents { CompanionSidebarEntry() }
 
             navigationRow(
                 symbol: "person.crop.circle",
@@ -2657,25 +2657,20 @@ private struct AgentSidebarSection: View {
     }
 
     var body: some View {
-        let all = groups
+        let all = groups.filter { agentTeams.primaryCompanionID == nil || $0.profileID != agentTeams.primaryCompanionID }
         let visible = all.filter(filter.includes)
         LazyVStack(spacing: 3) {
             HStack {
-                Text("Group chats")
+                Text("Companion")
                     .font(.locus(size: 9, weight: .medium))
                 Spacer()
-                Text("1")
-                    .font(.locus(size: 8, design: .monospaced))
-                    .accessibilityLabel("1 group chat")
             }
             .foregroundStyle(viewColors.muted)
             .padding(.horizontal, 9)
             .padding(.bottom, 5)
             .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("sidebar.groupChats.header")
-            CrewChatSidebarEntry(
-                selected: model.agentCrewChatPresented || crew.boundProfileID(for: model.currentSessionID) != nil
-            )
+            .accessibilityIdentifier("sidebar.companion.header")
+            CompanionSidebarEntry(featured: true)
             .padding(.bottom, 10)
             if !all.isEmpty || filter != .all {
                 HStack {

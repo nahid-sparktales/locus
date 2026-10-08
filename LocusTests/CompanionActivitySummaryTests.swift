@@ -6,6 +6,71 @@ import XCTest
 final class CompanionActivitySummaryTests: XCTestCase {
     private let ready = CompanionActivitySummary.Availability(runtimeConnected: true, modelConnected: true, detail: "Ready on this Mac")
 
+    func testCompanionManualUnreadAndReadReceiptsPersistWithoutAffectingOtherChats() throws {
+        let suite = "CompanionReadTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let owner = UUID()
+        let companion = activityRun("companion-run", owner: owner, workspace: "/tmp", sessionID: "companion")
+        let other = activityRun("other-run", owner: UUID(), workspace: "/tmp", sessionID: "other")
+        let activity = ActivityCenterModel()
+        activity.restore(persistenceEnabled: true, defaults: defaults)
+        activity.markCompanionConversation(sessionID: "other", read: false, runs: [])
+        activity.markCompanionConversation(sessionID: "companion", read: true, runs: [companion, other])
+        XCTAssertFalse(activity.companionConversationIsUnread(sessionID: "companion", runs: [companion, other]))
+        XCTAssertTrue(activity.activityIsUnseen(other))
+        activity.markCompanionConversation(sessionID: "companion", read: false, runs: [companion, other])
+        let restored = ActivityCenterModel()
+        restored.restore(persistenceEnabled: true, defaults: defaults)
+        XCTAssertTrue(restored.companionConversationIsUnread(sessionID: "companion", runs: [companion]))
+        XCTAssertFalse(restored.activityIsUnseen(companion), "Manual unread does not erase the durable completion receipt")
+        restored.markCompanionConversation(sessionID: "companion", read: true, runs: [companion, other])
+        let reopened = ActivityCenterModel()
+        reopened.restore(persistenceEnabled: true, defaults: defaults)
+        XCTAssertFalse(reopened.companionConversationIsUnread(sessionID: "companion", runs: [companion]))
+        XCTAssertTrue(reopened.manuallyUnreadCompanionSessionIDs.contains("other"))
+        XCTAssertTrue(reopened.activityIsUnseen(other))
+    }
+
+    func testNewCompanionCompletionBecomesUnreadWithoutMarkingRunningWorkSeen() {
+        let activity = ActivityCenterModel()
+        let owner = UUID()
+        let completed = activityRun("first", owner: owner, workspace: "/tmp", sessionID: "companion")
+        let running = activityRun("next", owner: owner, workspace: "/tmp", sessionID: "companion", state: "running")
+        activity.markCompanionConversation(sessionID: "companion", read: true, runs: [completed, running])
+        XCTAssertFalse(activity.companionConversationIsUnread(sessionID: "companion", runs: [completed, running]))
+        XCTAssertNil(activity.activitySeenUpdates[running.id], "Viewing the chat cannot acknowledge a reply that has not arrived")
+        let next = activityRun("next", owner: owner, workspace: "/tmp", sessionID: "companion")
+        XCTAssertTrue(activity.companionConversationIsUnread(sessionID: "companion", runs: [completed, next]))
+        activity.markCompanionConversation(sessionID: "companion", read: true, runs: [completed, next])
+        XCTAssertFalse(activity.companionConversationIsUnread(sessionID: "companion", runs: [completed, next]))
+    }
+
+    func testCanonicalCompanionReadStateIgnoresStaleRunningCacheAndOtherAgentChats() throws {
+        let app = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let profile = AgentProfile(name: "Companion", model: "fixture", workspacePreferences: .init(defaultProjectPath: "/tmp"))
+        let other = AgentProfile(name: "Other", model: "fixture")
+        app.agentProfiles = [profile, other]
+        try app.agentTeamsModel.commitCompanion(.init(existingProfileID: profile.id))
+        app.sessions = [activitySession("companion", owner: profile.id, workspace: "/tmp"),
+                        activitySession("other", owner: other.id, workspace: "/tmp")]
+        let finished = activityRun("reply", owner: profile.id, workspace: "/tmp", sessionID: "companion",
+                                   updatedAt: 20, sequence: 8)
+        let stale = activityRun("reply", owner: profile.id, workspace: "/tmp", sessionID: "companion",
+                                state: "running", updatedAt: 999, sequence: 2)
+        let otherReply = activityRun("other-reply", owner: other.id, workspace: "/tmp", sessionID: "other")
+        app.activity.activityRuns = [finished, otherReply]
+        app.runs.runDetailsByID[stale.id] = stale
+        XCTAssertTrue(app.companionHasUnread, "A stale worker cache must not replace the terminal reply")
+        app.markCompanionRead()
+        XCTAssertFalse(app.companionHasUnread)
+        XCTAssertEqual(app.activity.activitySeenUpdates[finished.id], 20)
+        XCTAssertTrue(app.activity.activityIsUnseen(otherReply))
+        app.markCompanionRead(false)
+        XCTAssertTrue(app.companionHasUnread)
+        XCTAssertFalse(app.activity.manuallyUnreadCompanionSessionIDs.contains("other"))
+    }
+
     func testMultipleTasksRetainApprovalsFailuresAndUnreadSeparately() {
         let summary = CompanionActivitySummary.make(availability: ready, runs: [
             .init(id: "active", state: .running, updatedAt: 10),
@@ -266,10 +331,11 @@ final class CompanionActivitySummaryTests: XCTestCase {
     }
 
     private func activityRun(_ id: String, owner: UUID, workspace: String,
-                             sessionID: String? = nil, state: String = "completed") -> OrchestrationRun {
+                             sessionID: String? = nil, state: String = "completed", updatedAt: Double = 2,
+                             sequence: Int = 1) -> OrchestrationRun {
         var value: [String: Any] = [
             "id": id, "workspace_root": workspace, "state": state, "request": "Fixture",
-            "created_at": 1.0, "updated_at": 2.0, "last_seq": 1, "pinned": false,
+            "created_at": 1.0, "updated_at": updatedAt, "last_seq": sequence, "pinned": false,
             "legacy": false, "recoverable": false, "manifest": ["agent_profile_id": owner.uuidString],
         ]
         if let sessionID { value["session_id"] = sessionID }

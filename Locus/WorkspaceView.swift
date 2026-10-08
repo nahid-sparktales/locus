@@ -82,7 +82,8 @@ struct WorkspaceView: View {
                 HeaderIconButton(symbol: "sidebar.left", label: "Show sidebar",
                                  identifier: "workspace.showSidebar", action: showSidebar)
             }
-            Label("Agent overview", systemImage: "person.crop.rectangle")
+            Label(model.savedAgentOverviewProfile?.id == agentTeams.primaryCompanionID ? "Your companion" : "Agent overview",
+                  systemImage: "person.crop.rectangle")
                 .font(.locus(size: 12, weight: .semibold))
                 .foregroundStyle(viewColors.inkSoft)
             Spacer()
@@ -128,12 +129,8 @@ struct WorkspaceView: View {
                     .environmentObject(model)
             }
 
-            if let profile = model.currentCompanionConversationProfile {
-                CompanionConversationCharacter(profile: profile, size: 80, showsPrompt: model.blocks.isEmpty)
-                    .padding(.vertical, 8)
-            }
-
             ConversationView(streamingReply: model.streamingReply)
+                .companionPointerScope(enabled: model.currentCompanionConversationProfile != nil)
                 .frame(minHeight: 0, maxHeight: .infinity)
                 .clipped()
 
@@ -3396,6 +3393,7 @@ private struct ConversationView: View {
     @EnvironmentObject private var transcriptPresentation: TranscriptPresentationModel
     @EnvironmentObject private var schedule: ScheduleModel
     @EnvironmentObject private var runs: OrchestrationRunsModel
+    @EnvironmentObject private var activity: ActivityCenterModel
     @EnvironmentObject private var sessionCatalog: SessionCatalogModel
     @EnvironmentObject private var agentTeams: AgentTeamsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3434,6 +3432,10 @@ private struct ConversationView: View {
             }
             ScrollView {
                 TranscriptLayoutStack(itemCount: items.count) {
+                    if let profile = model.currentCompanionConversationProfile {
+                        CompanionConversationCharacter(profile: profile, size: 80, showsPrompt: transcript.isEmpty)
+                            .padding(.top, 8).padding(.bottom, 24)
+                    }
                     if transcript.isEmpty, model.currentCompanionConversationProfile == nil {
                         EmptyConversationView()
                             .environmentObject(model)
@@ -3504,6 +3506,11 @@ private struct ConversationView: View {
             // for that viewport or its realized interactive descendants.
             .accessibilityLabel("Conversation transcript")
             .accessibilityIdentifier("conversation.scroll")
+            .task(id: "\(model.currentSessionID)|\(model.transcriptInputState == .ready)|\(model.companionReadRevision)") {
+                if model.currentCompanionConversationProfile != nil, model.transcriptInputState == .ready {
+                    model.markCompanionRead()
+                }
+            }
             .chatAttachmentDropTarget()
             .overlay(alignment: .bottom) {
                 if scrollCoordinator.followState.showsJumpToLatest, !transcript.isEmpty {
@@ -5704,7 +5711,8 @@ private struct CompanionConversationCharacter: View {
     var body: some View {
         VStack(spacing: 8) {
             VStack(spacing: 8) {
-                AgentAvatarView(profileID: profile.id, name: profile.name, size: size)
+                AgentAvatarView(profileID: profile.id, name: profile.name, size: size * 1.175)
+                    .frame(width: size, height: size)
                 Text(profile.name)
                     .font(.locus(size: 15, weight: .semibold))
                     .foregroundStyle(colors.ink)

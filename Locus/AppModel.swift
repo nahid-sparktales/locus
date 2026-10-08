@@ -255,6 +255,7 @@ final class AppModel: ObservableObject {
             transcriptSessionTransitionRevision &+= 1
             pendingActivityResultRun = nil
             if activityResultReveal != nil { activityResultReveal = nil }
+            if usesCompanionContext(sessionID: currentSessionID) { selectedMode = .ask }
         }
         return result
     }
@@ -305,8 +306,12 @@ final class AppModel: ObservableObject {
             runtimeFacadeRevision &+= 1
         }
     }
+    var restoringModeSessionID: String?
     @Published var selectedMode: WorkMode = .work {
         didSet {
+            let modeSessionID = restoringModeSessionID ?? currentSessionID
+            let companionMode = usesCompanionContext(sessionID: modeSessionID)
+            if companionMode, selectedMode != .ask { selectedMode = .ask }
             // Changing modes is taking a stance on what happens next, so a
             // pending "implement this plan?" prompt — or an unanswered
             // question — would only contradict it.
@@ -319,7 +324,7 @@ final class AppModel: ObservableObject {
             // Just Chat is deliberately not a workspace surface. Remember the
             // inspector's prior state so leaving Chat restores exactly what
             // the user had before, regardless of which mode control they use.
-            if selectedMode == .ask, oldValue != .ask {
+            if selectedMode == .ask, oldValue != .ask, !companionMode {
                 dismissOverview()
                 restoreInspectorAfterJustChat = !inspectorCollapsed
                 inspectorCollapsed = true
@@ -1951,7 +1956,7 @@ final class AppModel: ObservableObject {
         set { settings.showContextUsageInHeader = newValue }
     }
 
-    var justChatEnabled: Bool { selectedMode == .ask }
+    var justChatEnabled: Bool { selectedMode == .ask && currentCompanionConversationProfile == nil }
 
     func setJustChatEnabled(_ enabled: Bool) {
         if enabled {

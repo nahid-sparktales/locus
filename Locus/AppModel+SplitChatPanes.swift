@@ -235,14 +235,17 @@ extension AppModel {
 
     private func restorePanePreferences(for sessionID: String) {
         let wasRestoring = isRestoringManualModelRoute
+        let previousModeSession = restoringModeSessionID
         isRestoringManualModelRoute = true
-        defer { isRestoringManualModelRoute = wasRestoring }
+        restoringModeSessionID = sessionID
+        defer { isRestoringManualModelRoute = wasRestoring; restoringModeSessionID = previousModeSession }
         let state = paneState(containing: sessionID)
         draftText = state?.draft ?? splitPaneDrafts[sessionID] ?? ""
         chatAttachments = state?.attachments ?? splitPaneAttachments[sessionID] ?? []
         contextFiles = state?.contextFiles ?? []
         queuedMessages = state?.queuedMessages ?? []
-        if goals.goal(for: sessionID)?.status == .active { selectedMode = .work }
+        if usesCompanionContext(sessionID: sessionID) { selectedMode = .ask }
+        else if goals.goal(for: sessionID)?.status == .active { selectedMode = .work }
         else if let mode = state?.mode ?? splitPaneModes[sessionID] { selectedMode = mode }
         selectedAgentTeamID = state?.selectedTeamID ?? splitPaneTeams[sessionID] ?? nil
         soloSwarmEnabled = selectedAgentTeamID == nil
@@ -276,7 +279,7 @@ extension AppModel {
         state.blocks = splitPaneBlocks[sessionID] ?? []
         state.draft = splitPaneDrafts[sessionID] ?? ""
         state.attachments = splitPaneAttachments[sessionID] ?? []
-        state.mode = splitPaneModes[sessionID] ?? .work
+        state.mode = conversationMode(splitPaneModes[sessionID] ?? .work, sessionID: sessionID)
         state.selectedTeamID = splitPaneTeams[sessionID] ?? nil
         state.soloRouting = splitPaneSoloRouting[sessionID] ?? false
         state.transcriptSearchQuery = splitPaneSearchQueries[sessionID] ?? ""

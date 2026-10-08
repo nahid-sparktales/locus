@@ -72,6 +72,18 @@ extension AppModel {
         return primaryCompanionProfile
     }
 
+    /// Only the durable companion conversation receives Locus-wide retrieval.
+    /// The same saved agent's ordinary task/event chats retain their own modes.
+    func usesCompanionContext(sessionID: String, profileID: UUID? = nil) -> Bool {
+        guard let companion = companionConversation, companion.id == sessionID,
+              let owner = primaryCompanionProfile?.id else { return false }
+        return profileID == nil || profileID == owner
+    }
+
+    func conversationMode(_ requested: WorkMode, sessionID: String) -> WorkMode {
+        usesCompanionContext(sessionID: sessionID) ? .ask : requested
+    }
+
     func companionChats(in workspace: String? = nil) -> [SessionSummary] {
         companionConversation.map { [$0] } ?? []
     }
@@ -107,6 +119,7 @@ extension AppModel {
             inspectAgentChat(current)
             sidebarDestination = .agents
             rememberSidebarSession(current)
+            if transcriptInputState == .ready { markCompanionRead() }
             // Revealing the selected chat must not reload active work, an
             // approval or an in-flight transcript. Explicit failure retry is safe.
             if transcriptInputState == .unavailable, canSwitchToCompanionChat {
