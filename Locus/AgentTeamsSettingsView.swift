@@ -1648,6 +1648,7 @@ struct AgentProfileEditor: View {
     @State private var advancedSettings = false
     @State private var editingBehavior = false
     @State private var environmentExpanded = false
+    @State private var assigningModel = false
     @State private var permissionsExpanded = false
     @State private var connectionsExpanded = false
     @State private var previousInstructions: String?
@@ -1751,6 +1752,14 @@ struct AgentProfileEditor: View {
                 draft.name = behavior.displayName
                 draft.instructions = behavior.customInstructions
                 editingBehavior = false
+            }
+            .environmentObject(model)
+            .environmentObject(providerAccounts)
+        }
+        .locusSheet(isPresented: $assigningModel) {
+            AgentModelChoicePicker(assigned: draft.resolvedModelChoices) { choice in
+                draft.additionalModels = (draft.additionalModels ?? []) + [choice]
+                draft.clamp()
             }
             .environmentObject(model)
             .environmentObject(providerAccounts)
@@ -1900,7 +1909,7 @@ struct AgentProfileEditor: View {
     private var environmentDisclosure: some View {
         VStack(alignment: .leading, spacing: 12) {
             disclosureHeader(
-                "Model & provider", detail: environmentSummary,
+                "Models & providers", detail: environmentSummary,
                 symbol: "cpu", expanded: $environmentExpanded,
                 identifier: "agent.environment"
             )
@@ -1916,6 +1925,7 @@ struct AgentProfileEditor: View {
                 }
                 .accessibilityIdentifier("agent.providerRoute")
                 modelPicker
+                assignedModels
                 Text(providerDetail)
                     .font(.locus(size: 9))
                     .foregroundStyle(viewColors.textTertiary)
@@ -1952,6 +1962,40 @@ struct AgentProfileEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("agent.modelAvailability")
             }
+        }
+    }
+
+    private var assignedModels: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The model above is preferred when task scores are equal. With several models assigned, the agent chooses per task and falls back if a model cannot start.")
+                .font(.locus(size: 10))
+                .foregroundStyle(viewColors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(draft.resolvedModelChoices.dropFirst()) { choice in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(choice.model).font(.locus(size: 11, weight: .medium))
+                        Text(choice.route.accountID.flatMap { id in
+                            providerAccounts.providerAccounts.first { $0.id == id }?.displayName
+                        } ?? (choice.route.accountID == nil ? "Local Ollama" : "Unavailable account"))
+                        .font(.locus(size: 10))
+                        .foregroundStyle(viewColors.textTertiary)
+                    }
+                    Spacer()
+                    Button {
+                        draft.additionalModels?.removeAll { $0.id == choice.id }
+                    } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.locus())
+                    .accessibilityLabel("Remove \(choice.model)")
+                    .accessibilityIdentifier("agent.models.remove.\(choice.id)")
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("agent.models.choice.\(choice.id)")
+            }
+            Button("Assign another model", systemImage: "plus") { assigningModel = true }
+                .buttonStyle(.locus())
+                .disabled(draft.resolvedModelChoices.count >= 8)
+                .accessibilityIdentifier("agent.models.add")
         }
     }
 
@@ -2028,7 +2072,9 @@ struct AgentProfileEditor: View {
         case .providerAccount(let id):
             name = providerAccounts.providerAccounts.first { $0.id == id }?.displayName ?? "Unavailable provider"
         }
+        let extra = max(0, draft.resolvedModelChoices.count - 1)
         return "\(name) · \(draft.model.isEmpty ? "Choose a model" : draft.model)"
+            + (extra > 0 ? " + \(extra)" : "")
     }
 
     private var providerDetail: String {

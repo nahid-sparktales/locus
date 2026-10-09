@@ -26,14 +26,18 @@ extension AppModel {
     }
 
     func savedAgentProfileDispatch(profileID: UUID, mode: WorkMode, sessionID: String? = nil,
-                                   queuedRoute: [String: JSONValue]? = nil) throws -> TaskCapsuleDispatch {
+                                   queuedRoute: [String: JSONValue]? = nil,
+                                   selectedProfile: AgentProfile? = nil) throws -> TaskCapsuleDispatch {
         guard !removingSavedAgentIDs.contains(profileID) else {
             throw SavedAgentConversationError.unavailable("This saved agent is being removed.")
         }
         guard let savedProfile = agentProfiles.first(where: { $0.id == profileID }) else {
             throw SavedAgentConversationError.unavailable("This conversation's agent profile was removed. Choose another agent or start a regular chat.")
         }
-        var profile = sessionID.map { agentChatProfile(savedProfile, sessionID: $0) } ?? savedProfile
+        if queuedRoute == nil, selectedProfile == nil, let sessionID, let retained = chatModelRoute(for: sessionID) {
+            _ = try chatModelProviderBody(retained)
+        }
+        var profile = selectedProfile ?? sessionID.map { agentChatProfile(savedProfile, sessionID: $0) } ?? savedProfile
         if let queuedRoute {
             guard queuedRoute["profile_id"]?.string.flatMap(UUID.init(uuidString:)) == profileID,
                   let name = queuedRoute["model"]?.string?.nilIfEmpty,
@@ -69,6 +73,7 @@ extension AppModel {
             "timeout_seconds": profile.timeoutSeconds, "token_limit": profile.tokenLimit,
         ]
         value["behavior"] = encodedJSONObject(profile.resolvedBehavior)
+        if let choices = profile.additionalModels, !choices.isEmpty { value["model_choices"] = choices.compactMap { encodedJSONObject($0) } }
         if let mode = profile.defaultMode { value["default_mode"] = mode.rawValue }
         if let policy = profile.mcpPolicy { value["mcp_policy"] = encodedJSONObject(policy) }
         return value
@@ -130,13 +135,27 @@ extension AppModel {
         guard savedAgentProfileID(for: sessionID) == profileID else {
             throw SavedAgentConversationError.unavailable("This conversation belongs to a different saved agent.")
         }
-        guard pendingChatTurns[sessionID] == nil, !savedAgentConversationState(sessionID).busy else {
+        guard pendingChatTurns[sessionID] == nil, pendingChatTurnTokens[sessionID] == nil,
+              !savedAgentConversationState(sessionID).busy else {
             throw SavedAgentConversationError.unavailable("This conversation is still working or needs your attention in Locus.")
         }
         guard goals.goal(for: sessionID)?.status != .active else {
             throw SavedAgentConversationError.unavailable("Pause the current goal before continuing this agent conversation.")
         }
-        let dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID)
+        let token = UUID()
+        pendingChatTurnTokens[sessionID] = token
+        defer {
+            if pendingChatTurnTokens[sessionID] == token {
+                pendingChatTurnTokens[sessionID] = nil
+                pendingChatTurns[sessionID] = nil
+            }
+        }
+        let manualSelection = hasManualChatModelSelection(sessionID: sessionID)
+        let choosesModel = !manualSelection && profile.resolvedModelChoices.count > 1
+            && sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true
+        let capturedDispatch: TaskCapsuleDispatch?
+        if choosesModel { capturedDispatch = nil }
+        else { capturedDispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID) }
         let payload = attachments.isEmpty ? text : Self.decoratedPrompt(text, mode: mode,
             chatAttachments: attachments, contextFiles: [], restoredTranscriptContext: nil, companionContext: companionTurn)
         let imageAttachments: [[String: Any]] = attachments.compactMap { attachment in
@@ -145,7 +164,6 @@ extension AppModel {
             return ["name": attachment.name, "mime_type": mime, "data": data.base64EncodedString()]
         }
         let allowsSpecialists = profileID == primaryCompanionProfile?.id && mode == .work
-        let token = UUID()
         var failure: Error?
         var accepted = false
         let turn = Task { @MainActor [weak self] in
@@ -159,6 +177,19 @@ extension AppModel {
                 guard detail.matches(sessionID: sessionID, profileID: profileID, workspace: workspace) else {
                     throw SavedAgentConversationError.unavailable("This conversation belongs to another agent or project, or is archived. Restore it in Locus before continuing.")
                 }
+                let dispatch: TaskCapsuleDispatch
+                if let capturedDispatch { dispatch = capturedDispatch }
+                else {
+                    // Keep route scoring inside the registered task so Stop
+                    // and app shutdown can cancel it before any admission.
+                    let chosen = await prepareAgentModelChoice(profile: profile, sessionID: nil, text: text, mode: mode,
+                        requiresVision: attachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
+                    try Task.checkCancellation()
+                    dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode,
+                        sessionID: sessionID, selectedProfile: chosen)
+                }
+                let agentChoices = agentModelChoicesForDispatch(dispatch, sessionID: sessionID,
+                                                                manualSelection: manualSelection)
                 var queueBody = detail.executionQueueContext
                 queueBody.merge([
                     "run_id": runID, "session_id": sessionID, "message_id": UUID().uuidString,
@@ -167,11 +198,18 @@ extension AppModel {
                 ]) { _, new in new }
                 if let route = try await prepareAgentChatQueueRoute(dispatch, sessionID: sessionID) {
                     queueBody["agent_chat_route"] = route
+                    if let agentChoices {
+                        try await prepareAgentModelChoiceCredentials(agentChoices)
+                        queueBody["agent_model_choices"] = agentChoices.map(\.wireValue)
+                    }
                     queueBody["mode"] = mode.rawValue
                     if companionTurn { queueBody["companion_context"] = true }
                 }
                 try Task.checkCancellation()
                 let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
+                retainAcceptedChatRoute(ChatModelRoute(model: dispatch.profile.model, provider: dispatch.provider,
+                    accountID: dispatch.accountID.flatMap(UUID.init(uuidString:)), profileID: profileID,
+                    selection: manualSelection ? "manual" : "automatic"), sessionID: sessionID)
                 let previous = taskConversationStates[sessionID]
                 taskConversationStates[sessionID] = TaskConversationState(
                     sessionID: sessionID, taskID: previous?.taskID, teamID: nil,
@@ -200,6 +238,11 @@ extension AppModel {
                     "agent_profile": Self.savedAgentProfileBody(dispatch.profile),
                     "agent_config": encodedJSONObject(dispatch.profile.resolvedBehavior) ?? [:],
                 ]
+                var route: [String: Any] = ["profile_id": dispatch.profile.id.uuidString,
+                    "provider": dispatch.provider, "model": dispatch.profile.model]
+                if let accountID = dispatch.accountID { route["provider_account_id"] = accountID }
+                request["agent_chat_route"] = route
+                if let agentChoices { request["agent_model_choices"] = agentChoices.map(\.wireValue) }
                 if companionTurn { request["companion_context"] = true }
                 if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
                 if allowsSpecialists { request["solo_swarm"] = ["enabled": true] }

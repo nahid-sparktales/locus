@@ -322,7 +322,8 @@ def test_companion_request_flag_requires_matching_saved_profile_and_ask_mode(tmp
     asyncio.run(server._handle_client_message(service, message))
     assert len(calls) == 1
     assert calls[0][0] == server._run_profile_turn
-    assert calls[0][1][-1] is True
+    assert calls[0][1][-2] is True
+    assert calls[0][1][-1] is None
 
 
 def test_saved_agent_automation_retains_workflow_outputs_and_profile_boundary(tmp_path, monkeypatch):

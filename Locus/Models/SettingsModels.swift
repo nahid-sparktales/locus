@@ -273,6 +273,7 @@ struct AppSettings: Codable, Hashable {
     var modelRouterFallbackAccountID: String?
     var modelRouterFallbackModel = ""
     var agentChatModelSelections: [String: AgentChatModelSelection] = [:]
+    var chatModelRoutes: [String: ChatModelRoute] = [:]
     var inspectorWidth: Double = AppSettings.defaultInspectorWidth
     /// Preferred width of the conversations/workspaces sidebar. Layout may
     /// temporarily render it narrower in a compact window without overwriting
@@ -852,6 +853,7 @@ struct AppSettings: Codable, Hashable {
         agentChatModelSelections = try container.decodeIfPresent(
             [String: AgentChatModelSelection].self, forKey: .agentChatModelSelections
         ) ?? defaults.agentChatModelSelections
+        chatModelRoutes = try container.decodeIfPresent([String: ChatModelRoute].self, forKey: .chatModelRoutes) ?? [:]
         // Clamped on the way in as well as on the way out: a corrupt or
         // out-of-range stored value must not produce an unusable panel.
         inspectorWidth = Self.clampInspectorWidth(

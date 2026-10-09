@@ -160,7 +160,8 @@ extension AppModel {
     }
 
     func capsuleDispatch(profileID: String, context: [String: Any], mode: WorkMode) -> TaskCapsuleDispatch? {
-        guard let profile = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(profileID) == .orderedSame }),
+        guard let saved = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(profileID) == .orderedSame }),
+              let profile = try? firstReadyAgentModelProfile(saved),
               let resolved = capsuleProvider(profile) else { return nil }
         return TaskCapsuleDispatch(profile: profile, provider: resolved.provider, accountID: resolved.accountID,
                                    providerBody: resolved.body, context: context, mode: mode)
@@ -205,7 +206,8 @@ extension AppModel {
     }
 
     private func capsuleProfilePayload(id: String) -> [String: Any]? {
-        guard let profile = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }),
+        guard let saved = capsuleProfiles.first(where: { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }),
+              let profile = try? firstReadyAgentModelProfile(saved),
               let resolved = capsuleProvider(profile) else { return nil }
         var route = resolved.body
         if resolved.provider == "ollama" { route["host"] = lastOllamaHost }
@@ -216,6 +218,9 @@ extension AppModel {
             "access_ceiling": profile.accessCeiling.rawValue, "timeout_seconds": profile.timeoutSeconds,
             "token_limit": profile.tokenLimit, "metering": subscription ? "self_hosted" : profile.metering.rawValue,
             "route": route]
+        if saved.resolvedModelChoices.count > 1 {
+            payload["agent_model_choices"] = agentModelChoiceReferences(readyAgentModelProfiles(saved))
+        }
         if let behavior = encodedJSONObject(profile.resolvedBehavior) { payload["behavior"] = behavior }
         if let mode = profile.defaultMode { payload["default_mode"] = mode.rawValue }
         if let policy = profile.mcpPolicy, let raw = encodedJSONObject(policy) { payload["mcp_policy"] = raw }

@@ -8,7 +8,7 @@ extension AppModel {
             workspace: { [weak self] in self?.workspacePath ?? "" },
             availability: { [weak self] profile in
                 guard let self else { return "Locus is unavailable." }
-                do { _ = try self.agentProfileProvider(profile); return nil }
+                do { _ = try self.firstReadyAgentModelProfile(profile); return nil }
                 catch { return error.localizedDescription }
             },
             state: { [weak self] id in self?.savedAgentConversationState(id) ?? .init() },

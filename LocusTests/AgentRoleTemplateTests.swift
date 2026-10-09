@@ -23,11 +23,13 @@ final class AgentRoleTemplateTests: XCTestCase {
     func testTemplateApplicationPreservesIdentityWorkspaceAndEditableInstructions() throws {
         var original = AgentProfile(name: "Custom", model: "my-model", instructions: "Before")
         original.workspacePreferences = .init()
+        original.additionalModels = [.init(route: .providerAccount(UUID()), model: "assigned-alternative")]
         let selected = try role("architect").applying(to: original)
         XCTAssertEqual(selected.id, original.id)
         XCTAssertEqual(selected.workspacePreferences, original.workspacePreferences)
         XCTAssertEqual(selected.route, original.route)
         XCTAssertEqual(selected.model, "my-model")
+        XCTAssertEqual(selected.additionalModels, original.additionalModels)
         XCTAssertEqual(selected.role, .planner)
         XCTAssertEqual(selected.accessCeiling, .readOnly)
         XCTAssertEqual(selected.defaultMode, .plan)
@@ -40,6 +42,7 @@ final class AgentRoleTemplateTests: XCTestCase {
         XCTAssertEqual(roundTrip.instructions, "My edited instructions")
         XCTAssertEqual(roundTrip.resolvedBehavior.specialistRoleID, "architect")
         XCTAssertEqual(roundTrip.defaultMode, .plan)
+        XCTAssertEqual(roundTrip.additionalModels, original.additionalModels)
     }
 
     func testLegacyProfileDecodesWithoutTemplateOrDefaultMode() throws {

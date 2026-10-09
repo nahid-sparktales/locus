@@ -510,6 +510,22 @@ enum AgentRoute: Codable, Hashable {
     }
 }
 
+/// An assigned model keeps its account identity; equal names on different
+/// accounts are different routes and must never borrow credentials.
+struct AgentModelChoice: Codable, Hashable, Identifiable {
+    var route: AgentRoute
+    var model: String
+
+    var id: String {
+        "\(route.accountID?.uuidString.lowercased() ?? "ollama")|\(model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    var normalized: AgentModelChoice? {
+        let name = String(model.trimmingCharacters(in: .whitespacesAndNewlines).prefix(256))
+        return name.isEmpty ? nil : .init(route: route, model: name)
+    }
+}
+
 /// A provider-scoped model identity used by the visual quick-team builder.
 /// Model names alone are not unique because two accounts can expose the same
 /// identifier while using different credentials, billing, and privacy rules.
@@ -640,6 +656,9 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     var name: String
     var route: AgentRoute = .localOllama
     var model: String
+    /// Additional assigned routes. The existing route/model remains preferred
+    /// and keeps profiles saved before multi-model support compatible.
+    var additionalModels: [AgentModelChoice]? = nil
     var role: AgentRole
     var instructions: String
     var capabilityTags: [String]
@@ -672,12 +691,14 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         mcpPolicy: MCPAgentPolicy? = nil,
         behavior: AgentBehavior? = nil,
         workspacePreferences: AgentWorkspacePreferences? = nil,
-        defaultMode: WorkMode? = nil
+        defaultMode: WorkMode? = nil,
+        additionalModels: [AgentModelChoice]? = nil
     ) {
         self.id = id
         self.name = name
         self.route = route
         self.model = model
+        self.additionalModels = additionalModels
         self.role = role
         self.instructions = instructions ?? role.defaultInstructions
         self.capabilityTags = capabilityTags
@@ -697,6 +718,9 @@ struct AgentProfile: Identifiable, Codable, Hashable {
     mutating func clamp() {
         name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
         model = String(model.trimmingCharacters(in: .whitespacesAndNewlines).prefix(256))
+        var modelIDs = Set([AgentModelChoice(route: route, model: model).id])
+        let alternatives = (additionalModels ?? []).compactMap(\.normalized).filter { modelIDs.insert($0.id).inserted }
+        additionalModels = alternatives.isEmpty ? nil : Array(alternatives.prefix(7))
         instructions = String(instructions.prefix(16_000))
         capabilityTags = Array(Set(capabilityTags.map {
             String($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(40))
@@ -720,6 +744,12 @@ struct AgentProfile: Identifiable, Codable, Hashable {
         }
         resolved.clamp()
         behavior = resolved
+    }
+
+    var resolvedModelChoices: [AgentModelChoice] {
+        var seen = Set<String>()
+        return Array(([AgentModelChoice(route: route, model: model)] + (additionalModels ?? []))
+            .compactMap(\.normalized).filter { seen.insert($0.id).inserted }.prefix(8))
     }
 
     var isConfigured: Bool { !name.isEmpty && !model.isEmpty }

@@ -1043,6 +1043,19 @@ struct RootView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(AppEdition.current.displayName) workspace")
         .modifier(LocusSharedPresentations(surface: .main, updates: updates))
+        .alert("Change this chat’s model?", isPresented: Binding(
+            get: { model.pendingChatModelChange != nil },
+            set: { if !$0 { model.cancelChatModelChange() } }
+        )) {
+            Button("Cancel", role: .cancel) { model.cancelChatModelChange() }
+                .accessibilityIdentifier("chat.modelChange.cancel")
+            Button("Change model") { model.confirmChatModelChange() }
+                .accessibilityIdentifier("chat.modelChange.confirm")
+        } message: {
+            if let change = model.pendingChatModelChange {
+                Text("Switch from \(change.currentLabel) to \(change.newLabel)? Changing models after a task has started can reduce answer quality and continuity. This applies to future messages in this chat.")
+            }
+        }
         .onAppear { model.appUpdates = updates }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow,

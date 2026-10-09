@@ -576,7 +576,7 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "pinned": bool(meta.get("pinned", False)),
         "archived": bool(meta.get("archived", False)),
         "cwd": header.get("cwd"),
-        "model": header.get("model"),
+        "model": meta.get("model") if meta.get("route_established") else header.get("model"),
         "started": header.get("started"),
         "task": meta.get("task"),
         "team": meta.get("team"),
@@ -590,6 +590,9 @@ def session_detail(session_id: str) -> dict[str, Any]:
         "agent_name": meta.get("agent_name"),
         "agent_primary": bool(meta.get("agent_primary") or False),
         "provider": meta.get("provider"),
+        "provider_account_id": meta.get("provider_account_id"),
+        "model_route_selection": meta.get("model_route_selection"),
+        "route_established": meta.get("route_established") is True,
         "folder_id": placement.get("folder_id") if placement else None,
         "sort_order": int(placement.get("order") or 0) if placement else None,
         "agent_activities": activity["activities"],
@@ -705,6 +708,8 @@ def session_duplicate(
         fields: dict[str, Any] = {
             "title": f"{title} Copy"[:120],
             "team": source_meta.get("team"),
+            **{key: source_meta[key] for key in ("model", "provider", "provider_account_id",
+                                                "model_route_selection", "route_established") if key in source_meta},
         }
         workspace = str(SessionStore.header(source_path).get("cwd") or "")
         if mode == "worktree" and source_task is not None:

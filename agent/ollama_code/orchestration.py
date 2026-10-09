@@ -25,7 +25,7 @@ from typing import Any
 
 from .agent_config import AgentConfiguration, compose_system_prompt
 from .capabilities import enabled as capability_enabled
-from .codex_app_server import CodexBrokerClient, codex_home_for_account
+from .codex_app_server import CodexAppServerError, CodexBrokerClient, codex_home_for_account
 from .ollama import ChatResponse, OllamaClient, OllamaError, looks_like_image_rejection
 from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
@@ -55,6 +55,10 @@ MAX_SWARM_DEPTH = 4
 
 class OrchestrationError(ValueError):
     """A manifest or dispatcher plan crossed a hard orchestration boundary."""
+
+
+class ProviderUnavailableError(OrchestrationError):
+    """A selected provider could not create a client; no request was admitted."""
 
 
 class OpenAIResponsesFallbackRequired(OrchestrationError):
@@ -191,11 +195,15 @@ class AgentProfile:
     memory_context: str = field(default="", repr=False)
     usage_rates: dict[str, Any] = field(default_factory=dict)
     default_mode: str = "work"
+    model_choices: tuple[dict[str, Any], ...] = ()
+    task_model_choices: tuple[dict[str, str], ...] = ()
 
     @classmethod
     def parse(cls, value: Any, *, require_route: bool = True) -> AgentProfile:
         if not isinstance(value, dict):
             raise OrchestrationError("agent profiles must be objects")
+        from .agent_chat_routes import validate_model_choices
+        from .agent_model_routes import profile_model_choices
         profile = cls(
             id=_identifier(value.get("id"), "agent id"),
             name=str(value.get("name") or "").strip()[:64],
@@ -219,6 +227,9 @@ class AgentProfile:
             memory_context=str(value.get("_memory_context") or "")[:24_000],
             usage_rates=dict(value.get("usage_rates") or {}),
             default_mode=str(value.get("default_mode") or "work"),
+            model_choices=tuple(profile_model_choices(value.get("model_choices"))),
+            task_model_choices=tuple(validate_model_choices(value["agent_model_choices"]))
+            if "agent_model_choices" in value else (),
         )
         if not profile.name or not profile.model:
             raise OrchestrationError("every team member needs a name and exact model")
@@ -2408,6 +2419,64 @@ class TeamOrchestrator:
         stream: Callable[[str], None] | None = None,
         stop: Stop | None = None,
     ):
+        if not profile.task_model_choices:
+            return self._raw_call_once(run_id, profile, messages, budget, tools, force_tool, stream, stop)
+        from .agent_model_routes import (
+            initial_provider_failure,
+            rank_task_choices,
+            record_route_outcome,
+            trusted_task_choices,
+        )
+        choices = trusted_task_choices(profile.id, list(profile.task_model_choices))
+        if not choices:
+            raise OrchestrationError("Reconnect one of this agent's assigned model accounts.")
+        task = "\n".join(str(item.get("content") or "") for item in messages if item.get("role") == "user")
+        choices = rank_task_choices(choices, task, self.run_store)
+        for index, choice in enumerate(choices):
+            selected = replace(profile, model=choice["model"], route=choice, task_model_choices=())
+            started = False
+            began_at = time.monotonic()
+            def output(token):
+                nonlocal started
+                started = started or bool(token)
+                if stream is not None:
+                    stream(token)
+            def thinking(token):
+                nonlocal started
+                started = started or bool(token)
+            try:
+                prompt = [dict(message) for message in messages]
+                for message in prompt:
+                    if message.get("role") == "system":
+                        message["content"] = str(message.get("content") or "").replace(
+                            f"Your underlying model is {profile.model} via {_route_label(profile.route)}.",
+                            f"Your underlying model is {selected.model} via {_route_label(selected.route)}.")
+                response = self._raw_call_once(run_id, selected, prompt, budget, tools, force_tool, output, stop,
+                                               observe_thinking=thinking)
+                record_route_outcome(self.run_store, choice, task, reliable=True,
+                                     latency_ms=int((time.monotonic() - began_at) * 1000))
+                return response
+            except Exception as error:
+                record_route_outcome(self.run_store, choice, task, reliable=False,
+                                     latency_ms=int((time.monotonic() - began_at) * 1000))
+                if (started or (stop or self.should_stop)() or index + 1 == len(choices)
+                        or not initial_provider_failure(error, managed=choice["provider"] in {"chatgpt", "claude_plan"})):
+                    raise
+                self.emit({"type": "note", "run_id": run_id, "agent_id": profile.id,
+                           "model_fallback": True, "text": f"{profile.name}'s model could not start; trying its next assigned model."})
+
+    def _raw_call_once(
+        self,
+        run_id: str,
+        profile: AgentProfile,
+        messages: list[dict[str, Any]],
+        budget: OrchestrationBudget,
+        tools: list[dict[str, Any]] | None = None,
+        force_tool: str | None = None,
+        stream: Callable[[str], None] | None = None,
+        stop: Stop | None = None,
+        observe_thinking: Callable[[str], None] | None = None,
+    ):
         effective_stop = stop or self.should_stop
         with self._guard:
             if self._call_count >= budget.max_model_calls:
@@ -2478,6 +2547,7 @@ class TeamOrchestrator:
                 messages=messages,
                 tools=tools or [],
                 on_token=stream,
+                **({"on_thinking": observe_thinking} if observe_thinking is not None else {}),
                 should_stop=effective_stop,
                 options={**(options or {}), "num_predict": profile.token_limit},
             )
@@ -2615,6 +2685,9 @@ def parse_manifest(value: Any) -> tuple[str, AgentTeam, dict[str, AgentProfile],
             raise OrchestrationError(
                 "OpenAI Responses swarms require an OpenAI API dispatcher using GPT-5.6"
             )
+        # This engine's API/model contract is explicit; its dispatcher cannot
+        # silently become a subscription or non-OpenAI route through a pool.
+        profiles[team.dispatcher_id] = replace(dispatcher, task_model_choices=())
     _routing_weights(team.routing_weights)
     forced = str(value.get("forced_agent_id") or "") or None
     if forced and forced not in profiles:
@@ -2915,6 +2988,7 @@ class ChatGPTTeamClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         on_token: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
         should_stop: Stop | None = None,
         options: dict[str, Any] | None = None,
         **_: Any,
@@ -2946,6 +3020,13 @@ class ChatGPTTeamClient:
         text = str(result.get("text") or "")
         if on_token is not None and text:
             on_token(text)
+        reasoning = str(result.get("reasoning") or "")
+        if on_thinking is not None and reasoning:
+            on_thinking(reasoning)
+        turn = result.get("turn") or {}
+        if turn.get("status") == "failed":
+            error = turn.get("error") or {}
+            raise CodexAppServerError(str(error.get("message") or "Subscription model request failed"))
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
         last = usage.get("total") or usage.get("last") or {}
         response = ChatResponse(
@@ -3009,7 +3090,7 @@ def _client(profile: AgentProfile):
         return OllamaClient(str(route.get("host") or "http://localhost:11434"), profile.timeout_seconds)
     if route.get("provider") == "claude_plan":
         if _TEAM_CLAUDE_RESOLVER is None:
-            raise OrchestrationError("The Claude runtime is unavailable.")
+            raise ProviderUnavailableError("The Claude runtime is unavailable.")
         client = ChatGPTTeamClient(_TEAM_CLAUDE_RESOLVER(str(route.get("account_id") or "")), profile.timeout_seconds)
         client.host = "claude_plan://managed"
         return client
@@ -3018,7 +3099,7 @@ def _client(profile: AgentProfile):
         # values, so tools and child processes never inherit the broker token.
         broker = _TEAM_CODEX_BROKER
         if broker is None:
-            raise OrchestrationError("the primary ChatGPT broker is unavailable")
+            raise ProviderUnavailableError("the primary ChatGPT broker is unavailable")
         if "codex_home_id" in route:
             home_id = route["codex_home_id"]
             if not isinstance(home_id, str):
@@ -3029,7 +3110,7 @@ def _client(profile: AgentProfile):
             elif _TEAM_CODEX_ACCOUNT_RESOLVER is not None:
                 broker = _TEAM_CODEX_ACCOUNT_RESOLVER(home_id)
             else:
-                raise OrchestrationError("account-scoped ChatGPT routing is unavailable")
+                raise ProviderUnavailableError("account-scoped ChatGPT routing is unavailable")
         return ChatGPTTeamClient(broker, profile.timeout_seconds)
     return RemoteClient(
         base_url=str(route.get("base_url") or ""),
@@ -3065,6 +3146,7 @@ def orchestration_fingerprint(
             "timeout_seconds": profile.timeout_seconds, "token_limit": profile.token_limit,
             "metering": profile.metering, "route": route, "mcp_policy": profile.mcp_policy,
             "behavior": profile.behavior.structured(),
+            "agent_model_choices": list(profile.task_model_choices),
         })
     value = {
         "team": {

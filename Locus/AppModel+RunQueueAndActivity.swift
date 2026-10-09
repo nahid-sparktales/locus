@@ -111,7 +111,8 @@ extension AppModel {
                 $0.agentTriggerID == task.id && $0.agentKind == "schedule"
             }?.agentProfileID
             if let profileID = draft.agentProfileID.flatMap(UUID.init(uuidString:)),
-               let profile = agentProfiles.first(where: { $0.id == profileID }),
+               let saved = agentProfiles.first(where: { $0.id == profileID }),
+               let profile = try? firstReadyAgentModelProfile(saved),
                let route = try? agentProfileProvider(profile) {
                 draft.provider = route.provider
                 draft.providerAccountID = route.accountID
@@ -134,7 +135,15 @@ extension AppModel {
         } else {
             draft.runner = .solo
         }
-        if let account = activeAccount {
+        if let route = currentChatModelRoute {
+            draft.provider = route.provider
+            draft.providerAccountID = route.accountID?.uuidString
+            draft.model = route.model
+        } else if let profile = currentAgentChatProfile, let route = try? agentProfileProvider(profile) {
+            draft.provider = route.provider
+            draft.providerAccountID = route.accountID
+            draft.model = profile.model
+        } else if let account = activeAccount {
             draft.provider = account.kind.backendProvider
             draft.providerAccountID = account.id.uuidString
             draft.model = routedModel(for: account)
@@ -248,7 +257,10 @@ extension AppModel {
             $0.agentTriggerID == task.id && $0.agentKind == "schedule"
         })?.savedAgentProfileID {
             do {
-                _ = try savedAgentProfileDispatch(profileID: profileID, mode: task.mode)
+                guard let profile = agentProfiles.first(where: { $0.id == profileID }) else {
+                    return "This schedule’s saved agent is unavailable"
+                }
+                _ = try firstReadyAgentModelProfile(profile)
                 return task.runner == .solo ? nil : "This saved agent’s schedule requires its solo runner"
             } catch { return error.localizedDescription }
         }
@@ -569,7 +581,9 @@ extension AppModel {
             return
         }
         let profileDispatch: TaskCapsuleDispatch?
+        let ordinaryRoute: ChatModelRoute?
         do {
+            ordinaryRoute = try queuedChatModelRoute(run)
             struct Owner: Decodable { let agent_profile_id: String? }
             let owner = try await backend.get("/api/sessions/\(sessionID)", as: Owner.self)
             if let rawProfileID = owner.agent_profile_id {
@@ -592,9 +606,9 @@ extension AppModel {
         guard let worker = await ensureChatWorker(
             for: sessionID,
             workspaceRoot: workspace,
-            provider: profileDispatch?.provider ?? run.manifest?["provider"]?.string,
-            providerAccountID: profileDispatch == nil ? run.manifest?["provider_account_id"]?.string : profileDispatch?.accountID,
-            model: profileDispatch?.profile.model ?? run.manifest?["model"]?.string
+            provider: profileDispatch?.provider ?? ordinaryRoute?.provider ?? run.manifest?["provider"]?.string,
+            providerAccountID: profileDispatch == nil ? (ordinaryRoute?.accountID?.uuidString ?? run.manifest?["provider_account_id"]?.string) : profileDispatch?.accountID,
+            model: profileDispatch?.profile.model ?? ordinaryRoute?.model ?? run.manifest?["model"]?.string
         ) else {
             restoredQueuedRunIDs.remove(run.id)
             await markEventRunNeedsAttention(
@@ -648,6 +662,11 @@ extension AppModel {
                 _ = try await prepareChatWorkerCapsuleRoute(using: worker.service,
                     capsuleDispatch: profileDispatch, restoringOverride: true, ordinaryProviderBody: [:])
             }
+            if let ordinaryRoute {
+                _ = try await prepareChatWorkerCapsuleRoute(using: worker.service,
+                    capsuleDispatch: nil, restoringOverride: true,
+                    ordinaryProviderBody: try chatModelProviderBody(ordinaryRoute))
+            }
             if profileDispatch == nil, run.manifest?["goal_id"] != nil {
                 if let issue = await prepareChatWorkerProvider(
                     using: worker.service,
@@ -674,6 +693,7 @@ extension AppModel {
                 "run_id": run.id,
                 "request_id": run.id,
             ]
+            if let ordinaryRoute { request["chat_route"] = ordinaryRoute.wireValue }
             if companionTurn { request["companion_context"] = true }
             if let saved = run.manifest?["agent_config"], let config = encodedJSONValue(saved) {
                 request["agent_config"] = config
@@ -681,6 +701,8 @@ extension AppModel {
                 request["agent_config"] = config
             }
             if let profileDispatch {
+                if let route = run.manifest?["agent_chat_route"] { request["agent_chat_route"] = encodedJSONValue(route) }
+                if let choices = run.manifest?["agent_model_choices"] { request["agent_model_choices"] = encodedJSONValue(choices) }
                 request["conversation_profile_id"] = profileDispatch.profile.id.uuidString
                 if companionTurn || run.runKind != "team" {
                     request["agent_profile"] = Self.savedAgentProfileBody(profileDispatch.profile)

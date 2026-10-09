@@ -160,6 +160,7 @@ def agent_profiles_update(request: Request, body: dict = Body(default_factory=di
     """Replace controller-owned profiles in the private runtime configuration."""
     import uuid
 
+    from ..agent_model_routes import normalize_runtime_choices
     from ..agent_profile_runtime import parse_solo_profile
 
     profiles = body.get("profiles")
@@ -168,17 +169,28 @@ def agent_profiles_update(request: Request, body: dict = Body(default_factory=di
     saved = {}
     try:
         for item in profiles:
+            item = normalize_runtime_choices(item)
             profile = item["profile"]
             key = str(uuid.UUID(profile["id"]))
             parse_solo_profile(profile, profile["model"])
             if key in saved:
                 raise ValueError("Duplicate agent profile")
-            if not item.get("unavailable") and not isinstance(item.get("provider"), dict):
+            if not item.get("unavailable") and not isinstance(item.get("provider"), dict) \
+                    and not item.get("model_choices"):
                 raise ValueError("An agent profile needs its selected provider")
             saved[key] = item
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         raise HTTPException(422, "Invalid saved agent configuration") from exc
-    supervisor(request.app).private.set("agent-profiles", saved)
+    private = supervisor(request.app).private
+    private.set("agent-profiles", saved)
+    # This trusted controller envelope explicitly provisions current accounts.
+    # Task snapshots reference these records instead of copying their secrets.
+    from ..agent_model_routes import configured_choices
+    for item in saved.values():
+        if item.get("model_choices") is None:
+            continue  # Legacy single-provider envelopes keep their existing contract.
+        for route, provider in configured_choices(item):
+            private.set("account:" + route.get("provider_account_id", "local"), provider)
     return {"ok": True}
 
 

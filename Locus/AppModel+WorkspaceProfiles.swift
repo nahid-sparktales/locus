@@ -52,6 +52,7 @@ extension AppModel {
     /// Restores the model a workspace was last used with, through the account
     /// it belonged to.
     private func applyProfileRoute(_ profile: WorkspaceProfile, currentModel: String) {
+        guard currentChatModelRoute == nil else { return }
         guard !profile.model.isEmpty else { return }
         guard profile.accountID != settings.activeAccountID || profile.model != currentModel
         else { return }

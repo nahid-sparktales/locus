@@ -417,6 +417,10 @@ struct SessionDetailResponse: Codable {
     let workspaceRoot: String?
     let executionPath: String?
     var environment: [String: String]? = nil
+    var provider: String? = nil
+    var providerAccountID: String? = nil
+    var modelRouteSelection: String? = nil
+    var routeEstablished: Bool? = nil
 
     func belongsToWorkspace(_ workspace: String) -> Bool {
         SessionSummary.matchesWorkspace(root: workspaceRoot?.nilIfEmpty ?? cwd, environment: environment, requested: workspace)
@@ -440,6 +444,10 @@ struct SessionDetailResponse: Codable {
         case workerID = "worker_id"
         case workspaceRoot = "workspace_root"
         case executionPath = "execution_path"
+        case provider
+        case providerAccountID = "provider_account_id"
+        case modelRouteSelection = "model_route_selection"
+        case routeEstablished = "route_established"
     }
 }
 
