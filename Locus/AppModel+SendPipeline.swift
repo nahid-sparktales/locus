@@ -28,7 +28,6 @@ extension AppModel {
         includeAttachments: Bool = true,
         automaticRoutingPrepared: Bool = false,
         preparedModelRoute: ModelRoutingPreparedTurn? = nil,
-        preparedAgentProfile: AgentProfile? = nil,
         consumeMatchingDraft: Bool = true,
         allowLocalCommands: Bool = true,
         capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil,
@@ -36,15 +35,16 @@ extension AppModel {
     ) {
         guard admitTranscriptInput() else { return }
         let residentProfileID = savedAgentProfileID(for: currentSessionID)
+        let manualAgentModelSelection = hasManualChatModelSelection(sessionID: currentSessionID)
         let companionTurn = usesCompanionContext(sessionID: currentSessionID, profileID: residentProfileID)
         if companionTurn { selectedMode = .ask }
         let automaticAgentProfile = residentProfileID.flatMap { id in agentProfiles.first { $0.id == id } }.flatMap { profile in
-            !hasManualChatModelSelection(sessionID: currentSessionID) && profile.resolvedModelChoices.count > 1
+            !manualAgentModelSelection && profile.resolvedModelChoices.count > 1
                 && sessionCatalog.snapshot.sessionsByID[currentSessionID]?.isAgentEventChat != true ? profile : nil
         }
         var residentDispatch: TaskCapsuleDispatch?
-        if let residentProfileID, automaticAgentProfile == nil || preparedAgentProfile != nil {
-            do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID, selectedProfile: preparedAgentProfile) }
+        if let residentProfileID, automaticAgentProfile == nil {
+            do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
             catch { showToast(error.localizedDescription); return }
         }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
@@ -175,37 +175,10 @@ extension AppModel {
             && selectedAgentTeamID == nil
             && dispatchedMode != .ask
             && !isSlashPassthrough
-        if let automaticAgentProfile, preparedAgentProfile == nil, workflowDispatch == nil,
-           savedGoal == nil, dispatchedTeam == nil, !isSlashPassthrough {
-            isBusy = true
-            let ownership = transcriptPresentation.sessionOwnershipToken
-            let sessionID = currentSessionID
-            let routingToken = UUID()
-            let routingTask = Task { [weak self] in
-                guard let self else { return }
-                defer {
-                    if pendingChatTurnTokens[sessionID] == routingToken {
-                        pendingChatTurnTokens[sessionID] = nil
-                        pendingChatTurns[sessionID] = nil
-                        if currentSessionID == sessionID { isBusy = false }
-                    }
-                }
-                let chosen = await prepareAgentModelChoice(profile: automaticAgentProfile, sessionID: sessionID,
-                    text: text, mode: dispatchedMode,
-                    requiresVision: availableAttachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
-                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(ownership), canAcceptTranscriptInput else { return }
-                isBusy = false
-                send(rawText, preservingDraftOnFailure: preservingDraftOnFailure,
-                    requeueingOnFailure: requeueingOnFailure, includeAttachments: includeAttachments,
-                    automaticRoutingPrepared: automaticRoutingPrepared, preparedModelRoute: preparedModelRoute,
-                    preparedAgentProfile: chosen, consumeMatchingDraft: consumeMatchingDraft,
-                    allowLocalCommands: allowLocalCommands, capsuleDispatch: explicitCapsuleDispatch, approvedPlan: approvedPlan)
-            }
-            pendingChatTurnTokens[sessionID] = routingToken
-            pendingChatTurns[sessionID] = routingTask
-            return
-        }
-        if settings.automaticModelRoutingEnabled, currentChatModelRoute == nil, capsuleDispatch == nil, !privateIdentity,
+        let dispatchedAutomaticAgent = workflowDispatch == nil && savedGoal == nil
+            && dispatchedTeam == nil && !isSlashPassthrough ? automaticAgentProfile : nil
+        if settings.automaticModelRoutingEnabled, currentChatModelRoute == nil, capsuleDispatch == nil,
+           residentProfileID == nil, !privateIdentity,
            goals.goal(for: currentSessionID)?.status != .active,
            !automaticRoutingPrepared,
            !isSlashPassthrough,
@@ -355,10 +328,14 @@ extension AppModel {
             updatedAt: Date()
         )
 
-        let agentChoices = capsuleDispatch.flatMap { agentModelChoicesForDispatch($0, sessionID: dispatchedSessionID) }
         let pendingTurnToken = UUID()
         let pendingTurn = Task { [weak self] in
             guard let self else { return }
+            var capsuleDispatch = capsuleDispatch
+            var agentChoices = capsuleDispatch.flatMap {
+                self.agentModelChoicesForDispatch($0, sessionID: dispatchedSessionID,
+                                                  manualSelection: manualAgentModelSelection)
+            }
             var capsuleRequestAccepted = false
             defer {
                 if let capsuleDispatch, !capsuleDispatch.profileOnly, !capsuleRequestAccepted {
@@ -377,6 +354,22 @@ extension AppModel {
                 return
             }
             do {
+                // Scoring belongs to this submitted turn. Acknowledge first,
+                // then choose using the captured profile and attachments so
+                // later draft edits, navigation, or model choices cannot
+                // retarget the message or delay its appearance.
+                if let dispatchedAutomaticAgent {
+                    let chosen = await self.prepareAgentModelChoice(
+                        profile: dispatchedAutomaticAgent, sessionID: nil, text: text, mode: dispatchedMode,
+                        requiresVision: dispatchedAttachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
+                    try Task.checkCancellation()
+                    let selected = try self.savedAgentProfileDispatch(profileID: dispatchedAutomaticAgent.id,
+                        mode: dispatchedMode, sessionID: dispatchedSessionID, selectedProfile: chosen)
+                    capsuleDispatch = selected
+                    agentChoices = self.agentModelChoicesForDispatch(selected, sessionID: dispatchedSessionID,
+                                                                    manualSelection: manualAgentModelSelection)
+                }
+                try Task.checkCancellation()
                 let queuedTeam = dispatchedTeam?["team"] as? [String: Any]
                 var queuedBody: [String: Any] = [
                     "run_id": reservedRunID,
@@ -428,7 +421,7 @@ extension AppModel {
                     self.retainAcceptedChatRoute(ChatModelRoute(model: capsuleDispatch.profile.model,
                         provider: capsuleDispatch.provider, accountID: capsuleDispatch.accountID.flatMap(UUID.init(uuidString:)),
                         profileID: capsuleDispatch.profile.id,
-                        selection: self.hasManualChatModelSelection(sessionID: dispatchedSessionID) ? "manual" : "automatic"),
+                        selection: manualAgentModelSelection ? "manual" : "automatic"),
                         sessionID: dispatchedSessionID)
                 }
             } catch {

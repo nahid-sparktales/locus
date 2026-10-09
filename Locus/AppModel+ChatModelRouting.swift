@@ -197,8 +197,9 @@ extension AppModel {
         persistSettings()
     }
 
-    func agentModelChoicesForDispatch(_ dispatch: TaskCapsuleDispatch, sessionID: String) -> [ChatModelRoute]? {
-        guard !dispatch.profileOnly || (!hasManualChatModelSelection(sessionID: sessionID)
+    func agentModelChoicesForDispatch(_ dispatch: TaskCapsuleDispatch, sessionID: String,
+                                     manualSelection: Bool? = nil) -> [ChatModelRoute]? {
+        guard !dispatch.profileOnly || (!(manualSelection ?? hasManualChatModelSelection(sessionID: sessionID))
               && sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true) else { return nil }
         let routes = dispatch.profile.resolvedModelChoices.compactMap { choice -> ChatModelRoute? in
             var candidate = dispatch.profile
