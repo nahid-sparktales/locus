@@ -59,6 +59,38 @@ final class IdentityVaultCoordinatorTests: XCTestCase {
         XCTAssertEqual(vault.store.disclosures.last?.fieldIDs, [field.id])
     }
 
+    func testAPIKeysNeverEnterProfileSelectionDescriptionOrContext() async throws {
+        let (vault, profile, browser) = try await fixture()
+        let privateValues = ["PRIVATE_API_KEY_NAME", "PRIVATE_API_KEY_SERVICE", "PRIVATE_API_KEY_SECRET", "PRIVATE_API_KEY_NOTES"]
+        _ = try vault.store.saveAPIKey(.init(name: privateValues[0], service: privateValues[1],
+                                           secret: privateValues[2], notes: privateValues[3]))
+
+        let selection = Task { await vault.perform(arguments: ["action": "select"], session: "task-a", provider: provider, browser: browser) }
+        let profileReview = try await nextReview(vault)
+        XCTAssertEqual(profileReview.items.map(\.id), [profile.id])
+        for value in privateValues { XCTAssertFalse(String(describing: profileReview.items).contains(value)) }
+        vault.answerReview(id: profileReview.id, selected: [profile.id])
+        let selectionResult = await selection.value
+        let description = await vault.perform(arguments: ["action": "describe"], session: "task-a", provider: provider, browser: browser)
+        XCTAssertNotNil(selectionResult["text"])
+        XCTAssertNotNil(description["text"])
+        for value in privateValues {
+            XCTAssertFalse(String(describing: selectionResult).contains(value))
+            XCTAssertFalse(String(describing: description).contains(value))
+        }
+
+        let context = Task { await vault.perform(arguments: ["action": "request_context"], session: "task-a", provider: provider, browser: browser) }
+        let contextReview = try await nextReview(vault)
+        XCTAssertEqual(Set(contextReview.items.map(\.id)), Set(profile.fields.map(\.id)))
+        for value in privateValues { XCTAssertFalse(String(describing: contextReview.items).contains(value)) }
+        vault.answerReview(id: contextReview.id, selected: Set(profile.fields.map(\.id)))
+        let result = await context.value
+        let refs = try XCTUnwrap(result["source_refs"] as? [String])
+        let resolved = await vault.resolveSources(refs, session: "task-a", provider: provider)
+        XCTAssertNotNil(resolved["sources"])
+        for value in privateValues { XCTAssertFalse(String(describing: resolved).contains(value)) }
+    }
+
     func testDeniedAndChangedProfileReviewsReleaseNothing() async throws {
         let (vault, original, browser) = try await fixture()
         let first = Task { await vault.perform(arguments: ["action": "request_context"], session: "task-a", provider: provider, browser: browser) }
@@ -170,6 +202,7 @@ final class IdentityVaultCoordinatorTests: XCTestCase {
         let (vault, profile, _) = try await fixture()
         vault.isPresented = true
         vault.profileEditor = profile
+        vault.apiKeyEditor = try vault.store.saveAPIKey(.init(name: "Fixture key", secret: "SYNTHETIC_API_KEY"))
         let work = Task { while !Task.isCancelled { await Task.yield() } }
         vault.localWork = work
         let generation = vault.lifecycleGeneration
@@ -177,6 +210,8 @@ final class IdentityVaultCoordinatorTests: XCTestCase {
         XCTAssertTrue(work.isCancelled)
         XCTAssertFalse(vault.isPresented)
         XCTAssertNil(vault.profileEditor)
+        XCTAssertNil(vault.apiKeyEditor)
+        XCTAssertTrue(vault.store.apiKeys.isEmpty)
         XCTAssertGreaterThan(vault.lifecycleGeneration, generation)
         await work.value
     }

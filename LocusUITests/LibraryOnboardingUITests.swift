@@ -283,6 +283,82 @@ final class LibraryOnboardingUITests: XCTestCase {
         capture("Private signature preview")
     }
 
+    func testVaultAPIKeysStayMaskedSupportEditingAndExcludeSecretsFromSearch() {
+        app.launchEnvironment["LOCUS_UI_TESTING_ACCESSIBILITY_SURFACE"] = "identity-vault"
+        app.launch()
+        XCTAssertTrue(element("identity.search").waitForExistence(timeout: 15))
+        selectTab("API Keys")
+        element("identity.apiKey.add").click()
+
+        let name = element("identity.apiKey.name")
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Delete API Key"].exists)
+        XCTAssertFalse(element("identity.apiKey.save").isEnabled)
+        replaceValue(name, with: "Image service key")
+        replaceValue(element("identity.apiKey.service"), with: "Example AI")
+        let syntheticSecret = "sk-ui-fixture-only-7ca191"
+        let secureInput = app.secureTextFields["identity.apiKey.secret"].firstMatch
+        XCTAssertTrue(secureInput.exists)
+        secureInput.click()
+        secureInput.typeText(syntheticSecret)
+        replaceValue(element("identity.apiKey.notes"), with: "Synthetic UI test credential")
+        XCTAssertTrue(element("identity.apiKey.save").isEnabled)
+        element("identity.apiKey.save").click()
+
+        let edit = app.buttons["Edit Image service key"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Copy key for Image service key"].exists)
+        XCTAssertFalse(app.staticTexts[syntheticSecret].exists)
+        capture("API key saved with its value hidden")
+        edit.click()
+        XCTAssertTrue(secureInput.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["identity.apiKey.secret"].exists)
+        let reveal = element("identity.apiKey.reveal")
+        XCTAssertEqual(reveal.label, "Show API key")
+        reveal.click()
+        let revealedInput = app.textFields["identity.apiKey.secret"].firstMatch
+        XCTAssertTrue(revealedInput.waitForExistence(timeout: 5))
+        XCTAssertEqual(revealedInput.value as? String, syntheticSecret)
+        XCTAssertEqual(reveal.label, "Hide API key")
+        reveal.click()
+        XCTAssertTrue(secureInput.waitForExistence(timeout: 5))
+        XCTAssertFalse(revealedInput.exists)
+        replaceValue(name, with: "Production image key")
+        replaceValue(element("identity.apiKey.service"), with: "Fixture Provider")
+        element("identity.apiKey.save").click()
+
+        let updatedEdit = app.buttons["Edit Production image key"]
+        XCTAssertTrue(updatedEdit.waitForExistence(timeout: 5))
+        let search = element("identity.search")
+        replaceValue(search, with: "Fixture Provider")
+        XCTAssertTrue(updatedEdit.exists)
+        replaceValue(search, with: syntheticSecret)
+        XCTAssertTrue(app.staticTexts["No matching API keys"].waitForExistence(timeout: 5))
+        XCTAssertFalse(updatedEdit.exists)
+        app.buttons["Clear search"].firstMatch.click()
+        XCTAssertTrue(updatedEdit.waitForExistence(timeout: 5))
+
+        updatedEdit.click()
+        XCTAssertTrue(secureInput.waitForExistence(timeout: 5))
+        XCTAssertEqual(element("identity.apiKey.reveal").label, "Show API key")
+        app.buttons["Delete API Key"].click()
+        let alert = app.alerts.firstMatch
+        // SwiftUI alerts can be sheets on macOS. Scope the button to the
+        // confirmation so XCTest does not select its mirrored Touch Bar item.
+        let confirmation = alert.exists ? alert : app.sheets.matching(NSPredicate(format: "label == %@", "alert")).firstMatch
+        let confirmDelete = confirmation.buttons["Delete"].firstMatch
+        XCTAssertTrue(confirmDelete.waitForExistence(timeout: 5))
+        confirmDelete.click()
+        XCTAssertTrue(element("identity.apiKey.add").waitForExistence(timeout: 5))
+        XCTAssertFalse(updatedEdit.exists)
+    }
+
+    private func replaceValue(_ field: XCUIElement, with value: String) {
+        field.click()
+        app.typeKey("a", modifierFlags: .command)
+        field.typeText(value)
+    }
+
     private func useConnectedFixtureWhenAvailable() {
         let path = "/tmp/locus-connected-acceptance"
         if FileManager.default.fileExists(atPath: path + "/summary.md") {

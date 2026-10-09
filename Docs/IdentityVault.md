@@ -1,6 +1,12 @@
 # Identity Vault
 
-Identity Vault stores reusable personal, business, and career profiles, original document versions, signatures, and editable writing drafts on the Mac. Open it below Library or choose **Use Identity Vault…** in the composer. It has no cloud sync and does not import existing contacts, Library files, or browser autofill records automatically.
+Identity Vault stores reusable personal, business, and career profiles, API keys, original document versions, signatures, and editable writing drafts on the Mac. Open it below Library or choose **Use Identity Vault…** in the composer. It has no cloud sync and does not import existing contacts, Library files, or browser autofill records automatically.
+
+## API keys
+
+Choose **API Keys → Add API Key** to save a name, key, and optional service and notes. Keys use the vault’s encrypted storage. The list masks every key; **Edit** lets you reveal, update, or delete it. Search matches names and services only. **Copy key** clears its clipboard entry after 60 seconds or when the vault locks, without removing something copied afterward.
+
+Saving a key does not connect a provider. API keys are separate from profiles and are never included in profile selection, agent context, or form filling. Deleting a saved key does not revoke it at its service. Adding the first key upgrades the encrypted vault format; earlier Locus versions cannot open that vault.
 
 ## Résumés and cover letters
 

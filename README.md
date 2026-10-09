@@ -22,12 +22,12 @@ switches to a paid account.
 the separate **LocusX** edition.
 
 > [!NOTE]
-> [Download Locus 4.2.3 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v4.2.3/Locus-macOS.zip).
-> This wallet-free release improves Companion sending, draft recovery, and UI
-> responsiveness, alongside editable memory and workspace retrieval.
+> [Download Locus 4.2.4 for Apple Silicon](https://github.com/nahid-sparktales/locus/releases/download/v4.2.4/Locus-macOS.zip).
+> This wallet-free release adds per-chat model choices, multiple assigned models
+> for agents, and encrypted API keys in Identity Vault.
 > Install this download once if you use 2.6.0 or earlier;
 > existing chats, accounts, settings, and browser data stay in place. See the
-> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v4.2.3).
+> [release notes](https://github.com/nahid-sparktales/locus/releases/tag/v4.2.4).
 
 ![Locus welcome screen with project files beside the conversation](Docs/locus-workspace-dark.png)
 

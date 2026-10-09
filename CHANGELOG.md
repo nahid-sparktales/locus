@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 4.2.4 — 2026-10-09
+
+### Added
+
+- Chats keep their model and account when you switch conversations. Changing
+  a model after a chat starts asks for confirmation; queued tasks keep the
+  model selected when they were submitted.
+- Agents can have multiple assigned models. Automatic routing selects among
+  those models for each task and falls back on an initial provider failure.
+  A manual chat choice pins future tasks until you restore the agent default.
+- Identity Vault stores named API keys with service and notes in its encrypted
+  store. Keys stay masked until revealed, remain excluded from search and agent
+  context, and use a temporary private clipboard when copied.
+
+### Fixed
+
+- Companion messages still appear immediately while assigned-model selection
+  runs in the background. Stopping that selection cancels the submitted turn,
+  and later drafts, attachments, and model choices remain intact.
+
 ## 4.2.3 — 2026-10-09
 
 ### Fixed

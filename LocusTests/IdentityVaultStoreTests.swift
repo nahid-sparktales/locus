@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PDFKit
 import Security
@@ -16,6 +17,198 @@ final class IdentityVaultStoreTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("identity-vault-test-\(UUID())", isDirectory: true)
         temporaryDirectories.append(url)
         return url
+    }
+
+    private func metadata(at directory: URL) throws -> [String: Any] {
+        let encrypted = try Data(contentsOf: directory.appendingPathComponent("vault.bin"))
+        let clear = try AES.GCM.open(AES.GCM.SealedBox(combined: encrypted),
+            using: SymmetricKey(data: InMemoryIdentityVaultKeyProvider().data),
+            authenticating: Data("locus.identity.v1/metadata".utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: clear) as? [String: Any])
+    }
+
+    private func writeMetadata(_ object: [String: Any], to directory: URL) throws {
+        let clear = try JSONSerialization.data(withJSONObject: object)
+        let encrypted = try XCTUnwrap(AES.GCM.seal(clear,
+            using: SymmetricKey(data: InMemoryIdentityVaultKeyProvider().data),
+            authenticating: Data("locus.identity.v1/metadata".utf8)).combined)
+        try IdentityVaultStore.writeEncrypted(encrypted, to: directory.appendingPathComponent("vault.bin"))
+    }
+
+    func testAPIKeyEncryptedRoundTripAndLockKeepCredentialsSeparateFromProfiles() async throws {
+        let url = directory()
+        let vault = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider())
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        let input = IdentityVaultAPIKey(name: " Fixture key ", service: " Fixture service ",
+            secret: "  SYNTHETIC_API_KEY_FOR_TESTS\n", notes: "Private key usage notes 5719")
+        let saved = try vault.saveAPIKey(input)
+        XCTAssertEqual(saved.name, "Fixture key")
+        XCTAssertEqual(saved.service, "Fixture service")
+        XCTAssertEqual(saved.secret, input.secret, "Saving must preserve the exact credential.")
+        XCTAssertTrue(vault.profiles.isEmpty)
+        XCTAssertTrue(vault.documents.isEmpty)
+        XCTAssertTrue(vault.disclosures.isEmpty)
+        let ciphertext = try Data(contentsOf: url.appendingPathComponent("vault.bin"))
+        for value in [saved.name, saved.service, saved.secret, saved.notes] {
+            XCTAssertNil(ciphertext.range(of: Data(value.utf8)))
+        }
+        vault.lock()
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        XCTAssertThrowsError(try vault.saveAPIKey(input))
+        XCTAssertThrowsError(try vault.deleteAPIKey(saved.id))
+        let reopened = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider())
+        let reloaded = await reopened.load()
+        XCTAssertTrue(reloaded)
+        XCTAssertEqual(reopened.apiKeys, [saved])
+        XCTAssertTrue(reopened.profiles.isEmpty)
+    }
+
+    func testLegacyVaultPreservesRecordsAndUpgradesOnlyWhenAKeyIsSaved() async throws {
+        let url = directory()
+        let original = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider())
+        let loaded = await original.load()
+        XCTAssertTrue(loaded)
+        let profile = try original.saveProfile(.init(name: "Existing identity", kind: .personal))
+        let document = try original.addDocument(name: "Existing.txt", kind: .other, mimeType: "text/plain", data: Data("legacy original".utf8))
+        let draft = try original.saveDraft(.init(title: "Existing draft"))
+        let snapshot = try original.saveSnapshot(text: "Existing approved source")
+        var legacy = try metadata(at: url)
+        legacy.removeValue(forKey: "apiKeys")
+        XCTAssertEqual(legacy["version"] as? Int, 1)
+        original.lock()
+        try writeMetadata(legacy, to: url)
+
+        let vault = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider())
+        let reloaded = await vault.load()
+        XCTAssertTrue(reloaded)
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        var edited = profile
+        edited.name = "Updated identity"
+        let updated = try vault.saveProfile(edited)
+        XCTAssertEqual(try metadata(at: url)["version"] as? Int, 1)
+        let key = try vault.saveAPIKey(.init(name: "New key", secret: "fixture-legacy-migration-key"))
+        XCTAssertEqual(try metadata(at: url)["version"] as? Int, 2,
+            "Version 1 clients must reject the new vault instead of silently dropping API keys.")
+        vault.lock()
+        let upgradedLoaded = await vault.load()
+        XCTAssertTrue(upgradedLoaded)
+        XCTAssertEqual(vault.profiles, [updated])
+        XCTAssertEqual(vault.drafts, [draft])
+        XCTAssertEqual(try vault.documentData(id: document.id), Data("legacy original".utf8))
+        XCTAssertEqual(try vault.snapshotText(id: snapshot), "Existing approved source")
+        XCTAssertEqual(vault.apiKeys, [key])
+        try vault.deleteAPIKey(key.id)
+        XCTAssertEqual(try metadata(at: url)["version"] as? Int, 2)
+        vault.lock()
+        let deletionLoaded = await vault.load()
+        XCTAssertTrue(deletionLoaded)
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        XCTAssertEqual(vault.profiles, [updated])
+    }
+
+    func testFailedAPIKeyWritesPreservePublishedStateAndEncryptedMetadata() async throws {
+        let url = directory()
+        var failWrites = false
+        let vault = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider()) { data, destination in
+            if failWrites { throw CocoaError(.fileWriteNoPermission) }
+            try IdentityVaultStore.writeEncrypted(data, to: destination)
+        }
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        try vault.saveProfile(.init(name: "Keep existing identity", kind: .personal))
+        let metadataURL = url.appendingPathComponent("vault.bin")
+        let legacyBytes = try Data(contentsOf: metadataURL)
+        failWrites = true
+        XCTAssertThrowsError(try vault.saveAPIKey(.init(name: "Key", secret: "fixture-create")))
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: metadataURL), legacyBytes)
+        XCTAssertEqual(try metadata(at: url)["version"] as? Int, 1)
+
+        failWrites = false
+        let saved = try vault.saveAPIKey(.init(name: "Key", secret: "fixture-original"))
+        let originalBytes = try Data(contentsOf: metadataURL)
+        failWrites = true
+        var changed = saved
+        changed.secret = "fixture-replacement"
+        XCTAssertThrowsError(try vault.saveAPIKey(changed))
+        XCTAssertThrowsError(try vault.deleteAPIKey(saved.id))
+        XCTAssertEqual(vault.apiKeys, [saved])
+        XCTAssertEqual(try Data(contentsOf: metadataURL), originalBytes)
+        vault.lock()
+        let reloaded = await vault.load()
+        XCTAssertTrue(reloaded)
+        XCTAssertEqual(vault.apiKeys, [saved])
+    }
+
+    func testAPIKeyValidationAndStaleEditsDoNotReplaceSavedCredential() async throws {
+        let vault = IdentityVaultStore(inMemory: ())
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        var invalid = [
+            IdentityVaultAPIKey(name: " \n", secret: "fixture"),
+            IdentityVaultAPIKey(name: "Key", secret: " \n"),
+            IdentityVaultAPIKey(name: String(repeating: "a", count: 201), secret: "fixture"),
+            IdentityVaultAPIKey(name: "Key", service: String(repeating: "a", count: 201), secret: "fixture"),
+            IdentityVaultAPIKey(name: "Key", secret: String(repeating: "é", count: 32_769)),
+            IdentityVaultAPIKey(name: "Key", secret: "fixture", notes: String(repeating: "a", count: 65_537)),
+        ]
+        var invalidRevision = IdentityVaultAPIKey(name: "Key", secret: "fixture")
+        invalidRevision.revision = Int.max
+        invalid.append(invalidRevision)
+        for record in invalid {
+            XCTAssertThrowsError(try vault.saveAPIKey(record)) { error in
+                guard case IdentityVaultError.invalidAPIKey = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+        }
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        let first = try vault.saveAPIKey(.init(name: "Key", secret: "fixture-original"))
+        var changed = first
+        changed.secret = "fixture-rotated"
+        changed.createdAt = .distantPast
+        let second = try vault.saveAPIKey(changed)
+        XCTAssertEqual(second.revision, 2)
+        XCTAssertEqual(second.createdAt, first.createdAt)
+        XCTAssertGreaterThanOrEqual(second.updatedAt, first.updatedAt)
+        XCTAssertThrowsError(try vault.saveAPIKey(first)) { error in
+            guard case IdentityVaultError.staleRevision = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertEqual(vault.apiKeys, [second])
+        try vault.deleteAPIKey(second.id)
+        XCTAssertTrue(vault.apiKeys.isEmpty)
+        XCTAssertThrowsError(try vault.saveAPIKey(second))
+    }
+
+    func testMalformedCredentialPayloadAndFutureVaultVersionFailClosed() async throws {
+        let url = directory()
+        let vault = IdentityVaultStore(directoryURL: url, keyProvider: InMemoryIdentityVaultKeyProvider())
+        let loaded = await vault.load()
+        XCTAssertTrue(loaded)
+        try vault.saveAPIKey(.init(name: "Key", secret: "fixture"))
+        let valid = try metadata(at: url)
+        let key = try XCTUnwrap((valid["apiKeys"] as? [[String: Any]])?.first)
+        var duplicates = valid
+        duplicates["apiKeys"] = [key, key]
+        var missingKeys = valid
+        missingKeys.removeValue(forKey: "apiKeys")
+        var wrongVersion = valid
+        wrongVersion["version"] = 1
+        var blank = key
+        blank["secret"] = ""
+        var invalidKey = valid
+        invalidKey["apiKeys"] = [blank]
+        vault.lock()
+        for payload in [duplicates, missingKeys, wrongVersion, invalidKey] {
+            try writeMetadata(payload, to: url)
+            let rejected = await vault.load()
+            XCTAssertFalse(rejected)
+            XCTAssertTrue(vault.apiKeys.isEmpty)
+            XCTAssertEqual(vault.lastError, IdentityVaultError.corrupt.localizedDescription)
+        }
+        try writeMetadata(["version": 999], to: url)
+        let futureLoaded = await vault.load()
+        XCTAssertFalse(futureLoaded)
+        XCTAssertEqual(vault.lastError, IdentityVaultError.unsupportedVersion.localizedDescription)
     }
 
     func testEncryptedRoundTripIncludesOriginalsDraftsAndApprovedSnapshots() async throws {
