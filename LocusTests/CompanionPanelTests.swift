@@ -425,6 +425,77 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertNotNil(app.companionPanel.error)
     }
 
+    func testOlderBackendFallsBackToOneAuthoritativeDetailReadBeforeDispatch() async throws {
+        for status in [404, 405] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            app.companionPanel.activate()
+            await app.companionPanel.loadTask?.value
+            CompanionPanelURLProtocol.setExecutionContextResponse(status: status)
+            app.companionPanel.draft = "Send through the installed older runtime"
+            app.companionPanel.send()
+            await app.companionPanel.sendingTask?.value
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)/execution-context" }.count, 1)
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 2,
+                           "One initial transcript load and one authoritative legacy preflight")
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/runs/queue" }.count, 1,
+                           "The saved-agent runtime must reuse the panel's validated fallback result")
+            XCTAssertEqual(app.companionPanel.draft, "Send through the installed older runtime",
+                           "The fixture rejects queue admission after successful compatibility preflight")
+        }
+    }
+
+    func testOlderBackendFallbackRejectsFreshOwnershipChanges() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        var dispatched = false
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        CompanionPanelURLProtocol.setExecutionContextResponse(status: 404)
+        CompanionPanelURLProtocol.setOwner(UUID(), for: chat.id)
+        app.companionPanel.draft = "Keep this private request"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(app.companionPanel.draft, "Keep this private request")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 2)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/runs/queue"))
+        XCTAssertNotNil(app.companionPanel.error)
+    }
+
+    func testMetadataAuthorizationAndServerErrorsDoNotFetchLegacyHistory() async throws {
+        for status in [401, 403, 409, 429, 500, 503] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            CompanionPanelURLProtocol.setExecutionContextResponse(status: status)
+            do {
+                _ = try await app.loadSavedAgentConversationMetadata(sessionID: chat.id)
+                XCTFail("Expected metadata error \(status)")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, "Locus.Backend")
+                XCTAssertEqual((error as NSError).code, status)
+            }
+            XCTAssertEqual(CompanionPanelURLProtocol.paths(), ["/api/sessions/\(chat.id)/execution-context"])
+        }
+    }
+
+    func testMetadataCancellationAndTransportErrorsDoNotFetchLegacyHistory() async throws {
+        for code in [URLError.Code.cancelled, .cannotConnectToHost] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            CompanionPanelURLProtocol.setExecutionContextResponse(transportError: code)
+            do {
+                _ = try await app.loadSavedAgentConversationMetadata(sessionID: chat.id)
+                XCTFail("Expected metadata transport failure")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, NSURLErrorDomain)
+                XCTAssertEqual((error as NSError).code, code.rawValue)
+            }
+            XCTAssertEqual(CompanionPanelURLProtocol.paths(), ["/api/sessions/\(chat.id)/execution-context"])
+        }
+    }
+
     func testPendingBubbleReconcilesWithDurableRunWithoutTextGuessing() async throws {
         let (app, _, chat) = try fixture()
         defer { cleanup(app) }
@@ -1146,6 +1217,8 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     private static var holdExecutionContext = false
     private static var executionContextStarted: (() -> Void)?
     private static var heldResponses: [() -> Void] = []
+    private static var executionContextStatus = 200
+    private static var executionContextError: URLError.Code?
     static func reset(profileID: UUID, failures: Int, mismatch: String?, context: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         self.profileID = profileID; self.failures = failures; self.mismatch = mismatch; requestedPaths = []; created = false
@@ -1153,6 +1226,11 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         sessionContext = context
         archived = []; rejectCreation = false; owners = [:]
         holdExecutionContext = false; executionContextStarted = nil; heldResponses = []
+        executionContextStatus = 200; executionContextError = nil
+    }
+    static func setExecutionContextResponse(status: Int = 200, transportError: URLError.Code? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        executionContextStatus = status; executionContextError = transportError
     }
     static func setOwner(_ profileID: UUID, for sessionID: String) {
         lock.lock(); defer { lock.unlock() }; owners[sessionID] = profileID
@@ -1194,14 +1272,20 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             Self.requestedBodies[path, default: []].append(body)
         }
-        let status = path == "/api/runs/queue" || Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
-        Self.failures = max(0, Self.failures - 1)
         let isExecutionContext = path.hasSuffix("/execution-context")
+        if isExecutionContext, let code = Self.executionContextError {
+            Self.lock.unlock()
+            client?.urlProtocol(self, didFailWithError: URLError(code))
+            return
+        }
+        let defaultStatus = path == "/api/runs/queue" || Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
+        let status = isExecutionContext && Self.executionContextStatus != 200 ? Self.executionContextStatus : defaultStatus
+        Self.failures = max(0, Self.failures - 1)
         let sessionID = isExecutionContext ? request.url!.pathComponents.dropLast().last! : request.url!.lastPathComponent
         let owner = Self.mismatch == "owner" ? UUID() : Self.owners[sessionID] ?? Self.profileID
         let archived = Self.mismatch == "archive"
         let payload: [String: Any]
-        if status == 503 {
+        if status >= 400 {
             payload = ["detail": "Temporary fixture failure"]
         } else if path == "/api/sessions/detached" {
             Self.created = true

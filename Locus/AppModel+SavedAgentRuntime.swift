@@ -98,6 +98,23 @@ extension AppModel {
                      busy: busy, blocks: paneBlocks(for: sessionID))
     }
 
+    /// Installed or remote runtimes may outlive an app update. Older runtimes
+    /// expose the same authoritative routing fields only through session detail.
+    func loadSavedAgentConversationMetadata(sessionID: String) async throws -> SavedAgentConversationMetadata {
+        do {
+            return try await backend.get("/api/sessions/\(sessionID)/execution-context",
+                                         as: SavedAgentConversationMetadata.self)
+        } catch {
+            let responseError = error as NSError
+            guard responseError.domain == "Locus.Backend", [404, 405].contains(responseError.code) else {
+                throw error
+            }
+            // Never turn a cancelled preflight into a new legacy request.
+            try Task.checkCancellation()
+            return try await backend.get("/api/sessions/\(sessionID)", as: SavedAgentConversationMetadata.self)
+        }
+    }
+
     /// Uses the existing worker lifecycle and global admission queue, pinned to
     /// the resident's workspace and profile for every submitted turn, including
     /// an explicit model choice saved for this conversation.
@@ -137,7 +154,7 @@ extension AppModel {
             do {
                 let detail: SavedAgentConversationMetadata
                 if let validatedSession { detail = validatedSession }
-                else { detail = try await backend.get("/api/sessions/\(sessionID)/execution-context", as: SavedAgentConversationMetadata.self) }
+                else { detail = try await loadSavedAgentConversationMetadata(sessionID: sessionID) }
                 try Task.checkCancellation()
                 guard detail.matches(sessionID: sessionID, profileID: profileID, workspace: workspace) else {
                     throw SavedAgentConversationError.unavailable("This conversation belongs to another agent or project, or is archived. Restore it in Locus before continuing.")

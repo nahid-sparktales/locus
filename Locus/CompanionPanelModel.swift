@@ -359,10 +359,10 @@ final class CompanionPanelModel: ObservableObject {
             guard let self, let app else { return }
             defer { sendingSessionIDs.remove(id); sendingTasks[id] = nil }
             do {
-                // Fetch only routing metadata, once. The runtime uses this same
-                // durable ownership check instead of reading the transcript again.
-                let response = try await app.backend.get("/api/sessions/\(id)/execution-context",
-                                                         as: SavedAgentConversationMetadata.self)
+                // Fetch routing metadata once, using legacy detail only when
+                // the connected runtime does not support the lightweight route.
+                // Dispatch reuses this same durable ownership check.
+                let response = try await app.loadSavedAgentConversationMetadata(sessionID: id)
                 try Task.checkCancellation()
                 guard selectionRevision == revision, scopeIsCurrent, selectedSessionID == id,
                       id != app.currentSessionID else { throw CancellationError() }
