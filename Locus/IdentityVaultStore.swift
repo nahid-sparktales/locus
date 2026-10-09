@@ -52,17 +52,41 @@ struct InMemoryIdentityVaultKeyProvider: IdentityVaultKeyProviding {
 private struct IdentityVaultPayload: Codable {
     var version = 1
     var profiles: [IdentityVaultProfile] = []
+    var apiKeys: [IdentityVaultAPIKey] = []
     var documents: [IdentityVaultDocument] = []
     var drafts: [IdentityVaultDraft] = []
     var disclosures: [IdentityVaultDisclosure] = []
     var snapshotIDs: Set<UUID> = []
+
+    private enum CodingKeys: String, CodingKey {
+        case version, profiles, apiKeys, documents, drafts, disclosures, snapshotIDs
+    }
+
+    init() {}
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        // Read the version before interpreting a schema that this client may not understand.
+        guard version == 1 || version == 2 else { return }
+        profiles = try container.decode([IdentityVaultProfile].self, forKey: .profiles)
+        apiKeys = version == 1
+            ? try container.decodeIfPresent([IdentityVaultAPIKey].self, forKey: .apiKeys) ?? []
+            : try container.decode([IdentityVaultAPIKey].self, forKey: .apiKeys)
+        documents = try container.decode([IdentityVaultDocument].self, forKey: .documents)
+        drafts = try container.decode([IdentityVaultDraft].self, forKey: .drafts)
+        disclosures = try container.decode([IdentityVaultDisclosure].self, forKey: .disclosures)
+        snapshotIDs = try container.decode(Set<UUID>.self, forKey: .snapshotIDs)
+    }
 }
 
 @MainActor
 final class IdentityVaultStore: ObservableObject {
     static let maximumDocumentBytes = 100 * 1_024 * 1_024
     static let maximumTextBytes = 5 * 1_024 * 1_024
+    static let maximumAPIKeyBytes = 64 * 1_024
     @Published private(set) var profiles: [IdentityVaultProfile] = []
+    @Published private(set) var apiKeys: [IdentityVaultAPIKey] = []
     @Published private(set) var documents: [IdentityVaultDocument] = []
     @Published private(set) var drafts: [IdentityVaultDraft] = []
     @Published private(set) var disclosures: [IdentityVaultDisclosure] = []
@@ -127,8 +151,11 @@ final class IdentityVaultStore: ObservableObject {
                         let clear = try Self.open(encrypted, key: key, context: "metadata")
                         next = try JSONDecoder().decode(IdentityVaultPayload.self, from: clear)
                     } catch { throw IdentityVaultError.corrupt }
-                    guard next.version == 1 else { throw IdentityVaultError.unsupportedVersion }
+                    guard next.version == 1 || next.version == 2 else { throw IdentityVaultError.unsupportedVersion }
                     guard Set(next.profiles.map(\.id)).count == next.profiles.count,
+                          Set(next.apiKeys.map(\.id)).count == next.apiKeys.count,
+                          next.apiKeys.allSatisfy(Self.isValidAPIKey),
+                          next.version == 2 || next.apiKeys.isEmpty,
                           Set(next.documents.map(\.id)).count == next.documents.count,
                           Set(next.drafts.map(\.id)).count == next.drafts.count,
                           Set(next.disclosures.map(\.id)).count == next.disclosures.count
@@ -163,7 +190,7 @@ final class IdentityVaultStore: ObservableObject {
         loadingTask = nil
         key = nil
         payload = IdentityVaultPayload()
-        profiles = []; documents = []; drafts = []; disclosures = []
+        profiles = []; apiKeys = []; documents = []; drafts = []; disclosures = []
         isReady = false
         isLoading = false
         lastError = nil
@@ -204,6 +231,49 @@ final class IdentityVaultStore: ObservableObject {
         next.profiles.removeAll { $0.id == id }
         // Document versions retain their source profile ID for history; deleting a profile never deletes originals.
         try commit(next)
+    }
+
+    @discardableResult
+    func saveAPIKey(_ apiKey: IdentityVaultAPIKey) throws -> IdentityVaultAPIKey {
+        try requireReady()
+        var apiKey = apiKey
+        apiKey.name = apiKey.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        apiKey.service = apiKey.service.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isValidAPIKey(apiKey) else { throw IdentityVaultError.invalidAPIKey }
+        var next = payload
+        if let index = next.apiKeys.firstIndex(where: { $0.id == apiKey.id }) {
+            guard apiKey.revision == next.apiKeys[index].revision else { throw IdentityVaultError.staleRevision }
+            apiKey.revision += 1
+            apiKey.createdAt = next.apiKeys[index].createdAt
+            apiKey.updatedAt = Date()
+            next.apiKeys[index] = apiKey
+        } else {
+            guard apiKey.revision == 1 else { throw IdentityVaultError.staleRevision }
+            apiKey.createdAt = Date()
+            apiKey.updatedAt = apiKey.createdAt
+            next.apiKeys.append(apiKey)
+        }
+        // Older clients reject version 2 instead of silently discarding credentials on their next save.
+        next.version = 2
+        try commit(next)
+        return apiKey
+    }
+
+    func deleteAPIKey(_ id: UUID) throws {
+        try requireReady()
+        guard payload.apiKeys.contains(where: { $0.id == id }) else { return }
+        var next = payload
+        next.apiKeys.removeAll { $0.id == id }
+        try commit(next)
+    }
+
+    private static func isValidAPIKey(_ apiKey: IdentityVaultAPIKey) -> Bool {
+        !apiKey.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && apiKey.name.count <= 200 && apiKey.service.count <= 200
+            && !apiKey.secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && apiKey.secret.utf8.count <= maximumAPIKeyBytes
+            && apiKey.notes.utf8.count <= maximumAPIKeyBytes
+            && apiKey.revision > 0 && apiKey.revision < Int.max
     }
 
     @discardableResult
@@ -364,6 +434,7 @@ final class IdentityVaultStore: ObservableObject {
     private func publish(_ next: IdentityVaultPayload) {
         payload = next
         profiles = next.profiles
+        apiKeys = next.apiKeys
         documents = next.documents
         drafts = next.drafts
         disclosures = next.disclosures

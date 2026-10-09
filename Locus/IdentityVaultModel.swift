@@ -40,7 +40,7 @@ struct IdentityVaultReview: Identifiable {
 }
 
 enum IdentityVaultTab: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", documents = "Documents", signatures = "Signatures", history = "Sharing History"
+    case profiles = "Profiles", apiKeys = "API Keys", documents = "Documents", signatures = "Signatures", history = "Sharing History"
     var id: String { rawValue }
 }
 
@@ -53,6 +53,7 @@ final class IdentityVaultModel: ObservableObject {
     @Published var notice: String?
     @Published var isWorking = false
     @Published var profileEditor: IdentityVaultProfile?
+    @Published var apiKeyEditor: IdentityVaultAPIKey?
     @Published var draftEditor: IdentityVaultDraft?
     @Published var previewDocument: IdentityVaultDocument?
     @Published var pendingReview: IdentityVaultReview?
@@ -78,6 +79,7 @@ final class IdentityVaultModel: ObservableObject {
     private var grants: [String: String] = [:]
     var browserSnapshots: [String: IdentityBrowserSnapshot] = [:]
     var onLock: (() -> Void)?
+    private let secretClipboard = IdentityVaultSecretClipboard()
 
     init(store: IdentityVaultStore, defaults: UserDefaults? = nil) {
         self.store = store
@@ -126,6 +128,16 @@ final class IdentityVaultModel: ObservableObject {
         if let profileID { selectedProfiles[id] = profileID }
     }
 
+    func copyAPIKey(id: UUID) {
+        guard !blocked, store.isReady, let record = store.apiKeys.first(where: { $0.id == id }) else {
+            notice = "Unlock your vault to copy this API key."
+            return
+        }
+        notice = secretClipboard.copy(record.secret)
+            ? "API key copied. It will clear from the clipboard in 60 seconds unless you copy something else."
+            : "Could not copy the API key. Try again."
+    }
+
     func suspend() {
         blocked = true
         lifecycleGeneration &+= 1
@@ -139,8 +151,10 @@ final class IdentityVaultModel: ObservableObject {
         grants.removeAll()
         browserSnapshots.removeAll()
         profileEditor = nil
+        apiKeyEditor = nil
         draftEditor = nil
         previewDocument = nil
+        secretClipboard.clear()
         store.lock()
         onLock?()
     }

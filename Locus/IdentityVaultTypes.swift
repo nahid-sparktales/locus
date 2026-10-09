@@ -91,6 +91,26 @@ struct IdentityVaultProfile: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Stored separately from identity profiles so credentials never enter profile-sharing or form-fill flows.
+struct IdentityVaultAPIKey: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    var name: String
+    var service: String
+    var secret: String
+    var notes: String
+    var revision = 1
+    var createdAt = Date()
+    var updatedAt = Date()
+
+    init(id: UUID = UUID(), name: String = "", service: String = "", secret: String = "", notes: String = "") {
+        self.id = id
+        self.name = name
+        self.service = service
+        self.secret = secret
+        self.notes = notes
+    }
+}
+
 enum IdentityVaultDocumentKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case resume, coverLetter, signature, business, identity, other
     var id: String { rawValue }
@@ -163,6 +183,7 @@ struct IdentityVaultImportedDocument: Sendable {
 
 enum IdentityVaultError: LocalizedError {
     case unavailable, corrupt, unsupportedVersion, invalidRecord, staleRevision, missingDocument
+    case invalidAPIKey
     case tooLarge, unsupportedDocument, extractionFailed, helperUnavailable, cancelled
     case keychain(Int32)
     var errorDescription: String? {
@@ -171,6 +192,7 @@ enum IdentityVaultError: LocalizedError {
         case .corrupt: "The encrypted vault could not be opened. Its saved data has not been changed."
         case .unsupportedVersion: "This vault was saved by a newer version of Locus. Update Locus to open it."
         case .invalidRecord: "Check the record name and fields. Every field needs a unique key and a label."
+        case .invalidAPIKey: "Enter a name and an API key. Names and services must be 200 characters or fewer; keys and notes must be 64 KB or smaller."
         case .staleRevision: "This item changed while it was open. Reopen it before saving."
         case .missingDocument: "That document version is no longer available."
         case .tooLarge: "Vault documents must be 100 MB or smaller; extracted text must be 5 MB or smaller."

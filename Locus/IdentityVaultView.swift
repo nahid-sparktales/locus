@@ -22,7 +22,7 @@ struct IdentityVaultPresentation: ViewModifier {
     }
 }
 
-private struct IdentityPrivateSurface: ViewModifier {
+struct IdentityPrivateSurface: ViewModifier {
     func body(content: Content) -> some View {
         content.onAppear { IdentityPrivacyGuard.shared.visiblePrivateViews += 1 }
             .onDisappear { IdentityPrivacyGuard.shared.visiblePrivateViews = max(0, IdentityPrivacyGuard.shared.visiblePrivateViews - 1) }
@@ -127,6 +127,7 @@ struct IdentityVaultView: View {
                 if vault.isWorking { ProgressView("Processing locally…").padding(12) }
                 switch vault.tab {
                 case .profiles: profiles
+                case .apiKeys: IdentityVaultAPIKeysView(vault: vault)
                 case .documents, .signatures: documents
                 case .history: history
                 }
@@ -147,6 +148,15 @@ struct IdentityVaultView: View {
             } onDelete: {
                 try store.deleteProfile(profile.id)
                 vault.profileEditor = nil
+            }
+        }
+        .locusSheet(item: $vault.apiKeyEditor) { record in
+            IdentityVaultAPIKeyEditor(record: record, isNew: !store.apiKeys.contains(where: { $0.id == record.id })) { edited in
+                _ = try store.saveAPIKey(edited)
+                vault.apiKeyEditor = nil
+            } onDelete: {
+                try store.deleteAPIKey(record.id)
+                vault.apiKeyEditor = nil
             }
         }
         .locusSheet(item: $importReview) { request in
@@ -192,6 +202,9 @@ struct IdentityVaultView: View {
                         Button(kind.title) { vault.profileEditor = .init(name: kind.title, kind: kind) }
                     }
                 } label: { Label("New Profile", systemImage: "plus") }
+            } else if vault.tab == .apiKeys {
+                Button("Add API Key", systemImage: "plus") { vault.apiKeyEditor = .init() }
+                    .accessibilityIdentifier("identity.apiKey.add")
             } else if vault.tab != .history {
                 Button("Import", systemImage: "square.and.arrow.down") { beginImport() }.disabled(vault.isWorking)
                 if vault.tab == .documents {
@@ -216,6 +229,7 @@ struct IdentityVaultView: View {
     private var tabDescription: String {
         switch vault.tab {
         case .profiles: "Reusable details for forms, applications, and private tasks."
+        case .apiKeys: "Store service keys privately. Reveal or copy a key when you need it."
         case .documents: "Saved files and editable drafts. Preview before you share."
         case .signatures: "Signature images you can choose when filling a document."
         case .history: "Review what you shared, when, and with whom."
