@@ -150,14 +150,12 @@ extension AppModel {
                 pendingChatTurns[sessionID] = nil
             }
         }
-        let chosen: AgentProfile?
-        if !hasManualChatModelSelection(sessionID: sessionID), profile.resolvedModelChoices.count > 1 {
-            chosen = await prepareAgentModelChoice(profile: profile, sessionID: sessionID, text: text, mode: mode,
-                requiresVision: attachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
-        } else { chosen = nil }
-        try Task.checkCancellation()
-        let dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID, selectedProfile: chosen)
-        let agentChoices = agentModelChoicesForDispatch(dispatch, sessionID: sessionID)
+        let manualSelection = hasManualChatModelSelection(sessionID: sessionID)
+        let choosesModel = !manualSelection && profile.resolvedModelChoices.count > 1
+            && sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true
+        let capturedDispatch: TaskCapsuleDispatch?
+        if choosesModel { capturedDispatch = nil }
+        else { capturedDispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode, sessionID: sessionID) }
         let payload = attachments.isEmpty ? text : Self.decoratedPrompt(text, mode: mode,
             chatAttachments: attachments, contextFiles: [], restoredTranscriptContext: nil, companionContext: companionTurn)
         let imageAttachments: [[String: Any]] = attachments.compactMap { attachment in
@@ -179,6 +177,19 @@ extension AppModel {
                 guard detail.matches(sessionID: sessionID, profileID: profileID, workspace: workspace) else {
                     throw SavedAgentConversationError.unavailable("This conversation belongs to another agent or project, or is archived. Restore it in Locus before continuing.")
                 }
+                let dispatch: TaskCapsuleDispatch
+                if let capturedDispatch { dispatch = capturedDispatch }
+                else {
+                    // Keep route scoring inside the registered task so Stop
+                    // and app shutdown can cancel it before any admission.
+                    let chosen = await prepareAgentModelChoice(profile: profile, sessionID: nil, text: text, mode: mode,
+                        requiresVision: attachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
+                    try Task.checkCancellation()
+                    dispatch = try savedAgentProfileDispatch(profileID: profile.id, mode: mode,
+                        sessionID: sessionID, selectedProfile: chosen)
+                }
+                let agentChoices = agentModelChoicesForDispatch(dispatch, sessionID: sessionID,
+                                                                manualSelection: manualSelection)
                 var queueBody = detail.executionQueueContext
                 queueBody.merge([
                     "run_id": runID, "session_id": sessionID, "message_id": UUID().uuidString,
@@ -198,7 +209,7 @@ extension AppModel {
                 let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
                 retainAcceptedChatRoute(ChatModelRoute(model: dispatch.profile.model, provider: dispatch.provider,
                     accountID: dispatch.accountID.flatMap(UUID.init(uuidString:)), profileID: profileID,
-                    selection: hasManualChatModelSelection(sessionID: sessionID) ? "manual" : "automatic"), sessionID: sessionID)
+                    selection: manualSelection ? "manual" : "automatic"), sessionID: sessionID)
                 let previous = taskConversationStates[sessionID]
                 taskConversationStates[sessionID] = TaskConversationState(
                     sessionID: sessionID, taskID: previous?.taskID, teamID: nil,
