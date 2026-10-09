@@ -41,7 +41,7 @@ final class IdentityVaultStoreTests: XCTestCase {
         let loaded = await vault.load()
         XCTAssertTrue(loaded)
         let input = IdentityVaultAPIKey(name: " Fixture key ", service: " Fixture service ",
-            secret: "  sk-private-fixture-9847\n", notes: "Private key usage notes 5719")
+            secret: "  SYNTHETIC_API_KEY_FOR_TESTS\n", notes: "Private key usage notes 5719")
         let saved = try vault.saveAPIKey(input)
         XCTAssertEqual(saved.name, "Fixture key")
         XCTAssertEqual(saved.service, "Fixture service")
