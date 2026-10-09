@@ -157,6 +157,7 @@ final class CompanionPanelTests: XCTestCase {
         defer { cleanup(app) }
         let ordinary = AgentProfile(name: "Worker", model: "fixture")
         app.agentProfiles.append(ordinary)
+        CompanionPanelURLProtocol.setOwner(ordinary.id, for: "ordinary-agent")
         app.sessions.append(SessionSummary(id: "ordinary-agent", name: "Worker", preview: "", mtime: 3,
             size: 0, cwd: "/tmp", agentProfileID: ordinary.id.uuidString))
         do {
@@ -374,6 +375,332 @@ final class CompanionPanelTests: XCTestCase {
         XCTAssertEqual(app.currentSessionID, "companion-created")
         XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/detached" }.count, 1)
         XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0.hasSuffix("/resume") }.count, 2)
+    }
+
+    func testSendAcknowledgesComposerBeforeDelayedOwnershipValidation() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app); CompanionPanelURLProtocol.releaseExecutionContextResponses() }
+        var dispatched = false
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "  Visible immediately  "
+        let enteredValidation = expectation(description: "Metadata request is pending")
+        CompanionPanelURLProtocol.holdExecutionContextResponses { enteredValidation.fulfill() }
+
+        app.companionPanel.send()
+        // These assertions run before yielding the main actor to any request.
+        XCTAssertEqual(app.companionPanel.draft, "")
+        XCTAssertEqual(app.companionPanel.blocks.last?.text, "Visible immediately")
+        XCTAssertEqual(app.companionPanel.blocks.last?.kind, .user)
+        XCTAssertTrue(app.companionPanel.isSending)
+        XCTAssertFalse(app.companionPanel.canSend)
+        XCTAssertEqual(app.draftText, "Central draft")
+        let submission = app.companionPanel.sendingTask
+        await fulfillment(of: [enteredValidation], timeout: 2)
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(app.companionPanel.blocks.last?.text, "Visible immediately")
+        XCTAssertEqual(app.companionPanel.draft, "")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 1,
+                       "Only the initial panel load reads the transcript")
+        CompanionPanelURLProtocol.releaseExecutionContextResponses()
+        await submission?.value
+        XCTAssertTrue(dispatched)
+        XCTAssertEqual(app.companionPanel.draft, "")
+    }
+
+    func testDefaultPanelDispatchValidatesMetadataOnlyOnceAndRestoresRejectedDraft() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Retry after queue rejection"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)/execution-context" }.count, 1)
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 1)
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/runs/queue" }.count, 1)
+        XCTAssertEqual(app.companionPanel.draft, "Retry after queue rejection")
+        XCTAssertFalse(app.companionPanel.blocks.contains { $0.kind == .user })
+        XCTAssertNotNil(app.companionPanel.error)
+    }
+
+    func testOlderBackendFallsBackToOneAuthoritativeDetailReadBeforeDispatch() async throws {
+        for status in [404, 405] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            app.companionPanel.activate()
+            await app.companionPanel.loadTask?.value
+            CompanionPanelURLProtocol.setExecutionContextResponse(status: status)
+            app.companionPanel.draft = "Send through the installed older runtime"
+            app.companionPanel.send()
+            await app.companionPanel.sendingTask?.value
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)/execution-context" }.count, 1)
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 2,
+                           "One initial transcript load and one authoritative legacy preflight")
+            XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/runs/queue" }.count, 1,
+                           "The saved-agent runtime must reuse the panel's validated fallback result")
+            XCTAssertEqual(app.companionPanel.draft, "Send through the installed older runtime",
+                           "The fixture rejects queue admission after successful compatibility preflight")
+        }
+    }
+
+    func testOlderBackendFallbackRejectsFreshOwnershipChanges() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        var dispatched = false
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        CompanionPanelURLProtocol.setExecutionContextResponse(status: 404)
+        CompanionPanelURLProtocol.setOwner(UUID(), for: chat.id)
+        app.companionPanel.draft = "Keep this private request"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(app.companionPanel.draft, "Keep this private request")
+        XCTAssertEqual(CompanionPanelURLProtocol.paths().filter { $0 == "/api/sessions/\(chat.id)" }.count, 2)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/runs/queue"))
+        XCTAssertNotNil(app.companionPanel.error)
+    }
+
+    func testMetadataAuthorizationAndServerErrorsDoNotFetchLegacyHistory() async throws {
+        for status in [401, 403, 409, 429, 500, 503] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            CompanionPanelURLProtocol.setExecutionContextResponse(status: status)
+            do {
+                _ = try await app.loadSavedAgentConversationMetadata(sessionID: chat.id)
+                XCTFail("Expected metadata error \(status)")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, "Locus.Backend")
+                XCTAssertEqual((error as NSError).code, status)
+            }
+            XCTAssertEqual(CompanionPanelURLProtocol.paths(), ["/api/sessions/\(chat.id)/execution-context"])
+        }
+    }
+
+    func testMetadataCancellationAndTransportErrorsDoNotFetchLegacyHistory() async throws {
+        for code in [URLError.Code.cancelled, .cannotConnectToHost] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            CompanionPanelURLProtocol.setExecutionContextResponse(transportError: code)
+            do {
+                _ = try await app.loadSavedAgentConversationMetadata(sessionID: chat.id)
+                XCTFail("Expected metadata transport failure")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, NSURLErrorDomain)
+                XCTAssertEqual((error as NSError).code, code.rawValue)
+            }
+            XCTAssertEqual(CompanionPanelURLProtocol.paths(), ["/api/sessions/\(chat.id)/execution-context"])
+        }
+    }
+
+    func testPendingBubbleReconcilesWithDurableRunWithoutTextGuessing() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            let pending = try XCTUnwrap(app.companionPanel.blocks.last)
+            // Backend history can decorate shared context and assigns fresh IDs.
+            app.splitPaneBlocks[chat.id, default: []].append(ChatBlock(kind: .user,
+                text: "Durable decorated request", runID: pending.runID))
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Original request"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(app.companionPanel.blocks.filter { $0.kind == .user }.map(\.text), ["Durable decorated request"])
+        app.splitPaneBlocks[chat.id] = []
+        XCTAssertTrue(app.companionPanel.blocks.isEmpty, "Acknowledged local rows no longer shadow the canonical transcript")
+    }
+
+    func testPendingBubbleReconcilesAfterOpeningCompanionInForeground() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            let pending = try XCTUnwrap(app.companionPanel.blocks.last)
+            app.installTranscriptSession(chat.id, blocks: [ChatBlock(kind: .user,
+                text: pending.text, runID: pending.runID)])
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Open this while sending"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertTrue(app.companionPanel.isForegroundConversation)
+        XCTAssertEqual(app.companionPanel.blocks.filter { $0.kind == .user }.map(\.text), ["Open this while sending"])
+    }
+
+    func testRejectedSendPreservesLaterEditsIncludingIntentionallyEmptyDraft() async throws {
+        for replacement in ["A new question", ""] {
+            let (app, _, _) = try fixture()
+            defer { cleanup(app) }
+            app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+                app.companionPanel.draft = "An edit before clearing"
+                app.companionPanel.draft = replacement
+                throw SavedAgentConversationError.unavailable("Fixture rejection")
+            }
+            app.companionPanel.activate()
+            await app.companionPanel.loadTask?.value
+            app.companionPanel.draft = "Original submission"
+            app.companionPanel.send()
+            await app.companionPanel.sendingTask?.value
+            XCTAssertEqual(app.companionPanel.draft, replacement)
+            XCTAssertEqual(app.companionPanel.blocks.filter { $0.kind == .user }.map(\.text), ["Original submission"])
+            XCTAssertTrue(app.companionPanel.blocks.contains { $0.kind == .error && $0.text.contains("not sent") })
+        }
+    }
+
+    func testRejectedSendPreservesEditsFromAnotherComposerIncludingClearedDraft() async throws {
+        for replacement in ["Another pane's question", ""] {
+            let (app, _, chat) = try fixture()
+            defer { cleanup(app) }
+            app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+                app.setPaneDraft("Another pane's first edit", for: chat.id)
+                app.setPaneDraft(replacement, for: chat.id)
+                throw SavedAgentConversationError.unavailable("Fixture rejection")
+            }
+            app.companionPanel.activate()
+            await app.companionPanel.loadTask?.value
+            app.companionPanel.draft = "Original submission"
+            app.companionPanel.send()
+            await app.companionPanel.sendingTask?.value
+            XCTAssertEqual(app.paneDraft(for: chat.id), replacement)
+            XCTAssertEqual(app.companionPanel.draft, replacement)
+            XCTAssertEqual(app.companionPanel.blocks.filter { $0.kind == .user }.map(\.text), ["Original submission"])
+            XCTAssertTrue(app.companionPanel.blocks.contains { $0.kind == .error && $0.text.contains("not sent") })
+            XCTAssertEqual(app.draftText, "Central draft")
+        }
+    }
+
+    func testRejectedSendPreservesClearedForegroundDraftAfterHandoff() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            app.installTranscriptSession(chat.id, blocks: [])
+            app.setPaneDraft("New foreground question", for: chat.id)
+            app.setPaneDraft("", for: chat.id)
+            throw SavedAgentConversationError.unavailable("Fixture rejection")
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Original submission"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(app.currentSessionID, chat.id)
+        XCTAssertEqual(app.draftText, "")
+        XCTAssertEqual(app.blocks.filter { $0.kind == .user }.map(\.text), ["Original submission"])
+        XCTAssertTrue(app.blocks.contains { $0.kind == .error && $0.text.contains("not sent") })
+    }
+
+    func testCancelledSendKeepsOriginalCopyableWhenAnotherComposerWasEdited() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            app.setPaneDraft("Later question", for: chat.id)
+            app.setPaneDraft("", for: chat.id)
+            throw CancellationError()
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Cancelled original"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertEqual(app.companionPanel.draft, "")
+        XCTAssertEqual(app.companionPanel.blocks.filter { $0.kind == .user }.map(\.text), ["Cancelled original"])
+        XCTAssertTrue(app.companionPanel.blocks.contains { $0.kind == .error && $0.text.contains("not sent") })
+        XCTAssertTrue(app.companionPanel.error?.contains("not sent") == true)
+    }
+
+    func testCancelledSendRestoresUntouchedDraftAndSharedContext() async throws {
+        let (app, _, _) = try fixture()
+        defer { cleanup(app) }
+        let enteredDispatch = expectation(description: "Waiting for admission")
+        var continuation: CheckedContinuation<Void, Never>?
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in
+            await withCheckedContinuation { continuation = $0; enteredDispatch.fulfill() }
+            try Task.checkCancellation()
+        }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        app.companionPanel.draft = "Cancel before acceptance"
+        app.companionContext.activate(try XCTUnwrap(app.companionScope))
+        app.companionContext.previewText("Keep this context", name: "Context")
+        XCTAssertTrue(app.companionContext.approvePreview())
+        app.companionPanel.send()
+        let submission = app.companionPanel.sendingTask
+        await fulfillment(of: [enteredDispatch], timeout: 2)
+        XCTAssertEqual(app.companionPanel.draft, "")
+        submission?.cancel()
+        continuation?.resume()
+        await submission?.value
+        XCTAssertEqual(app.companionPanel.draft, "Cancel before acceptance")
+        XCTAssertEqual(app.companionContext.attachments.first?.textContent, "Keep this context")
+        XCTAssertFalse(app.companionPanel.blocks.contains { $0.kind == .user })
+        XCTAssertNil(app.companionPanel.error)
+        XCTAssertEqual(app.draftText, "Central draft")
+    }
+
+    func testChangedDurableOwnershipRejectsOptimisticSendAndRestoresDraft() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        var dispatched = false
+        app.companionPanel.configure(app: app) { _, _, _, _, _, _ in dispatched = true }
+        app.companionPanel.activate()
+        await app.companionPanel.loadTask?.value
+        CompanionPanelURLProtocol.setOwner(UUID(), for: chat.id)
+        app.companionPanel.draft = "Keep my private request"
+        app.companionPanel.send()
+        await app.companionPanel.sendingTask?.value
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(app.companionPanel.draft, "Keep my private request")
+        XCTAssertFalse(app.companionPanel.blocks.contains { $0.kind == .user })
+        XCTAssertNotNil(app.companionPanel.error)
+    }
+
+    func testMainCompanionSendAcknowledgesComposerBeforeQueueRequest() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [])
+        app.sessionInfo = SessionInfo(model: "fixture", host: "localhost", cwd: "/tmp", session: chat.id,
+            sessionID: chat.id, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            maxIterations: 10, hasProjectContext: false, permissions: SessionPermissions(skipAll: false, allowed: []))
+        app.draftText = "Immediate main message"
+        app.send(app.draftText)
+        XCTAssertEqual(app.draftText, "")
+        XCTAssertEqual(app.blocks.last?.text, "Immediate main message")
+        XCTAssertEqual(app.blocks.last?.kind, .user)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/runs/queue"),
+                       "Presentation updates synchronously before admission starts")
+        await app.pendingChatTurns[chat.id]?.value
+    }
+
+    func testDesktopForegroundSendUsesImmediateMainConversationPresentation() async throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        app.installTranscriptSession(chat.id, blocks: [])
+        app.sessionInfo = SessionInfo(model: "fixture", host: "localhost", cwd: "/tmp", session: chat.id,
+            sessionID: chat.id, messages: 0, approxTokens: 0, promptTokens: 0, completionTokens: 0,
+            maxIterations: 10, hasProjectContext: false, permissions: SessionPermissions(skipAll: false, allowed: []))
+        app.draftText = "Immediate desktop message"
+        app.sendCompanionDesktopMessage(sessionID: chat.id)
+        XCTAssertEqual(app.draftText, "")
+        XCTAssertEqual(app.blocks.last?.text, "Immediate desktop message")
+        XCTAssertEqual(app.blocks.last?.kind, .user)
+        XCTAssertEqual(app.turnDispatchedMode, .ask)
+        XCTAssertFalse(CompanionPanelURLProtocol.paths().contains("/api/runs/queue"))
+        await app.pendingChatTurns[chat.id]?.value
+    }
+
+    func testDesktopForegroundSendCannotRetargetAnUnrelatedChat() throws {
+        let (app, _, chat) = try fixture()
+        defer { cleanup(app) }
+        let originalBlocks = app.blocks
+        app.sendCompanionDesktopMessage(sessionID: chat.id)
+        XCTAssertEqual(app.draftText, "Central draft")
+        XCTAssertEqual(app.blocks, originalBlocks)
+        XCTAssertTrue(CompanionPanelURLProtocol.paths().isEmpty)
     }
 
     func testHealthyConversationOverrideCanSendWithUnavailableDefaultAccount() async throws {
@@ -886,12 +1213,38 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
     private static var archived: Set<String> = []
     private static var rejectCreation = false
     private static var sessionContext: [String: Any] = [:]
+    private static var owners: [String: UUID] = [:]
+    private static var holdExecutionContext = false
+    private static var executionContextStarted: (() -> Void)?
+    private static var heldResponses: [() -> Void] = []
+    private static var executionContextStatus = 200
+    private static var executionContextError: URLError.Code?
     static func reset(profileID: UUID, failures: Int, mismatch: String?, context: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         self.profileID = profileID; self.failures = failures; self.mismatch = mismatch; requestedPaths = []; created = false
         requestedBodies = [:]
         sessionContext = context
-        archived = []; rejectCreation = false
+        archived = []; rejectCreation = false; owners = [:]
+        holdExecutionContext = false; executionContextStarted = nil; heldResponses = []
+        executionContextStatus = 200; executionContextError = nil
+    }
+    static func setExecutionContextResponse(status: Int = 200, transportError: URLError.Code? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        executionContextStatus = status; executionContextError = transportError
+    }
+    static func setOwner(_ profileID: UUID, for sessionID: String) {
+        lock.lock(); defer { lock.unlock() }; owners[sessionID] = profileID
+    }
+    static func holdExecutionContextResponses(onStart: @escaping () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        holdExecutionContext = true; executionContextStarted = onStart
+    }
+    static func releaseExecutionContextResponses() {
+        lock.lock()
+        holdExecutionContext = false; executionContextStarted = nil
+        let responses = heldResponses; heldResponses = []
+        lock.unlock()
+        responses.forEach { $0() }
     }
     static func paths() -> [String] { lock.lock(); defer { lock.unlock() }; return requestedPaths }
     static func bodies(for path: String) -> [[String: Any]] {
@@ -919,12 +1272,20 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             Self.requestedBodies[path, default: []].append(body)
         }
-        let status = path == "/api/runs/queue" || Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
+        let isExecutionContext = path.hasSuffix("/execution-context")
+        if isExecutionContext, let code = Self.executionContextError {
+            Self.lock.unlock()
+            client?.urlProtocol(self, didFailWithError: URLError(code))
+            return
+        }
+        let defaultStatus = path == "/api/runs/queue" || Self.failures > 0 || (Self.rejectCreation && path == "/api/sessions/detached") ? 503 : 200
+        let status = isExecutionContext && Self.executionContextStatus != 200 ? Self.executionContextStatus : defaultStatus
         Self.failures = max(0, Self.failures - 1)
-        let owner = Self.mismatch == "owner" ? UUID() : Self.profileID
+        let sessionID = isExecutionContext ? request.url!.pathComponents.dropLast().last! : request.url!.lastPathComponent
+        let owner = Self.mismatch == "owner" ? UUID() : Self.owners[sessionID] ?? Self.profileID
         let archived = Self.mismatch == "archive"
         let payload: [String: Any]
-        if status == 503 {
+        if status >= 400 {
             payload = ["detail": "Temporary fixture failure"]
         } else if path == "/api/sessions/detached" {
             Self.created = true
@@ -949,18 +1310,29 @@ private final class CompanionPanelURLProtocol: URLProtocol, @unchecked Sendable 
             info.merge(Self.sessionContext) { _, new in new }
             payload = ["ok": true, "messages": [], "session_info": info]
         } else {
-            var detail: [String: Any] = ["id": request.url!.lastPathComponent, "preview": "",
+            var detail: [String: Any] = ["id": sessionID, "preview": "",
                 "archived": archived, "agent_profile_id": owner.uuidString,
-                "messages": request.url!.lastPathComponent == "companion-created" ? [] : [["role": "assistant", "content": "Saved companion answer"]]]
+                "messages": sessionID == "companion-created" ? [] : [["role": "assistant", "content": "Saved companion answer"]]]
+            if isExecutionContext { detail.removeValue(forKey: "messages") }
             detail.merge(Self.sessionContext) { _, new in new }
             if Self.mismatch == "workspace" { detail["cwd"] = "/var/tmp" }
             payload = detail
         }
-        Self.lock.unlock()
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
-                                       headerFields: ["Content-Type": "application/json"])!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: payload))
-        client?.urlProtocolDidFinishLoading(self)
+        let respond = {
+            let response = HTTPURLResponse(url: self.request.url!, statusCode: status, httpVersion: nil,
+                                           headerFields: ["Content-Type": "application/json"])!
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            self.client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: payload))
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        if isExecutionContext && Self.holdExecutionContext {
+            Self.heldResponses.append(respond)
+            let started = Self.executionContextStarted
+            Self.lock.unlock()
+            started?()
+        } else {
+            Self.lock.unlock()
+            respond()
+        }
     }
 }

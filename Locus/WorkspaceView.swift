@@ -3366,20 +3366,22 @@ struct TranscriptFollowState: Equatable {
 /// Small transcripts need no estimated row heights. In particular, a handful
 /// of very tall Markdown answers can make a lazy stack repeatedly revise its
 /// scroll extent during a width change. Large histories still virtualize.
-private struct TranscriptLayoutStack<Content: View>: View {
+struct TranscriptLayoutStack<Content: View>: View {
     let itemCount: Int
+    let spacing: CGFloat
     let content: Content
 
-    init(itemCount: Int, @ViewBuilder content: () -> Content) {
+    init(itemCount: Int, spacing: CGFloat = 0, @ViewBuilder content: () -> Content) {
         self.itemCount = itemCount
+        self.spacing = spacing
         self.content = content()
     }
 
     var body: some View {
         if itemCount <= 40 {
-            VStack(alignment: .leading, spacing: 0) { content }
+            VStack(alignment: .leading, spacing: spacing) { content }
         } else {
-            LazyVStack(alignment: .leading, spacing: 0) { content }
+            LazyVStack(alignment: .leading, spacing: spacing) { content }
         }
     }
 }

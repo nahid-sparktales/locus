@@ -232,7 +232,7 @@ private struct CompanionInspectorContent: View {
     private var transcript: some View {
         ScrollViewReader { reader in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+                TranscriptLayoutStack(itemCount: panel.blocks.count, spacing: 18) {
                     if let scope = model.companionScope, panel.selectedSessionID == scope.sessionID {
                         CompanionFocusCheckInView(sessionID: scope.sessionID) {
                             tool = .focus; toolsPresented = true

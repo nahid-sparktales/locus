@@ -639,6 +639,16 @@ part of the recovery batch.
 `messages` are sanitized (see §4). 404 when the id is unknown; 413 when the
 transcript exceeds the bounded file, record, or message-count limits.
 
+### `GET /api/sessions/{session_id}/execution-context`
+
+Returns the current saved ownership and checkout metadata needed to send a
+turn: `id`, `agent_profile_id`, `cwd`, `workspace_root`, `execution_path`,
+`environment`, `archived`, and `task`. Optional metadata is `null` when absent.
+This endpoint reads the leading session header and current metadata without
+loading message history, activity, or historical model changes. Unknown or
+invalid session IDs return 404. It does not authorize a turn; the existing
+queue, profile ownership, and worker admission checks still apply.
+
 ### `PATCH /api/sessions/{session_id}`
 
 Updates any supplied combination of `title` (string, max 120 normalized

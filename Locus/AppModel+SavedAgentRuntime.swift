@@ -103,11 +103,29 @@ extension AppModel {
                      busy: busy, blocks: paneBlocks(for: sessionID))
     }
 
+    /// Installed or remote runtimes may outlive an app update. Older runtimes
+    /// expose the same authoritative routing fields only through session detail.
+    func loadSavedAgentConversationMetadata(sessionID: String) async throws -> SavedAgentConversationMetadata {
+        do {
+            return try await backend.get("/api/sessions/\(sessionID)/execution-context",
+                                         as: SavedAgentConversationMetadata.self)
+        } catch {
+            let responseError = error as NSError
+            guard responseError.domain == "Locus.Backend", [404, 405].contains(responseError.code) else {
+                throw error
+            }
+            // Never turn a cancelled preflight into a new legacy request.
+            try Task.checkCancellation()
+            return try await backend.get("/api/sessions/\(sessionID)", as: SavedAgentConversationMetadata.self)
+        }
+    }
+
     /// Uses the existing worker lifecycle and global admission queue, pinned to
     /// the resident's workspace and profile for every submitted turn, including
     /// an explicit model choice saved for this conversation.
     func sendSavedAgentTurn(sessionID: String, workspace: String, profileID: UUID, text: String, mode: WorkMode, runID: String = UUID().uuidString,
-                            preservingForeground: Bool = false, attachments: [ChatAttachment] = []) async throws {
+                            preservingForeground: Bool = false, attachments: [ChatAttachment] = [],
+                            validatedSession: SavedAgentConversationMetadata? = nil) async throws {
         let companionTurn = usesCompanionContext(sessionID: sessionID, profileID: profileID)
         let mode: WorkMode = companionTurn ? .ask : mode
         guard [.ask, .work].contains(mode), !isShuttingDown,
@@ -149,12 +167,17 @@ extension AppModel {
         }
         let allowsSpecialists = profileID == primaryCompanionProfile?.id && mode == .work
         var failure: Error?
+        var accepted = false
         let turn = Task { @MainActor [weak self] in
             guard let self else { return }
+            var provisionalForegroundBlockID: UUID?
             do {
-                let detail = try await backend.get("/api/sessions/\(sessionID)", as: SessionDetailResponse.self)
-                guard detail.belongsToWorkspace(workspace), detail.archived != true else {
-                    throw SavedAgentConversationError.unavailable("This conversation belongs to another project or is archived. Restore it in Locus before continuing.")
+                let detail: SavedAgentConversationMetadata
+                if let validatedSession { detail = validatedSession }
+                else { detail = try await loadSavedAgentConversationMetadata(sessionID: sessionID) }
+                try Task.checkCancellation()
+                guard detail.matches(sessionID: sessionID, profileID: profileID, workspace: workspace) else {
+                    throw SavedAgentConversationError.unavailable("This conversation belongs to another agent or project, or is archived. Restore it in Locus before continuing.")
                 }
                 var queueBody = detail.executionQueueContext
                 queueBody.merge([
@@ -171,6 +194,7 @@ extension AppModel {
                     queueBody["mode"] = mode.rawValue
                     if companionTurn { queueBody["companion_context"] = true }
                 }
+                try Task.checkCancellation()
                 let _: OrchestrationRun = try await backend.post("/api/runs/queue", body: queueBody, as: OrchestrationRun.self)
                 retainAcceptedChatRoute(ChatModelRoute(model: dispatch.profile.model, provider: dispatch.provider,
                     accountID: dispatch.accountID.flatMap(UUID.init(uuidString:)), profileID: profileID,
@@ -211,8 +235,11 @@ extension AppModel {
                 if companionTurn { request["companion_context"] = true }
                 if !imageAttachments.isEmpty { request["attachments"] = imageAttachments }
                 if allowsSpecialists { request["solo_swarm"] = ["enabled": true] }
-                if currentSessionID == sessionID {
-                    blocks.append(ChatBlock(kind: .user, text: text))
+                if currentSessionID == sessionID,
+                   !blocks.contains(where: { $0.kind == .user && $0.runID == runID }) {
+                    let submitted = ChatBlock(kind: .user, text: text, runID: runID)
+                    provisionalForegroundBlockID = submitted.id
+                    blocks.append(submitted)
                 }
                 worker.prepareForTurnAcceptance(runID)
                 guard worker.service.send(request), await waitForTurnAcceptance(runID, from: worker) else {
@@ -221,13 +248,27 @@ extension AppModel {
                     if recovered { throw SavedAgentConversationError.unavailable("The agent did not accept this message. It is ready to retry.") }
                     // Recovery lost its race with durable acceptance: retain the
                     // running task and do not invite duplicate submission.
+                    accepted = true
                     return
                 }
+                accepted = true
                 refreshSplitPane(sessionID)
-                if preservingForeground { try? await refreshCompanionConversationCatalog() }
-                else { await refreshMetadata() }
+                if preservingForeground {
+                    // Acceptance is complete; catalog decoration must not keep
+                    // the companion composer in its Sending state.
+                    Task { [weak self] in try? await self?.refreshCompanionConversationCatalog() }
+                } else { await refreshMetadata() }
             } catch {
                 failure = error
+                if !accepted, let provisionalForegroundBlockID {
+                    // The user may have opened or left this chat during setup.
+                    // Remove only our unaccepted local row, never a restored
+                    // durable message or a different foreground conversation.
+                    if currentSessionID == sessionID {
+                        blocks.removeAll { $0.id == provisionalForegroundBlockID }
+                    }
+                    splitPaneBlocks[sessionID]?.removeAll { $0.id == provisionalForegroundBlockID }
+                }
                 if let worker = taskWorkers[sessionID] {
                     finishChatRuntime(worker, state: error is CancellationError ? .cancelled : .failed, error: error.localizedDescription)
                 } else {
@@ -249,6 +290,44 @@ extension AppModel {
             pendingChatTurnTokens[sessionID] = nil; pendingChatTurns[sessionID] = nil
         }
         if let failure { throw failure }
-        try Task.checkCancellation()
+        // A stop racing with durable acceptance must not restore an already
+        // accepted message as a fresh draft and invite duplicate submission.
+        if !accepted { try Task.checkCancellation() }
+    }
+}
+
+/// The send preflight needs durable ownership and execution routing, not the
+/// complete conversation. This matches the backend's bounded metadata endpoint.
+struct SavedAgentConversationMetadata: Decodable {
+    let id: String
+    let agentProfileID: UUID?
+    let cwd: String?
+    let workspaceRoot: String?
+    let executionPath: String?
+    let environment: [String: String]?
+    let archived: Bool?
+    let task: TaskRecord?
+
+    enum CodingKeys: String, CodingKey {
+        case id, cwd, environment, archived, task
+        case agentProfileID = "agent_profile_id"
+        case workspaceRoot = "workspace_root"
+        case executionPath = "execution_path"
+    }
+
+    func matches(sessionID: String, profileID: UUID, workspace: String) -> Bool {
+        id == sessionID && agentProfileID == profileID && archived != true
+            && SessionSummary.matchesWorkspace(root: workspaceRoot?.nilIfEmpty ?? cwd,
+                                                environment: environment, requested: workspace)
+    }
+
+    var executionQueueContext: [String: Any] {
+        var context: [String: Any] = [
+            "workspace_root": workspaceRoot?.nilIfEmpty ?? cwd ?? "",
+            "execution_path": executionPath?.nilIfEmpty ?? cwd ?? "",
+            "execution_environment": environment?["type"] ?? (task == nil ? "local" : "worktree"),
+        ]
+        if let task { context["task_id"] = task.id }
+        return context
     }
 }

@@ -95,6 +95,7 @@ POST /api/sessions/restore
 GET /api/sessions/{session_id}
 GET /api/sessions/{session_id}/media/{media_id}
 GET /api/sessions/{session_id}/export-data
+GET /api/sessions/{session_id}/execution-context
 PATCH /api/sessions/{session_id}/organization
 GET /api/sessions/{session_id}/organization
 POST /api/sessions/{session_id}/duplicate

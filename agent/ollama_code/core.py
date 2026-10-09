@@ -1409,13 +1409,13 @@ class AgentCore:
         self, host: str | None = None, context_window_tokens: Any = None
     ) -> None:
         """Switch back to the local Ollama runtime."""
+        previous = (self.provider, self.host, self.model, dict(self.config))
         self.apply_context_window(context_window_tokens)
         self.provider = "ollama"
         self.host = (host or str(self.config.get("host") or DEFAULT_HOST)).rstrip("/")
         # A host switch needs no respawn, so the bypass list the app built at
         # launch can be stale by now; keep it correct for the host in use.
         proxy.ensure_no_proxy_host(self.host)
-        self.client = OllamaClient(self.host)
         self.config["provider"] = "ollama"
         self.config["host"] = self.host
         # The label describes a remote account; it would be a lie about the
@@ -1423,6 +1423,12 @@ class AgentCore:
         self.config["remote_account_label"] = ""
         self.config["remote_account_id"] = ""
         self.model = str(self.config.get("model") or "")
+        if previous == (self.provider, self.host, self.model, self.config):
+            # Saved-agent sends reapply their route each turn. Keep the warm
+            # client and learned context window when that route did not change.
+            self._emit_info()
+            return
+        self.client = OllamaClient(self.host)
         # Left unknown rather than resolved here: resolving costs Ollama I/O and
         # the app awaits this endpoint on a short timeout. `resolve_context_limit_soon`
         # settles it off-thread, and `run_turn` settles it before anything can
@@ -1473,6 +1479,8 @@ class AgentCore:
         # Validate before mutating provider, model, URL, or context state. A
         # rejected credential transport must leave the working provider intact.
         validate_remote_url(normalized_url, effective_key)
+        previous_provider = self.provider
+        previous_config = dict(self.config)
         self.apply_context_window(context_window_tokens)
         self.provider = "remote"
         self.config["provider"] = "remote"
@@ -1510,6 +1518,13 @@ class AgentCore:
             # across endpoints is how "xhigh" reaches a model that rejects the
             # field and fails the turn outright.
             self.config["remote_reasoning_effort"] = ""
+        if (previous_provider == "remote" and previous_config == self.config
+                and self.model == str(self.config.get("remote_model") or "")):
+            # Validate the requested transport/credential above even for a
+            # repeat selection. Rebuilding here discards discovery on every
+            # turn and needlessly restarts up to three endpoint probes.
+            self._emit_info()
+            return
         self._build_remote_client()
         # _build_remote_client only adopts a non-empty model, so clearing the
         # config above is not enough on its own: self.model would keep the

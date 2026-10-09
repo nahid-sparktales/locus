@@ -75,7 +75,9 @@ jobs:
           actual="$(shasum -a 256 "$gitleaks_dir/$asset" | awk '{print $1}')"
           test "$actual" = "$expected"
           tar -xzf "$gitleaks_dir/$asset" -C "$gitleaks_dir"
-          "$gitleaks_dir/gitleaks" git --no-banner --redact --config .gitleaks.toml .
+          # Check every ancestor of the proposed merge or release, including
+          # removed secrets, without coupling it to unrelated fetched branches.
+          "$gitleaks_dir/gitleaks" git --log-opts="HEAD" --no-banner --redact --config .gitleaks.toml .
 
   agent-worlds-contract:
     needs: preflight

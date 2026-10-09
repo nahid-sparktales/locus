@@ -4,6 +4,9 @@ import Foundation
 /// Navigation-only transport. It resumes fixture transcripts and
 /// rejects every other mutation; it never connects a provider or executes work.
 private final class CompanionChatUITestProtocol: URLProtocol {
+    private let replyLock = NSLock()
+    private var delayedReply: DispatchWorkItem?
+    private var stopped = false
     static let profileID = UUID(uuidString: "C0111111-1111-4111-8111-111111111111")!
     static let companionSessionID = "companion-fixture-chat"
     static let projectSessionID = "companion-fixture-project"
@@ -38,7 +41,13 @@ private final class CompanionChatUITestProtocol: URLProtocol {
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func stopLoading() {}
+    override func stopLoading() {
+        replyLock.lock()
+        stopped = true
+        delayedReply?.cancel()
+        delayedReply = nil
+        replyLock.unlock()
+    }
 
     override func startLoading() {
         guard let url = request.url else { return }
@@ -52,6 +61,20 @@ private final class CompanionChatUITestProtocol: URLProtocol {
            let info = try? JSONSerialization.jsonObject(with: data) {
             response = ["ok": true, "messages": Self.messages(sessionID), "session_info": info]
             status = 200
+        } else if request.httpMethod == "GET", url.path.hasSuffix("/execution-context"), knownSession {
+            response = ["id": sessionID, "cwd": Self.workspace(sessionID),
+                        "workspace_root": Self.workspace(sessionID), "archived": false,
+                        "agent_profile_id": sessionID != Self.workSessionID
+                            ? Self.profileID.uuidString as Any : NSNull()]
+            status = 200
+            if ProcessInfo.processInfo.environment["LOCUS_UI_TESTING_COMPANION_SEND_DELAY"] == "1" {
+                let reply = DispatchWorkItem { [weak self] in self?.finish(response, status: status, url: url) }
+                replyLock.lock()
+                delayedReply = reply
+                replyLock.unlock()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: reply)
+                return
+            }
         } else if request.httpMethod == "GET", url.path == "/api/sessions/\(detailID)",
                   Self.sessionIDs.contains(detailID) {
             response = ["id": detailID, "messages": Self.messages(detailID), "preview": "", "cwd": Self.workspace(detailID),
@@ -76,6 +99,15 @@ private final class CompanionChatUITestProtocol: URLProtocol {
             response = ["detail": "This navigation fixture does not execute work."]
             status = 409
         }
+        finish(response, status: status, url: url)
+    }
+
+    private func finish(_ response: [String: Any], status: Int, url: URL) {
+        replyLock.lock()
+        let cancelled = stopped
+        delayedReply = nil
+        replyLock.unlock()
+        guard !cancelled else { return }
         let payload = (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
         let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
                                    headerFields: ["Content-Type": "application/json"])!
