@@ -80,6 +80,7 @@ final class SendAcknowledgementTests: XCTestCase {
         XCTAssertFalse(RoutingAcknowledgementProtocol.paths.contains("/api/runs/queue"))
         XCTAssertNil(app.pendingChatTurns["send-fixture"])
         XCTAssertFalse(app.isBusy)
+        XCTAssertEqual(app.draftText, "Submitted message", "Stopping without a replacement keeps unsent draft recovery")
         XCTAssertEqual(app.blocks.filter { $0.kind == .user }.map(\.text), ["Submitted message"])
     }
 
@@ -105,6 +106,44 @@ final class SendAcknowledgementTests: XCTestCase {
         XCTAssertFalse(app.savedAgentConversationState("send-fixture").busy)
         XCTAssertEqual(app.currentSessionID, "elsewhere")
         XCTAssertEqual(app.draftText, "Other chat's draft")
+    }
+
+    func testCancelledScoringCannotClearAnImmediateReplacementTurn() async throws {
+        for replacementAdmitted in [false, true] {
+            let started = expectation(description: "Original model scoring started")
+            let (app, _) = try routedCompanion(started: started)
+            defer { cleanup(app) }
+            app.draftText = "Original message"
+            app.submitDraft()
+            let original = try XCTUnwrap(app.pendingChatTurns["send-fixture"])
+            await fulfillment(of: [started], timeout: 2)
+
+            app.stop()
+            RoutingAcknowledgementProtocol.onNextScoringStarted({})
+            app.draftText = "Replacement message"
+            app.submitDraft()
+            let replacement = try XCTUnwrap(app.pendingChatTurns["send-fixture"])
+            let replacementRunID = try XCTUnwrap(app.taskConversationStates["send-fixture"]?.runID)
+            if replacementAdmitted {
+                // Model the worker handoff: its run remains authoritative
+                // after pending admission bookkeeping has been released.
+                app.pendingChatTurns["send-fixture"] = nil
+                app.pendingChatTurnTokens["send-fixture"] = nil
+                app.taskConversationStates["send-fixture"]?.state = .running
+            }
+            await original.value
+
+            XCTAssertTrue(app.isBusy, "An old cancellation must not clear the replacement's busy state")
+            XCTAssertEqual(app.taskConversationStates["send-fixture"]?.runID, replacementRunID)
+            XCTAssertEqual(app.taskConversationStates["send-fixture"]?.state, replacementAdmitted ? .running : .queued)
+            XCTAssertEqual(app.draftText, "")
+            XCTAssertEqual(app.blocks.filter { $0.kind == .user }.map(\.text), ["Original message", "Replacement message"])
+            XCTAssertFalse(RoutingAcknowledgementProtocol.paths.contains("/api/runs/queue"))
+
+            replacement.cancel()
+            RoutingAcknowledgementProtocol.finishScoring()
+            await replacement.value
+        }
     }
 
     func testForegroundSendAcknowledgesBeforeQueueRequestAndPreservesNewerDraftOnFailure() async throws {
@@ -201,6 +240,10 @@ private final class RoutingAcknowledgementProtocol: URLProtocol, @unchecked Send
         lock.unlock()
         response?.respond(status: 200, body: ["selected_id": "model-route:ollama:secondary", "limited_data": false,
             "reason": "Fixture decision", "tags": ["general"], "candidates": []])
+    }
+    static func onNextScoringStarted(_ callback: @escaping () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        started = callback
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

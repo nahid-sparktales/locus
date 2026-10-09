@@ -425,6 +425,15 @@ extension AppModel {
                         sessionID: dispatchedSessionID)
                 }
             } catch {
+                // Stop can clear this task before its cancelled preflight
+                // unwinds. A replacement may already be queued or running;
+                // only the old submission's recovery may touch its state.
+                let pendingToken = self.pendingChatTurnTokens[dispatchedSessionID]
+                let currentRunID = self.taskConversationStates[dispatchedSessionID]?.runID
+                if pendingToken != pendingTurnToken,
+                   pendingToken != nil || (currentRunID != nil && currentRunID != reservedRunID) {
+                    return
+                }
                 if let dispatchedGoalInputID {
                     self.goals.restoreUserInput(sessionID: dispatchedSessionID, text: text, inputID: dispatchedGoalInputID)
                 }
