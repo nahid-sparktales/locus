@@ -262,13 +262,29 @@ extension AppModel {
             savedAgentRuntimeSyncPending = false
             let profiles: [[String: Any]] = agentProfiles.map { profile in
                 var item: [String: Any] = ["profile": Self.savedAgentProfileBody(profile)]
-                do {
-                    let route = try agentProfileProvider(profile)
-                    var provider = route.body
-                    provider["model"] = profile.model
-                    if route.provider == "ollama" { provider["host"] = lastOllamaHost }
-                    item["provider"] = provider
-                } catch { item["unavailable"] = error.localizedDescription }
+                let choices: [[String: Any]] = profile.resolvedModelChoices.map { choice in
+                    var candidate = profile
+                    candidate.route = choice.route
+                    candidate.model = choice.model
+                    var value: [String: Any] = ["model": choice.model]
+                    do {
+                        let route = try agentProfileProvider(candidate)
+                        var provider = route.body
+                        provider["model"] = choice.model
+                        if route.provider == "ollama" { provider["host"] = lastOllamaHost }
+                        value["provider"] = provider
+                    } catch { value["unavailable"] = error.localizedDescription }
+                    return value
+                }
+                // This endpoint is private runtime configuration. Public
+                // profile exports contain only model/account references.
+                if !choices.isEmpty { item["model_choices"] = choices }
+                if let preferred = choices.first {
+                    item["provider"] = preferred["provider"]
+                    item["unavailable"] = preferred["unavailable"]
+                } else {
+                    item["unavailable"] = "Configure an exact model for \(profile.name)."
+                }
                 return item
             }
             let _: [String: Bool] = try await backend.post("/api/runtime/agent-profiles",
@@ -299,9 +315,20 @@ extension AppModel {
     }
 
     func newSavedAgentDraft() -> AgentProfile {
-        let route = settings.activeAccountID.flatMap(UUID.init(uuidString:))
-            .map(AgentRoute.providerAccount) ?? .localOllama
-        return AgentProfile(name: "", route: route, model: selectedModel, role: .generalist,
+        let route: AgentRoute
+        let modelName: String
+        if let saved = currentChatModelRoute {
+            route = saved.accountID.map(AgentRoute.providerAccount) ?? .localOllama
+            modelName = saved.model
+        } else if let profile = currentAgentChatProfile {
+            route = profile.route
+            modelName = profile.model
+        } else {
+            route = settings.activeAccountID.flatMap(UUID.init(uuidString:))
+                .map(AgentRoute.providerAccount) ?? .localOllama
+            modelName = selectedModel
+        }
+        return AgentProfile(name: "", route: route, model: modelName, role: .generalist,
                             instructions: "", accessCeiling: .readOnly,
                             behavior: AgentBehavior(selfDescription: ""))
     }
@@ -433,7 +460,7 @@ extension AppModel {
     /// Agent hub, so a closed hub opens first and mounts the editor itself;
     /// presenting directly would lose the owner's identity and route.
     func newSavedAgentAutomation(_ kind: AgentConfigurationKind, profile: AgentProfile, workspace: String? = nil) {
-        do { _ = try agentProfileProvider(profile) } catch { showToast(error.localizedDescription); return }
+        do { _ = try firstReadyAgentModelProfile(profile) } catch { showToast(error.localizedDescription); return }
         if configureAgentPresented, configureAgentProfileID == profile.id {
             presentSavedAgentAutomation(kind, profile: profile)
             return
@@ -447,7 +474,8 @@ extension AppModel {
     func presentSavedAgentAutomation(_ kind: AgentConfigurationKind, profile: AgentProfile) {
         let workspace = configureAgentWorkspace ?? savedAgentWorkspacePath(profile)
         do {
-            let route = try agentProfileProvider(profile)
+            let readyProfile = try firstReadyAgentModelProfile(profile)
+            let route = try agentProfileProvider(readyProfile)
             if kind == .schedule {
                 presentScheduleEditor(prompt: configureAgentDraftSuggestion)
                 guard var draft = schedule.scheduleEditorDraft else { return }
@@ -456,7 +484,7 @@ extension AppModel {
                 draft.executionEnvironment = savedAgentScheduleEnvironment(profile, workspace: workspace)
                 draft.provider = route.provider
                 draft.providerAccountID = route.accountID
-                draft.model = profile.model
+                draft.model = readyProfile.model
                 draft.mode = profile.defaultMode ?? .work
                 draft.runner = .solo
                 draft.teamID = nil
@@ -474,7 +502,7 @@ extension AppModel {
             draft.agentProfileID = profile.id.uuidString
             draft.mode = profile.defaultMode ?? .work
             draft.workflow = .singleAgent(instruction: draft.instruction, mode: draft.mode)
-            draft.profileRoute = ["provider": route.provider, "model": profile.model,
+            draft.profileRoute = ["provider": route.provider, "model": readyProfile.model,
                                   "provider_account_id": route.accountID ?? ""]
             eventAutomations.editorDraft = draft
         } catch { showToast(error.localizedDescription) }

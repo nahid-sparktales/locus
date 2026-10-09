@@ -16,9 +16,7 @@ extension AppModel {
     /// Only ordinary conversations may override their owner's default route.
     /// Scheduled/event receiving chats always retain their configured model.
     func agentChatProfile(_ profile: AgentProfile, sessionID: String) -> AgentProfile {
-        guard sessionCatalog.snapshot.sessionsByID[sessionID]?.isAgentEventChat != true,
-              let selection = settings.agentChatModelSelections[sessionID],
-              selection.profileID == profile.id else { return profile }
+        guard let selection = chatModelRoute(for: sessionID), selection.profileID == profile.id else { return profile }
         var result = profile
         result.route = selection.accountID.map(AgentRoute.providerAccount) ?? .localOllama
         result.model = selection.model
@@ -134,29 +132,19 @@ extension AppModel {
 
     @discardableResult
     func selectAgentChatModel(account: ProviderAccount?, model: String) -> Bool {
-        guard let profile = currentAgentChatProfile else { return false }
-        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return true }
-        var selected = profile
-        selected.route = account.map { .providerAccount($0.id) } ?? .localOllama
-        selected.model = name
-        do { _ = try agentProfileProvider(selected) }
-        catch { showToast(error.localizedDescription); return true }
-        if selected.route != profile.route || selected.model != profile.model { pauseGoalForRouteChange() }
-        settings.agentChatModelSelections[currentSessionID] = AgentChatModelSelection(
-            profileID: profile.id, accountID: account?.id, model: name
-        )
-        persistSettings()
-        showToast("\(name) will be used for your next message in this chat")
-        return true
+        guard currentAgentChatProfile != nil else { return false }
+        return stageChatModelChange(account: account, model: model)
     }
 
     func resetAgentChatModel() {
-        guard modelSelectionLockReason == nil, let profile = currentAgentChatProfile else { return }
-        pauseGoalForRouteChange()
-        settings.agentChatModelSelections.removeValue(forKey: currentSessionID)
-        persistSettings()
-        showToast("This chat will use \(profile.name)’s default model for the next message")
+        guard modelSelectionLockReason == nil,
+              let id = savedAgentProfileID(for: currentSessionID),
+              let saved = agentProfiles.first(where: { $0.id == id }) else { return }
+        do {
+            let profile = try firstReadyAgentModelProfile(saved)
+            let account = profile.route.accountID.flatMap { id in providerAccounts.first { $0.id == id } }
+            stageChatModelChange(account: account, model: profile.model, resetsAgentDefault: true)
+        } catch { showToast(error.localizedDescription) }
     }
 
     func rememberSidebarAgent(_ identity: String) {

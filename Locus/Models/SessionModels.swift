@@ -51,6 +51,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
     /// runs on without asking the backend.
     let model: String?
     let provider: String?
+    let providerAccountID: String?
+    let modelRouteSelection: String?
+    let routeEstablished: Bool?
 
     init(
         id: String,
@@ -75,7 +78,10 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         agentName: String? = nil,
         agentPrimary: Bool? = nil,
         model: String? = nil,
-        provider: String? = nil
+        provider: String? = nil,
+        providerAccountID: String? = nil,
+        modelRouteSelection: String? = nil,
+        routeEstablished: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -100,6 +106,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         self.agentPrimary = agentPrimary
         self.model = model
         self.provider = provider
+        self.providerAccountID = providerAccountID
+        self.modelRouteSelection = modelRouteSelection
+        self.routeEstablished = routeEstablished
     }
 
     enum CodingKeys: String, CodingKey {
@@ -114,6 +123,9 @@ struct SessionSummary: Codable, Hashable, Identifiable {
         case agentName = "agent_name"
         case agentPrimary = "agent_primary"
         case model, provider
+        case providerAccountID = "provider_account_id"
+        case modelRouteSelection = "model_route_selection"
+        case routeEstablished = "route_established"
     }
 
     var displayTitle: String {
@@ -199,7 +211,10 @@ struct SessionSummary: Codable, Hashable, Identifiable {
             agentName: agentName,
             agentPrimary: agentPrimary,
             model: model,
-            provider: provider
+            provider: provider,
+            providerAccountID: providerAccountID,
+            modelRouteSelection: modelRouteSelection,
+            routeEstablished: routeEstablished
         )
     }
 

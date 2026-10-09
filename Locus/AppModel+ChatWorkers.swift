@@ -26,7 +26,7 @@ extension AppModel {
         // process for a synthetic session; nil exercises recoverable sending.
         guard persistenceEnabled else { return nil }
         let process = BackendProcess()
-        let routedAccountID = providerAccountID ?? settings.activeAccountID
+        let routedAccountID = provider == nil ? (providerAccountID ?? settings.activeAccountID) : providerAccountID
         var workerEnvironment = ProxyRuntime.shared.environmentOverlay(
             scope: .modelAndAgent,
             workspacePath: workspaceRoot,
@@ -394,13 +394,15 @@ extension AppModel {
                 // The displayed worker info may still name the capsule's
                 // premium model. The control service retains the user's solo
                 // local selection, including changes made during a capsule.
-                let state = try await backend.get("/api/provider", as: ProviderStateResponse.self)
-                guard state.provider == "ollama", !state.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let model: String
+                if let captured = ordinaryProviderBody["model"] as? String { model = captured }
+                else { model = try await backend.get("/api/provider", as: ProviderStateResponse.self).model }
+                guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw NSError(domain: "Locus.TaskCapsules", code: 1, userInfo: [
                         NSLocalizedDescriptionKey: "The regular local model is not ready. Select a model before continuing."
                     ])
                 }
-                localModel = state.model
+                localModel = model
             }
         }
         let _: ProviderStateResponse = try await service.post(
@@ -546,6 +548,7 @@ extension AppModel {
            let info = decode(SessionInfo.self, from: event)
         {
             runtime.sessionInfo = info
+            rememberChatModelRoute(info)
             if runtime.isAttaching { return }
         }
         guard currentSessionID == runtime.sessionID, !runtime.isAttaching else {

@@ -241,6 +241,9 @@ struct SessionInfo: Codable, Hashable {
     let maxIterations: Int
     let hasProjectContext: Bool
     let provider: String?
+    let providerAccountID: String?
+    let modelRouteSelection: String?
+    let routeEstablished: Bool?
     let task: TaskRecord?
     let workspaceRoot: String?
     let executionPath: String?
@@ -267,6 +270,9 @@ struct SessionInfo: Codable, Hashable {
         maxIterations: Int,
         hasProjectContext: Bool,
         provider: String? = nil,
+        providerAccountID: String? = nil,
+        modelRouteSelection: String? = nil,
+        routeEstablished: Bool? = nil,
         task: TaskRecord? = nil,
         workspaceRoot: String? = nil,
         executionPath: String? = nil,
@@ -290,6 +296,9 @@ struct SessionInfo: Codable, Hashable {
         self.maxIterations = maxIterations
         self.hasProjectContext = hasProjectContext
         self.provider = provider
+        self.providerAccountID = providerAccountID
+        self.modelRouteSelection = modelRouteSelection
+        self.routeEstablished = routeEstablished
         self.task = task
         self.workspaceRoot = workspaceRoot
         self.executionPath = executionPath
@@ -322,6 +331,9 @@ struct SessionInfo: Codable, Hashable {
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
+            providerAccountID: providerAccountID,
+            modelRouteSelection: modelRouteSelection,
+            routeEstablished: routeEstablished,
             task: task,
             workspaceRoot: workspaceRoot,
             executionPath: executionPath,
@@ -349,6 +361,9 @@ struct SessionInfo: Codable, Hashable {
             maxIterations: maxIterations,
             hasProjectContext: hasProjectContext,
             provider: provider,
+            providerAccountID: providerAccountID,
+            modelRouteSelection: modelRouteSelection,
+            routeEstablished: routeEstablished,
             task: task,
             workspaceRoot: task?.workspaceRoot ?? workspaceRoot,
             executionPath: task?.executionPath ?? executionPath,
@@ -373,6 +388,9 @@ struct SessionInfo: Codable, Hashable {
         case workspaceRoot = "workspace_root"
         case executionPath = "execution_path"
         case initialMode = "initial_mode"
+        case providerAccountID = "provider_account_id"
+        case modelRouteSelection = "model_route_selection"
+        case routeEstablished = "route_established"
     }
 
     // Tolerant decoding: `session_info` arrives on every turn, and a single
@@ -396,6 +414,9 @@ struct SessionInfo: Codable, Hashable {
         maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations) ?? 0
         hasProjectContext = try container.decodeIfPresent(Bool.self, forKey: .hasProjectContext) ?? false
         provider = try? container.decodeIfPresent(String.self, forKey: .provider)
+        providerAccountID = try? container.decodeIfPresent(String.self, forKey: .providerAccountID)
+        modelRouteSelection = try? container.decodeIfPresent(String.self, forKey: .modelRouteSelection)
+        routeEstablished = try? container.decodeIfPresent(Bool.self, forKey: .routeEstablished)
         task = try? container.decodeIfPresent(TaskRecord.self, forKey: .task)
         workspaceRoot = try? container.decodeIfPresent(String.self, forKey: .workspaceRoot)
         executionPath = try? container.decodeIfPresent(String.self, forKey: .executionPath)

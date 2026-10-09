@@ -1517,6 +1517,9 @@ class SessionStore:
                 "agent_primary": bool(entry.get("agent_primary") or False),
                 "model": entry.get("model"),
                 "provider": entry.get("provider"),
+                "provider_account_id": entry.get("provider_account_id"),
+                "model_route_selection": entry.get("model_route_selection"),
+                "route_established": entry.get("route_established") is True,
                 "folder_id": (
                     placement.get("folder_id") if isinstance(placement, dict) else None
                 ),

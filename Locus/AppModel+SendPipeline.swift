@@ -28,6 +28,7 @@ extension AppModel {
         includeAttachments: Bool = true,
         automaticRoutingPrepared: Bool = false,
         preparedModelRoute: ModelRoutingPreparedTurn? = nil,
+        preparedAgentProfile: AgentProfile? = nil,
         consumeMatchingDraft: Bool = true,
         allowLocalCommands: Bool = true,
         capsuleDispatch explicitCapsuleDispatch: TaskCapsuleDispatch? = nil,
@@ -37,9 +38,13 @@ extension AppModel {
         let residentProfileID = savedAgentProfileID(for: currentSessionID)
         let companionTurn = usesCompanionContext(sessionID: currentSessionID, profileID: residentProfileID)
         if companionTurn { selectedMode = .ask }
+        let automaticAgentProfile = residentProfileID.flatMap { id in agentProfiles.first { $0.id == id } }.flatMap { profile in
+            !hasManualChatModelSelection(sessionID: currentSessionID) && profile.resolvedModelChoices.count > 1
+                && sessionCatalog.snapshot.sessionsByID[currentSessionID]?.isAgentEventChat != true ? profile : nil
+        }
         var residentDispatch: TaskCapsuleDispatch?
-        if let residentProfileID {
-            do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID) }
+        if let residentProfileID, automaticAgentProfile == nil || preparedAgentProfile != nil {
+            do { residentDispatch = try savedAgentProfileDispatch(profileID: residentProfileID, mode: selectedMode, sessionID: currentSessionID, selectedProfile: preparedAgentProfile) }
             catch { showToast(error.localizedDescription); return }
         }
         if selectedMode == .duo, explicitCapsuleDispatch == nil, !isBusy, !hasPendingPermission {
@@ -66,7 +71,6 @@ extension AppModel {
         // route, even if its worker still carries the temporary planning model.
         // Capture before any awaited work so sidebar/account changes cannot
         // retarget this already submitted message.
-        let ordinaryProviderBody = capsuleDispatch == nil ? providerRequestBody(verify: false) : [:]
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         let privateIdentity = isIdentityTask
         let capturedIdentityProvider = privateIdentity ? identityProviderIdentity() : nil
@@ -171,7 +175,37 @@ extension AppModel {
             && selectedAgentTeamID == nil
             && dispatchedMode != .ask
             && !isSlashPassthrough
-        if settings.automaticModelRoutingEnabled, capsuleDispatch == nil, !privateIdentity,
+        if let automaticAgentProfile, preparedAgentProfile == nil, workflowDispatch == nil,
+           savedGoal == nil, dispatchedTeam == nil, !isSlashPassthrough {
+            isBusy = true
+            let ownership = transcriptPresentation.sessionOwnershipToken
+            let sessionID = currentSessionID
+            let routingToken = UUID()
+            let routingTask = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    if pendingChatTurnTokens[sessionID] == routingToken {
+                        pendingChatTurnTokens[sessionID] = nil
+                        pendingChatTurns[sessionID] = nil
+                        if currentSessionID == sessionID { isBusy = false }
+                    }
+                }
+                let chosen = await prepareAgentModelChoice(profile: automaticAgentProfile, sessionID: sessionID,
+                    text: text, mode: dispatchedMode,
+                    requiresVision: availableAttachments.contains { $0.kind == .image || $0.kind == .applicationSnapshot })
+                guard !Task.isCancelled, transcriptPresentation.ownsSessionLoad(ownership), canAcceptTranscriptInput else { return }
+                isBusy = false
+                send(rawText, preservingDraftOnFailure: preservingDraftOnFailure,
+                    requeueingOnFailure: requeueingOnFailure, includeAttachments: includeAttachments,
+                    automaticRoutingPrepared: automaticRoutingPrepared, preparedModelRoute: preparedModelRoute,
+                    preparedAgentProfile: chosen, consumeMatchingDraft: consumeMatchingDraft,
+                    allowLocalCommands: allowLocalCommands, capsuleDispatch: explicitCapsuleDispatch, approvedPlan: approvedPlan)
+            }
+            pendingChatTurnTokens[sessionID] = routingToken
+            pendingChatTurns[sessionID] = routingTask
+            return
+        }
+        if settings.automaticModelRoutingEnabled, currentChatModelRoute == nil, capsuleDispatch == nil, !privateIdentity,
            goals.goal(for: currentSessionID)?.status != .active,
            !automaticRoutingPrepared,
            !isSlashPassthrough,
@@ -207,6 +241,12 @@ extension AppModel {
             }
             return
         }
+        let ordinaryRoute: ChatModelRoute?
+        do {
+            ordinaryRoute = capsuleDispatch == nil && residentProfileID == nil && !privateIdentity
+                && savedGoal == nil && dispatchedTeam == nil && !isSlashPassthrough ? try ordinaryChatRouteSnapshot() : nil
+        } catch { showToast(error.localizedDescription); return }
+        let ordinaryProviderBody = ordinaryRoute.flatMap { try? chatModelProviderBody($0) } ?? [:]
         // Agent-side slash commands never receive attachments (the server
         // routes them past the turn machinery), so dispatching any would
         // silently drop them — keep the chips for the next real message.
@@ -315,6 +355,7 @@ extension AppModel {
             updatedAt: Date()
         )
 
+        let agentChoices = capsuleDispatch.flatMap { agentModelChoicesForDispatch($0, sessionID: dispatchedSessionID) }
         let pendingTurnToken = UUID()
         let pendingTurn = Task { [weak self] in
             guard let self else { return }
@@ -353,8 +394,16 @@ extension AppModel {
                 if let capsuleDispatch, dispatchedTeam == nil,
                    let route = try await self.prepareAgentChatQueueRoute(capsuleDispatch, sessionID: dispatchedSessionID) {
                     queuedBody["agent_chat_route"] = route
+                    if let agentChoices {
+                        try await self.prepareAgentModelChoiceCredentials(agentChoices)
+                        queuedBody["agent_model_choices"] = agentChoices.map(\.wireValue)
+                    }
                     queuedBody["mode"] = dispatchedMode.rawValue
                     if companionTurn { queuedBody["companion_context"] = true }
+                }
+                if let ordinaryRoute, dispatchedTeam == nil, dispatchedGoalID == nil {
+                    queuedBody["chat_route"] = try await self.prepareChatQueueRoute(ordinaryRoute)
+                    queuedBody["mode"] = dispatchedMode.rawValue
                 }
                 if let dispatchedGoalID {
                     guard let goal = await self.goals.flushUserInput(sessionID: dispatchedSessionID),
@@ -372,6 +421,16 @@ extension AppModel {
                     body: queuedBody,
                     as: OrchestrationRun.self
                 )
+                if let ordinaryRoute, dispatchedTeam == nil, !isSlashPassthrough {
+                    self.retainAcceptedChatRoute(ordinaryRoute, sessionID: dispatchedSessionID)
+                }
+                if let capsuleDispatch, capsuleDispatch.profileOnly, dispatchedTeam == nil {
+                    self.retainAcceptedChatRoute(ChatModelRoute(model: capsuleDispatch.profile.model,
+                        provider: capsuleDispatch.provider, accountID: capsuleDispatch.accountID.flatMap(UUID.init(uuidString:)),
+                        profileID: capsuleDispatch.profile.id,
+                        selection: self.hasManualChatModelSelection(sessionID: dispatchedSessionID) ? "manual" : "automatic"),
+                        sessionID: dispatchedSessionID)
+                }
             } catch {
                 if let dispatchedGoalInputID {
                     self.goals.restoreUserInput(sessionID: dispatchedSessionID, text: text, inputID: dispatchedGoalInputID)
@@ -434,12 +493,20 @@ extension AppModel {
                 "mode": dispatchedMode.rawValue,
                 "request_id": reservedRunID,
             ]
+            if let ordinaryRoute, dispatchedTeam == nil, dispatchedGoalID == nil { request["chat_route"] = ordinaryRoute.wireValue }
             if privateIdentity { request["identity_mode"] = true }
             if companionTurn { request["companion_context"] = true }
             if let approvedPlan { request["approved_plan"] = encodedJSONObject(approvedPlan) }
             if let residentProfileID { request["conversation_profile_id"] = residentProfileID.uuidString }
+            if let agentChoices { request["agent_model_choices"] = agentChoices.map(\.wireValue) }
             if let capsuleDispatch {
                 if dispatchedTeam == nil { request["agent_profile"] = Self.savedAgentProfileBody(capsuleDispatch.profile) }
+                if capsuleDispatch.profileOnly, dispatchedTeam == nil {
+                    var route: [String: Any] = ["profile_id": capsuleDispatch.profile.id.uuidString,
+                        "provider": capsuleDispatch.provider, "model": capsuleDispatch.profile.model]
+                    if let accountID = capsuleDispatch.accountID { route["provider_account_id"] = accountID }
+                    request["agent_chat_route"] = route
+                }
                 if !capsuleDispatch.profileOnly { request["capsule_context"] = capsuleDispatch.context }
             }
             if let savedConfig = savedGoal?.execution["agent_config"],
@@ -469,9 +536,9 @@ extension AppModel {
             guard let worker = await self.ensureChatWorker(
                 for: dispatchedSessionID,
                 workspaceRoot: dispatchedWorkspaceRoot,
-                provider: capsuleDispatch?.provider ?? capturedIdentityProvider?.provider,
-                providerAccountID: capsuleDispatch?.accountID ?? capturedIdentityProvider?.accountID,
-                model: capsuleDispatch?.profile.model ?? capturedIdentityProvider?.model
+                provider: capsuleDispatch?.provider ?? capturedIdentityProvider?.provider ?? ordinaryRoute?.provider,
+                providerAccountID: capsuleDispatch?.accountID ?? capturedIdentityProvider?.accountID ?? ordinaryRoute?.accountID?.uuidString,
+                model: capsuleDispatch?.profile.model ?? capturedIdentityProvider?.model ?? ordinaryRoute?.model
             ) else {
                 self.discardAutomaticModelRoutingTurn(
                     for: dispatchedSessionID,
@@ -523,7 +590,7 @@ extension AppModel {
                 if capsuleDispatch != nil { worker.hasCapsuleProviderOverride = true }
                 worker.hasCapsuleProviderOverride = try await self.prepareChatWorkerCapsuleRoute(
                     using: worker.service, capsuleDispatch: capsuleDispatch,
-                    restoringOverride: worker.hasCapsuleProviderOverride,
+                    restoringOverride: worker.hasCapsuleProviderOverride || ordinaryRoute != nil,
                     ordinaryProviderBody: ordinaryProviderBody
                 )
                 if let dispatchedGoalID,
