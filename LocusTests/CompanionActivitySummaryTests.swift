@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import Locus
@@ -323,6 +324,86 @@ final class CompanionActivitySummaryTests: XCTestCase {
             model.companionActivityIncludes($0, profileID: profile.id)
         }.map(\.id), ["valid"])
         XCTAssertEqual(model.companionActivitySummary(profileID: profile.id).unreadCount, 1)
+    }
+
+    func testActivityPresentationSharesDerivedStateAndInvalidatesSynchronously() {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let profile = AgentProfile(name: "Companion", model: "fixture")
+        model.agentProfiles = [profile]
+        model.initialWorkspacePath = "/tmp/companion-presentation-cache"
+        model.sessions = [activitySession("chat", owner: profile.id, workspace: model.workspacePath)]
+        let source = CompanionActivityPresentation(app: model)
+        let baseline = source.summary(profileID: profile.id)
+        for _ in 0..<20 {
+            XCTAssertEqual(source.summary(profileID: profile.id), baseline)
+            XCTAssertNil(source.voicePose(profileID: profile.id))
+            XCTAssertEqual(source.scopeID(profileID: profile.id), model.workspacePath)
+        }
+        XCTAssertEqual(source.presentationBuildCountForTesting, 1,
+                       "Avatar and status copies share one profile derivation")
+
+        model.taskConversationStates = ["chat": .init(sessionID: "chat", runID: "run",
+            state: .queued, updatedAt: Date())]
+        XCTAssertEqual(source.summary(profileID: profile.id)?.execution, .queued,
+                       "A synchronous read after a source change must not return the previous cache")
+        XCTAssertEqual(source.presentationBuildCountForTesting, 2)
+        model.taskConversationStates = ["chat": .init(sessionID: "chat", runID: "run",
+            state: .waitingPermission, updatedAt: Date())]
+        XCTAssertEqual(source.summary(profileID: profile.id)?.execution, .needsApproval)
+        XCTAssertEqual(source.presentationBuildCountForTesting, 3)
+    }
+
+    func testActivityPresentationDoesNotReuseAReadDuringWillChange() async {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let profile = AgentProfile(name: "Companion", model: "fixture")
+        model.agentProfiles = [profile]
+        model.initialWorkspacePath = "/tmp/companion-presentation-will-change"
+        model.sessions = [activitySession("chat", owner: profile.id, workspace: model.workspacePath)]
+        let source = CompanionActivityPresentation(app: model)
+        _ = source.summary(profileID: profile.id)
+        let earlyRead = model.objectWillChange.sink { _ = source.summary(profileID: profile.id) }
+        defer { earlyRead.cancel() }
+        model.taskConversationStates = ["chat": .init(sessionID: "chat", runID: "run",
+            state: .waitingPermission, updatedAt: Date())]
+        XCTAssertEqual(source.summary(profileID: profile.id)?.execution, .needsApproval)
+        await drainMainQueue()
+        XCTAssertEqual(source.summary(profileID: profile.id)?.execution, .needsApproval)
+    }
+
+    func testActivityPresentationCoalescesBurstsAndSkipsUnchangedViews() async {
+        let model = AppModel(startImmediately: false, backendOverride: stubbedBackendService())
+        let profile = AgentProfile(name: "Companion", model: "fixture")
+        model.agentProfiles = [profile]
+        model.initialWorkspacePath = "/tmp/companion-presentation-burst"
+        model.sessions = [activitySession("chat", owner: profile.id, workspace: model.workspacePath)]
+        let source = CompanionActivityPresentation(app: model)
+        _ = source.summary(profileID: profile.id)
+        var publications = 0
+        let observation = source.objectWillChange.sink { publications += 1 }
+        defer { observation.cancel() }
+        let before = source.presentationBuildCountForTesting
+        for _ in 0..<100 { model.objectWillChange.send() }
+        await drainMainQueue()
+        XCTAssertEqual(publications, 0, "Unrelated app changes do not repaint companion activity")
+        XCTAssertEqual(source.presentationBuildCountForTesting, before + 1,
+                       "A synchronous publication burst produces one settled derivation")
+
+        let afterUnrelated = source.presentationBuildCountForTesting
+        for value in 0..<100 {
+            model.taskConversationStates = ["chat": .init(sessionID: "chat", runID: "run",
+                state: value == 99 ? .waitingPermission : .running,
+                updatedAt: Date(timeIntervalSince1970: Double(value)))]
+        }
+        await drainMainQueue()
+        XCTAssertEqual(publications, 1, "Publish the settled activity once, including urgent approvals")
+        XCTAssertEqual(source.summary(profileID: profile.id)?.execution, .needsApproval)
+        XCTAssertEqual(source.presentationBuildCountForTesting, afterUnrelated + 1)
+    }
+
+    private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 
     private func activitySession(_ id: String, owner: UUID, workspace: String) -> SessionSummary {

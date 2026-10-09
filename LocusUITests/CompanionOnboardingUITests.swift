@@ -158,6 +158,38 @@ final class CompanionOnboardingUITests: XCTestCase {
         capture("Companion panel drafts restored")
     }
 
+    func testCompanionSendShowsMessageBeforePreflightAndRestoresDraftOnCancel() {
+        app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_CHAT"] = "1"
+        app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_SEND_DELAY"] = "1"
+        app.launch()
+        XCTAssertTrue(element("composer.input").waitForExistence(timeout: 15))
+        element("inspector.rail.companion").click()
+        let input = element("companion.panel.input")
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.click()
+        input.typeText("Synthetic delayed companion send")
+        element("companion.panel.send").click()
+
+        // The fixture holds ownership validation for ten seconds. Sending must
+        // already be visible, and cancel must remain usable during that wait.
+        XCTAssertEqual(input.value as? String, "")
+        let message = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "companion.panel.message.")
+        ).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 2))
+        let stop = element("companion.panel.stop")
+        XCTAssertTrue(stop.exists)
+        stop.click()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Synthetic delayed companion send"), object: input
+        )], timeout: 3), .completed)
+        XCTAssertFalse(message.exists)
+        XCTAssertTrue(element("companion.panel.send").isEnabled)
+        capture("Companion draft restored after cancelling delayed send")
+    }
+
     func testCompanionShortcutsOpenProfileAndConversationWithoutLosingDrafts() {
         app.launchEnvironment["LOCUS_UI_TESTING_FIRST_LAUNCH"] = "0"
         app.launchEnvironment["LOCUS_UI_TESTING_COMPANION_OFFLINE"] = "0"

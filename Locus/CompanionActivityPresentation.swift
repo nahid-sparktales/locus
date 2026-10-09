@@ -5,8 +5,26 @@ import SwiftUI
 /// timer, provider request, profile or execution controls.
 @MainActor
 final class CompanionActivityPresentation: ObservableObject {
+    private struct Presentation: Equatable {
+        let summary: CompanionActivitySummary?
+        let voicePose: CompanionCharacterPose?
+        let scopeID: String
+    }
+
+    private struct CachedPresentation {
+        let revision: UInt64
+        let value: Presentation
+    }
+
     private weak var app: AppModel?
     private var observations: Set<AnyCancellable> = []
+    private var revision: UInt64 = 0
+    private var refreshScheduled = false
+    private var cached: [UUID: CachedPresentation] = [:]
+    private var published: [UUID: Presentation] = [:]
+#if DEBUG
+    private(set) var presentationBuildCountForTesting = 0
+#endif
 
     init(app: AppModel) {
         self.app = app
@@ -14,19 +32,64 @@ final class CompanionActivityPresentation: ObservableObject {
             app.runs.objectWillChange.eraseToAnyPublisher(), app.runtimeStatus.objectWillChange.eraseToAnyPublisher(),
             app.providerAccountsModel.objectWillChange.eraseToAnyPublisher(), app.sessionCatalog.objectWillChange.eraseToAnyPublisher(),
             app.agentTeamsModel.objectWillChange.eraseToAnyPublisher(), app.voiceControl.objectWillChange.eraseToAnyPublisher()]
-        Publishers.MergeMany(publishers).receive(on: RunLoop.main).sink { [weak self] _ in
-            self?.objectWillChange.send()
+        // These owners publish on the main actor. Invalidate synchronously so
+        // callers immediately see a changed owner, but let its whole mutation
+        // finish before recomputing the shared presentation and notifying views.
+        Publishers.MergeMany(publishers).sink { [weak self] _ in
+            self?.sourceWillChange()
         }.store(in: &observations)
     }
 
-    func summary(profileID: UUID) -> CompanionActivitySummary? { app?.companionActivitySummary(profileID: profileID) }
-    func voicePose(profileID: UUID) -> CompanionCharacterPose? {
-        guard let app, profileID == app.primaryCompanionProfile?.id,
-              app.voiceControl.activeConversationSessionID == app.companionConversation?.id,
-              app.voiceControl.isVoiceModeActive else { return nil }
-        return app.voiceControl.isListening ? .listening : app.voiceControl.isSpeaking ? .speaking : nil
+    func summary(profileID: UUID) -> CompanionActivitySummary? { presentation(profileID: profileID).summary }
+    func voicePose(profileID: UUID) -> CompanionCharacterPose? { presentation(profileID: profileID).voicePose }
+    func scopeID(profileID: UUID) -> String { presentation(profileID: profileID).scopeID }
+
+    private func presentation(profileID: UUID) -> Presentation {
+        // During objectWillChange delivery the owner may not have assigned its
+        // new value yet. Do not reuse an intermediate read until the deferred
+        // refresh has observed the completed mutation.
+        if !refreshScheduled, let entry = cached[profileID], entry.revision == revision { return entry.value }
+#if DEBUG
+        presentationBuildCountForTesting += 1
+#endif
+        let voicePose: CompanionCharacterPose?
+        if let app, profileID == app.primaryCompanionProfile?.id,
+           app.voiceControl.activeConversationSessionID == app.companionConversation?.id,
+           app.voiceControl.isVoiceModeActive {
+            voicePose = app.voiceControl.isListening ? .listening : app.voiceControl.isSpeaking ? .speaking : nil
+        } else {
+            voicePose = nil
+        }
+        let value = Presentation(summary: app?.companionActivitySummary(profileID: profileID),
+            voicePose: voicePose, scopeID: app?.companionActivityWorkspacePath(profileID: profileID) ?? "")
+        cached[profileID] = CachedPresentation(revision: revision, value: value)
+        if published[profileID] == nil { published[profileID] = value }
+        return value
     }
-    func scopeID(profileID: UUID) -> String { app?.companionActivityWorkspacePath(profileID: profileID) ?? "" }
+
+    private func sourceWillChange() {
+        revision &+= 1
+        guard !refreshScheduled else { return }
+        refreshScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.refreshPresentation() }
+    }
+
+    private func refreshPresentation() {
+        refreshScheduled = false
+        // objectWillChange precedes the mutation. A synchronous observer may
+        // have read the old value since invalidation; discard that intermediate
+        // cache before deriving the settled state.
+        revision &+= 1
+        var changed = false
+        for profileID in Array(published.keys) {
+            let value = presentation(profileID: profileID)
+            if published[profileID] != value { changed = true; published[profileID] = value }
+        }
+        // Composer edits, transcript tokens and panel geometry do not change
+        // companion activity. Avoid repainting every avatar for those events.
+        if changed { objectWillChange.send() }
+    }
+
 }
 
 struct CompanionCompletionReactionGate {

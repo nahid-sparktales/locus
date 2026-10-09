@@ -117,6 +117,14 @@ final class CompanionDesktopController: NSObject, ObservableObject, NSWindowDele
 }
 
 extension AppModel {
+    /// The desktop's foreground composer is another view of the current chat.
+    /// Use its synchronous presentation and existing admission/failure lifecycle.
+    func sendCompanionDesktopMessage(sessionID: String) {
+        guard currentSessionID == sessionID, companionScope?.sessionID == sessionID,
+              isAgentOnline, !savedAgentConversationState(sessionID).busy else { return }
+        send(paneDraft(for: sessionID), preservingDraftOnFailure: true, allowLocalCommands: false)
+    }
+
     func configureCompanionDesktop() {
         companionDesktop.configure(defaults: persistenceEnabled ? .standard : nil) { [weak self] in
             guard let self else { return AnyView(EmptyView()) }
@@ -198,8 +206,6 @@ private struct CompanionDesktopForegroundComposer: View {
     @EnvironmentObject private var companionContext: CompanionContextSharingModel
     @EnvironmentObject private var composerState: ComposerStateModel
     @ObservedObject var panel: CompanionPanelModel
-    @State private var sending = false
-    @State private var error: String?
     var body: some View {
         if panel.isForegroundConversation, let sessionID = panel.selectedSessionID {
             VStack(alignment: .leading, spacing: 6) {
@@ -212,32 +218,13 @@ private struct CompanionDesktopForegroundComposer: View {
                 HStack {
                     CompanionVoiceControls()
                     Spacer()
-                    Button("Send") { send(sessionID) }
-                        .disabled(sending || !model.isAgentOnline || model.savedAgentConversationState(sessionID).busy
+                    Button("Send") { model.sendCompanionDesktopMessage(sessionID: sessionID) }
+                        .disabled(!model.isAgentOnline || model.savedAgentConversationState(sessionID).busy
                             || (model.paneDraft(for: sessionID).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 && companionContext.attachments.isEmpty))
                         .accessibilityIdentifier("companion.desktop.send")
                 }
-                if let error { Text(error).font(.caption).foregroundStyle(.orange) }
             }
-        }
-    }
-    private func send(_ sessionID: String) {
-        guard !sending, let scope = model.companionScope, scope.sessionID == sessionID else { return }
-        let original = model.paneDraft(for: sessionID)
-        let text = original.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Please look at the shared context."
-        let attachments = model.companionContext.scope == scope ? model.companionContext.attachments : []
-        let mode = panel.mode
-        sending = true; error = nil
-        Task { @MainActor in
-            defer { sending = false }
-            do {
-                guard model.companionScope == scope else { return }
-                try await model.sendSavedAgentTurn(sessionID: sessionID, workspace: scope.workspace,
-                    profileID: scope.profileID, text: text, mode: mode, preservingForeground: true, attachments: attachments)
-                model.companionContext.consume(Set(attachments.map(\.id)), for: scope)
-                if model.paneDraft(for: sessionID) == original { model.setPaneDraft("", for: sessionID) }
-            } catch { self.error = error.localizedDescription }
         }
     }
 }

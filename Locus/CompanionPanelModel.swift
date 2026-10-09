@@ -23,20 +23,53 @@ final class CompanionPanelModel: ObservableObject {
     private(set) var clearingTask: Task<Void, Never>?
     private var sendingTasks: [String: Task<Void, Never>] = [:]
     private var catalogObservation: AnyCancellable?
-    private var dispatch: ((String, String, UUID, String, WorkMode, [ChatAttachment]) async throws -> Void)?
+    private var transcriptObservation: AnyCancellable?
+    private var paneDraftObservation: AnyCancellable?
+    private var dispatch: ((Submission, SavedAgentConversationMetadata) async throws -> Void)?
+    @Published private var pendingMessages: [String: [ChatBlock]] = [:]
+    private var draftRevisions: [String: UInt64] = [:]
+
+    private struct Submission {
+        let sessionID: String
+        let workspace: String
+        let profileID: UUID
+        let text: String
+        let mode: WorkMode
+        let attachments: [ChatAttachment]
+        let runID: String
+    }
 
     func configure(app: AppModel,
                    dispatch: ((String, String, UUID, String, WorkMode, [ChatAttachment]) async throws -> Void)? = nil) {
         self.app = app
-        self.dispatch = dispatch ?? { [weak app] id, workspace, profileID, text, mode, attachments in
-            guard let app else { throw CancellationError() }
-            try await app.sendSavedAgentTurn(sessionID: id, workspace: workspace, profileID: profileID,
-                                            text: text, mode: mode, preservingForeground: true, attachments: attachments)
+        self.dispatch = { [weak app] submission, validatedSession in
+            if let dispatch {
+                try await dispatch(submission.sessionID, submission.workspace, submission.profileID,
+                                   submission.text, submission.mode, submission.attachments)
+            } else {
+                guard let app else { throw CancellationError() }
+                try await app.sendSavedAgentTurn(sessionID: submission.sessionID, workspace: submission.workspace,
+                    profileID: submission.profileID, text: submission.text, mode: submission.mode,
+                    runID: submission.runID, preservingForeground: true, attachments: submission.attachments,
+                    validatedSession: validatedSession)
+            }
         }
         // Catalog changes intentionally do not invalidate the entire AppModel.
         // Observe this store only for the panel's history and selected identity.
         catalogObservation = app.sessionCatalog.$snapshot.dropFirst().sink { [weak self] snapshot in
             self?.catalogDidChange(snapshot)
+        }
+        transcriptObservation = app.$splitPaneBlocks.sink { [weak self] transcripts in
+            self?.reconcilePendingMessages(with: transcripts)
+        }
+        paneDraftObservation = app.$splitPaneDrafts.dropFirst().sink { [weak self, weak app] drafts in
+            guard let self, let app else { return }
+            // Observe the canonical store so edits from a split pane or voice
+            // are protected just like edits through the inspector's binding.
+            // @Published supplies the next dictionary before its backing value.
+            for id in sendingSessionIDs where (drafts[id] ?? "") != (app.splitPaneDrafts[id] ?? "") {
+                draftRevisions[id, default: 0] &+= 1
+            }
         }
     }
 
@@ -58,7 +91,17 @@ final class CompanionPanelModel: ObservableObject {
     var isForegroundConversation: Bool { selectedSessionID != nil && selectedSessionID == app?.currentSessionID }
     var blocks: [ChatBlock] {
         guard selectionIsCurrent, let id = selectedSessionID, loadedSessionID == id else { return [] }
-        return app?.paneBlocks(for: id) ?? []
+        var visible = app?.paneBlocks(for: id) ?? []
+        guard let candidates = pendingMessages[id], !candidates.isEmpty else { return visible }
+        let durableRunIDs = Set(visible.lazy.filter { $0.kind == .user }.compactMap(\.runID))
+        let pending = candidates.filter { !durableRunIDs.contains($0.runID ?? "") }
+        if !pending.isEmpty {
+            // Keep submitted text visible while admission or the first
+            // authoritative transcript refresh is still in flight.
+            let insertion = visible.firstIndex(where: \.isStreaming) ?? visible.endIndex
+            visible.insert(contentsOf: pending, at: insertion)
+        }
+        return visible
     }
     var state: SavedAgentConversationState {
         guard selectionIsCurrent, let id = selectedSessionID else { return .init() }
@@ -299,34 +342,70 @@ final class CompanionPanelModel: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Please look at the shared context."
         let originalDraft = draft
         let requestedWorkspace = workspace
-        let requestedMode = mode
         let revision = selectionRevision
+        let submission = Submission(sessionID: id, workspace: requestedWorkspace, profileID: profileID,
+                                    text: text, mode: mode, attachments: attachments, runID: UUID().uuidString)
         sendingSessionIDs.insert(id)
         error = nil
+        // Acknowledge the click synchronously. Network validation and queue
+        // admission must never hold submitted text in the composer for seconds.
+        let durableRunIDs = Set(app.paneBlocks(for: id).lazy.filter { $0.kind == .user }.compactMap(\.runID))
+        pendingMessages[id] = (pendingMessages[id] ?? []).filter { !durableRunIDs.contains($0.runID ?? "") }
+            + [ChatBlock(kind: .user, text: text, runID: submission.runID)]
+        app.setPaneDraft("", for: id)
+        let draftRevision = draftRevisions[id, default: 0]
+        let foregroundDraftRevision = app.composerState.draftRevision
         sendingTasks[id] = Task { [weak self, weak app] in
             guard let self, let app else { return }
             defer { sendingSessionIDs.remove(id); sendingTasks[id] = nil }
             do {
-                // Revalidate actual durable ownership immediately before any
-                // dispatch; a cached catalog alone cannot authorize a turn.
-                let response = try await app.backend.get("/api/sessions/\(id)", as: CompanionPanelConversation.self)
+                // Fetch only routing metadata, once. The runtime uses this same
+                // durable ownership check instead of reading the transcript again.
+                let response = try await app.backend.get("/api/sessions/\(id)/execution-context",
+                                                         as: SavedAgentConversationMetadata.self)
                 try Task.checkCancellation()
                 guard selectionRevision == revision, scopeIsCurrent, selectedSessionID == id,
                       id != app.currentSessionID else { throw CancellationError() }
-                guard response.identity.matches(sessionID: id, profileID: profileID, workspace: requestedWorkspace),
-                      response.detail.archived != true else {
+                guard response.matches(sessionID: id, profileID: profileID, workspace: requestedWorkspace) else {
                     throw SavedAgentConversationError.unavailable("This conversation no longer belongs to your companion and project, or is archived.")
                 }
-                try await dispatch(id, requestedWorkspace, profileID, text, requestedMode, attachments)
+                try await dispatch(submission, response)
                 app.companionContext.consume(Set(attachments.map(\.id)), for: scope)
-                // Acceptance only clears the exact submitted draft. Later edits
-                // or a different selected chat remain untouched.
-                if id != app.currentSessionID, app.paneDraft(for: id) == originalDraft {
-                    app.setPaneDraft("", for: id)
-                }
             } catch {
+                // Restore only an untouched composer. A later edit, including
+                // an intentional edit back to empty, belongs to the user.
+                let foregroundIsUntouched = id != app.currentSessionID
+                    || app.composerState.draftRevision == foregroundDraftRevision
+                let canRestoreDraft = draftRevisions[id, default: 0] == draftRevision
+                    && foregroundIsUntouched && app.paneDraft(for: id).isEmpty
+                if canRestoreDraft {
+                    app.setPaneDraft(originalDraft, for: id)
+                    pendingMessages[id]?.removeAll { $0.runID == submission.runID }
+                    if pendingMessages[id]?.isEmpty == true { pendingMessages[id] = nil }
+                } else {
+                    // Keep both drafts recoverable. The main composer already
+                    // retains failed submitted rows; do the same here, with an
+                    // explicit failure label even when cancellation is silent.
+                    let failed = ChatBlock(kind: .error,
+                        text: "Message not sent. Copy the message above to retry.", runID: submission.runID)
+                    if id == app.currentSessionID {
+                        if !app.blocks.contains(where: { $0.kind == .user && $0.runID == submission.runID }) {
+                            app.blocks.append(ChatBlock(kind: .user, text: text, runID: submission.runID))
+                        }
+                        app.blocks.append(failed)
+                        pendingMessages[id]?.removeAll { $0.runID == submission.runID }
+                        if pendingMessages[id]?.isEmpty == true { pendingMessages[id] = nil }
+                    } else {
+                        pendingMessages[id, default: []].append(failed)
+                    }
+                    app.showToast("Companion message not sent — your newer draft is unchanged.")
+                }
                 guard selectionRevision == revision, scopeIsCurrent else { return }
-                if !(error is CancellationError) { self.error = error.localizedDescription }
+                if !canRestoreDraft {
+                    self.error = "Message not sent. Your draft is unchanged; copy the earlier message to retry."
+                } else if !Task.isCancelled && !(error is CancellationError) {
+                    self.error = error.localizedDescription
+                }
             }
         }
     }
@@ -347,6 +426,15 @@ final class CompanionPanelModel: ObservableObject {
             return
         }
         app.openCompanionMainConversation()
+    }
+
+    private func reconcilePendingMessages(with transcripts: [String: [ChatBlock]]) {
+        for (id, pending) in pendingMessages {
+            guard let transcript = transcripts[id] else { continue }
+            let durableRunIDs = Set(transcript.lazy.filter { $0.kind == .user }.compactMap(\.runID))
+            let remaining = pending.filter { !durableRunIDs.contains($0.runID ?? "") }
+            if remaining.count != pending.count { pendingMessages[id] = remaining.isEmpty ? nil : remaining }
+        }
     }
 
     private func catalogDidChange(_ snapshot: SessionCatalogSnapshot) {

@@ -532,6 +532,30 @@ def sessions_restore(
         raise _busy_http() from exc
 
 
+def session_execution_context(session_id: str) -> dict[str, Any]:
+    """Fresh ownership and checkout metadata without loading the transcript.
+
+    Sending a turn only needs these fields. Reconstructing history, scanning
+    agent activity and resolving historical model changes before admission
+    made each send scale with the length of the ongoing conversation.
+    """
+    path = SessionStore.path_for(session_id)
+    if path is None:
+        raise HTTPException(404, f"session not found: {session_id}")
+    header = SessionStore.header(path)
+    meta = SessionMeta.get(session_id)
+    return {
+        "id": session_id,
+        "agent_profile_id": meta.get("agent_profile_id"),
+        "cwd": header.get("cwd"),
+        "workspace_root": meta.get("workspace_root"),
+        "execution_path": meta.get("execution_path"),
+        "environment": meta.get("environment"),
+        "archived": bool(meta.get("archived", False)),
+        "task": meta.get("task"),
+    }
+
+
 def session_detail(session_id: str) -> dict[str, Any]:
     path = SessionStore.path_for(session_id)
     if path is None:
@@ -964,6 +988,9 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/sessions/{session_id}", session_delete, methods=["DELETE"])
     router.add_api_route("/api/sessions/restore", sessions_restore, methods=["POST"])
     router.add_api_route("/api/sessions/{session_id}", session_detail, methods=["GET"])
+    router.add_api_route(
+        "/api/sessions/{session_id}/execution-context", session_execution_context, methods=["GET"]
+    )
     router.add_api_route("/api/sessions/{session_id}/media/{media_id}", session_media, methods=["GET"])
     router.add_api_route(
         "/api/sessions/{session_id}/export-data", session_export_data, methods=["GET"]

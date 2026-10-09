@@ -296,6 +296,7 @@ extension AppModel {
            draftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
             draftText = ""
         }
+        let dispatchedDraftRevision = composerState.draftRevision
         // Adaptive workers stay inside the ordinary Solo experience. The Runs
         // inspector still opens automatically for explicit teams only.
         let opensRuns = dispatchedTeam != nil
@@ -393,7 +394,8 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan,
+                        expectedDraftRevision: dispatchedDraftRevision
                     )
                 } else if requeueingOnFailure, approvedPlan == nil,
                           let runtime = self.taskWorkers[dispatchedSessionID] {
@@ -485,7 +487,8 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan,
+                        expectedDraftRevision: dispatchedDraftRevision
                     )
                 }
                 return
@@ -570,7 +573,8 @@ extension AppModel {
                     self.stashUnsent(
                         text,
                         requeue: requeueingOnFailure,
-                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
+                        preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan,
+                        expectedDraftRevision: dispatchedDraftRevision
                     )
                 }
                 return
@@ -596,7 +600,8 @@ extension AppModel {
                         self.stashUnsent(
                             text,
                             requeue: requeueingOnFailure,
-                            preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan
+                            preserveDraft: preservingDraftOnFailure, approvedPlan: approvedPlan,
+                            expectedDraftRevision: dispatchedDraftRevision
                         )
                     }
                     self.showToast("The agent did not accept this chat. It is ready to retry.")
@@ -754,7 +759,8 @@ extension AppModel {
     /// Where a message goes when it could not be delivered. A drained queue
     /// entry returns to the head of the queue — writing it into the draft
     /// would destroy whatever the user typed while waiting.
-    private func stashUnsent(_ text: String, requeue: Bool, preserveDraft: Bool, approvedPlan: [String: JSONValue]? = nil) {
+    private func stashUnsent(_ text: String, requeue: Bool, preserveDraft: Bool, approvedPlan: [String: JSONValue]? = nil,
+                             expectedDraftRevision: UInt? = nil) {
         if approvedPlan != nil {
             planApprovalPending = true
             showToast("The saved plan was not sent. Use Implement to retry its approval.")
@@ -764,6 +770,11 @@ extension AppModel {
             queuedMessages.insert(text, at: 0)
             showToast("Kept in queue — reconnect the local agent to send")
         } else if preserveDraft {
+            if let expectedDraftRevision,
+               composerState.draftRevision != expectedDraftRevision || (!draftText.isEmpty && draftText != text) {
+                showToast("Not sent — your newer draft is unchanged. Copy the earlier message from the chat to retry.")
+                return
+            }
             draftText = text
             showToast("Draft kept — reconnect the local agent to send")
         } else {
