@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 4.2.3 — 2026-10-09
+
+### Fixed
+
+- Companion messages appear in the conversation immediately after Send,
+  while ownership checks and worker setup continue in the background.
+- Sending uses one small metadata request instead of downloading the complete
+  conversation twice. Long chat and catalog responses decode off the UI thread.
+- Failed or cancelled sends preserve newer drafts and keep unsent messages
+  recoverable. Accepted messages reconcile without duplicate bubbles.
+- The desktop companion uses the same responsive send flow as the main chat.
+- Companion activity updates reuse shared state and avoid unnecessary avatar
+  refreshes. Short companion chats use more stable transcript layout.
+- Reusing the same Ollama or API model connection preserves its warm client
+  and discovered context settings between turns.
+
 ## 4.2.2 — 2026-10-08
 
 ### Fixed

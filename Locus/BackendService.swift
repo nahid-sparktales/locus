@@ -134,7 +134,7 @@ final class BackendService {
         request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
-        return try JSONDecoder().decode(type, from: data)
+        return try await Self.decodeResponse(type, from: data)
     }
 
     func post<T: Decodable>(
@@ -185,7 +185,7 @@ final class BackendService {
         request.httpBody = data
         let (responseData, response) = try await session.data(for: request)
         try validate(response, data: responseData)
-        return try JSONDecoder().decode(type, from: responseData)
+        return try await Self.decodeResponse(type, from: responseData)
     }
 
     func put<T: Decodable>(_ path: String, body: [String: Any], as type: T.Type) async throws -> T {
@@ -208,7 +208,7 @@ final class BackendService {
         request.setValue(authToken, forHTTPHeaderField: BackendSecurity.header)
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
-        return try JSONDecoder().decode(type, from: data)
+        return try await Self.decodeResponse(type, from: data)
     }
 
     nonisolated static func reconnectDelay(for attempt: Int) -> TimeInterval {
@@ -234,7 +234,17 @@ final class BackendService {
         }
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
-        return try JSONDecoder().decode(type, from: data)
+        return try await Self.decodeResponse(type, from: data)
+    }
+
+    /// URLSession suspends the request, but its main-actor caller resumes here
+    /// afterward. Decode large histories and catalogs on the generic executor
+    /// so receiving them cannot hold up typing, send feedback, or animation.
+    private nonisolated static func decodeResponse<T: Decodable>(_ type: T.Type, from data: Data) async throws -> T {
+        try Task.checkCancellation()
+        let decoded = try JSONDecoder().decode(type, from: data)
+        try Task.checkCancellation()
+        return decoded
     }
 
     private func receive(from task: URLSessionWebSocketTask) {
