@@ -1467,25 +1467,6 @@ struct WorkspaceSourceLocation: Hashable, Sendable {
 }
 
 enum MarkdownArtifactPromotion {
-    /// The file reference a nested paragraph leads with, if it is the only
-    /// one. A bullet like `` `AppModel.swift` — the composition root ``
-    /// promotes to a chip; a bullet comparing two files stays prose, so an
-    /// annotation's actions are never attributed to the wrong file.
-    static func leadingArtifact(
-        in runs: [MarkdownInlineRun],
-        workspacePath: String?,
-        resolveArtifact: ((String?) -> WorkspaceArtifactReference?)? = nil
-    ) -> WorkspaceArtifactReference? {
-        let resolve = resolveArtifact ?? { WorkspaceArtifactReference.classify($0, workspacePath: workspacePath) }
-        guard let first = runs.first,
-              let reference = resolve(candidate(in: first)),
-              runs.dropFirst().allSatisfy({ run in
-                  resolve(candidate(in: run)) == nil
-              })
-        else { return nil }
-        return reference
-    }
-
     /// The text a run offers as a possible workspace path: a link's
     /// destination, or the literal text of inline code.
     static func candidate(in run: MarkdownInlineRun) -> String? {

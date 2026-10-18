@@ -291,15 +291,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         if visible { scheduleProjectionRefresh() }
     }
 
-    /// Focus the map camera and close any open conversation panel.
-    func focusResident(_ agentID: String) {
-        guard canInteract, profilesProvider().contains(where: { $0.id.uuidString == agentID }) else { return }
-        dismissConversation()
-        selection = agentID
-        focusRequest += 1
-        refresh()
-    }
-
     func chooseResident(_ agentID: String) {
         if quartersPresented { openAgentProfile(agentID) }
         else { openResidentMapChat(agentID) }
@@ -598,11 +589,6 @@ final class AgentWorldModel: NSObject, ObservableObject, NSWindowDelegate {
         activateSelectedConversation()
     }
 
-    var conversationContext: String? {
-        guard let sessionID = selectedSessionOverride, let profile = selectedProfile,
-              appModel?.savedAgentProfileID(for: sessionID) != profile.id else { return nil }
-        return "Shared task · \(profile.name)"
-    }
     func requestActivityCenter() {
         guard activeScreen?.screen.capabilities.contains("agents.read") == true else { return }
         appModel?.activity.openActivityCenter()

@@ -1338,9 +1338,7 @@ final class FeatureLogicTests: XCTestCase {
                     .init(text: name, style: .code),
                     .init(text: " — workspace notes"),
                 ]
-                let chip = try XCTUnwrap(MarkdownArtifactPromotion.leadingArtifact(
-                    in: runs, workspacePath: workspace.path, resolveArtifact: resolve
-                ))
+                let chip = try XCTUnwrap(resolve(MarkdownArtifactPromotion.candidate(in: runs[0])))
                 let text = MarkdownNativeText.attributed(
                     runs, size: 13, weight: .regular, color: .primary,
                     lineSpacing: 5, inlineCodeSize: 12,
@@ -1426,51 +1424,6 @@ final class FeatureLogicTests: XCTestCase {
         ), "Cached presentation must never authorize a changed symlink target")
         cache.setLiveResizing(false)
         XCTAssertNil(cache.classify(candidate, workspacePath: workspace.path))
-    }
-
-    func testLeadingArtifactPromotesAnnotatedBulletsButNotComparisons() throws {
-        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("locus-chip-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        try Data("a".utf8).write(to: workspace.appendingPathComponent("notes.md"))
-        try Data("b".utf8).write(to: workspace.appendingPathComponent("todo.md"))
-
-        func reference(_ runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
-            MarkdownArtifactPromotion.leadingArtifact(in: runs, workspacePath: workspace.path)
-        }
-
-        // A bare backticked name and a bare link both promote.
-        XCTAssertEqual(
-            reference([.init(text: "notes.md", style: .code)])?.relativePath, "notes.md"
-        )
-        XCTAssertEqual(
-            reference([.init(text: "notes.md", destination: "notes.md")])?.relativePath,
-            "notes.md"
-        )
-        // The answer contract annotates every bullet; the annotation rides
-        // along instead of demoting the reference to prose.
-        XCTAssertEqual(
-            reference([
-                .init(text: "notes.md", style: .code),
-                .init(text: " — the working notes"),
-            ])?.relativePath,
-            "notes.md"
-        )
-        // Prose that merely mentions a file does not lead with it.
-        XCTAssertNil(reference([
-            .init(text: "see "),
-            .init(text: "notes.md", style: .code),
-        ]))
-        // A comparison of two files stays prose: a chip's actions would be
-        // attributed to just one of them.
-        XCTAssertNil(reference([
-            .init(text: "notes.md", style: .code),
-            .init(text: " duplicates "),
-            .init(text: "todo.md", style: .code),
-        ]))
-        // Names that resolve to nothing in the workspace never promote.
-        XCTAssertNil(reference([.init(text: "missing.md", style: .code)]))
     }
 
     @MainActor

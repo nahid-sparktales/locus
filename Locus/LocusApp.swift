@@ -295,25 +295,6 @@ struct LocusApp: App {
                     .background(LocusTheme.surfaceCanvas)
             }
         #endif
-        case "browser":
-            BrowserPanel(
-                browser: model.browser,
-                sessionID: model.currentSessionID,
-                homeURL: model.normalizedPreviewURL,
-                isExpanded: locusEnvironment["LOCUS_UI_TESTING_BROWSER_EXPANDED"] == "1",
-                onToggleExpand: {}
-            )
-            .onAppear {
-                if model.browser.snapshots(for: model.currentSessionID).isEmpty {
-                    model.browser.userNewTab(sessionID: model.currentSessionID)
-                }
-            }
-            .frame(
-                maxWidth: locusEnvironment["LOCUS_UI_TESTING_BROWSER_COMPACT"] == "1"
-                    ? 440 : .infinity
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(LocusTheme.surfaceCanvas)
         case "notebook":
             GeometryReader { proxy in
                 NotebookSheet(notebook: model.notebook, availableSize: proxy.size)
