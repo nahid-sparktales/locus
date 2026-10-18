@@ -9,7 +9,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from ..agent_workspaces import AgentChatWorkspace, validate_agent_home
-from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..core import AgentCore
 from ..goals import GoalError, GoalStore
@@ -29,18 +28,9 @@ from ..worktrees import (
     WorktreeError,
     is_git_workspace,
 )
-from .dependencies import get_service
+from .dependencies import _busy_http, _require_capability, get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
-
-
-def _require_capability(name: str) -> None:
-    if not capability_enabled(name):
-        raise HTTPException(404, f"capability is disabled: {name}")
 
 
 def _session_has_active_run(service: ChatService, session_id: str) -> bool:

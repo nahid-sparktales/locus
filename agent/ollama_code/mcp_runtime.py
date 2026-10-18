@@ -21,10 +21,6 @@ from .tools import MAX_OUTPUT, _truncate
 EventHandler = Callable[[dict[str, Any]], None]
 
 
-class MCPRuntimeUnavailable(RuntimeError):
-    pass
-
-
 def _fingerprint(
     server: dict[str, Any], credentials: dict[str, Any], *, connection_only: bool = False,
 ) -> str:
@@ -1609,11 +1605,6 @@ class MCPManager:
             self._statuses[value["id"]] = value
         self.emit({"type": "mcp_status", **value})
 
-    @staticmethod
-    def _looks_like_auth(message: str) -> bool:
-        lowered = message.lower()
-        return any(marker in lowered for marker in ("401", "403", "unauthorized", "forbidden", "oauth"))
-
     def _current_item_allowed(self, server_id: str, item: dict[str, Any], kind: str) -> bool:
         server = next((value for value in self.extensions.mcp_servers() if value.get("id") == server_id), None)
         if not server or not server.get("enabled", True) or not server.get("active", True):
@@ -1655,7 +1646,7 @@ class MCPManager:
         self._publish_tools()
 
 
-__all__ = ["MCPManager", "MCPRuntimeUnavailable"]
+__all__ = ["MCPManager"]
 
 
 _SENSITIVE_FIELD = re.compile(

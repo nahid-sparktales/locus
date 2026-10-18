@@ -20,7 +20,6 @@ from pathlib import Path
 from locus_memory.crypto import derive_subkey
 from locus_memory.errors import IntegrityError, ReconciliationRequired, VaultLocked
 
-SERVICE = "io.sparktales.locus.memory-guard.v1"
 HELPER_ID = "io.sparktales.locus.memory-guard"
 
 

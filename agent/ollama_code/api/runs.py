@@ -19,7 +19,6 @@ from ..agent_chat_routes import (
     validate_chat_route,
     validate_model_choices,
 )
-from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError
 from ..orchestration import (
@@ -34,7 +33,7 @@ from ..sessions import SessionMeta, SessionStore
 from ..telemetry import TelemetryError, send_otlp
 from ..tools import truncate_output
 from ..worktrees import TaskCheckout, TaskCheckoutStore, WorktreeError
-from .dependencies import get_service
+from .dependencies import _busy_http, _require_capability, get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
 TeamTurnRunner = Callable[..., None]
@@ -48,15 +47,6 @@ def _get_team_runner(request: Request) -> TeamTurnRunner:
 
 
 TeamRunnerDependency = Annotated[TeamTurnRunner, Depends(_get_team_runner)]
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
-
-
-def _require_capability(name: str) -> None:
-    if not capability_enabled(name):
-        raise HTTPException(404, f"capability is disabled: {name}")
 
 
 def mcp_task_list(

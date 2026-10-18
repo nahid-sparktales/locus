@@ -457,7 +457,6 @@ def test_version_one_state_migrates_with_builtins_and_preserves_user_entries(tmp
 
 def test_bundled_skills_are_manual_optional_and_shadow_safe(tmp_path):
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
-    assert manager.startup_skills(str(tmp_path)) == []
 
     registry = ToolRegistry(manager)
     registry.begin_turn("Fix this feature", str(tmp_path))
@@ -467,7 +466,6 @@ def test_bundled_skills_are_manual_optional_and_shadow_safe(tmp_path):
     )
     registry.begin_turn("Use $grill-me to clarify this feature", str(tmp_path))
     context = registry.explicit_skill_context
-    assert "Startup skill" not in context
     assert "Explicitly activated skill $builtin:grill-me" in context
     assert "task-observer" not in context
     registry.begin_turn("Use $using-superpowers for this task", str(tmp_path))
@@ -482,8 +480,6 @@ def test_bundled_skills_are_manual_optional_and_shadow_safe(tmp_path):
 
     shadow = _skill(tmp_path / "user-skills", name="using-superpowers")
     manager.import_skill(str(shadow))
-    startup = manager.startup_skills(str(tmp_path))
-    assert all(item["name"] != "using-superpowers" for item in startup)
     replacement = next(
         item for item in manager.skills(str(tmp_path))
         if item["name"] == "using-superpowers" and not item.get("builtin")
@@ -525,7 +521,6 @@ def test_stale_bundled_startup_metadata_cannot_restore_default_activation(tmp_pa
     skill = next(item for item in manager.skills() if item.get("builtin"))
     assert skill["activation"] == "explicit"
     assert skill["allow_implicit_invocation"] is False
-    assert manager.startup_skills() == []
     registry = ToolRegistry(manager)
     registry.begin_turn("Work on this task", str(tmp_path))
     assert registry.explicit_skill_context == ""

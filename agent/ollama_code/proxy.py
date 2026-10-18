@@ -4,8 +4,7 @@ The app injects credential-free proxy URLs at agent spawn — ``HTTP_PROXY``/
 ``HTTPS_PROXY`` for a manual HTTP proxy, ``ALL_PROXY=socks5h://…`` for SOCKS —
 plus ``NO_PROXY``. Startup secrets never travel in the environment: the app
 sets a non-secret stdin flag, writes one bounded JSON line containing an
-optional percent-encoded proxy credential, then closes the pipe. The legacy
-proxy-only stdin form remains accepted.
+optional percent-encoded proxy credential, then closes the pipe.
 requests and httpx read proxies straight from ``os.environ``, so folding that
 credential into the URL variables is all this process needs to authenticate.
 
@@ -46,12 +45,11 @@ PROXY_URL_VARS = (
 #: The bypass list travels with the proxy URLs but never carries a secret.
 _BYPASS_VARS = ("NO_PROXY", "no_proxy")
 
-#: The handoff variables. ``LOCUS_PROXY_CREDENTIAL_STDIN`` is only a flag;
+#: The handoff variables. ``LOCUS_BOOTSTRAP_SECRETS_STDIN`` is only a flag;
 #: ``LOCUS_PROXY_CREDENTIAL`` is read by nothing and is listed here purely so a
 #: stray value cannot be inherited by a child (see ``activate_from_env``).
 _CREDENTIAL_VARS = (
-    "LOCUS_PROXY_CREDENTIAL", "LOCUS_PROXY_CREDENTIAL_STDIN",
-    "LOCUS_BOOTSTRAP_SECRETS_STDIN",
+    "LOCUS_PROXY_CREDENTIAL", "LOCUS_BOOTSTRAP_SECRETS_STDIN",
 )
 
 #: Whether activate_from_env folded a credential into this process's proxy
@@ -69,7 +67,7 @@ def activate_from_env() -> None:
     anything can make an outbound request.
 
     The credential arrives on stdin, and only on stdin, when the app sets
-    ``LOCUS_PROXY_CREDENTIAL_STDIN=1``; that flag is popped, as is
+    ``LOCUS_BOOTSTRAP_SECRETS_STDIN=1``; that flag is popped, as is
     ``LOCUS_PROXY_CREDENTIAL``, whose value is read by nothing. Taking a secret
     from the environment is precisely the exposure the stdin handoff exists to
     eliminate, so a value found in that variable is discarded, never used —
@@ -84,7 +82,6 @@ def activate_from_env() -> None:
     """
     global credential_applied
     bootstrap_stdin = os.environ.pop("LOCUS_BOOTSTRAP_SECRETS_STDIN", None) == "1"
-    from_stdin = os.environ.pop("LOCUS_PROXY_CREDENTIAL_STDIN", None) == "1"
     # Popped and dropped on the floor: whatever put a value here, it is not the
     # app, and it must not survive into a child's environment.
     os.environ.pop("LOCUS_PROXY_CREDENTIAL", None)
@@ -100,8 +97,6 @@ def activate_from_env() -> None:
                 credential = str(payload.get("proxy_credential") or "").strip()
         except (AttributeError, OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             credential = ""
-    elif from_stdin:
-        credential = _credential_from_stdin()
     if not credential:
         return
     # user and pass are each percent-encoded by the app, so the first ":" is
@@ -301,17 +296,3 @@ def _hostname(url: str) -> str:
     if not host or any(character in host for character in ", \t"):
         return ""
     return host
-
-
-def _credential_from_stdin() -> str:
-    """One line from stdin, or "" when there is nothing to read.
-
-    EOF, an already-closed stdin and a process with no stdin at all are the
-    same answer: no credential. The proxy then fails to authenticate, which is
-    visible and fixable — a crash at startup is neither.
-    """
-    try:
-        line = sys.stdin.readline()
-    except Exception:  # noqa: BLE001 - detached, closed, or non-text stdin
-        return ""
-    return line.strip()

@@ -4,7 +4,6 @@ import hashlib
 import re
 import threading
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -14,7 +13,6 @@ from ..agent_workspaces import AgentChatWorkspace, home_session_workspace, valid
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
 from ..runstore import RunStoreError
-from ..schedules import timezone as schedule_timezone
 from ..sessions import SessionMeta, SessionStore, session_agent_kind
 from ..worktrees import (
     TaskCheckout,
@@ -23,15 +21,10 @@ from ..worktrees import (
     is_git_workspace,
 )
 from .automation_workflows import start_execution
-from .dependencies import get_service
+from .dependencies import _require_capability, get_service
 from .event_triggers import _detach_agent_session
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
-
-
-def _require_capability(name: str) -> None:
-    if not capability_enabled(name):
-        raise HTTPException(404, f"capability is disabled: {name}")
 
 
 def _schedule_workspace(value: Any) -> str:
@@ -66,12 +59,6 @@ def _validate_schedule_payload(
     ):
         raise HTTPException(422, "scheduled worktrees require a Git repository")
     return payload
-
-
-def _scheduled_chat_title(schedule: dict[str, Any], scheduled_for: float) -> str:
-    zone = schedule_timezone(str(schedule["timezone"]))
-    value = datetime.fromtimestamp(scheduled_for, zone).strftime("%b %d, %Y %H:%M")
-    return f"{schedule['name']} · {value.replace(' 0', ' ')}"
 
 
 class _OccurrenceSkipped(Exception):

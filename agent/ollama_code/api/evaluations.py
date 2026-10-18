@@ -15,7 +15,7 @@ from ..evaluations import (
     compare_results,
     summarize_results,
 )
-from .dependencies import get_service
+from .dependencies import _busy_http, get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
 
@@ -24,10 +24,6 @@ def _store(service: ChatService) -> EvaluationStore:
     if not capability_enabled("evaluations"):
         raise HTTPException(404, "capability is disabled: evaluations")
     return EvaluationStore(service.run_store)
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def evaluation_list(

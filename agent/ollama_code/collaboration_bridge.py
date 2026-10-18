@@ -233,7 +233,6 @@ class AgentWorkerRuntime:
             "_active_mcp",
             "_mcp_by_qualified",
             "_explicit_skill_context",
-            "_startup_skill_context",
             "_loaded_skill_context",
         ):
             setattr(registry, name, copy.deepcopy(getattr(source, name)))

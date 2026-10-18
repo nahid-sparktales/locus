@@ -17,14 +17,10 @@ from ..config import (
 from ..core import AgentCore
 from ..devserver import DevServerError
 from ..ollama import OllamaError
-from .dependencies import get_service
+from .dependencies import _busy_http, get_service
 from .providers import chatgpt_account_payload
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def health(service: ServiceDependency) -> dict[str, Any]:

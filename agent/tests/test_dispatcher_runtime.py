@@ -40,7 +40,6 @@ def core(tmp_path, pack):
 
 def test_default_dispatcher_is_separate_from_other_startup_skills(core):
     assert core.dispatcher.enabled()
-    assert core.extensions.startup_skills(core.cwd) == []
     core.tool_registry.begin_turn("Fix this issue", core.cwd)
     assert core.tool_registry.explicit_skill_context == ""
     prompt = core.system_message()["content"]

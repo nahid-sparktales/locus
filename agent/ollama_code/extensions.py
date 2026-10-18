@@ -1614,10 +1614,6 @@ class ExtensionManager:
         for skill in self.skills(workspace):
             if not skill.get("enabled") or skill.get("error"):
                 continue
-            if skill.get("activation") == "startup":
-                # Already present in the turn context; do not spend eager-index
-                # tokens advertising startup skills a second time.
-                continue
             policy = " [explicit invocation only]" if not skill.get("allow_implicit_invocation", True) else ""
             path = str(skill.get("path") or "")
             location = f" ({path})" if path else ""
@@ -1628,10 +1624,6 @@ class ExtensionManager:
                 break
             lines.append(line)
         return "\n".join(lines) if len(lines) > 1 else ""
-
-    def startup_skills(self, workspace: str = "") -> list[dict[str, Any]]:
-        """Compatibility surface: Locus no longer injects startup skills."""
-        return []
 
     def refresh_saved_state(self) -> None:
         """Observe Settings changes made by another conversation's worker."""

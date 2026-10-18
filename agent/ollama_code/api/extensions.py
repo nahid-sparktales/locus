@@ -14,15 +14,11 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError, parse_plugin
-from .dependencies import get_service
+from .dependencies import _busy_http, get_service
 from .disconnect import watch_disconnect
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
 T = TypeVar("T")
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def _extension_failure(exc: ExtensionError) -> HTTPException:

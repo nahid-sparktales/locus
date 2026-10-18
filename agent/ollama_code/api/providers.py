@@ -13,13 +13,9 @@ from ..config import context_window
 from ..model_router import ModelRouterError, decide_model_route
 from ..ollama import OllamaError, effective_context_length
 from ..runstore import RunStoreError
-from .dependencies import get_service
+from .dependencies import _busy_http, get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def get_provider(service: ServiceDependency) -> dict[str, Any]:
