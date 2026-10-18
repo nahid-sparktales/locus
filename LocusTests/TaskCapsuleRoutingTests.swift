@@ -489,12 +489,9 @@ final class TaskCapsuleRoutingTests: XCTestCase {
             "run_id": run.id, "job_id": "step-1", "attempt": 1,
             "attempt_id": "attempt-1", "state": "failed", "goal": "Partial work",
         ]))
-        let replacement = AgentProfile(name: "Replacement", model: "local-model")
         let actions: [(String, () -> Void)] = [
             ("resume", { model.resumeOrchestration(run) }),
-            ("job retry", { model.retryOrchestrationJob(attempt, in: run) }),
             ("branch retry", { model.retryOrchestrationBranch(attempt, in: run) }),
-            ("reassign", { model.reassignOrchestrationJob(attempt, in: run, to: replacement) }),
             ("run with Locus", { model.runOrchestrationWithLocus(run) }),
             ("replay", { model.replayOrchestration(run) }),
             ("duplicate", { model.duplicateOrchestration(run) }),

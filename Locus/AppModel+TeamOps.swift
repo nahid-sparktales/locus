@@ -360,25 +360,6 @@ extension AppModel {
         }
     }
 
-    func retryOrchestrationJob(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
-        guard !redirectCapsuleRecovery(run) else { return }
-        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
-            showToast("Pause the team run before retrying a job")
-            return
-        }
-        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
-              let manifest = teamManifest(for: run.request, teamID: teamID)
-        else {
-            showToast("Repair the team before retrying this job")
-            return
-        }
-        orchestrationAction(
-            path: "/api/orchestrations/\(run.id)/jobs/\(attempt.jobID)/retry",
-            body: ["manifest": manifest],
-            runID: run.id
-        )
-    }
-
     func stopOrchestrationBranch(_ attempt: AgentJobAttempt, in run: OrchestrationRun) {
         guard teamRunPresentation(for: run.id, durable: run).isActivelyOwned,
               !isCodingAttempt(attempt, in: run)
@@ -435,45 +416,6 @@ extension AppModel {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         return nodeID.addingPercentEncoding(withAllowedCharacters: allowed)
-    }
-
-    func reassignOrchestrationJob(
-        _ attempt: AgentJobAttempt,
-        in run: OrchestrationRun,
-        to profile: AgentProfile
-    ) {
-        guard !redirectCapsuleRecovery(run) else { return }
-        guard teamRunPresentation(for: run.id, durable: run).canRecover else {
-            showToast("Pause the team run before reassigning a job")
-            return
-        }
-        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
-              let manifest = teamManifest(for: run.request, teamID: teamID)
-        else {
-            showToast("Repair the team before reassigning this job")
-            return
-        }
-        orchestrationAction(
-            path: "/api/orchestrations/\(run.id)/jobs/\(attempt.jobID)/reassign",
-            body: ["manifest": manifest, "agent_id": profile.id.uuidString],
-            runID: run.id
-        )
-    }
-
-    func reassignmentCandidates(
-        for attempt: AgentJobAttempt,
-        in run: OrchestrationRun
-    ) -> [AgentProfile] {
-        guard let teamID = run.teamID.flatMap(UUID.init(uuidString:)),
-              let team = agentTeams.first(where: { $0.id == teamID })
-        else { return [] }
-        return team.memberIDs.compactMap { id in
-            agentProfiles.first(where: { $0.id == id })
-        }.filter { profile in
-            !profile.accessCeiling.canWrite
-                && profile.id.uuidString != attempt.agentID
-                && (attempt.role != "reviewer" || profile.role == .reviewer)
-        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func isCodingAttempt(_ attempt: AgentJobAttempt, in run: OrchestrationRun) -> Bool {
