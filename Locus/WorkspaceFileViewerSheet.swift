@@ -6,7 +6,6 @@ import SwiftUI
 /// actually read. View-only on purpose — editing belongs to the user's editor,
 /// reachable from the header.
 struct WorkspaceFileViewerSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -143,7 +142,6 @@ struct WorkspaceFileViewerSheet: View {
 /// is laid out at least viewport-wide and pinned leading — a two-axis
 /// ScrollView otherwise centers a stack of short lines in a wide viewport.
 struct WorkspaceSourceTextView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let contents: String
@@ -196,7 +194,6 @@ struct WorkspaceSourceTextView: View {
 }
 
 private struct WorkspaceSourceTextRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let line: String

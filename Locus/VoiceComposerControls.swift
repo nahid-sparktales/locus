@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct VoiceComposerButtons: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -46,7 +45,6 @@ struct VoiceComposerButtons: View {
 }
 
 struct VoiceComposerStrip: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -156,7 +154,6 @@ struct VoiceComposerStrip: View {
 }
 
 private struct VoicePushToTalkButton: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var voice: VoiceControlModel

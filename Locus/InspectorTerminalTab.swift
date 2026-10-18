@@ -11,7 +11,6 @@ struct InspectorTerminalTab: View {
 }
 
 private struct TerminalPanel: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

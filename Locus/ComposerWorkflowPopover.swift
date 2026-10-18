@@ -3,7 +3,6 @@ import SwiftUI
 /// Modes affect the next message. Goals and capsules open their own setup;
 /// keeping those actions in a separate section avoids implying a mode change.
 struct ComposerWorkflowPopover: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -175,7 +174,6 @@ struct ComposerWorkflowPopover: View {
 }
 
 private struct ComposerWorkflowRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.isEnabled) private var isEnabled

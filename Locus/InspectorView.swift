@@ -5,7 +5,6 @@ import SwiftUI
 /// run state, files, instructions, terminal and checkpoints, with a drag
 /// handle on its leading edge.
 struct InspectorView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let resizeWidth: CGFloat
@@ -111,7 +110,6 @@ struct InspectorView: View {
 // MARK: - Model router
 
 struct InspectorRouterTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -327,7 +325,6 @@ struct InspectorRouterTab: View {
 /// health are visible while a chat is open. The Settings sheet still edits
 /// the backward-compatible Default profile.
 struct InspectorProxiesTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -975,7 +972,6 @@ struct InspectorProxiesTab: View {
 /// launchers; this bar is the durable, ordered workspace for switching and
 /// closing panels without the permanent icon row competing for space.
 private struct InspectorOpenTabBar: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1047,7 +1043,6 @@ private struct InspectorOpenTabBar: View {
 /// Kept as its own identity-bearing view so rebuilding the selected panel can
 /// never leave another tab's click closure attached to this tab's label.
 private struct InspectorOpenTabItem: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1117,7 +1112,6 @@ private struct InspectorOpenTabItem: View {
 /// its hit target never changes size. Tabs therefore remain calm and do not
 /// shift as the pointer moves across the bar.
 private struct InspectorTabCloseButton: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1240,7 +1234,6 @@ enum InspectorTabAppearance {
 /// Compact attention state for text tabs. Destination symbols stay on the
 /// vertical rail; the top bar uses only labels, badges, and close controls.
 private struct InspectorTextTabBadge: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1269,7 +1262,6 @@ private struct InspectorTextTabBadge: View {
 
 /// Shared empty state for inspector tabs.
 struct InspectorPlaceholder: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let symbol: String
@@ -1299,7 +1291,6 @@ struct InspectorPlaceholder: View {
 /// Attention badge on the rail's icons, so a collapsed inspector keeps
 /// asking for eyes exactly the way an open panel does.
 struct InspectorTabBadge: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1340,7 +1331,6 @@ struct InspectorTabBadge: View {
 
 /// Drag target on the inspector's leading divider.
 private struct InspectorResizeHandle: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let renderedWidth: CGFloat
@@ -1529,7 +1519,6 @@ private struct MCPTaskImagePreview: View {
 }
 
 struct InspectorRunsTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

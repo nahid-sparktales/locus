@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct AgentRolePickerView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

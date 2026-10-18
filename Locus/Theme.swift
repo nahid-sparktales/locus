@@ -803,7 +803,6 @@ enum LocusSurfaceKind {
 }
 
 private struct LocusSurfaceModifier: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusHostedSurface) private var ocean
@@ -860,7 +859,6 @@ private struct LocusSurfaceModifier: ViewModifier {
 }
 
 private struct LocusCardModifier: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusHostedSurface) private var ocean
@@ -887,7 +885,6 @@ private struct LocusCardModifier: ViewModifier {
 }
 
 private struct LocusWorkspaceBackground: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.locusHostedSurface) private var ocean
@@ -913,7 +910,6 @@ struct LocusButtonStyle: ButtonStyle {
 }
 
 private struct LocusButtonStyleBody: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1018,7 +1014,6 @@ struct BrandMark: View {
 }
 
 struct SettingsAdvancedLabel: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     var detail: String
@@ -1043,7 +1038,6 @@ struct SettingsAdvancedLabel: View {
 }
 
 struct SettingsAdvancedDisclosureRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var isExpanded: Bool

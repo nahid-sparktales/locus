@@ -3,7 +3,6 @@ import SwiftUI
 
 struct OnboardingView: View {
     var availableSize = CGSize(width: 760, height: 720)
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

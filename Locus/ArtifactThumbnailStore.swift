@@ -114,7 +114,6 @@ struct WorkspaceImageAction: Identifiable {
 }
 
 struct AsyncWorkspaceImageArtifactView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.displayScale) private var displayScale

@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 /// A task-scoped Simulator surface. Pointer gestures are mapped to device
 /// points and injected through the bridge, so the Mac pointer never moves.
 struct InspectorSimulatorTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

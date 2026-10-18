@@ -94,7 +94,6 @@ enum WalletSendEligibility {
 }
 
 struct WalletSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1880,7 +1879,6 @@ private enum WalletConnectionPresentation {
 }
 
 private struct WalletConnectionProposalSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var gateway: WalletGateway
@@ -1989,7 +1987,6 @@ private struct WalletConnectionProposalSheet: View {
 }
 
 private struct WalletSectionCard<Content: View>: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -2015,7 +2012,6 @@ private struct WalletSectionCard<Content: View>: View {
 }
 
 private struct WalletAlphaRiskSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2061,7 +2057,6 @@ private struct WalletAlphaRiskSheet: View {
 }
 
 private struct WalletSendSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2358,7 +2353,6 @@ private struct WalletSendSheet: View {
 }
 
 private struct WalletReceiveSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2473,7 +2467,6 @@ private struct WalletReceiveSheet: View {
 }
 
 private struct WalletBrowserOriginGrantSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2510,7 +2503,6 @@ private struct WalletBrowserOriginGrantSheet: View {
 }
 
 private struct WalletNativePolicySheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     private struct PolicyOption: Identifiable {
@@ -2667,7 +2659,6 @@ private struct WalletNativePolicySheet: View {
 }
 
 private struct WalletSPLTokenPolicySheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2811,7 +2802,6 @@ private struct WalletSPLTokenPolicySheet: View {
 }
 
 private struct WalletContractPolicySheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -2957,7 +2947,6 @@ private struct WalletContractPolicySheet: View {
 }
 
 private struct WalletContractRegistrySheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -3011,7 +3000,6 @@ private struct WalletContractRegistrySheet: View {
 }
 
 private struct WalletVaultDeleteSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -3035,7 +3023,6 @@ private struct WalletVaultDeleteSheet: View {
 }
 
 private struct WalletRecoveryVaultDeleteSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -3066,7 +3053,6 @@ private struct WalletRecoveryVaultDeleteSheet: View {
 }
 
 private struct WalletTransactionConfirmationSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

@@ -768,7 +768,6 @@ private struct WorkspacePanelMotion: ViewModifier {
 }
 
 struct RootView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1067,7 +1066,6 @@ struct RootView: View {
 }
 
 struct RememberConfirmationView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1141,7 +1139,6 @@ struct RememberConfirmationView: View {
 }
 
 struct MCPInputRequestView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

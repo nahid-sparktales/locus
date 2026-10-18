@@ -7,7 +7,6 @@ import SwiftUI
 /// side by side. Every change goes through `BoardStore`, which saves before
 /// it publishes, so this view only renders and reports errors.
 struct InspectorBoardTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: BoardStore

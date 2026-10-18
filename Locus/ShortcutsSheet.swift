@@ -52,7 +52,6 @@ private let shortcutReferenceGroups: [ShortcutReferenceGroup] = [
 ]
 
 private struct KeyboardShortcutsReference: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     var body: some View {
@@ -94,7 +93,6 @@ private struct KeyboardShortcutsReference: View {
 
 /// The persistent reference requested in Settings, directly below Extensions.
 struct KeyboardShortcutsSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     var body: some View {
@@ -117,7 +115,6 @@ struct KeyboardShortcutsSettingsView: View {
 
 /// Keyboard shortcut reference, still presented with ⌘/ and `/shortcuts`.
 struct ShortcutsSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

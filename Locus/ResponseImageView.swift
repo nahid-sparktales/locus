@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 /// image. The file is re-contained at render time and must belong to the
 /// current workspace; anything else degrades to the caption and a notice.
 struct ResponseImageView<Original: View>: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let part: ResponsePart

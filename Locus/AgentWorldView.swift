@@ -17,7 +17,6 @@ struct AgentWorldCommands: Commands {
 }
 
 struct AgentWorldView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: AgentWorldModel
@@ -89,7 +88,6 @@ private struct AgentWorldHub: View {
 }
 
 private struct AgentWorldTransferDetail: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var world: AgentWorldModel
@@ -707,7 +705,6 @@ private struct AgentWorldSurface: View {
 }
 
 private struct AgentWorldBoardChatPicker: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var world: AgentWorldModel

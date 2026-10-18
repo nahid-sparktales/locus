@@ -83,7 +83,6 @@ struct TaskRestorePreview: Decodable {
 
 /// A projection of existing task owners. Loading this view never dispatches work.
 struct TaskDetailView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

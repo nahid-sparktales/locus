@@ -21,7 +21,6 @@ struct OptionalQuestionPanel: View {
 }
 
 private struct OptionalQuestionCard: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var questions: OptionalQuestionModel

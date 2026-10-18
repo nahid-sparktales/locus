@@ -3,7 +3,6 @@ import SwiftUI
 /// Keep editable values in the same leading, full-width layout as instructions.
 /// A hidden native label avoids the trailing value column used by macOS Form.
 struct LocusFormField<Content: View>: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
