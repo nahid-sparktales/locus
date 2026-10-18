@@ -9,7 +9,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from ..automation_workflows import (
     WorkflowValidationError,
     simulate_workflow,
-    validate_workflow,
 )
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import ChatService
@@ -34,21 +33,6 @@ def _allowed_connections(body: dict[str, Any]) -> set[str] | None:
     return {str(item) for item in raw}
 
 
-def workflow_validate(
-    service: ServiceDependency,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    del service
-    _require_capability()
-    try:
-        workflow = validate_workflow(
-            body.get("workflow"), allowed_connection_ids=_allowed_connections(body)
-        )
-    except WorkflowValidationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"valid": True, "workflow": workflow}
-
-
 def workflow_simulate(
     service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -68,21 +52,6 @@ def workflow_simulate(
         )
     except WorkflowValidationError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def execution_list(
-    service: ServiceDependency,
-    automation_kind: str = Query(default=""),
-    automation_id: str = Query(default=""),
-    limit: int = Query(default=100, ge=1, le=500),
-) -> dict[str, Any]:
-    _require_capability()
-    return {
-        "executions": service.run_store.automation_executions(
-            automation_kind=automation_kind, automation_id=automation_id, limit=limit
-        ),
-        "read_only": service.run_store.read_only,
-    }
 
 
 def attention_list(
@@ -160,14 +129,6 @@ def attention_clear(run_id: str, service: ServiceDependency) -> dict[str, Any]:
 
 def attention_clear_unavailable(service: ServiceDependency) -> dict[str, Any]:
     return _clear_recoveries(service)
-
-
-def execution_detail(execution_id: str, service: ServiceDependency) -> dict[str, Any]:
-    _require_capability()
-    execution = service.run_store.automation_execution(execution_id)
-    if execution is None:
-        raise HTTPException(404, "automation execution not found")
-    return execution
 
 
 def _queue_agent_action(service: ChatService, action: dict[str, Any]) -> dict[str, Any]:
@@ -392,13 +353,7 @@ def execution_cancel(execution_id: str, service: ServiceDependency) -> dict[str,
 
 def register_routes(router: APIRouter) -> None:
     router.add_api_route(
-        "/api/automation-workflows/validate", workflow_validate, methods=["POST"]
-    )
-    router.add_api_route(
         "/api/automation-workflows/simulate", workflow_simulate, methods=["POST"]
-    )
-    router.add_api_route(
-        "/api/automation-executions", execution_list, methods=["GET"]
     )
     router.add_api_route("/api/attention", attention_list, methods=["GET"])
     router.add_api_route(
@@ -408,9 +363,6 @@ def register_routes(router: APIRouter) -> None:
     )
     router.add_api_route(
         "/api/attention/{run_id}/clear", attention_clear, methods=["POST"]
-    )
-    router.add_api_route(
-        "/api/automation-executions/{execution_id}", execution_detail, methods=["GET"]
     )
     router.add_api_route(
         "/api/automation-executions/{execution_id}/complete-step",

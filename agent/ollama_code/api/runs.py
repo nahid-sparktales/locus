@@ -498,21 +498,6 @@ def orchestration_reconcile_worker_exit(
     return updated
 
 
-def orchestration_dispatch_decision(
-    service: ServiceDependency, run_id: str, body: dict[str, Any] = Body(default_factory=dict)
-) -> dict[str, Any]:
-    _require_capability("adaptive_routing")
-    action = str(body.get("action") or "cancel")
-    if action not in {"run", "redispatch", "cancel"}:
-        raise HTTPException(422, "action must be run, redispatch, or cancel")
-    decision: dict[str, Any] = {"action": action}
-    if isinstance(body.get("plan"), dict):
-        decision["plan"] = body["plan"]
-    if not service.answer_dispatch(run_id, decision):
-        raise HTTPException(409, "that dispatch plan is no longer waiting")
-    return {"ok": True, "run_id": run_id, "action": action}
-
-
 async def _resume_orchestration(
     service: ChatService,
     team_runner: TeamTurnRunner,
@@ -1085,33 +1070,6 @@ def task_land(
         raise HTTPException(409, str(exc)) from exc
 
 
-def task_apply(service: ServiceDependency, task_id: str) -> dict[str, Any]:
-    """Apply only after a complete dry run; leave source changes unstaged."""
-    svc = service
-    task = TaskCheckoutStore.load(task_id)
-    if task is None:
-        raise HTTPException(404, f"task not found: {task_id}")
-    _require_task_idle(service, task)
-    try:
-        with svc.state_mutation():
-            result = task.apply()
-            if svc.current_task and svc.current_task.id == task.id:
-                svc.current_task = task
-                svc.core.task_metadata = task.as_dict()
-            svc.queue_event(
-                {
-                    "type": "task_applied",
-                    "task": task.as_dict(),
-                    **result,
-                }
-            )
-            return {"task": task.as_dict(), **result}
-    except AgentBusyError as exc:
-        raise _busy_http() from exc
-    except WorktreeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-
-
 def task_create_branch(
     service: ServiceDependency,
     task_id: str,
@@ -1226,11 +1184,6 @@ def register_routes(router: APIRouter) -> None:
         methods=["POST"],
     )
     router.add_api_route(
-        "/api/orchestrations/{run_id}/dispatch-decision",
-        orchestration_dispatch_decision,
-        methods=["POST"],
-    )
-    router.add_api_route(
         "/api/orchestrations/{run_id}/resume", orchestration_resume, methods=["POST"]
     )
     router.add_api_route(
@@ -1276,7 +1229,6 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/tasks/{task_id}/checks", task_landing_checks, methods=["POST"])
     router.add_api_route("/api/runs/{run_id}/cancel", run_cancel, methods=["POST"])
     router.add_api_route("/api/tasks/{task_id}/landing", task_land, methods=["POST"])
-    router.add_api_route("/api/tasks/{task_id}/apply", task_apply, methods=["POST"])
     router.add_api_route("/api/tasks/{task_id}/branch", task_create_branch, methods=["POST"])
     router.add_api_route("/api/tasks/{task_id}/snapshot", task_snapshot, methods=["POST"])
     router.add_api_route("/api/tasks/{task_id}/restore", task_restore, methods=["POST"])

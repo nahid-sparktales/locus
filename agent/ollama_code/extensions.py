@@ -1243,21 +1243,6 @@ class ExtensionManager:
                     out.append(item)
         return out
 
-    def remove_marketplace(self, marketplace_id: str) -> None:
-        with self._guard:
-            if any(item.get("marketplace_id") == marketplace_id for item in self._state["plugins"]):
-                raise ExtensionError("uninstall this marketplace's plugins before removing it")
-            before = len(self._state["marketplaces"])
-            self._state["marketplaces"] = [
-                item for item in self._state["marketplaces"] if item.get("id") != marketplace_id
-            ]
-            if len(self._state["marketplaces"]) == before:
-                raise ExtensionError("marketplace not found")
-            snapshot = self.marketplaces_root / marketplace_id
-            if snapshot.exists():
-                shutil.rmtree(snapshot, ignore_errors=True)
-            self._save()
-
     # --------------------------------------------------------------- plugins
 
     def inspect_catalog_plugin(self, marketplace_id: str, plugin_name: str) -> dict[str, Any]:

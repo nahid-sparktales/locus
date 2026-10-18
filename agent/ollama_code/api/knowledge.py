@@ -12,7 +12,6 @@ from ..document_extract import MAX_SOURCE_BYTES
 from ..document_library import DocumentError, DocumentStore
 from ..knowledge import KnowledgeError, KnowledgeStore
 from ..knowledge_runtime import knowledge_store
-from ..memory import MemoryError
 from ..memory_runtime import memory_vault, memory_workspace
 from .dependencies import get_service
 
@@ -98,63 +97,6 @@ def knowledge_search(
         return _knowledge_store(service, workspace).search_with_diagnostics(query, limit=limit)
     except KnowledgeError as exc:
         raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memories(
-    service: ServiceDependency,
-    workspace: str = Query(default=""),
-) -> dict[str, Any]:
-    target = memory_workspace(service, workspace)
-    return {
-        "memories": memory_vault(target).list(
-            workspace=target,
-            status="approved",
-            scopes=["workspace"],
-        )
-    }
-
-
-def knowledge_memory_create(
-    service: ServiceDependency,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    try:
-        target = memory_workspace(service, str(body.get("workspace") or ""))
-        memory = memory_vault(target).save(
-            {**body, "scope": "workspace", "status": "approved"},
-            workspace=target,
-        )
-        return {"ok": True, "memory": memory}
-    except (KnowledgeError, MemoryError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memory_update(
-    memory_id: str,
-    service: ServiceDependency,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    try:
-        target = memory_workspace(service, str(body.get("workspace") or ""))
-        memory = memory_vault(target).save(
-            {**body, "scope": "workspace", "status": "approved"},
-            memory_id,
-            workspace=target,
-        )
-        return {"ok": True, "memory": memory}
-    except (KnowledgeError, MemoryError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-def knowledge_memory_delete(
-    memory_id: str,
-    service: ServiceDependency,
-    workspace: str = Query(default=""),
-) -> dict[str, Any]:
-    target = memory_workspace(service, workspace)
-    if not memory_vault(target).delete(memory_id):
-        raise HTTPException(404, "workspace memory not found")
-    return {"ok": True, "id": memory_id}
 
 
 def knowledge_delete_all(
@@ -267,14 +209,4 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route("/api/knowledge/reindex", knowledge_reindex, methods=["POST"])
     router.add_api_route("/api/knowledge/changes", knowledge_changes, methods=["POST"])
     router.add_api_route("/api/knowledge/search", knowledge_search, methods=["GET"])
-    router.add_api_route("/api/knowledge/memories", knowledge_memories, methods=["GET"])
-    router.add_api_route(
-        "/api/knowledge/memories", knowledge_memory_create, methods=["POST"]
-    )
-    router.add_api_route(
-        "/api/knowledge/memories/{memory_id}", knowledge_memory_update, methods=["PUT"]
-    )
-    router.add_api_route(
-        "/api/knowledge/memories/{memory_id}", knowledge_memory_delete, methods=["DELETE"]
-    )
     router.add_api_route("/api/knowledge", knowledge_delete_all, methods=["DELETE"])

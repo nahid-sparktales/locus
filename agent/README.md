@@ -234,7 +234,6 @@ batch name; deleting a chat never touches files in its workspace.
 | PATCH | `/api/sessions/{id}` | Set `title`, `pinned`, `archived` |
 | POST | `/api/sessions/{id}/resume` | Load a session into the agent |
 | GET | `/api/tasks/{id}` | Task record and complete baseline-relative binary patch |
-| POST | `/api/tasks/{id}/apply` | Dry-run check, then apply task changes unstaged |
 | GET | `/api/tools` | Tool schemas |
 | GET/POST | `/api/permissions` | Read or change the permission mode |
 | GET/POST | `/api/provider` | Switch among local Ollama, a managed ChatGPT account, and an API endpoint |

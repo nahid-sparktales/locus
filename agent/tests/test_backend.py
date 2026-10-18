@@ -2250,21 +2250,6 @@ def test_evaluation_execution_routes_use_feature_runtime_and_app_runner(
     assert args[4] == evaluation_id
     assert args[5] is client.app.state.evaluation_team_runner
 
-    interrupted: list[bool] = []
-    service.active_evaluation_id = evaluation_id
-    service.active_evaluation_core = SimpleNamespace(
-        interrupt=lambda: interrupted.append(True)
-    )
-    cancelled = client.post(f"/api/evaluations/runs/{evaluation_id}/cancel")
-
-    assert cancelled.json() == {
-        "ok": True,
-        "evaluation_id": evaluation_id,
-        "state": "cancelling",
-    }
-    assert service.core._interrupt.is_set()
-    assert interrupted == [True]
-
 
 def test_schedule_crud_and_manual_dispatch_preserve_foreground_chat(client, tmp_path):
     foreground = client.app.state.service.core.session.session_id

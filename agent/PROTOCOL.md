@@ -171,8 +171,8 @@ cancelled and must be requested again.
 
 ### Evaluation Lab
 
-`/api/evaluations` supports suite CRUD, result history, deterministic grading,
-execution and cancellation. `GET /api/evaluations/{suite_id}/comparison`
+`/api/evaluations` supports suite CRUD, result history, deterministic grading
+and execution. `GET /api/evaluations/{suite_id}/comparison`
 groups Solo/team metrics and `/export` returns a portable versioned JSON suite
 plus results. A case describes prompt/tags, Solo or team target,
 mode, timeout, assertions, optional rubric and reviewer judge, and passing
@@ -719,7 +719,7 @@ overwritten. Returns 409 while a turn is active.
 ### Managed chat tasks and handoff
 
 `GET /api/tasks/{task_id}` returns the task record, current tree, and complete
-baseline-relative binary patch. `POST /api/tasks/{task_id}/apply` first runs a
+baseline-relative binary patch. Landing to the local workspace first runs a
 complete `git apply --check`; only a clean check is applied to the source
 workspace, unstaged and uncommitted. A conflict leaves the source untouched.
 Successful application records the applied tree, so later rounds expose only
@@ -830,8 +830,6 @@ The extension surface shares one error and concurrency contract:
 | GET | `/api/extensions/catalog` | Catalog entries; optional `query` and `marketplace_id` filters. |
 | GET | `/api/extensions/catalog/trust` | Trust review of one catalog plugin before installing it. Requires both `marketplace_id` and `plugin` query parameters. |
 | POST | `/api/extensions/marketplaces` | Add a marketplace source. |
-| POST | `/api/extensions/marketplaces/{marketplace_id}/refresh` | Re-fetch one marketplace. |
-| DELETE | `/api/extensions/marketplaces/{marketplace_id}` | Remove a marketplace. |
 | POST | `/api/extensions/plugins/install` | Install a plugin from a catalog entry or source. |
 | POST | `/api/extensions/plugins/enable` | Enable or disable an installed plugin. |
 | POST | `/api/extensions/plugins/update` | Update a plugin to its newest version. |

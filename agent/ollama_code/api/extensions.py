@@ -146,28 +146,6 @@ def add_extension_marketplace(
         raise _extension_failure(exc) from exc
 
 
-def refresh_extension_marketplace(
-    marketplace_id: str, service: ServiceDependency
-) -> dict[str, Any]:
-    try:
-        value = service.core.extensions.refresh_marketplace(marketplace_id)
-        _announce_extensions(service, "marketplace_refreshed")
-        return value
-    except ExtensionError as exc:
-        raise _extension_failure(exc) from exc
-
-
-def delete_extension_marketplace(
-    marketplace_id: str, service: ServiceDependency
-) -> dict[str, Any]:
-    try:
-        service.core.extensions.remove_marketplace(marketplace_id)
-        _announce_extensions(service, "marketplace_removed")
-        return {"ok": True}
-    except ExtensionError as exc:
-        raise _extension_failure(exc) from exc
-
-
 def install_extension_plugin(
     service: ServiceDependency,
     body: dict[str, Any] = Body(default_factory=dict),
@@ -710,16 +688,6 @@ def register_routes(router: APIRouter) -> None:
         ("/api/extensions/catalog", get_extension_catalog, ["GET"]),
         ("/api/extensions/catalog/trust", inspect_extension_plugin, ["GET"]),
         ("/api/extensions/marketplaces", add_extension_marketplace, ["POST"]),
-        (
-            "/api/extensions/marketplaces/{marketplace_id}/refresh",
-            refresh_extension_marketplace,
-            ["POST"],
-        ),
-        (
-            "/api/extensions/marketplaces/{marketplace_id}",
-            delete_extension_marketplace,
-            ["DELETE"],
-        ),
         ("/api/extensions/plugins/install", install_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/enable", enable_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/update", update_extension_plugin, ["POST"]),

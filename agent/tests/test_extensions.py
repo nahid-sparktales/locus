@@ -860,7 +860,7 @@ def test_extension_rest_contract_and_busy_conflict(tmp_path):
         updated_manifest = json.loads(manifest.read_text())
         updated_manifest["version"] = "2.0.0"
         manifest.write_text(json.dumps(updated_manifest))
-        client.post(f"/api/extensions/marketplaces/{marketplace_id}/refresh")
+        service.core.extensions.refresh_marketplace(marketplace_id)
         update_trust = client.get(
             "/api/extensions/catalog/trust",
             params={"marketplace_id": marketplace_id, "plugin": "fixture"},

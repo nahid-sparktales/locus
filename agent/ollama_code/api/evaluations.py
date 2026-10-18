@@ -2,7 +2,6 @@
 
 import asyncio
 import uuid
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -14,10 +13,8 @@ from ..evaluations import (
     EvaluationError,
     EvaluationStore,
     compare_results,
-    grade_case,
     summarize_results,
 )
-from ..worktrees import TaskCheckoutStore
 from .dependencies import get_service
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
@@ -106,38 +103,6 @@ def evaluation_delete(suite_id: str, service: ServiceDependency) -> dict[str, An
     return {"ok": True, "id": suite_id}
 
 
-def evaluation_grade(
-    suite_id: str,
-    service: ServiceDependency,
-    body: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    suite = _store(service).get_suite(suite_id)
-    if suite is None:
-        raise HTTPException(404, "evaluation suite not found")
-    case_id = str(body.get("case_id") or "")
-    case = next((item for item in suite["cases"] if item["id"] == case_id), None)
-    if case is None:
-        raise HTTPException(404, "evaluation case not found")
-    checkout = str(body.get("checkout") or "")
-    source_root = Path(suite["workspace_root"]).resolve()
-    checkout_path = Path(checkout).resolve()
-    if checkout_path != source_root or str(case.get("mode")) != "read_only":
-        task_id = str(body.get("task_id") or "")
-        task = TaskCheckoutStore.load(task_id) if task_id else None
-        if task is None or Path(task.execution_path).resolve() != checkout_path:
-            raise HTTPException(422, "checkout is not a managed evaluation task")
-    try:
-        result = grade_case(
-            case,
-            checkout,
-            str(body.get("output") or ""),
-            [str(item) for item in body.get("changed_paths") or []],
-        )
-    except EvaluationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"case_id": case_id, **result}
-
-
 async def evaluation_run(
     suite_id: str,
     request: Request,
@@ -217,18 +182,6 @@ async def evaluation_run(
     return {"ok": True, "evaluation_id": evaluation_id, "state": "queued"}
 
 
-def evaluation_cancel(
-    evaluation_id: str,
-    service: ServiceDependency,
-) -> dict[str, Any]:
-    if service.active_evaluation_id != evaluation_id:
-        raise HTTPException(409, "that evaluation is not currently running")
-    service.core.interrupt()
-    if service.active_evaluation_core is not None:
-        service.active_evaluation_core.interrupt()
-    return {"ok": True, "evaluation_id": evaluation_id, "state": "cancelling"}
-
-
 def evaluation_human_grade(suite_id: str, result_id: str, service: ServiceDependency,
                            body: dict[str, Any] = Body(default_factory=dict)):
     try:
@@ -254,13 +207,5 @@ def register_routes(router: APIRouter) -> None:
         "/api/evaluations/{suite_id}", evaluation_delete, methods=["DELETE"]
     )
     router.add_api_route(
-        "/api/evaluations/{suite_id}/grade", evaluation_grade, methods=["POST"]
-    )
-    router.add_api_route(
         "/api/evaluations/{suite_id}/run", evaluation_run, methods=["POST"]
-    )
-    router.add_api_route(
-        "/api/evaluations/runs/{evaluation_id}/cancel",
-        evaluation_cancel,
-        methods=["POST"],
     )
