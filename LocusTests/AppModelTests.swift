@@ -1967,14 +1967,6 @@ final class AppModelTests: XCTestCase {
             ),
             100
         )
-        XCTAssertEqual(
-            TranscriptScrollMetrics.bottomOriginY(
-                documentBounds: document,
-                viewportHeight: 400,
-                isFlipped: true
-            ),
-            1_600
-        )
         let unflippedVisible = CGRect(x: 0, y: 75, width: 600, height: 400)
         XCTAssertEqual(
             TranscriptScrollMetrics.bottomDistance(

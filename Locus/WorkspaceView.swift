@@ -3655,29 +3655,6 @@ private struct ConversationView: View {
                 transcriptEnd(token: token, id: .end(token.sessionGeneration))
             }
         }
-        #if DEBUG
-        .background {
-            if model.pendingDispatchPlan != nil, TranscriptRowGeometryDiagnostics.enabled {
-                GeometryReader { geometry in
-                    Color.clear
-                        .onAppear {
-                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
-                                frame: geometry.frame(in: .global), event: "appear")
-                        }
-                        .onChange(of: geometry.frame(in: .global)) { _, frame in
-                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
-                                frame: frame, event: "geometry")
-                        }
-                        .onDisappear {
-                            TranscriptRowGeometryDiagnostics.record(row: row.index, token: token,
-                                frame: geometry.frame(in: .global), event: "disappear")
-                        }
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
-        #endif
         .id(row.id)
     }
 
@@ -4164,42 +4141,7 @@ struct TranscriptScrollMetrics {
         }
         return max(visibleRect.minY - documentBounds.minY, 0)
     }
-
-    static func bottomOriginY(
-        documentBounds: CGRect,
-        viewportHeight: CGFloat,
-        isFlipped: Bool
-    ) -> CGFloat {
-        if isFlipped {
-            return max(documentBounds.maxY - viewportHeight, documentBounds.minY)
-        }
-        return documentBounds.minY
-    }
 }
-
-#if DEBUG
-@MainActor
-private enum TranscriptRowGeometryDiagnostics {
-    static let enabled = {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["XCTestConfigurationFilePath"] != nil
-            && environment["LOCUS_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
-    }()
-    private static var records = 0
-
-    static func record(row: Int, token: TranscriptRenderToken, frame: CGRect, event: String) {
-        guard enabled, records < 128 else { return }
-        records += 1
-        let metadata: [String: Any] = ["record": records, "row": row, "event": event,
-            "generation": token.sessionGeneration, "revision": token.contentRevision,
-            "frame": [frame.minX, frame.minY, frame.width, frame.height]]
-        if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
-           let json = String(data: data, encoding: .utf8) {
-            try? FileHandle.standardError.write(contentsOf: Data(("LocusTranscriptRowGeometry " + json + "\n").utf8))
-        }
-    }
-}
-#endif
 
 enum TranscriptTailLayoutKind: Equatable { case content, end, predecessor }
 
@@ -4288,10 +4230,8 @@ final class TranscriptScrollCoordinator: ObservableObject {
     #if DEBUG
     private let geometryDiagnosticsEnabled = {
         let environment = ProcessInfo.processInfo.environment
-        return (environment["LOCUS_UI_TESTING"] == "1"
-            && environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1")
-            || (environment["XCTestConfigurationFilePath"] != nil
-                && environment["LOCUS_TESTING_TRANSCRIPT_GEOMETRY"] == "1")
+        return environment["LOCUS_UI_TESTING"] == "1"
+            && environment["LOCUS_UI_TESTING_TRANSCRIPT_GEOMETRY"] == "1"
     }()
     private var geometryDiagnosticRecords = 0
     private var geometryDiagnosticDisplayTicks = 0
@@ -4933,27 +4873,6 @@ final class TranscriptScrollCoordinator: ObservableObject {
         } else {
             schedulePin()
         }
-    }
-
-    func resetForSession() {
-        activityResultOwnership = nil
-        selectionViewportOwnership = nil
-        pendingSessionFollowReset = nil
-        scrollIntentRevision &+= 1
-        isProgrammaticScroll = false
-        pinPending = false
-        displayLink?.isPaused = true
-        isUserLiveScrolling = false
-        isSelectionDragActive = false
-        isRoutingVerticalWheel = false
-        contentRect = nil
-        endRect = nil
-        predecessorRect = nil
-        realizationRequested = false
-        realizationGeometry.removeAll(keepingCapacity: true)
-        lastAlignment = nil
-        mutateState { $0 = TranscriptFollowState() }
-        contentMayHaveChanged()
     }
 
     func detachAll() {
@@ -6969,162 +6888,6 @@ private struct ToolActivityView: View {
     }
 }
 
-#if DEBUG
-/// Metadata-only diagnostics for the exact scroll fixture's first tool header.
-/// The probe neither forces layout nor changes input/AX ownership, and is
-/// absent outside that fixture. In particular it never reads labels or text.
-private struct ToolHeaderHitTestDiagnostics: NSViewRepresentable {
-    static let isEnabled = {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["LOCUS_UI_TESTING"] == "1"
-            && environment["LOCUS_UI_TESTING_SCROLL"] == "1"
-            && environment["LOCUS_UI_TESTING_TOOL_HEADER_HIT_TEST"] == "1"
-    }()
-
-    func makeNSView(context: Context) -> ToolHeaderHitTestDiagnosticView {
-        ToolHeaderHitTestDiagnosticView(frame: .zero)
-    }
-
-    func updateNSView(_ view: ToolHeaderHitTestDiagnosticView, context: Context) {}
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize, nsView: ToolHeaderHitTestDiagnosticView, context: Context
-    ) -> CGSize? {
-        guard let width = proposal.width, let height = proposal.height,
-              width.isFinite, height.isFinite else { return nil }
-        return CGSize(width: width, height: height)
-    }
-}
-
-private final class ToolHeaderHitTestDiagnosticView: NSView {
-    private var updateObserver: NSObjectProtocol?
-    private var eventMonitor: Any?
-    private var recordPending = false
-    private var recordCount = 0
-    private var lastGeometry: [NSRect]?
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func isAccessibilityElement() -> Bool { false }
-    override func isAccessibilityHidden() -> Bool { true }
-    override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if let updateObserver { NotificationCenter.default.removeObserver(updateObserver) }
-        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
-        updateObserver = nil
-        eventMonitor = nil
-        guard ToolHeaderHitTestDiagnostics.isEnabled, let window else { return }
-        updateObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didUpdateNotification, object: window, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.scheduleRecord("window.updated") }
-        }
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .scrollWheel]) {
-            [weak self] event in
-            guard let self, event.window === self.window,
-                  let scroll = self.enclosingScrollView,
-                  scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
-            else { return event }
-            self.scheduleRecord(event.type == .scrollWheel ? "wheel" : "leftMouseDown", force: true)
-            return event
-        }
-        scheduleRecord("attached", force: true)
-    }
-
-    override func layout() {
-        super.layout()
-        scheduleRecord("layout")
-    }
-
-    private func scheduleRecord(_ event: String, force: Bool = false) {
-        guard ToolHeaderHitTestDiagnostics.isEnabled, !recordPending, recordCount < 64 else { return }
-        recordPending = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.recordPending = false
-            self.record(event, force: force)
-        }
-    }
-
-    private func record(_ event: String, force: Bool) {
-        guard recordCount < 64, let window, let root = window.contentView,
-              let scroll = enclosingScrollView, let document = scroll.documentView,
-              bounds.width > 0, bounds.height > 0 else { return }
-        let header = convert(bounds, to: nil)
-        let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
-        let geometry = [header, viewport, document.bounds, scroll.contentView.bounds]
-        guard force || geometry != lastGeometry else { return }
-        lastGeometry = geometry
-        recordCount += 1
-        let center = NSPoint(x: header.midX, y: header.midY)
-        let rootPoint = root.superview?.convert(center, from: nil) ?? center
-        let nativeHit = root.hitTest(rootPoint)
-        let screenPoint = window.convertPoint(toScreen: center)
-        func rect(_ value: NSRect) -> [Double] {
-            [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
-        }
-        func className(_ value: AnyObject) -> String {
-            String(NSStringFromClass(type(of: value)).prefix(512))
-        }
-        func ancestry(_ view: NSView?) -> [String] {
-            var result: [String] = []
-            var current = view
-            for _ in 0..<16 {
-                guard let view = current else { break }
-                result.append(className(view))
-                current = view.superview
-            }
-            return result
-        }
-        func accessibilityMetadata(_ value: Any?) -> [String: Any] {
-            guard let value else { return ["present": false] }
-            var record: [String: Any] = ["present": true, "class": className(value as AnyObject)]
-            guard let accessible = value as? any NSAccessibilityProtocol else { return record }
-            record["role"] = accessible.accessibilityRole()?.rawValue ?? "none"
-            record["frameOnScreen"] = rect(accessible.accessibilityFrame())
-            // Classify ownership, never emit a raw runtime identifier.
-            let identifier = accessible.accessibilityIdentifier() ?? ""
-            record["ownsExpectedHeader"] = identifier == "tool.scroll-tool-0.toggle"
-            record["identifierKind"] = identifier.isEmpty ? "none"
-                : (identifier == "conversation.scroll" ? "transcript"
-                    : (identifier == "conversation.jumpToLatest" ? "jumpToLatest"
-                        : (identifier.hasPrefix("tool.") ? "tool" : "other")))
-            return record
-        }
-        var record: [String: Any] = [
-            "event": event,
-            "record": recordCount,
-            "headerInWindow": rect(header),
-            "headerOnScreen": rect(window.convertToScreen(header)),
-            "viewportInWindow": rect(viewport),
-            "headerCenterInsideViewport": viewport.contains(center),
-            "documentBounds": rect(document.bounds),
-            "clipBounds": rect(scroll.contentView.bounds),
-            "windowVisible": window.isVisible,
-            "windowUnoccluded": window.occlusionState.contains(.visible),
-            "nativeHitAncestors": ancestry(nativeHit),
-            "probeAncestors": ancestry(self),
-            "nativeInsideTranscript": nativeHit.map { $0 === scroll || $0.isDescendant(of: scroll) } ?? false,
-            "rootAX": accessibilityMetadata(root.accessibilityHitTest(screenPoint)),
-            "scrollAX": accessibilityMetadata(scroll.accessibilityHitTest(screenPoint)),
-            "documentAX": accessibilityMetadata(document.accessibilityHitTest(screenPoint)),
-            "nativeHitAX": accessibilityMetadata(nativeHit?.accessibilityHitTest(screenPoint)),
-        ]
-        if let nativeHit { record["nativeHitFrameInWindow"] = rect(nativeHit.convert(nativeHit.bounds, to: nil)) }
-        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
-           let json = String(data: data, encoding: .utf8) {
-            try? FileHandle.standardError.write(contentsOf: Data(("LocusToolHeaderHitTest " + json + "\n").utf8))
-        }
-    }
-
-    deinit {
-        if let updateObserver { NotificationCenter.default.removeObserver(updateObserver) }
-        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
-    }
-}
-#endif
-
 private struct ToolCardView: View {
     @Environment(\.locusViewColors) private var viewColors
 
@@ -7162,13 +6925,6 @@ private struct ToolCardView: View {
             .buttonStyle(.locus())
             .accessibilityLabel("\(tool.tool), \(statusLabel), \(expanded ? "collapse" : "expand")")
             .accessibilityIdentifier("tool.\(tool.toolID).toggle")
-            #if DEBUG
-            .background {
-                if ToolHeaderHitTestDiagnostics.isEnabled, tool.toolID == "scroll-tool-0" {
-                    ToolHeaderHitTestDiagnostics()
-                }
-            }
-            #endif
 
             if expanded || tool.status == .awaitingPermission || tool.status == .error {
                 VStack(alignment: .leading, spacing: 10) {
