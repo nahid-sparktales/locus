@@ -482,6 +482,7 @@ def test_permission_modes():
 
     perms.set_mode("bypass")
     assert perms.is_auto_allowed("bash") and perms.skip_all
+    assert PermissionManager(skip_all=True).is_auto_allowed("write_file")
 
 
 def test_computer_guardrails_remain_above_bypass():
@@ -656,6 +657,9 @@ def test_think_filter_strips_reasoning_across_chunks():
     assert (out + f.flush()).strip() == "Hello  world".strip().replace("  ", "  ")
     assert f.take_thinking() == "secret"
 
+    unclosed = ThinkFilter()
+    assert unclosed.feed("<think>never closes") + unclosed.flush() == ""
+
 
 def test_thinking_alias_is_streamed_as_reasoning_not_answer_text():
     f = ThinkFilter()
@@ -678,6 +682,12 @@ def test_process_chunk_parses_string_tool_arguments():
     assert resp.tool_calls[0].name == "bash"
     assert resp.tool_calls[0].arguments == {"command": "ls"}
 
+    late = ChatResponse()
+    process_chunk({"message": {"content": ""}}, late)
+    process_chunk({"message": {"tool_calls": [{"function": {"name": "bash", "arguments": {"command": "ls"}}}]},
+                   "done": True}, late)
+    assert [(call.name, call.arguments) for call in late.tool_calls] == [("bash", {"command": "ls"})]
+
 
 def test_process_chunk_captures_native_thinking():
     """Reasoning text lands on the response, separate from the content token."""
@@ -686,6 +696,11 @@ def test_process_chunk_captures_native_thinking():
     assert token == "hi"
     assert resp.thinking == "hmm"
     assert resp.content == "hi"
+    assert process_chunk({"message": {"content": "!"}}, resp) == "!"
+    process_chunk({"done": True, "done_reason": "stop", "prompt_eval_count": 3, "eval_count": 2}, resp)
+    assert resp.content == "hi!"
+    assert resp.done and resp.done_reason == "stop"
+    assert resp.prompt_eval_count == 3 and resp.eval_count == 2
 
 
 # ------------------------------------------------------------------- sessions
@@ -3750,54 +3765,6 @@ def test_starting_a_service_sweeps_the_lease_databases_of_earlier_launches(
     assert not earlier.exists()
 
 
-def test_ask_user_question_blocks_until_answered(tmp_path):
-    """The bridge parks the worker thread, exactly like the permission decider."""
-    import threading
-
-    core = _core(tmp_path, [])
-    service = server_mod.ChatService(core)
-    service.ws = object()  # a client is attached, so a question can be answered
-    events = []
-    service.emit = events.append
-
-    result = {}
-    done = threading.Event()
-
-    def ask():
-        result["value"] = service.ask_user_question({"questions": [
-            {"id": "q1", "header": "Storage", "question": "Where should the cache live?"},
-        ]})
-        done.set()
-
-    worker = threading.Thread(target=ask, daemon=True)
-    worker.start()
-
-    required = None
-    for _ in range(200):
-        required = next((e for e in events if e["type"] == "question_required"), None)
-        if required is not None:
-            break
-        time.sleep(0.01)
-    assert required is not None, "question_required was never emitted"
-    assert required["tool"] == "ask_question"
-    assert required["questions"][0]["header"] == "Storage"
-
-    # Still waiting: nothing has answered yet.
-    assert not done.wait(0.05)
-
-    assert service.answer_question(required["request_id"], {
-        "action": "answer",
-        "answers": [{"id": "q1", "selected": ["SQLite"], "text": ""}],
-    })
-    assert done.wait(2), "the worker thread never unblocked"
-    assert "SQLite" in result["value"]
-
-    # The panel is told the wait is over, and the id is retired.
-    assert any(e["type"] == "question_resolved" for e in events)
-    assert service.pending_questions == {}
-    assert not service.answer_question(required["request_id"], {"action": "answer", "answers": []})
-
-
 def test_cancel_all_questions_unblocks_an_interrupted_turn(tmp_path):
     import threading
 
@@ -3861,7 +3828,10 @@ def test_question_response_frame_unblocks_the_waiting_turn(tmp_path, monkeypatch
         if required is not None:
             break
         time.sleep(0.01)
-    assert required is not None
+    assert required is not None, "question_required was never emitted"
+    assert required["tool"] == "ask_question"
+    assert required["questions"][0]["header"] == "Storage"
+    assert not done.wait(0.05), "the turn must stay parked until answered"
 
     asyncio.run(server_mod._handle_client_message(service, {
         "type": "question_response",
@@ -3874,6 +3844,8 @@ def test_question_response_frame_unblocks_the_waiting_turn(tmp_path, monkeypatch
     assert "SQLite" in result["value"]
     assert "or Postgres" in result["value"]
     assert errors == []
+    assert any(e["type"] == "question_resolved" for e in events)
+    assert service.pending_questions == {}
 
     # Answering twice is rejected rather than silently accepted.
     asyncio.run(server_mod._handle_client_message(service, {
