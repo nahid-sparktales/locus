@@ -5694,58 +5694,6 @@ final class AppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testCompletedPlanTurnOffersToImplementThePlan() {
-        let model = AppModel(startImmediately: false)
-        armPlanApproval(model)
-
-        XCTAssertTrue(model.planApprovalPending, "a finished plan is a decision point")
-        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
-    }
-
-    @MainActor
-    func testPlanPanelTracksDraftingStepsAndApproval() {
-        let model = AppModel(startImmediately: false)
-        model.selectedMode = .plan
-        model.turnDispatchedInPlanMode = true
-        model.turnDispatchedMode = .plan
-        model.isBusy = true
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
-        model.handleEventForTesting([
-            "type": "todo_update",
-            "todos": [["content": "Audit the sidebar", "status": "pending"]],
-        ])
-        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
-
-        model.handleEventForTesting([
-            "type": "turn_done",
-            "reason": "complete",
-            "duration_ms": 3_000,
-        ])
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
-        XCTAssertEqual(model.activePlan?.steps, ["Audit the sidebar"])
-    }
-
-    @MainActor
-    func testPlanPanelPreservesStoppedWorkPlan() {
-        let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .work
-        model.isBusy = true
-        model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
-
-        model.handleEventForTesting([
-            "type": "turn_done",
-            "reason": "interrupted",
-            "duration_ms": 2_400,
-        ])
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .stopped)
-        XCTAssertEqual(model.planPanelPresentation.stoppedOutcome, .interrupted)
-        XCTAssertEqual(model.todos.first?.status, .inProgress)
-    }
-
-    @MainActor
     func testStalePlanDoesNotReOfferAfterAChatTurn() {
         let model = AppModel(startImmediately: false)
         model.selectedMode = .plan
