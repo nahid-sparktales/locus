@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 4.2.5 — 2026-10-19
+
+### Security
+
+- The bundled MCP library is updated to 2.2.0, which fixes CVE-2026-59951.
+  Google Calendar, Gmail and Drive tools still pass their sign-in and input
+  hints to the agent under the new library.
+
+### Changed
+
+- Removed backend routes the app no longer calls, duplicate helpers, redundant
+  tests, and test-only diagnostics compiled into the app. Nothing you use
+  changes.
+
 ## 4.2.4 — 2026-10-09
 
 ### Added
