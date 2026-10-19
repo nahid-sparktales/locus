@@ -5,6 +5,7 @@ installer. No endpoint supplied by a model is ever used for authenticated calls.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sys
@@ -65,49 +66,61 @@ def segment(value: str) -> str:
 
 def create_server(kind: str, google: GoogleWorkspace):
     from mcp.server import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import ToolAnnotations
     server = MCPServer("Locus Google " + kind.title())
+
+    def tool(annotations: ToolAnnotations):
+        def register(function):
+            @functools.wraps(function)
+            def guarded(*args, **kwargs):
+                try:
+                    return function(*args, **kwargs)
+                except ValueError as error:  # mcp>=2.1 only forwards ToolError text to the model
+                    raise ToolError(str(error)) from error
+            return server.tool(annotations=annotations)(guarded)
+        return register
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True)
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
     change = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
     if kind == "calendar":
-        @server.tool(annotations=read)
+        @tool(annotations=read)
         def list_calendars(page_token: str = "") -> dict:
             """List connected calendars. Pass nextPageToken to fetch the next page."""
             return google.request("GET", "calendar/v3/users/me/calendarList", params={"maxResults": 100, "pageToken": page_token})
 
-        @server.tool(annotations=read)
+        @tool(annotations=read)
         def list_events(time_min: str, time_max: str, calendar_id: str = "primary", query: str = "", page_token: str = "") -> dict:
             """Read events within RFC3339 timestamps with time zones. Supports pagination."""
             return google.request("GET", f"calendar/v3/calendars/{segment(calendar_id)}/events", params={
                 "timeMin": time_min, "timeMax": time_max, "q": query, "pageToken": page_token,
                 "singleEvents": "true", "orderBy": "startTime", "maxResults": 100})
 
-        @server.tool(annotations=read)
+        @tool(annotations=read)
         def get_event(event_id: str, calendar_id: str = "primary") -> dict:
             """Read one event before changing it."""
             return google.request("GET", f"calendar/v3/calendars/{segment(calendar_id)}/events/{segment(event_id)}")
 
-        @server.tool(annotations=write)
+        @tool(annotations=write)
         def create_event(summary: str, start: dict, end: dict, calendar_id: str = "primary", description: str = "", location: str = "") -> dict:
             """Create an event after approval. Start/end use dateTime + timeZone, or date for all-day events. Does not invite attendees."""
             return google.request("POST", f"calendar/v3/calendars/{segment(calendar_id)}/events", body={
                 "summary": summary, "start": start, "end": end, "description": description, "location": location})
 
-        @server.tool(annotations=change)
+        @tool(annotations=change)
         def update_event(event_id: str, changes: dict, calendar_id: str = "primary") -> dict:
             """Update an event after approval. Allowed fields: summary, description, location, start, end."""
             if not changes or set(changes) - {"summary", "description", "location", "start", "end"}:
                 raise ValueError("Only summary, description, location, start and end may be changed")
             return google.request("PATCH", f"calendar/v3/calendars/{segment(calendar_id)}/events/{segment(event_id)}", body=changes)
 
-        @server.tool(annotations=change)
+        @tool(annotations=change)
         def delete_event(event_id: str, calendar_id: str = "primary") -> dict:
             """Delete an event only after the user approves the exact event."""
             google.request("DELETE", f"calendar/v3/calendars/{segment(calendar_id)}/events/{segment(event_id)}")
             return {"deleted": True, "event_id": event_id}
     elif kind == "drive":
-        @server.tool(annotations=read)
+        @tool(annotations=read)
         def search_files(query: str = "", page_token: str = "") -> dict:
             """Search file names in Google Drive. Returns nextPageToken when more files are available."""
             escaped = query.replace("\\", "\\\\").replace("'", "\\'")
@@ -116,7 +129,7 @@ def create_server(kind: str, google: GoogleWorkspace):
                 "pageToken": page_token, "pageSize": 100, "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
                 "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,description)",})
 
-        @server.tool(annotations=read)
+        @tool(annotations=read)
         def read_file(file_id: str) -> dict:
             """Read Google Docs as text, Sheets as CSV, or small text files. Other types return a Drive link."""
             path = "drive/v3/files/" + segment(file_id)
