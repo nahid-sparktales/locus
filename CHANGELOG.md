@@ -11,6 +11,8 @@
   hints to the agent under the new library.
 - The bundled certificate store (certifi) is updated to 2026.10.19 for
   PYSEC-2026-4320.
+- The wallet connector's build tooling pins follow-redirects 1.16.1 for two
+  high-severity advisories. The shipped connector bundle is unchanged.
 
 ### Changed
 
