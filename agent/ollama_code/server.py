@@ -42,6 +42,7 @@ from locus_memory.context.continuity import snapshot_payload
 
 from . import __version__, proxy
 from .agent_config import AgentConfiguration
+from .api.dependencies import _require_capability
 from .capabilities import enabled as capability_enabled
 from .chat_service import AgentBusyError, ChatService
 from .chat_transport_runtime import command_error as _command_error
@@ -144,10 +145,6 @@ _UNTRUSTED_BROWSER_NOTICE = (
 )
 
 
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def _configured_parent_pid() -> int:
@@ -274,11 +271,6 @@ async def block_browser_origins(request: Request, call_next):
 
 def _allowed_origins(application: FastAPI) -> set[str]:
     return set(getattr(application.state, "allowed_origins", set()))
-
-
-def _require_capability(name: str) -> None:
-    if not capability_enabled(name):
-        raise HTTPException(404, f"capability is disabled: {name}")
 
 
 # --------------------------------------------------------------------- REST

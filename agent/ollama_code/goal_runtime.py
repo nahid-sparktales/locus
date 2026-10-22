@@ -48,7 +48,6 @@ GOAL_TOOL_SCHEMAS = [
         }, "required": ["status", "summary", "evidence"], "additionalProperties": False},
     }},
 ]
-GOAL_TOOL_NAMES = frozenset({"get_goal", "update_goal"})
 
 
 def validate_goal_report(value: Any) -> dict[str, Any]:

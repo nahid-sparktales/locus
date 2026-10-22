@@ -1243,21 +1243,6 @@ class ExtensionManager:
                     out.append(item)
         return out
 
-    def remove_marketplace(self, marketplace_id: str) -> None:
-        with self._guard:
-            if any(item.get("marketplace_id") == marketplace_id for item in self._state["plugins"]):
-                raise ExtensionError("uninstall this marketplace's plugins before removing it")
-            before = len(self._state["marketplaces"])
-            self._state["marketplaces"] = [
-                item for item in self._state["marketplaces"] if item.get("id") != marketplace_id
-            ]
-            if len(self._state["marketplaces"]) == before:
-                raise ExtensionError("marketplace not found")
-            snapshot = self.marketplaces_root / marketplace_id
-            if snapshot.exists():
-                shutil.rmtree(snapshot, ignore_errors=True)
-            self._save()
-
     # --------------------------------------------------------------- plugins
 
     def inspect_catalog_plugin(self, marketplace_id: str, plugin_name: str) -> dict[str, Any]:
@@ -1629,10 +1614,6 @@ class ExtensionManager:
         for skill in self.skills(workspace):
             if not skill.get("enabled") or skill.get("error"):
                 continue
-            if skill.get("activation") == "startup":
-                # Already present in the turn context; do not spend eager-index
-                # tokens advertising startup skills a second time.
-                continue
             policy = " [explicit invocation only]" if not skill.get("allow_implicit_invocation", True) else ""
             path = str(skill.get("path") or "")
             location = f" ({path})" if path else ""
@@ -1643,10 +1624,6 @@ class ExtensionManager:
                 break
             lines.append(line)
         return "\n".join(lines) if len(lines) > 1 else ""
-
-    def startup_skills(self, workspace: str = "") -> list[dict[str, Any]]:
-        """Compatibility surface: Locus no longer injects startup skills."""
-        return []
 
     def refresh_saved_state(self) -> None:
         """Observe Settings changes made by another conversation's worker."""

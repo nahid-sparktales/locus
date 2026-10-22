@@ -14,15 +14,11 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from ..capabilities import enabled as capability_enabled
 from ..chat_service import AgentBusyError, ChatService
 from ..extensions import ExtensionError, parse_plugin
-from .dependencies import get_service
+from .dependencies import _busy_http, get_service
 from .disconnect import watch_disconnect
 
 ServiceDependency = Annotated[ChatService, Depends(get_service)]
 T = TypeVar("T")
-
-
-def _busy_http() -> HTTPException:
-    return HTTPException(409, "agent is busy — interrupt the current turn first")
 
 
 def _extension_failure(exc: ExtensionError) -> HTTPException:
@@ -142,28 +138,6 @@ def add_extension_marketplace(
         )
         _announce_extensions(service, "marketplace_added")
         return value
-    except ExtensionError as exc:
-        raise _extension_failure(exc) from exc
-
-
-def refresh_extension_marketplace(
-    marketplace_id: str, service: ServiceDependency
-) -> dict[str, Any]:
-    try:
-        value = service.core.extensions.refresh_marketplace(marketplace_id)
-        _announce_extensions(service, "marketplace_refreshed")
-        return value
-    except ExtensionError as exc:
-        raise _extension_failure(exc) from exc
-
-
-def delete_extension_marketplace(
-    marketplace_id: str, service: ServiceDependency
-) -> dict[str, Any]:
-    try:
-        service.core.extensions.remove_marketplace(marketplace_id)
-        _announce_extensions(service, "marketplace_removed")
-        return {"ok": True}
     except ExtensionError as exc:
         raise _extension_failure(exc) from exc
 
@@ -710,16 +684,6 @@ def register_routes(router: APIRouter) -> None:
         ("/api/extensions/catalog", get_extension_catalog, ["GET"]),
         ("/api/extensions/catalog/trust", inspect_extension_plugin, ["GET"]),
         ("/api/extensions/marketplaces", add_extension_marketplace, ["POST"]),
-        (
-            "/api/extensions/marketplaces/{marketplace_id}/refresh",
-            refresh_extension_marketplace,
-            ["POST"],
-        ),
-        (
-            "/api/extensions/marketplaces/{marketplace_id}",
-            delete_extension_marketplace,
-            ["DELETE"],
-        ),
         ("/api/extensions/plugins/install", install_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/enable", enable_extension_plugin, ["POST"]),
         ("/api/extensions/plugins/update", update_extension_plugin, ["POST"]),

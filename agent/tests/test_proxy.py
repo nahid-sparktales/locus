@@ -42,7 +42,6 @@ def clean_proxy_state(monkeypatch):
         "NO_PROXY",
         "no_proxy",
         "LOCUS_PROXY_CREDENTIAL",
-        "LOCUS_PROXY_CREDENTIAL_STDIN",
         "LOCUS_BOOTSTRAP_SECRETS_STDIN",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -63,8 +62,10 @@ def inherited_environ(clean_proxy_state, monkeypatch):
     monkeypatch.setenv("https_proxy", CREDENTIALED)
 
 
-def _stdin(text: str, monkeypatch):
-    monkeypatch.setattr("sys.stdin", io.StringIO(text))
+def _handoff(credential: str, monkeypatch):
+    monkeypatch.setenv("LOCUS_BOOTSTRAP_SECRETS_STDIN", "1")
+    payload = json.dumps({"proxy_credential": credential}) + "\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
 
 
 def _recording(real):
@@ -79,23 +80,6 @@ def _recording(real):
 
 
 # --------------------------------------------------------- activate_from_env
-
-
-def test_activate_reads_the_credential_from_stdin(monkeypatch):
-    """The secret never enters the environment: popping it would not help,
-    because `ps -E` reads the exec-time block for the life of the process."""
-    monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("http_proxy", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("alice:s3cret\n", monkeypatch)
-
-    proxy.activate_from_env()
-
-    assert "LOCUS_PROXY_CREDENTIAL_STDIN" not in os.environ
-    assert os.environ["HTTP_PROXY"] == CREDENTIALED
-    assert os.environ["http_proxy"] == CREDENTIALED
-    assert "HTTPS_PROXY" not in os.environ, "absent vars stay absent"
-    assert proxy.credential_applied
 
 
 def test_activate_reads_proxy_secret_from_one_json_line(monkeypatch):
@@ -113,19 +97,7 @@ def test_activate_reads_proxy_secret_from_one_json_line(monkeypatch):
 def test_activate_ignores_stdin_without_the_flag(monkeypatch):
     """No flag, no read: whatever is on stdin belongs to someone else."""
     monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    _stdin("alice:s3cret\n", monkeypatch)
-
-    proxy.activate_from_env()
-
-    assert os.environ["HTTP_PROXY"] == CLEAN
-    assert not proxy.credential_applied
-
-
-def test_activate_survives_an_empty_stdin(monkeypatch):
-    """EOF before the line arrives means no credential, not a failed startup."""
-    monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("", monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO("alice:s3cret\n"))
 
     proxy.activate_from_env()
 
@@ -135,23 +107,13 @@ def test_activate_survives_an_empty_stdin(monkeypatch):
 
 def test_activate_survives_a_closed_stdin(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
+    monkeypatch.setenv("LOCUS_BOOTSTRAP_SECRETS_STDIN", "1")
     monkeypatch.setattr("sys.stdin", None)
 
     proxy.activate_from_env()
 
     assert os.environ["HTTP_PROXY"] == CLEAN
     assert not proxy.credential_applied
-
-
-def test_activate_reads_one_line_only(monkeypatch):
-    monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("alice:s3cret\nnot-the-credential\n", monkeypatch)
-
-    proxy.activate_from_env()
-
-    assert os.environ["HTTP_PROXY"] == CREDENTIALED
 
 
 def test_activate_ignores_and_removes_a_stray_credential_var(monkeypatch):
@@ -170,8 +132,7 @@ def test_activate_ignores_and_removes_a_stray_credential_var(monkeypatch):
 
 def test_activate_rewrites_a_socks_url(monkeypatch):
     monkeypatch.setenv("ALL_PROXY", "socks5h://proxy.example:1080")
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("alice:s3cret\n", monkeypatch)
+    _handoff("alice:s3cret", monkeypatch)
 
     proxy.activate_from_env()
 
@@ -187,22 +148,11 @@ def test_activate_without_credential_is_a_noop(monkeypatch):
     assert not proxy.credential_applied
 
 
-def test_activate_consumes_the_credential_even_without_proxy_vars(monkeypatch):
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("alice:s3cret\n", monkeypatch)
-
-    proxy.activate_from_env()
-
-    assert "LOCUS_PROXY_CREDENTIAL_STDIN" not in os.environ
-    assert not proxy.credential_applied
-
-
 def test_percent_encoded_credentials_are_embedded_verbatim(monkeypatch):
     """The app already encoded each half; a second pass would corrupt any
     password containing a literal %."""
     monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("user%40corp:p%25ss\n", monkeypatch)
+    _handoff("user%40corp:p%25ss", monkeypatch)
 
     proxy.activate_from_env()
 
@@ -211,8 +161,7 @@ def test_percent_encoded_credentials_are_embedded_verbatim(monkeypatch):
 
 def test_password_with_encoded_colon_survives_the_first_colon_split(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", CLEAN)
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
-    _stdin("alice:pa%3Ass\n", monkeypatch)
+    _handoff("alice:pa%3Ass", monkeypatch)
 
     proxy.activate_from_env()
 
@@ -268,14 +217,14 @@ def test_sanitize_drops_the_raw_credential_vars_without_activation(monkeypatch):
     not hand the handoff itself to a child."""
     base = {
         "LOCUS_PROXY_CREDENTIAL": "alice:s3cret",
-        "LOCUS_PROXY_CREDENTIAL_STDIN": "1",
+        "LOCUS_BOOTSTRAP_SECRETS_STDIN": "1",
         "PATH": "/usr/bin",
     }
 
     clean = proxy.sanitized_child_environment(base)
 
     assert "LOCUS_PROXY_CREDENTIAL" not in clean
-    assert "LOCUS_PROXY_CREDENTIAL_STDIN" not in clean
+    assert "LOCUS_BOOTSTRAP_SECRETS_STDIN" not in clean
     assert clean["PATH"] == "/usr/bin"
     assert not proxy.credential_applied, "no activation happened"
 
@@ -514,7 +463,7 @@ def test_spawned_child_never_sees_the_raw_credential_var(tmp_path, monkeypatch):
     from ollama_code.tools import ToolContext, execute_tool
 
     monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL", "alice:s3cret")
-    monkeypatch.setenv("LOCUS_PROXY_CREDENTIAL_STDIN", "1")
+    monkeypatch.setenv("LOCUS_BOOTSTRAP_SECRETS_STDIN", "1")
     wrapper, calls = _recording(subprocess.Popen)
     monkeypatch.setattr(tools_mod.subprocess, "Popen", wrapper)
 

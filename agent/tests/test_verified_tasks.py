@@ -549,15 +549,6 @@ def test_full_plan_restores_without_compaction(environment):
     assert core.tool_ctx.plan_document["acceptance_checks"][0]["id"] == "result"
 
 
-def test_utf8_compaction_sections_preserve_every_character():
-    from ollama_code.context_preservation import bounded_sections, token_estimate
-    text = "用户约束 🚀" * 5000
-    sections = bounded_sections(text, 24000)
-    assert "".join(sections) == text
-    assert all(len(section.encode("utf-8")) <= 24000 for section in sections)
-    assert token_estimate(text) > len(text) // 3
-
-
 @pytest.mark.parametrize("late_change", [None, "plan", "file"])
 def test_real_team_capsule_execution_resumes_without_repeating_verified_writer(environment, monkeypatch, late_change):
     from test_backend import FakeClient

@@ -18,7 +18,6 @@ from typing import Any
 FORMATS = {"pdf", "docx", "xlsx", "csv", "tsv"}
 MAX_SOURCE_BYTES = 100 * 1024 * 1024
 MAX_TEXT_BYTES = 5 * 1024 * 1024
-MAX_PAGES = 500
 MAX_CELLS = 200_000
 EXTRACTOR_VERSION = "locus-documents-1"
 MAX_XML_BYTES = 100 * 1024 * 1024

@@ -345,39 +345,6 @@ def memory_delete(
     return {"ok": True, "id": memory_id}
 
 
-def memory_search(
-    service: ServiceDependency,
-    query: str = Query(min_length=1, max_length=2_000),
-    workspace: str = Query(default=""),
-    agent_id: str = Query(default="primary"),
-    limit: int = Query(default=8, ge=1, le=20),
-) -> dict[str, Any]:
-    target = memory_workspace(service, workspace)
-    try:
-        knowledge = _knowledge_store(service, target).settings()
-        vault = memory_vault(target)
-        results = vault.search(
-            query,
-            workspace=target,
-            agent_id=agent_id,
-            limit=limit,
-            embedding_model=str(knowledge.get("embedding_model") or ""),
-            ollama_host=str(
-                knowledge.get("ollama_host") or "http://127.0.0.1:11434"
-            ),
-        )
-        vault.record_event(
-            "recall",
-            "matched" if results else "empty",
-            workspace=target,
-            agent_id=agent_id,
-            reason_code="approved_only",
-        )
-        return {"results": results}
-    except MemoryError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
 def memory_export(
     service: ServiceDependency,
     workspace: str = Query(default=""),
@@ -599,7 +566,6 @@ def register_routes(router: APIRouter) -> None:
     router.add_api_route(
         "/api/memory/{memory_id}", memory_delete, methods=["DELETE"]
     )
-    router.add_api_route("/api/memory/search", memory_search, methods=["GET"])
     router.add_api_route("/api/memory/export", memory_export, methods=["GET"])
     router.add_api_route("/api/memory/import", memory_import, methods=["POST"])
     router.add_api_route(

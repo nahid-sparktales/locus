@@ -28,6 +28,7 @@ from typing import Any
 
 from . import USER_AGENT, proxy
 from .chat_history_tools import CHAT_HISTORY_SCHEMAS, CHAT_HISTORY_TOOLS, execute_chat_history_tool
+from .collaboration_tools import schema as _schema
 from .response_parts import ATTACH_OUTPUT_PARTS_SCHEMA
 from .task_state import CHECK_SCHEMA
 
@@ -1453,17 +1454,6 @@ def execute_tool(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
 
 # ---------------------------------------------------------------------------
 # schemas (Ollama /api/chat "tools" format)
-
-
-def _schema(name: str, description: str, properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {"type": "object", "properties": properties, "required": required},
-        },
-    }
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [

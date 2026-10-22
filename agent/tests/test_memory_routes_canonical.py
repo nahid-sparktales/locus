@@ -168,9 +168,10 @@ def _listed(client, **params):
 
 
 def _search(client, query):
-    response = client.get("/api/memory/search", params={"query": query})
-    assert response.status_code == 200, response.text
-    return response.json()["results"]
+    core = client.app.state.service.core
+    workspace = core.workspace_root or core.cwd
+    with MemoryVault(workspace=workspace) as vault:
+        return vault.search(query, workspace=workspace, agent_id="primary")
 
 
 def test_http_candidate_approval_edit_feedback_and_delete(canonical_client):

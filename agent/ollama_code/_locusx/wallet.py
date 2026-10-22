@@ -6,30 +6,11 @@ from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any
 
+from ..collaboration_tools import schema as _schema
 from ..product_features import ProductFeatures
 from ..tools import truncate_output
 
 WALLET_BUDGET_MS = 60_000
-
-
-def _schema(
-    name: str,
-    description: str,
-    properties: dict[str, Any],
-    required: list[str],
-) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
 
 
 WALLET_TOOL_SCHEMAS = [
