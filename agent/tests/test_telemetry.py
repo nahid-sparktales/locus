@@ -56,10 +56,10 @@ def test_otlp_export_normalizes_endpoint_and_passes_plaintext_header_only_to_exp
 
     def export(exporter, spans):
         seen.update(
-            endpoint=exporter._endpoint,
-            headers=dict(exporter._headers),
+            endpoint=exporter._client._endpoint,
+            headers={key.lower(): value for key, value in exporter._client._headers.items()},
             spans=list(spans),
-            session=exporter._session,
+            session=exporter._client._transport._session,
         )
         return SpanExportResult.SUCCESS
 
@@ -73,7 +73,7 @@ def test_otlp_export_normalizes_endpoint_and_passes_plaintext_header_only_to_exp
     assert result["ok"]
     assert result["endpoint"] == "https://collector.example/otlp/v1/traces"
     assert seen["endpoint"] == result["endpoint"]
-    assert seen["headers"]["Authorization"] == "Bearer transient"
+    assert seen["headers"]["authorization"] == "Bearer transient"
     assert seen["session"].__class__.__name__ == "_NoRedirectSession"
     assert "transient" not in json.dumps(result)
     assert store.run("run")["export_state"] == "exported"
@@ -116,3 +116,35 @@ def test_otlp_never_exports_retrieval_source_identifiers(tmp_path, include_conte
     if include_content:
         assert "citations_redacted" in encoded
     assert store.events("run")[-1]["trace"]["selected"] == selected
+
+
+@pytest.mark.parametrize(("status", "expected"), [
+    (204, SpanExportResult.SUCCESS),
+    (302, SpanExportResult.FAILURE),
+    (503, SpanExportResult.FAILURE),
+])
+def test_single_attempt_exporter_sends_once_and_accepts_only_2xx(status, expected):
+    from ollama_code.telemetry import _NoRedirectSession, _SingleAttemptOTLPSpanExporter
+
+    calls = []
+
+    class Response:
+        status_code = status
+        reason = "stub"
+
+    class Session(_NoRedirectSession):
+        def request(self, method, url, **kwargs):
+            calls.append((method, url, kwargs.get("allow_redirects")))
+            return Response()
+
+    exporter = _SingleAttemptOTLPSpanExporter(
+        endpoint="https://collector.example/v1/traces",
+        headers={"Authorization": "Bearer transient"},
+        timeout=5,
+        session=Session(),
+    )
+    try:
+        assert exporter.export([]) is expected
+    finally:
+        exporter.shutdown()
+    assert calls == [("POST", "https://collector.example/v1/traces", False)]

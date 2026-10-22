@@ -13,6 +13,9 @@
   PYSEC-2026-4320.
 - The wallet connector's build tooling pins follow-redirects 1.16.1 for two
   high-severity advisories. The shipped connector bundle is unchanged.
+- OpenTelemetry is updated to 1.45.1 for CVE-2026-114603. Run export to an
+  OTLP collector still sends one request per attempt and treats only a 2xx
+  response as delivered.
 
 ### Changed
 
