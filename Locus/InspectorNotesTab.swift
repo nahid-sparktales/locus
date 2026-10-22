@@ -544,7 +544,6 @@ private struct NotesColorMenuButton: NSViewRepresentable {
 
 /// The formatting and export bar above the notes editor.
 struct NotesFormatToolbar: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: NotesStore
@@ -793,7 +792,6 @@ struct NotesFormatToolbar: View {
 /// Identity strip above the toolbar: which document is open, whether the last
 /// keystroke has landed on disk, and how much is in it.
 struct NotesHeaderBar: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var store: NotesStore
@@ -965,7 +963,6 @@ struct NotesHeaderBar: View {
 /// caller, so the inspector and the Notebook drive one editor rather than two
 /// copies of it.
 struct NotesDocumentEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     /// Observed, not owned. The store cache owns the lifetime, and that shared

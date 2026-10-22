@@ -85,14 +85,25 @@ class _SingleAttemptOTLPSpanExporter(OTLPSpanExporter):
     """Use the official encoder/transport while Locus owns the retry budget."""
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        # One request per call: the SDK client retries on its own and counts
+        # 3xx as delivered, so send through its transport directly and accept
+        # only a 2xx response.
+        client = self._client
         try:
             data = encode_spans(spans).SerializePartialToString()
-            response = self._export(data, self._timeout)
-        except requests.RequestException:
+            result = client._transport.request(
+                "POST",
+                client._endpoint,
+                headers=client._headers,
+                data=client._compress(data),
+                timeout=client._timeout,
+            )
+        except Exception:  # transport detail may contain a credential-bearing URL
             return SpanExportResult.FAILURE
+        status = result.status_code
         return (
             SpanExportResult.SUCCESS
-            if 200 <= response.status_code < 300
+            if status is not None and 200 <= status < 300
             else SpanExportResult.FAILURE
         )
 

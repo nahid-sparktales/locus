@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct TaskCapsuleView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: TaskCapsuleModel

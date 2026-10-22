@@ -69,7 +69,6 @@ enum InteractiveAnswerPresentation: Equatable {
 }
 
 private struct InteractiveAnswerCard<Original: View>: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -240,7 +239,6 @@ private struct InteractiveAnswerCard<Original: View>: View {
 /// "Open larger": the same fragment in a second sealed host at the maximum
 /// height, in a sheet the person dismisses with Close or Escape.
 private struct InteractiveAnswerSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String

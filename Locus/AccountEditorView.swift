@@ -6,7 +6,6 @@ import SwiftUI
 /// The account and its key are handed back to `AppModel` on Save — nothing is
 /// written while the sheet is open, so Cancel really does leave no trace.
 struct AccountEditorView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

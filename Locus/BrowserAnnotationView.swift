@@ -45,7 +45,6 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 /// `AnnotationGeometry` paths draw the live preview and the flattened export,
 /// so preview equals output by construction.
 struct BrowserScreenshotSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let draft: BrowserScreenshotDraft

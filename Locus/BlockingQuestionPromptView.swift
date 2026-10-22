@@ -8,7 +8,6 @@ import SwiftUI
 /// A question with no options is not a special case — it renders the same card
 /// with the entry field focused on appear.
 struct BlockingQuestionPromptView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

@@ -3,7 +3,6 @@ import Speech
 import SwiftUI
 
 struct CommandPaletteView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -167,7 +166,6 @@ private struct PluginInstallReview: Identifiable {
 }
 
 private struct ExtensionsSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -786,7 +784,6 @@ private struct ExtensionsSettingsView: View {
 }
 
 private struct MCPDeviceAuthorizationView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -843,7 +840,6 @@ private struct MCPDeviceAuthorizationView: View {
 }
 
 private struct PluginTrustReviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -940,7 +936,6 @@ private struct PluginTrustReviewView: View {
 }
 
 private struct MCPPresetReviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1032,7 +1027,6 @@ private struct MCPPresetReviewView: View {
 }
 
 private struct MCPEnableReviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1103,7 +1097,6 @@ private struct MCPKeyValueDraft: Identifiable {
 }
 
 private struct MCPServerEditorView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1288,7 +1281,6 @@ private struct MCPServerEditorView: View {
 }
 
 private struct MCPCredentialView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -1367,7 +1359,6 @@ private struct MCPCredentialView: View {
 }
 
 private struct MCPServerCatalogView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -1471,7 +1462,6 @@ private struct MCPServerCatalogView: View {
 }
 
 struct MCPAgentCatalogPicker: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var extensionsModel: ExtensionsModel
@@ -1530,7 +1520,6 @@ private struct MCPPreviewSelection: Identifiable {
 }
 
 private struct MCPItemPreviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1629,7 +1618,6 @@ private struct MCPItemPreviewView: View {
 }
 
 struct CheckpointSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1743,7 +1731,6 @@ enum SettingsPresentationContext {
 }
 
 struct SettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

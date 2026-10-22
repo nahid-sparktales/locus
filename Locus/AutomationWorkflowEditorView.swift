@@ -77,7 +77,6 @@ extension AppModel {
 
 /// Shared vertical workflow editor used by both scheduled and event agents.
 struct AutomationWorkflowEditorView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var workflow: AutomationWorkflow
@@ -187,7 +186,6 @@ struct AutomationWorkflowEditorView: View {
 }
 
 private struct WorkflowStepCard: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var step: AutomationWorkflowStep
@@ -419,7 +417,6 @@ private struct WorkflowStepCard: View {
 }
 
 private struct WorkflowSimulationSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

@@ -403,14 +403,11 @@ final class TranscriptFollowTests: XCTestCase {
         pump()
         XCTAssertEqual(requests, initial + 1, "Detached readers own their viewport")
 
-        coordinator.resetForSession()
-        pump()
-        XCTAssertEqual(requests, initial + 2)
         coordinator.contentMayHaveChanged()
         coordinator.detachAll()
         coordinator.jumpToLatest(animated: true)
         pump()
-        XCTAssertEqual(requests, initial + 2, "Queued work must not invoke a dismantled bridge's proxy")
+        XCTAssertEqual(requests, initial + 1, "Queued work must not invoke a dismantled bridge's proxy")
     }
 
     func testActivityResultUsesMeasuredLayoutAndReleasesViewportOnReaderIntent() throws {

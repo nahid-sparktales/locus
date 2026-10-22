@@ -507,7 +507,6 @@ enum CalendarStoreError: LocalizedError {
 }
 
 struct InspectorCalendarTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -803,7 +802,6 @@ struct InspectorCalendarTab: View {
 }
 
 private struct CalendarEventRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let event: LocusCalendarEntry
@@ -851,7 +849,6 @@ private struct CalendarEventRow: View {
 }
 
 private struct CalendarEventComposer: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

@@ -4,7 +4,6 @@ import SwiftUI
 /// after the root delegates and has no team controls or writer UI. Any inherited
 /// tool approval still appears in the normal composer permission panel.
 struct SoloSwarmPanelView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -137,7 +136,6 @@ struct SoloSwarmPanelView: View {
 /// the conversation directly below the request carrying the same run id, so
 /// planning and execution never displace the message composer.
 struct TeamRunBoardView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -527,7 +525,6 @@ struct TeamRunBoardView: View {
 /// dispatcher is building a plan. It reports observable stages and validation
 /// diagnostics without presenting provider reasoning or raw structured output.
 struct TeamDispatchProgressView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -726,7 +723,6 @@ struct TeamDispatchProgressView: View {
 /// releases the complete dependency graph; individual agents and jobs do not
 /// ask for additional dispatch approval.
 struct TeamDispatchApprovalPromptView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1071,7 +1067,6 @@ struct TeamDispatchApprovalPromptView: View {
 /// decides whether the plan gets implemented. ↑/↓ move the selection, 1–3
 /// answer directly, ↵ confirms, esc cancels.
 struct PlanApprovalPromptView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

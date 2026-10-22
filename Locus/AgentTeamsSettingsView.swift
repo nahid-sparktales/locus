@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct AgentTeamsSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -520,7 +519,6 @@ struct AgentTeamsSettingsView: View {
 }
 
 struct QuickTeamBuilderView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1092,7 +1090,6 @@ struct QuickTeamBuilderView: View {
 }
 
 private struct EvaluationReportView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1213,7 +1210,6 @@ private struct EvaluationReportView: View {
 }
 
 private struct AgentBehaviorEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -1627,7 +1623,6 @@ struct EffectiveResponsePreview: Decodable, Equatable {
 }
 
 struct AgentProfileEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2598,7 +2593,6 @@ struct AgentProfileEditor: View {
 }
 
 private struct AgentTeamEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2900,7 +2894,6 @@ private struct AgentTeamEditor: View {
 }
 
 private struct EvaluationSuiteEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -3144,7 +3137,6 @@ private struct EvaluationSuiteEditor: View {
 }
 
 struct WorkspaceKnowledgeSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -3767,7 +3759,6 @@ struct WorkspaceMemoryDraft: Identifiable {
 }
 
 struct WorkspaceMemoryEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss

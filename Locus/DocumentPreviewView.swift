@@ -4,7 +4,6 @@ import Quartz
 import SwiftUI
 
 struct DocumentPreviewSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -37,7 +36,6 @@ struct DocumentPreviewSheet: View {
 }
 
 struct DocumentPreviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var library: WorkspaceLibraryModel
@@ -225,7 +223,6 @@ private enum ImageCanvasBackground: String, CaseIterable, Identifiable {
 }
 
 private struct ImageReader: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let image: NSImage
@@ -418,7 +415,6 @@ private final class ImageReaderCanvas: NSView {
 }
 
 struct DocumentPDFReader: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     var url: URL? = nil

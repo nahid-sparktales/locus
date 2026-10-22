@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 4.2.5 — 2026-10-22
+
+### Security
+
+- The bundled MCP library is updated to 2.2.0, which fixes CVE-2026-59951.
+  Google Calendar, Gmail and Drive tools still pass their sign-in and input
+  hints to the agent under the new library.
+- The bundled certificate store (certifi) is updated to 2026.10.19 for
+  PYSEC-2026-4320.
+- The wallet connector's build tooling pins follow-redirects 1.16.1 for two
+  high-severity advisories. The shipped connector bundle is unchanged.
+- OpenTelemetry is updated to 1.45.1 for CVE-2026-114603. Run export to an
+  OTLP collector still sends one request per attempt and treats only a 2xx
+  response as delivered.
+
+### Changed
+
+- Removed backend routes the app no longer calls, duplicate helpers, redundant
+  tests, and test-only diagnostics compiled into the app. Nothing you use
+  changes.
+
 ## 4.2.4 — 2026-10-09
 
 ### Added

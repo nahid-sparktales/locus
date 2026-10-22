@@ -55,7 +55,6 @@ private struct AgentInspectorSelectionView: View {
 }
 
 private struct AgentInspectorPanel: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -157,7 +156,6 @@ private struct AgentInspectorPanel: View {
 // MARK: - Detail
 
 private struct AgentDetailView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -907,7 +905,6 @@ private struct AgentDetailView: View {
 // MARK: - Fleet
 
 private struct AgentFleetView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1098,7 +1095,6 @@ private struct AgentFleetView: View {
 // MARK: - Pieces
 
 private struct AgentGlyph: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let size: CGFloat
@@ -1125,7 +1121,6 @@ private struct AgentGlyph: View {
 }
 
 private struct AgentStatusPill: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let status: AgentOverview.Status
@@ -1173,7 +1168,6 @@ private struct AgentStatusPill: View {
 }
 
 private struct AgentActionButton: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -1214,7 +1208,6 @@ private struct AgentActionButton: View {
 }
 
 private struct AgentEyebrow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -1230,7 +1223,6 @@ private struct AgentEyebrow: View {
 }
 
 private struct AgentFactRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let fact: AgentOverview.Fact
@@ -1257,7 +1249,6 @@ private struct AgentFactRow: View {
 }
 
 private struct AgentChatRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let chat: AgentOverview.Chat
@@ -1334,7 +1325,6 @@ private struct AgentChatRow: View {
 }
 
 private struct AgentEventRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let event: AgentOverview.Event
@@ -1431,7 +1421,6 @@ private struct AgentEventRow: View {
 }
 
 private struct AgentFleetRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let entry: AgentFleetEntry
@@ -1501,7 +1490,6 @@ private struct AgentFleetRow: View {
 
 /// Filter chips wrap like tags rather than truncating into one line.
 private struct AgentChipFlow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let chips: [String]
@@ -1576,7 +1564,6 @@ struct AgentFlowLayout: Layout {
 }
 
 private struct AgentCardModifier: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     func body(content: Content) -> some View {

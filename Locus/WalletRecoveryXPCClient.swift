@@ -372,11 +372,6 @@ final class ProcessWalletRecoveryViewClient: WalletRecoveryViewClient {
     ) -> [String: String] {
         let allowedKeys = ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_CTYPE"]
         var result = source.filter { allowedKeys.contains($0.key) }
-        #if DEBUG
-        if source["LOCUS_UI_TESTING"] == "1" {
-            result["LOCUS_UI_TESTING"] = "1"
-        }
-        #endif
         return result
     }
 

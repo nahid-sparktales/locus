@@ -3,7 +3,6 @@ import SwiftUI
 /// What actually changed on disk, from the workspace's git status — not what
 /// the current conversation happened to touch.
 struct InspectorChangesTab: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -340,7 +339,6 @@ struct InspectorChangesTab: View {
 /// One changed file: status marker, path, line counts, stage/discard actions,
 /// and its diff inline.
 private struct GitChangeRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

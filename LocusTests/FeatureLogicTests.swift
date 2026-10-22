@@ -1338,9 +1338,7 @@ final class FeatureLogicTests: XCTestCase {
                     .init(text: name, style: .code),
                     .init(text: " — workspace notes"),
                 ]
-                let chip = try XCTUnwrap(MarkdownArtifactPromotion.leadingArtifact(
-                    in: runs, workspacePath: workspace.path, resolveArtifact: resolve
-                ))
+                let chip = try XCTUnwrap(resolve(MarkdownArtifactPromotion.candidate(in: runs[0])))
                 let text = MarkdownNativeText.attributed(
                     runs, size: 13, weight: .regular, color: .primary,
                     lineSpacing: 5, inlineCodeSize: 12,
@@ -1426,51 +1424,6 @@ final class FeatureLogicTests: XCTestCase {
         ), "Cached presentation must never authorize a changed symlink target")
         cache.setLiveResizing(false)
         XCTAssertNil(cache.classify(candidate, workspacePath: workspace.path))
-    }
-
-    func testLeadingArtifactPromotesAnnotatedBulletsButNotComparisons() throws {
-        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("locus-chip-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        try Data("a".utf8).write(to: workspace.appendingPathComponent("notes.md"))
-        try Data("b".utf8).write(to: workspace.appendingPathComponent("todo.md"))
-
-        func reference(_ runs: [MarkdownInlineRun]) -> WorkspaceArtifactReference? {
-            MarkdownArtifactPromotion.leadingArtifact(in: runs, workspacePath: workspace.path)
-        }
-
-        // A bare backticked name and a bare link both promote.
-        XCTAssertEqual(
-            reference([.init(text: "notes.md", style: .code)])?.relativePath, "notes.md"
-        )
-        XCTAssertEqual(
-            reference([.init(text: "notes.md", destination: "notes.md")])?.relativePath,
-            "notes.md"
-        )
-        // The answer contract annotates every bullet; the annotation rides
-        // along instead of demoting the reference to prose.
-        XCTAssertEqual(
-            reference([
-                .init(text: "notes.md", style: .code),
-                .init(text: " — the working notes"),
-            ])?.relativePath,
-            "notes.md"
-        )
-        // Prose that merely mentions a file does not lead with it.
-        XCTAssertNil(reference([
-            .init(text: "see "),
-            .init(text: "notes.md", style: .code),
-        ]))
-        // A comparison of two files stays prose: a chip's actions would be
-        // attributed to just one of them.
-        XCTAssertNil(reference([
-            .init(text: "notes.md", style: .code),
-            .init(text: " duplicates "),
-            .init(text: "todo.md", style: .code),
-        ]))
-        // Names that resolve to nothing in the workspace never promote.
-        XCTAssertNil(reference([.init(text: "missing.md", style: .code)]))
     }
 
     @MainActor
@@ -4454,127 +4407,6 @@ final class FeatureLogicTests: XCTestCase {
             ),
             "a/b.swift"
         )
-    }
-
-    // MARK: - Plan panel presentation
-
-    func testPlanPanelPhaseUsesAttentionAndRunStatePrecedence() {
-        let pending = [TodoItem(content: "Inspect the panel", status: .pending)]
-        let complete = [TodoItem(content: "Inspect the panel", status: .completed)]
-        let stopped = TurnCompletion(
-            outcome: .interrupted,
-            mode: .work,
-            durationMilliseconds: 2_000,
-            iterationLimit: nil
-        )
-
-        XCTAssertEqual(
-            planPhase(permission: true, approval: true, busy: true, mode: .plan, todos: pending),
-            .waitingForPermission
-        )
-        XCTAssertEqual(
-            planPhase(approval: true, busy: true, mode: .plan, todos: pending),
-            .readyForApproval
-        )
-        XCTAssertEqual(planPhase(busy: true, mode: .plan), .planning)
-        // Plan execution rides Work now: a busy Work turn holding todos is
-        // following them; without todos it is just working.
-        XCTAssertEqual(planPhase(busy: true, mode: .work, todos: pending), .executing)
-        XCTAssertEqual(planPhase(busy: true, mode: .work), .working)
-        XCTAssertEqual(planPhase(busy: true, mode: .grill, todos: pending), .working)
-        XCTAssertEqual(planPhase(todos: complete), .completed)
-        XCTAssertEqual(planPhase(todos: pending, completion: stopped), .stopped)
-        XCTAssertEqual(
-            planPhase(todos: complete, completion: stopped),
-            .stopped,
-            "an interrupted outcome takes precedence over completed step markers"
-        )
-        XCTAssertEqual(
-            planPhase(
-                todos: pending,
-                completion: TurnCompletion(
-                    outcome: .error,
-                    mode: .work,
-                    durationMilliseconds: 500,
-                    iterationLimit: nil
-                )
-            ),
-            .stopped
-        )
-        XCTAssertEqual(planPhase(todos: pending), .saved)
-        XCTAssertEqual(planPhase(), .idle)
-    }
-
-    func testPlanWorkspaceBriefingSummarizesTheLiveRouteAndRepository() {
-        let briefing = PlanWorkspaceBriefing.resolve(
-            workspacePath: "/Users/example/Projects/locus",
-            modelName: "Work · gpt-5.4",
-            providerName: "OpenAI API",
-            modelStatus: "Ready",
-            contextWindowTokens: 400_000,
-            isGitRepository: true,
-            branch: "codex/plan-panel",
-            changedFileCount: 3,
-            gitChangeSummary: "1 staged · 2 modified",
-            ahead: 2,
-            behind: 1,
-            indexedFileCount: 128,
-            messageCount: 71
-        )
-
-        XCTAssertEqual(briefing.folderName, "locus")
-        XCTAssertEqual(briefing.folderPath, "/Users/example/Projects/locus")
-        XCTAssertEqual(briefing.repositoryDetail, "codex/plan-panel · 3 changed files · ↑2 · ↓1")
-        XCTAssertEqual(briefing.modelName, "Work · gpt-5.4")
-        XCTAssertTrue(briefing.modelDetail.contains("OpenAI API · Ready"))
-        XCTAssertTrue(briefing.modelDetail.contains("400"))
-        XCTAssertTrue(briefing.modelDetail.contains("token window"))
-        XCTAssertEqual(briefing.activityTitle, "Workspace has unreviewed changes")
-        XCTAssertEqual(
-            briefing.activityDetail,
-            "1 staged · 2 modified · 128 indexed files · 71 messages"
-        )
-    }
-
-    func testPlanWorkspaceBriefingHandlesACleanNonGitFolder() {
-        let briefing = PlanWorkspaceBriefing.resolve(
-            workspacePath: "/tmp/notes",
-            modelName: "qwen3:8b",
-            providerName: "Local Ollama",
-            modelStatus: "Starting",
-            contextWindowTokens: nil,
-            isGitRepository: false,
-            branch: nil,
-            changedFileCount: 0,
-            gitChangeSummary: "No changes",
-            ahead: 0,
-            behind: 0,
-            indexedFileCount: 1,
-            messageCount: 1
-        )
-
-        XCTAssertEqual(briefing.repositoryDetail, "Git not detected")
-        XCTAssertEqual(briefing.modelDetail, "Local Ollama · Starting")
-        XCTAssertEqual(briefing.activityTitle, "Workspace indexed")
-        XCTAssertEqual(briefing.activityDetail, "Ready for inspection · 1 indexed file · 1 message")
-    }
-
-    private func planPhase(
-        permission: Bool = false,
-        approval: Bool = false,
-        busy: Bool = false,
-        mode: WorkMode? = nil,
-        todos: [TodoItem] = [],
-        completion: TurnCompletion? = nil
-    ) -> PlanPanelPhase {
-        PlanPanelPresentation.resolve(
-            hasPendingPermission: permission,
-            planApprovalPending: approval,
-            isBusy: busy,
-            dispatchedMode: mode,
-            todos: todos,
-            latestCompletion: completion
-        ).phase
     }
 
     // MARK: - Agent teams

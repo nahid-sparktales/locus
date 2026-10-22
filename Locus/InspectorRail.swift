@@ -9,7 +9,6 @@ import SwiftUI
 /// The panel opens to the rail's left. Attention badges
 /// live on the icons, so a run can ask for eyes without the panel being open.
 struct InspectorRail: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     static let width: CGFloat = 44
@@ -263,7 +262,6 @@ private struct CompanionInspectorRailIcon: View {
 /// Workspace-level actions sit beside the model picker in the conversation
 /// header. This keeps them separate from the inspector's panel picker.
 struct WorkspaceActionsMenu: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

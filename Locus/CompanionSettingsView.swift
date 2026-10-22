@@ -4,7 +4,6 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 struct CompanionAccessSettingsSection: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -123,7 +122,6 @@ struct CompanionAccessSettingsSection: View {
 }
 
 private struct CompanionPairingCard: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

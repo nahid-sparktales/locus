@@ -5,7 +5,6 @@ import SwiftUI
 /// minimized without moving keyboard focus. Opening a workspace panel takes
 /// its place on the right until that panel closes.
 struct SessionOverviewView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -112,7 +111,6 @@ struct SessionOverviewView: View {
 }
 
 struct RequestOverviewActivity: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -183,7 +181,6 @@ private struct OverviewContentHeightKey: PreferenceKey {
 
 /// Back button plus an eyebrow title, mirroring the Runs tab's push header.
 struct SummaryDetailHeader: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let title: String
@@ -221,7 +218,6 @@ struct SummaryDetailHeader: View {
 /// Codex's complete source list: icon, label, muted meta, and the activity
 /// lines that explain how each source was used.
 struct SourcesDetailView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let sources: [PinnedSummary.SourceRow]
@@ -278,7 +274,6 @@ struct SourcesDetailView: View {
 }
 
 private struct SourceDetailRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let row: PinnedSummary.SourceRow
@@ -341,7 +336,6 @@ private struct SourceDetailRow: View {
 
 /// The plan as a checklist, opened from the summary's plan row.
 struct PlanDetailView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -398,7 +392,6 @@ struct PlanDetailView: View {
 }
 
 private struct SessionPlanStepRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let step: SessionPlanStep

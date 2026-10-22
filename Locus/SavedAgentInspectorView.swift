@@ -64,7 +64,6 @@ enum AgentAvatarImage {
 
 struct AgentAvatarView: View {
     @Environment(\.companionActivityPresentation) private var companionActivity
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var agentTeams: AgentTeamsModel
@@ -153,7 +152,6 @@ private struct SavedAgentDisclosureStyle: DisclosureGroupStyle {
 /// Shared editing controls for the overview and the unsaved profile draft.
 /// Linking a project stores its location; it does not move or copy that project.
 struct AgentWorkspacePreferencesEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -641,7 +639,6 @@ private struct SavedAgentResultReader: View {
 }
 
 private struct SavedAgentOverviewContent: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

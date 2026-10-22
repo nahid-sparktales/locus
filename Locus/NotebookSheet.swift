@@ -3,7 +3,6 @@ import AppKit
 import SwiftUI
 
 struct NotebookSheet: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var notebook: NotebookModel

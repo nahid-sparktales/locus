@@ -1967,14 +1967,6 @@ final class AppModelTests: XCTestCase {
             ),
             100
         )
-        XCTAssertEqual(
-            TranscriptScrollMetrics.bottomOriginY(
-                documentBounds: document,
-                viewportHeight: 400,
-                isFlipped: true
-            ),
-            1_600
-        )
         let unflippedVisible = CGRect(x: 0, y: 75, width: 600, height: 400)
         XCTAssertEqual(
             TranscriptScrollMetrics.bottomDistance(
@@ -5691,58 +5683,6 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertEqual(model.todos.first?.status, .inProgress)
         XCTAssertEqual(model.blocks.last?.completion?.title, "Stopped")
-    }
-
-    @MainActor
-    func testCompletedPlanTurnOffersToImplementThePlan() {
-        let model = AppModel(startImmediately: false)
-        armPlanApproval(model)
-
-        XCTAssertTrue(model.planApprovalPending, "a finished plan is a decision point")
-        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
-    }
-
-    @MainActor
-    func testPlanPanelTracksDraftingStepsAndApproval() {
-        let model = AppModel(startImmediately: false)
-        model.selectedMode = .plan
-        model.turnDispatchedInPlanMode = true
-        model.turnDispatchedMode = .plan
-        model.isBusy = true
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
-        model.handleEventForTesting([
-            "type": "todo_update",
-            "todos": [["content": "Audit the sidebar", "status": "pending"]],
-        ])
-        XCTAssertEqual(model.planPanelPresentation.phase, .planning)
-
-        model.handleEventForTesting([
-            "type": "turn_done",
-            "reason": "complete",
-            "duration_ms": 3_000,
-        ])
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .readyForApproval)
-        XCTAssertEqual(model.activePlan?.steps, ["Audit the sidebar"])
-    }
-
-    @MainActor
-    func testPlanPanelPreservesStoppedWorkPlan() {
-        let model = AppModel(startImmediately: false)
-        model.turnDispatchedMode = .work
-        model.isBusy = true
-        model.todos = [TodoItem(content: "Verify the app", status: .inProgress)]
-
-        model.handleEventForTesting([
-            "type": "turn_done",
-            "reason": "interrupted",
-            "duration_ms": 2_400,
-        ])
-
-        XCTAssertEqual(model.planPanelPresentation.phase, .stopped)
-        XCTAssertEqual(model.planPanelPresentation.stoppedOutcome, .interrupted)
-        XCTAssertEqual(model.todos.first?.status, .inProgress)
     }
 
     @MainActor

@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SoloHelperControlsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var helpers: SoloCollaborationModel

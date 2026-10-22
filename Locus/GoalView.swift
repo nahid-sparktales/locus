@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct GoalCardView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: GoalModel
@@ -112,7 +111,6 @@ struct GoalCardView: View {
 }
 
 struct GoalEditorView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: GoalModel

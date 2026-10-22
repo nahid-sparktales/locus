@@ -20,7 +20,6 @@ private enum BrowserSettingsRoute: String, Hashable {
 }
 
 struct BrowserSettingsView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -270,7 +269,6 @@ private struct BrowserVaultUnavailableView: View {
 }
 
 private struct BrowserPasswordManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
@@ -342,7 +340,6 @@ private struct BrowserPasswordManager: View {
 }
 
 private struct BrowserPasswordEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -369,7 +366,6 @@ private struct BrowserPasswordEditor: View {
 }
 
 private struct BrowserContactManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
@@ -428,7 +424,6 @@ private struct BrowserContactManager: View {
 }
 
 private struct BrowserContactEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -464,7 +459,6 @@ private struct BrowserContactEditor: View {
 }
 
 private struct BrowserCardManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var vault: BrowserAutofillVault
@@ -529,7 +523,6 @@ private struct BrowserCardManager: View {
 }
 
 private struct BrowserCardEditor: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.dismiss) private var dismiss
@@ -584,7 +577,6 @@ private enum BrowserHistoryRange: String, CaseIterable, Identifiable {
 }
 
 private struct BrowserHistoryManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -645,7 +637,6 @@ private struct BrowserHistoryManager: View {
 }
 
 private struct BrowserDownloadManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -746,7 +737,6 @@ private struct BrowserDownloadManager: View {
 }
 
 private struct BrowserSiteDataManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -806,7 +796,6 @@ private struct BrowserSiteDataManager: View {
 }
 
 private struct BrowserPermissionManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService
@@ -889,7 +878,6 @@ private struct BrowserPermissionManager: View {
 }
 
 private struct BrowserImportManager: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var browser: BrowserService

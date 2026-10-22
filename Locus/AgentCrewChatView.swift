@@ -4,7 +4,6 @@ import SwiftUI
 /// The shared crew ledger lives in the workspace and uses the native chat
 /// renderer and editor. Agent World embeds this same surface.
 struct AgentCrewChatView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @ObservedObject var model: AgentCrewChatModel
@@ -243,7 +242,6 @@ struct CrewTranscriptScrollBridge: NSViewRepresentable {
 }
 
 private struct CrewTranscriptMessage: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var appModel: AppModel
@@ -294,7 +292,6 @@ private struct CrewTranscriptMessage: View {
 }
 
 struct CrewChatSidebarEntry: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

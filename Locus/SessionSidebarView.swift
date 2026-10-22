@@ -362,7 +362,6 @@ private final class SidebarHitTestDiagnosticView: NSView {
 /// Cross-session transcript results observe their child model at the smallest
 /// owning boundary, so result updates do not invalidate the whole sidebar or AppModel.
 private struct TranscriptHitsSection: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let snapshot: SessionCatalogSnapshot
@@ -481,7 +480,6 @@ enum SidebarIconMetrics {
 }
 
 struct SessionSidebarView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1479,7 +1477,6 @@ struct SessionSidebarView: View {
     /// footer's workspace menu chooses the folder. Tasks stay in the sidebar
     /// list, where their activity and settings live.
     private struct AgentSelectionMenu: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
         @EnvironmentObject private var model: AppModel
@@ -1779,7 +1776,6 @@ struct SessionSidebarView: View {
 }
 
 private struct SidebarResizeHandle: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1841,7 +1837,6 @@ private struct SidebarResizeHandle: View {
 }
 
 struct TeamProgressPopover: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2221,7 +2216,6 @@ private func handleChatSidebarDrop(
 }
 
 private struct ChatSidebarDropTarget: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2255,7 +2249,6 @@ private struct ChatSidebarDropTarget: ViewModifier {
 }
 
 private struct ChatFolderBranchView: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2387,7 +2380,6 @@ private struct ChatFolderBranchView: View {
 }
 
 private struct WorkspaceGroupRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2475,7 +2467,6 @@ private struct WorkspaceGroupRow: View {
 }
 
 private struct SectionLabel: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let text: String
@@ -2494,7 +2485,6 @@ private struct SectionLabel: View {
 }
 
 private struct SessionRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let session: SessionSummary
@@ -2623,7 +2613,6 @@ enum AgentSidebarFilter: String, CaseIterable, Identifiable {
 /// Observe both definition stores at the hierarchy boundary so a new agent
 /// appears immediately, even before its first conversation is available.
 private struct AgentSidebarSection: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2935,7 +2924,6 @@ private struct AgentSidebarSection: View {
 /// publishes only on those stores, so a row that watched AppModel alone kept
 /// drawing the state the agent had before the click.
 private struct AgentGroupRow: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel

@@ -109,7 +109,6 @@ private struct ComposerEditorLayout: Layout {
 
 /// The same native text editor and card treatment serve ordinary and crew chats.
 struct ComposerTextInput: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @Binding var text: String
@@ -158,7 +157,6 @@ struct ComposerTextInput: View {
 }
 
 struct ComposerCardStyle: ViewModifier {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     let focused: Bool
@@ -343,7 +341,6 @@ struct ComposerView: View {
     @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
-    @Environment(\.locusHostedSurface) private var oceanTheme
     private var composerPanel: Color { viewColors.panel }
 
     @EnvironmentObject private var model: AppModel
@@ -1503,7 +1500,6 @@ enum ComposerReturnAction: Equatable {
 }
 
 private struct ComposerTeamPickerPopover: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1801,7 +1797,6 @@ private struct ComposerTeamPickerPopover: View {
 }
 
 private struct ComposerAttachmentSourceMenu: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -1967,7 +1962,6 @@ private struct ComposerAttachmentSourceMenu: View {
 }
 
 private struct ChatAttachmentsPopover: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
@@ -2127,7 +2121,6 @@ private struct ChatAttachmentsPopover: View {
 }
 
 private struct ContextPopover: View {
-    @Environment(\.locusHostedSurface) private var usesWorldTheme
     @Environment(\.locusViewColors) private var viewColors
 
     @EnvironmentObject private var model: AppModel
