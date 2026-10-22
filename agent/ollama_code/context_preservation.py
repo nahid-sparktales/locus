@@ -239,14 +239,3 @@ def summarize_section(core: Any, messages: list[dict]) -> Any:
 def token_estimate(text: str) -> int:
     # Conservative local estimate: includes UTF-8 byte cost for non-ASCII text.
     return (len(text.encode("utf-8")) + 2) // 3
-
-
-def bounded_sections(text: str, byte_limit: int) -> list[str]:
-    data, sections, offset = text.encode("utf-8"), [], 0
-    while offset < len(data):
-        end = min(offset + byte_limit, len(data))
-        while end < len(data) and data[end] & 0xC0 == 0x80:
-            end -= 1
-        sections.append(data[offset:end].decode("utf-8"))
-        offset = end
-    return sections

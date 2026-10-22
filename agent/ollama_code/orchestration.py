@@ -26,6 +26,7 @@ from typing import Any
 from .agent_config import AgentConfiguration, compose_system_prompt
 from .capabilities import enabled as capability_enabled
 from .codex_app_server import CodexAppServerError, CodexBrokerClient, codex_home_for_account
+from .model_router import _weighted_average
 from .ollama import ChatResponse, OllamaClient, OllamaError, looks_like_image_rejection
 from .openai_responses_multi_agent import (
     OpenAIResponsesMultiAgentClient,
@@ -3578,18 +3579,6 @@ def _routing_weights(value: dict[str, float]) -> dict[str, float]:
     if total <= 0:
         raise OrchestrationError("routing score weights must contain a positive value")
     return {name: number / total for name, number in weights.items()}
-
-
-def _weighted_average(values: list[tuple[float, int]]) -> float:
-    if not values:
-        return 50.0
-    weighted = 0.0
-    total = 0.0
-    for value, index in values:
-        weight = 0.95 ** index
-        weighted += max(0.0, min(value, 100.0)) * weight
-        total += weight
-    return weighted / total if total else 50.0
 
 
 __all__ = [

@@ -324,17 +324,9 @@ HELP_PLAIN = """Slash commands:
   /tools                   list the tools the agent can call
   /diff                    show the working-tree diff
   /retry                   regenerate the last response
-  /exit                    quit (CLI only)
 
 Permissions: read_file, glob, grep, list_dir and todo_write run automatically;
 other tools ask first (once / always / deny)."""
-
-SLASH_COMMANDS = [
-    "/help", "/model", "/clear", "/compact", "/init", "/todos", "/tools",
-    "/status", "/cost", "/sessions", "/resume", "/permissions", "/diff",
-    "/retry", "/exit",
-]
-
 
 class AgentCore:
     """The agent. One instance per process; turns run one at a time."""
@@ -4977,8 +4969,6 @@ class AgentCore:
         parts = text.strip().split(maxsplit=1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
-        if cmd in ("/exit", "/quit"):
-            return {"command": "exit", "text": "Goodbye."}
         if cmd == "/help":
             return {"command": "help", "text": HELP_PLAIN}
         if cmd == "/model":

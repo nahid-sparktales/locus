@@ -20,9 +20,6 @@ MAX_STATUS_BYTES = 400_000
 MAX_DIFF_BYTES = 200_000
 MAX_FILES = 2_000
 
-#: Diffing an untracked file needs a base; this is git's empty tree.
-EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-
 
 class GitUnavailable(Exception):
     """git is not installed, or could not be executed."""

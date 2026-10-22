@@ -24,10 +24,7 @@ from urllib.parse import urlsplit
 import requests
 
 from . import USER_AGENT, proxy
-from .ollama import ChatResponse, OllamaError, ToolCall
-
-#: Well-known bases, offered as presets in the UI.
-HUGGINGFACE_ROUTER = "https://router.huggingface.co/v1"
+from .ollama import ChatResponse, OllamaError, ToolCall, _close_when_stopped
 
 DEFAULT_TIMEOUT = 600
 
@@ -838,18 +835,6 @@ class RemoteClient:
             if finish:
                 resp.done = True
                 resp.done_reason = "length" if finish == "length" else str(finish)
-
-
-def _close_when_stopped(
-    response: requests.Response,
-    should_stop: Callable[[], bool],
-    done: threading.Event,
-) -> None:
-    """Close a stalled streaming response as soon as the turn is interrupted."""
-    while not done.wait(0.05):
-        if should_stop():
-            response.close()
-            return
 
 
 def _consume_anthropic_event(

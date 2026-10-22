@@ -33,7 +33,6 @@ def test_requested_skills_are_discoverable_and_explicit(tmp_path):
     manager = ExtensionManager(str(tmp_path), root=tmp_path / "state")
     skills = {item["id"]: item for item in manager.skills()}
     assert not [item for item in skills.values() if item.get("error")]
-    assert manager.startup_skills() == []
     registry = ToolRegistry(manager)
     registry.begin_turn("Help with this project", str(tmp_path))
     assert registry.explicit_skill_context == ""

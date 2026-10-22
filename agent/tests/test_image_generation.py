@@ -8,7 +8,7 @@ from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+import test_backend
 from test_backend import FakeClient, FakeResponse, _core
 from test_image_files import jpeg_bytes, png_bytes
 
@@ -35,6 +35,7 @@ from ollama_code.tools import EDIT_TOOLS, SAFE_TOOLS, ToolContext, execute_tool
 KEY = "sk-live-secret-key-4242"
 PNG = png_bytes(64, 48)
 PNG_B64 = base64.b64encode(PNG).decode()
+client = test_backend.client
 
 
 def _provider_config(**overrides) -> ImageProviderConfig:
@@ -84,22 +85,6 @@ def _images(root: Path) -> list[str]:
 
 def _once(tool, summary, detail, request_id):
     return "once"
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    from ollama_code import server as server_mod
-
-    core = AgentCore(cwd=str(tmp_path), config={"model": "test-model", "max_iterations": 5})
-    core.model = "test-model"
-    monkeypatch.setattr(core.client, "check", lambda: None)
-    monkeypatch.setattr(core.client, "list_models", lambda: [{"name": "test-model", "size": 1, "details": {}}])
-    monkeypatch.setattr(core.client, "context_length", lambda name: 32768)
-    monkeypatch.setattr(core.client, "running_models", lambda: [{"name": "test-model", "context_length": 32768}])
-    core.messages = [core.system_message()]
-    app = server_mod.create_app(chat_service=server_mod.ChatService(core))
-    with TestClient(app) as c:
-        yield c
 
 
 # ------------------------------------------------------------- availability
