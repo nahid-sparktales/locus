@@ -9,6 +9,8 @@
 - The bundled MCP library is updated to 2.2.0, which fixes CVE-2026-59951.
   Google Calendar, Gmail and Drive tools still pass their sign-in and input
   hints to the agent under the new library.
+- The bundled certificate store (certifi) is updated to 2026.10.19 for
+  PYSEC-2026-4320.
 
 ### Changed
 
